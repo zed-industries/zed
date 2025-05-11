@@ -1,0 +1,37 @@
+syntax = "proto3";
+package zed.messages;
+
+message GetNotifications {
+    optional uint64 before_id = 1;
+}
+
+message AddNotification {
+    Notification notification = 1;
+}
+
+message GetNotificationsResponse {
+    repeated Notification notifications = 1;
+    bool done = 2;
+}
+
+message DeleteNotification {
+    uint64 notification_id = 1;
+}
+
+message UpdateNotification {
+    Notification notification = 1;
+}
+
+message MarkNotificationRead {
+    uint64 notification_id = 1;
+}
+
+message Notification {
+    uint64 id = 1;
+    uint64 timestamp = 2;
+    string kind = 3;
+    optional uint64 entity_id = 4;
+    string content = 5;
+    bool is_read = 6;
+    optional bool response = 7;
+}

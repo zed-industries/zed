@@ -1,11 +1,11 @@
 use crate::{
+    Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinition,
+    GoToTypeDefinition, GotoDefinitionKind, InlayId, Navigated, PointForPosition, SelectPhase,
     editor_settings::{GoToDefinitionFallback, MultiCursorModifier},
     hover_popover::{self, InlayHover},
     scroll::ScrollAmount,
-    Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinition,
-    GoToTypeDefinition, GotoDefinitionKind, InlayId, Navigated, PointForPosition, SelectPhase,
 };
-use gpui::{px, App, AsyncWindowContext, Context, Entity, Modifiers, Task, Window};
+use gpui::{App, AsyncWindowContext, Context, Entity, Modifiers, Task, Window, px};
 use language::{Bias, ToOffset};
 use linkify::{LinkFinder, LinkKind};
 use lsp::LanguageServerId;
@@ -16,7 +16,7 @@ use project::{
 use settings::Settings;
 use std::ops::Range;
 use theme::ActiveTheme as _;
-use util::{maybe, ResultExt, TryFutureExt as _};
+use util::{ResultExt, TryFutureExt as _, maybe};
 
 #[derive(Debug)]
 pub struct HoveredLinkState {
@@ -71,7 +71,7 @@ pub enum HoverLink {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct InlayHighlight {
+pub struct InlayHighlight {
     pub inlay: InlayId,
     pub inlay_position: Anchor,
     pub range: Range<usize>,
@@ -920,11 +920,11 @@ fn surrounding_filename(
 mod tests {
     use super::*;
     use crate::{
+        DisplayPoint,
         display_map::ToDisplayPoint,
         editor_tests::init_test,
         inlay_hint_cache::tests::{cached_hint_labels, visible_hint_labels},
         test::editor_lsp_test_context::EditorLspTestContext,
-        DisplayPoint,
     };
     use futures::StreamExt;
     use gpui::Modifiers;
@@ -1280,6 +1280,7 @@ mod tests {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                show_value_hints: false,
                 edit_debounce_ms: 0,
                 scroll_debounce_ms: 0,
                 show_type_hints: true,
@@ -1633,12 +1634,14 @@ mod tests {
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         // No highlight
         cx.update_editor(|editor, window, cx| {
-            assert!(editor
-                .snapshot(window, cx)
-                .text_highlight_ranges::<HoveredLinkState>()
-                .unwrap_or_default()
-                .1
-                .is_empty());
+            assert!(
+                editor
+                    .snapshot(window, cx)
+                    .text_highlight_ranges::<HoveredLinkState>()
+                    .unwrap_or_default()
+                    .1
+                    .is_empty()
+            );
         });
 
         // Moving the mouse over a file that does exist should highlight it.
@@ -1838,12 +1841,14 @@ mod tests {
 
         // No highlight
         cx.update_editor(|editor, window, cx| {
-            assert!(editor
-                .snapshot(window, cx)
-                .text_highlight_ranges::<HoveredLinkState>()
-                .unwrap_or_default()
-                .1
-                .is_empty());
+            assert!(
+                editor
+                    .snapshot(window, cx)
+                    .text_highlight_ranges::<HoveredLinkState>()
+                    .unwrap_or_default()
+                    .1
+                    .is_empty()
+            );
         });
 
         // Does not open the directory

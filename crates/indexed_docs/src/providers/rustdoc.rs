@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use collections::{HashSet, VecDeque};
 use fs::Fs;
@@ -53,7 +53,7 @@ impl IndexedDocsProvider for LocalRustdocProvider {
     }
 
     fn database_path(&self) -> PathBuf {
-        paths::support_dir().join("docs/rust/rustdoc-db.1.mdb")
+        paths::data_dir().join("docs/rust/rustdoc-db.1.mdb")
     }
 
     async fn suggest_packages(&self) -> Result<Vec<PackageName>> {
@@ -79,7 +79,7 @@ impl IndexedDocsProvider for LocalRustdocProvider {
 
         *WORKSPACE_CRATES.write() = Some((workspace_crates.clone(), Instant::now()));
 
-        Ok(workspace_crates.iter().cloned().collect())
+        Ok(workspace_crates.into_iter().collect())
     }
 
     async fn index(&self, package: PackageName, database: Arc<IndexedDocsDatabase>) -> Result<()> {
@@ -144,7 +144,7 @@ impl IndexedDocsProvider for DocsDotRsProvider {
     }
 
     fn database_path(&self) -> PathBuf {
-        paths::support_dir().join("docs/rust/docs-rs-db.1.mdb")
+        paths::data_dir().join("docs/rust/docs-rs-db.1.mdb")
     }
 
     async fn suggest_packages(&self) -> Result<Vec<PackageName>> {
@@ -209,9 +209,12 @@ impl IndexedDocsProvider for DocsDotRsProvider {
 async fn index_rustdoc(
     package: PackageName,
     database: Arc<IndexedDocsDatabase>,
-    fetch_page: impl Fn(&PackageName, Option<&RustdocItem>) -> BoxFuture<'static, Result<Option<String>>>
-        + Send
-        + Sync,
+    fetch_page: impl Fn(
+        &PackageName,
+        Option<&RustdocItem>,
+    ) -> BoxFuture<'static, Result<Option<String>>>
+    + Send
+    + Sync,
 ) -> Result<()> {
     let Some(package_root_content) = fetch_page(&package, None).await? else {
         return Ok(());

@@ -1,7 +1,7 @@
 mod async_body;
 pub mod github;
 
-pub use anyhow::{anyhow, Result};
+pub use anyhow::{Result, anyhow};
 pub use async_body::{AsyncBody, Inner};
 use derive_more::Deref;
 pub use http::{self, Method, Request, Response, StatusCode, Uri};
@@ -82,7 +82,7 @@ pub trait HttpClient: 'static + Send + Sync {
         }
     }
 
-    fn proxy(&self) -> Option<&Uri>;
+    fn proxy(&self) -> Option<&Url>;
 }
 
 /// An [`HttpClient`] that may have a proxy.
@@ -90,22 +90,22 @@ pub trait HttpClient: 'static + Send + Sync {
 pub struct HttpClientWithProxy {
     #[deref]
     client: Arc<dyn HttpClient>,
-    proxy: Option<Uri>,
+    proxy: Option<Url>,
 }
 
 impl HttpClientWithProxy {
     /// Returns a new [`HttpClientWithProxy`] with the given proxy URL.
     pub fn new(client: Arc<dyn HttpClient>, proxy_url: Option<String>) -> Self {
-        let proxy_uri = proxy_url
+        let proxy_url = proxy_url
             .and_then(|proxy| proxy.parse().ok())
             .or_else(read_proxy_from_env);
 
-        Self::new_uri(client, proxy_uri)
+        Self::new_url(client, proxy_url)
     }
-    pub fn new_uri(client: Arc<dyn HttpClient>, proxy_uri: Option<Uri>) -> Self {
+    pub fn new_url(client: Arc<dyn HttpClient>, proxy_url: Option<Url>) -> Self {
         Self {
             client,
-            proxy: proxy_uri,
+            proxy: proxy_url,
         }
     }
 }
@@ -118,7 +118,7 @@ impl HttpClient for HttpClientWithProxy {
         self.client.send(req)
     }
 
-    fn proxy(&self) -> Option<&Uri> {
+    fn proxy(&self) -> Option<&Url> {
         self.proxy.as_ref()
     }
 
@@ -135,7 +135,7 @@ impl HttpClient for Arc<HttpClientWithProxy> {
         self.client.send(req)
     }
 
-    fn proxy(&self) -> Option<&Uri> {
+    fn proxy(&self) -> Option<&Url> {
         self.proxy.as_ref()
     }
 
@@ -173,12 +173,12 @@ impl HttpClientWithUrl {
         }
     }
 
-    pub fn new_uri(
+    pub fn new_url(
         client: Arc<dyn HttpClient>,
         base_url: impl Into<String>,
-        proxy_uri: Option<Uri>,
+        proxy_url: Option<Url>,
     ) -> Self {
-        let client = HttpClientWithProxy::new_uri(client, proxy_uri);
+        let client = HttpClientWithProxy::new_url(client, proxy_url);
 
         Self {
             base_url: Mutex::new(base_url.into()),
@@ -231,7 +231,7 @@ impl HttpClientWithUrl {
         let base_api_url = match base_url.as_ref() {
             "https://zed.dev" => "https://llm.zed.dev",
             "https://staging.zed.dev" => "https://llm-staging.zed.dev",
-            "http://localhost:3000" => "http://localhost:8080",
+            "http://localhost:3000" => "http://localhost:8787",
             other => other,
         };
 
@@ -250,7 +250,7 @@ impl HttpClient for Arc<HttpClientWithUrl> {
         self.client.send(req)
     }
 
-    fn proxy(&self) -> Option<&Uri> {
+    fn proxy(&self) -> Option<&Url> {
         self.client.proxy.as_ref()
     }
 
@@ -267,7 +267,7 @@ impl HttpClient for HttpClientWithUrl {
         self.client.send(req)
     }
 
-    fn proxy(&self) -> Option<&Uri> {
+    fn proxy(&self) -> Option<&Url> {
         self.client.proxy.as_ref()
     }
 
@@ -276,7 +276,7 @@ impl HttpClient for HttpClientWithUrl {
     }
 }
 
-pub fn read_proxy_from_env() -> Option<Uri> {
+pub fn read_proxy_from_env() -> Option<Url> {
     const ENV_VARS: &[&str] = &[
         "ALL_PROXY",
         "all_proxy",
@@ -286,13 +286,10 @@ pub fn read_proxy_from_env() -> Option<Uri> {
         "http_proxy",
     ];
 
-    for var in ENV_VARS {
-        if let Ok(env) = std::env::var(var) {
-            return env.parse::<Uri>().ok();
-        }
-    }
-
-    None
+    ENV_VARS
+        .iter()
+        .find_map(|var| std::env::var(var).ok())
+        .and_then(|env| env.parse().ok())
 }
 
 pub struct BlockedHttpClient;
@@ -317,7 +314,7 @@ impl HttpClient for BlockedHttpClient {
         })
     }
 
-    fn proxy(&self) -> Option<&Uri> {
+    fn proxy(&self) -> Option<&Url> {
         None
     }
 
@@ -393,7 +390,7 @@ impl HttpClient for FakeHttpClient {
         future
     }
 
-    fn proxy(&self) -> Option<&Uri> {
+    fn proxy(&self) -> Option<&Url> {
         None
     }
 

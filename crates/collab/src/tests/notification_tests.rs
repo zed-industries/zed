@@ -3,7 +3,7 @@ use std::sync::Arc;
 use gpui::{BackgroundExecutor, TestAppContext};
 use notifications::NotificationEvent;
 use parking_lot::Mutex;
-use rpc::{proto, Notification};
+use rpc::{Notification, proto};
 
 use crate::tests::TestServer;
 

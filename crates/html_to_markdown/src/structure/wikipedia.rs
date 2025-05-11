@@ -1,6 +1,6 @@
+use crate::HandleTag;
 use crate::html_element::HtmlElement;
 use crate::markdown_writer::{HandlerOutcome, MarkdownWriter, StartTagOutcome};
-use crate::HandleTag;
 
 pub struct WikipediaChromeRemover;
 
@@ -148,7 +148,7 @@ mod tests {
     use indoc::indoc;
     use pretty_assertions::assert_eq;
 
-    use crate::{convert_html_to_markdown, markdown, TagHandler};
+    use crate::{TagHandler, convert_html_to_markdown, markdown};
 
     use super::*;
 

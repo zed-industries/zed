@@ -3,20 +3,29 @@ use editor::Editor;
 use extension_host::ExtensionStore;
 use futures::StreamExt;
 use gpui::{
-    actions, percentage, Animation, AnimationExt as _, App, Context, CursorStyle, Entity,
-    EventEmitter, InteractiveElement as _, ParentElement as _, Render, SharedString,
-    StatefulInteractiveElement, Styled, Transformation, Window,
+    Animation, AnimationExt as _, App, Context, CursorStyle, Entity, EventEmitter,
+    InteractiveElement as _, ParentElement as _, Render, SharedString, StatefulInteractiveElement,
+    Styled, Transformation, Window, actions, percentage,
 };
 use language::{BinaryStatus, LanguageRegistry, LanguageServerId};
 use project::{
     EnvironmentErrorMessage, LanguageServerProgress, LspStoreEvent, Project,
-    ProjectEnvironmentEvent, WorktreeId,
+    ProjectEnvironmentEvent,
+    git_store::{GitStoreEvent, Repository},
 };
 use smallvec::SmallVec;
-use std::{cmp::Reverse, fmt::Write, sync::Arc, time::Duration};
-use ui::{prelude::*, ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
+use std::{
+    cmp::Reverse,
+    fmt::Write,
+    path::Path,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+use ui::{ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 use util::truncate_and_trailoff;
-use workspace::{item::ItemHandle, StatusItemView, Workspace};
+use workspace::{StatusItemView, Workspace, item::ItemHandle};
+
+const GIT_OPERATION_DELAY: Duration = Duration::from_millis(0);
 
 actions!(activity_indicator, [ShowErrorMessage]);
 
@@ -34,6 +43,7 @@ pub struct ActivityIndicator {
     context_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
+#[derive(Debug)]
 struct ServerStatus {
     name: SharedString,
     status: BinaryStatus,
@@ -61,6 +71,7 @@ impl ActivityIndicator {
     ) -> Entity<ActivityIndicator> {
         let project = workspace.project().clone();
         let auto_updater = AutoUpdater::get(cx);
+        let workspace_handle = cx.entity();
         let this = cx.new(|cx| {
             let mut status_events = languages.language_server_binary_statuses();
             cx.spawn(async move |this, cx| {
@@ -75,17 +86,23 @@ impl ActivityIndicator {
             })
             .detach();
 
-            let mut status_events = languages.dap_server_binary_statuses();
-            cx.spawn(async move |this, cx| {
-                while let Some((name, status)) = status_events.next().await {
-                    this.update(cx, |this, cx| {
-                        this.statuses.retain(|s| s.name != name);
-                        this.statuses.push(ServerStatus { name, status });
-                        cx.notify();
-                    })?;
-                }
-                anyhow::Ok(())
-            })
+            cx.subscribe_in(
+                &workspace_handle,
+                window,
+                |activity_indicator, _, event, window, cx| match event {
+                    workspace::Event::ClearActivityIndicator { .. } => {
+                        if activity_indicator.statuses.pop().is_some() {
+                            activity_indicator.dismiss_error_message(
+                                &DismissErrorMessage,
+                                window,
+                                cx,
+                            );
+                            cx.notify();
+                        }
+                    }
+                    _ => {}
+                },
+            )
             .detach();
 
             cx.subscribe(
@@ -105,12 +122,21 @@ impl ActivityIndicator {
             )
             .detach();
 
+            cx.subscribe(
+                &project.read(cx).git_store().clone(),
+                |_, _, event: &GitStoreEvent, cx| match event {
+                    project::git_store::GitStoreEvent::JobsUpdated => cx.notify(),
+                    _ => {}
+                },
+            )
+            .detach();
+
             if let Some(auto_updater) = auto_updater.as_ref() {
                 cx.observe(auto_updater, |_, _, cx| cx.notify()).detach();
             }
 
             Self {
-                statuses: Default::default(),
+                statuses: Vec::new(),
                 project: project.clone(),
                 auto_updater,
                 context_menu_handle: Default::default(),
@@ -180,11 +206,8 @@ impl ActivityIndicator {
         cx: &mut Context<Self>,
     ) {
         if let Some(updater) = &self.auto_updater {
-            updater.update(cx, |updater, cx| {
-                updater.dismiss_error(cx);
-            });
+            updater.update(cx, |updater, cx| updater.dismiss_error(cx));
         }
-        cx.notify();
     }
 
     fn pending_language_server_work<'a>(
@@ -218,13 +241,14 @@ impl ActivityIndicator {
     fn pending_environment_errors<'a>(
         &'a self,
         cx: &'a App,
-    ) -> impl Iterator<Item = (&'a WorktreeId, &'a EnvironmentErrorMessage)> {
+    ) -> impl Iterator<Item = (&'a Arc<Path>, &'a EnvironmentErrorMessage)> {
         self.project.read(cx).shell_environment_errors(cx)
     }
 
     fn content_to_render(&mut self, cx: &mut Context<Self>) -> Option<Content> {
         // Show if any direnv calls failed
-        if let Some((&worktree_id, error)) = self.pending_environment_errors(cx).next() {
+        if let Some((abs_path, error)) = self.pending_environment_errors(cx).next() {
+            let abs_path = abs_path.clone();
             return Some(Content {
                 icon: Some(
                     Icon::new(IconName::Warning)
@@ -234,7 +258,7 @@ impl ActivityIndicator {
                 message: error.0.clone(),
                 on_click: Some(Arc::new(move |this, window, cx| {
                     this.project.update(cx, |project, cx| {
-                        project.remove_environment_error(worktree_id, cx);
+                        project.remove_environment_error(&abs_path, cx);
                     });
                     window.dispatch_action(Box::new(workspace::OpenLog), cx);
                 })),
@@ -282,6 +306,34 @@ impl ActivityIndicator {
                 message,
                 on_click: Some(Arc::new(Self::toggle_language_server_work_context_menu)),
             });
+        }
+
+        let current_job = self
+            .project
+            .read(cx)
+            .active_repository(cx)
+            .map(|r| r.read(cx))
+            .and_then(Repository::current_job);
+        // Show any long-running git command
+        if let Some(job_info) = current_job {
+            if Instant::now() - job_info.start >= GIT_OPERATION_DELAY {
+                return Some(Content {
+                    icon: Some(
+                        Icon::new(IconName::ArrowCircle)
+                            .size(IconSize::Small)
+                            .with_animation(
+                                "arrow-circle",
+                                Animation::new(Duration::from_secs(2)).repeat(),
+                                |icon, delta| {
+                                    icon.transform(Transformation::rotate(percentage(delta)))
+                                },
+                            )
+                            .into_any_element(),
+                    ),
+                    message: job_info.message.into(),
+                    on_click: None,
+                });
+            }
         }
 
         // Show any language server installation info.

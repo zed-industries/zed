@@ -2,8 +2,8 @@ use collections::HashMap;
 use std::{ops::Range, sync::LazyLock};
 use tree_sitter::{Query, QueryMatch};
 
-use crate::patterns::SETTINGS_NESTED_KEY_VALUE_PATTERN;
 use crate::MigrationPatterns;
+use crate::patterns::SETTINGS_NESTED_KEY_VALUE_PATTERN;
 
 pub const SETTINGS_PATTERNS: MigrationPatterns = &[(
     SETTINGS_NESTED_KEY_VALUE_PATTERN,

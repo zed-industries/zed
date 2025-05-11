@@ -3,7 +3,7 @@ use gpui::Render;
 use itertools::Itertools;
 use story::Story;
 
-use crate::{prelude::*, KeyBinding};
+use crate::{KeyBinding, prelude::*};
 
 pub struct KeybindingStory;
 

@@ -1,23 +1,23 @@
 use crate::fallback_themes::zed_default_dark;
 use crate::{
-    Appearance, IconTheme, IconThemeNotFoundError, SyntaxTheme, Theme, ThemeNotFoundError,
-    ThemeRegistry, ThemeStyleContent, DEFAULT_ICON_THEME_NAME,
+    Appearance, DEFAULT_ICON_THEME_NAME, IconTheme, IconThemeNotFoundError, SyntaxTheme, Theme,
+    ThemeNotFoundError, ThemeRegistry, ThemeStyleContent,
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui::{
-    px, App, Context, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels,
-    Subscription, Window,
+    App, Context, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels,
+    Subscription, Window, px,
 };
 use refineable::Refineable;
 use schemars::{
-    gen::SchemaGenerator,
-    schema::{InstanceType, Schema, SchemaObject},
     JsonSchema,
+    r#gen::SchemaGenerator,
+    schema::{InstanceType, Schema, SchemaObject},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::{add_references_to_properties, Settings, SettingsJsonSchemaParams, SettingsSources};
+use settings::{Settings, SettingsJsonSchemaParams, SettingsSources, add_references_to_properties};
 use std::sync::Arc;
 use util::ResultExt as _;
 
@@ -106,6 +106,8 @@ pub struct ThemeSettings {
     ///
     /// The terminal font family can be overridden using it's own setting.
     pub buffer_font: Font,
+    /// The agent font size. Determines the size of text in the agent panel.
+    agent_font_size: Pixels,
     /// The line height for buffers, and the terminal.
     ///
     /// Changing this may affect the spacing of some UI elements.
@@ -250,6 +252,11 @@ impl Global for BufferFontSize {}
 pub(crate) struct UiFontSize(Pixels);
 
 impl Global for UiFontSize {}
+
+#[derive(Default)]
+pub(crate) struct AgentFontSize(Pixels);
+
+impl Global for AgentFontSize {}
 
 /// Represents the selection of a theme, which can be either static or dynamic.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -409,6 +416,9 @@ pub struct ThemeSettingsContent {
     #[serde(default)]
     #[schemars(default = "default_font_features")]
     pub buffer_font_features: Option<FontFeatures>,
+    /// The font size for the agent panel.
+    #[serde(default)]
+    pub agent_font_size: Option<f32>,
     /// The name of the Zed theme to use.
     #[serde(default)]
     pub theme: Option<ThemeSelection>,
@@ -579,6 +589,15 @@ impl ThemeSettings {
         clamp_font_size(font_size)
     }
 
+    /// Returns the UI font size.
+    pub fn agent_font_size(&self, cx: &App) -> Pixels {
+        let font_size = cx
+            .try_global::<AgentFontSize>()
+            .map(|size| size.0)
+            .unwrap_or(self.agent_font_size);
+        clamp_font_size(font_size)
+    }
+
     /// Returns the buffer font size, read from the settings.
     ///
     /// The real buffer font size is stored in-memory, to support temporary font size changes.
@@ -746,6 +765,26 @@ pub fn reset_ui_font_size(cx: &mut App) {
     }
 }
 
+/// Sets the adjusted UI font size.
+pub fn adjust_agent_font_size(cx: &mut App, mut f: impl FnMut(&mut Pixels)) {
+    let agent_font_size = ThemeSettings::get_global(cx).agent_font_size(cx);
+    let mut adjusted_size = cx
+        .try_global::<AgentFontSize>()
+        .map_or(agent_font_size, |adjusted_size| adjusted_size.0);
+
+    f(&mut adjusted_size);
+    cx.set_global(AgentFontSize(clamp_font_size(adjusted_size)));
+    cx.refresh_windows();
+}
+
+/// Resets the UI font size to the default value.
+pub fn reset_agent_font_size(cx: &mut App) {
+    if cx.has_global::<AgentFontSize>() {
+        cx.remove_global::<AgentFontSize>();
+        cx.refresh_windows();
+    }
+}
+
 /// Ensures font size is within the valid range.
 pub fn clamp_font_size(size: Pixels) -> Pixels {
     size.max(MIN_FONT_SIZE)
@@ -789,6 +828,7 @@ impl settings::Settings for ThemeSettings {
             },
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
             buffer_line_height: defaults.buffer_line_height.unwrap(),
+            agent_font_size: defaults.agent_font_size.unwrap().into(),
             theme_selection: defaults.theme.clone(),
             active_theme: themes
                 .get(defaults.theme.as_ref().unwrap().theme(*system_appearance))
@@ -891,6 +931,12 @@ impl settings::Settings for ThemeSettings {
             );
             this.buffer_font_size = this.buffer_font_size.clamp(px(6.), px(100.));
 
+            merge(
+                &mut this.agent_font_size,
+                value.agent_font_size.map(Into::into),
+            );
+            this.agent_font_size = this.agent_font_size.clamp(px(6.), px(100.));
+
             merge(&mut this.buffer_line_height, value.buffer_line_height);
 
             // Clamp the `unnecessary_code_fade` to ensure text can't disappear entirely.
@@ -949,6 +995,13 @@ impl settings::Settings for ThemeSettings {
         );
 
         root_schema
+    }
+
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+        vscode.f32_setting("editor.fontWeight", &mut current.buffer_font_weight);
+        vscode.f32_setting("editor.fontSize", &mut current.buffer_font_size);
+        vscode.string_setting("editor.font", &mut current.buffer_font_family);
+        // TODO: possibly map editor.fontLigatures to buffer_font_features?
     }
 }
 

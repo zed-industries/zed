@@ -9,10 +9,10 @@ use project::Project;
 use smol::stream::StreamExt;
 use std::{any::TypeId, ops::Range, rc::Rc, time::Duration};
 use text::ToOffset;
-use ui::{prelude::*, ButtonLike, KeyBinding};
+use ui::{ButtonLike, KeyBinding, prelude::*};
 use workspace::{
-    searchable::SearchableItemHandle, Item, ItemHandle as _, ToolbarItemEvent, ToolbarItemLocation,
-    ToolbarItemView, Workspace,
+    Item, ItemHandle as _, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+    searchable::SearchableItemHandle,
 };
 
 pub struct ProposedChangesEditor {
@@ -51,7 +51,7 @@ struct RecalculateDiff {
 struct BranchBufferSemanticsProvider(Rc<dyn SemanticsProvider>);
 
 impl ProposedChangesEditor {
-    pub fn new<T: ToOffset>(
+    pub fn new<T: Clone + ToOffset>(
         title: impl Into<SharedString>,
         locations: Vec<ProposedChangeLocation<T>>,
         project: Option<Entity<Project>>,
@@ -109,7 +109,7 @@ impl ProposedChangesEditor {
                                     let diff =
                                         this.multibuffer.read(cx).diff_for(buffer.remote_id())?;
                                     Some(diff.update(cx, |diff, cx| {
-                                        diff.set_base_text(base_buffer.clone(), buffer, cx)
+                                        diff.set_base_text_buffer(base_buffer.clone(), buffer, cx)
                                     }))
                                 })
                                 .collect::<Vec<_>>()
@@ -140,7 +140,7 @@ impl ProposedChangesEditor {
         cx.notify();
     }
 
-    pub fn reset_locations<T: ToOffset>(
+    pub fn reset_locations<T: Clone + ToOffset>(
         &mut self,
         locations: Vec<ProposedChangeLocation<T>>,
         window: &mut Window,
@@ -185,7 +185,7 @@ impl ProposedChangesEditor {
                 branch_buffer = location.buffer.update(cx, |buffer, cx| buffer.branch(cx));
                 new_diffs.push(cx.new(|cx| {
                     let mut diff = BufferDiff::new(&branch_buffer.read(cx).snapshot(), cx);
-                    let _ = diff.set_base_text(
+                    let _ = diff.set_base_text_buffer(
                         location.buffer.clone(),
                         branch_buffer.read(cx).text_snapshot(),
                         cx,
@@ -202,10 +202,10 @@ impl ProposedChangesEditor {
             self.multibuffer.update(cx, |multibuffer, cx| {
                 multibuffer.push_excerpts(
                     branch_buffer,
-                    location.ranges.into_iter().map(|range| ExcerptRange {
-                        context: range,
-                        primary: None,
-                    }),
+                    location
+                        .ranges
+                        .into_iter()
+                        .map(|range| ExcerptRange::new(range)),
                     cx,
                 );
             });
@@ -285,8 +285,8 @@ impl Item for ProposedChangesEditor {
         Some(Icon::new(IconName::Diff))
     }
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some(self.title.clone())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        self.title.clone()
     }
 
     fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
@@ -453,6 +453,15 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
     ) -> Option<Task<anyhow::Result<Vec<project::InlayHint>>>> {
         let buffer = self.to_base(&buffer, &[range.start, range.end], cx)?;
         self.0.inlay_hints(buffer, range, cx)
+    }
+
+    fn inline_values(
+        &self,
+        _: Entity<Buffer>,
+        _: Range<text::Anchor>,
+        _: &mut App,
+    ) -> Option<Task<anyhow::Result<Vec<project::InlayHint>>>> {
+        None
     }
 
     fn resolve_inlay_hint(

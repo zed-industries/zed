@@ -1,5 +1,5 @@
 use futures::channel::oneshot;
-use futures::{select_biased, FutureExt};
+use futures::{FutureExt, select_biased};
 use gpui::{App, Context, Global, Subscription, Task, Window};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -19,12 +19,11 @@ pub static ZED_DISABLE_STAFF: LazyLock<bool> = LazyLock::new(|| {
 
 impl FeatureFlags {
     fn has_flag<T: FeatureFlag>(&self) -> bool {
-        if self.staff && T::enabled_for_staff() {
+        if T::enabled_for_all() {
             return true;
         }
 
-        #[cfg(debug_assertions)]
-        if T::enabled_in_development() {
+        if self.staff && T::enabled_for_staff() {
             return true;
         }
 
@@ -48,20 +47,13 @@ pub trait FeatureFlag {
         true
     }
 
-    fn enabled_in_development() -> bool {
-        Self::enabled_for_staff() && !*ZED_DISABLE_STAFF
+    /// Returns whether this feature flag is enabled for everyone.
+    ///
+    /// This is generally done on the server, but we provide this as a way to entirely enable a feature flag client-side
+    /// without needing to remove all of the call sites.
+    fn enabled_for_all() -> bool {
+        false
     }
-}
-
-pub struct Assistant2FeatureFlag;
-
-impl FeatureFlag for Assistant2FeatureFlag {
-    const NAME: &'static str = "assistant2";
-}
-
-pub struct PredictEditsFeatureFlag;
-impl FeatureFlag for PredictEditsFeatureFlag {
-    const NAME: &'static str = "predict-edits";
 }
 
 pub struct PredictEditsRateCompletionsFeatureFlag;
@@ -69,34 +61,13 @@ impl FeatureFlag for PredictEditsRateCompletionsFeatureFlag {
     const NAME: &'static str = "predict-edits-rate-completions";
 }
 
-/// A feature flag that controls whether "non eager mode" (holding `alt` to preview) is publicized.
-pub struct PredictEditsNonEagerModeFeatureFlag;
-impl FeatureFlag for PredictEditsNonEagerModeFeatureFlag {
-    const NAME: &'static str = "predict-edits-non-eager-mode";
-
-    fn enabled_for_staff() -> bool {
-        // Don't show to staff so it doesn't leak into media for the launch.
-        false
-    }
-}
-
-pub struct Remoting {}
-impl FeatureFlag for Remoting {
-    const NAME: &'static str = "remoting";
-}
-
-pub struct LanguageModels {}
-impl FeatureFlag for LanguageModels {
-    const NAME: &'static str = "language-models";
-}
-
-pub struct LlmClosedBeta {}
-impl FeatureFlag for LlmClosedBeta {
+pub struct LlmClosedBetaFeatureFlag {}
+impl FeatureFlag for LlmClosedBetaFeatureFlag {
     const NAME: &'static str = "llm-closed-beta";
 }
 
-pub struct ZedPro {}
-impl FeatureFlag for ZedPro {
+pub struct ZedProFeatureFlag {}
+impl FeatureFlag for ZedProFeatureFlag {
     const NAME: &'static str = "zed-pro";
 }
 
@@ -106,18 +77,18 @@ impl FeatureFlag for NotebookFeatureFlag {
     const NAME: &'static str = "notebooks";
 }
 
-pub struct AutoCommand {}
-impl FeatureFlag for AutoCommand {
-    const NAME: &'static str = "auto-command";
+pub struct DebuggerFeatureFlag {}
+impl FeatureFlag for DebuggerFeatureFlag {
+    const NAME: &'static str = "debugger";
+}
+
+pub struct ThreadAutoCaptureFeatureFlag {}
+impl FeatureFlag for ThreadAutoCaptureFeatureFlag {
+    const NAME: &'static str = "thread-auto-capture";
 
     fn enabled_for_staff() -> bool {
         false
     }
-}
-
-pub struct Debugger {}
-impl FeatureFlag for Debugger {
-    const NAME: &'static str = "debugger";
 }
 
 pub trait FeatureFlagViewExt<V: 'static> {
@@ -154,7 +125,6 @@ where
         if self
             .try_global::<FeatureFlags>()
             .is_some_and(|f| f.has_flag::<T>())
-            || cfg!(debug_assertions) && T::enabled_in_development()
         {
             self.defer_in(window, move |view, window, cx| {
                 callback(view, window, cx);

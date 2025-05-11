@@ -3,7 +3,7 @@
 #[cfg(test)]
 mod tests {
     use strum::EnumString;
-    use ui_macros::{path_str, DerivePathStr};
+    use ui_macros::{DerivePathStr, path_str};
 
     #[test]
     fn test_derive_path_str_with_prefix() {

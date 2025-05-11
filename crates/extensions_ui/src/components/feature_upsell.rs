@@ -1,6 +1,6 @@
 use gpui::{AnyElement, Div, StyleRefinement};
 use smallvec::SmallVec;
-use ui::{prelude::*, ButtonLike};
+use ui::prelude::*;
 
 #[derive(IntoElement)]
 pub struct FeatureUpsell {
@@ -46,21 +46,20 @@ impl FeatureUpsell {
 impl RenderOnce for FeatureUpsell {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         self.base
-            .p_4()
+            .py_2()
+            .px_4()
             .justify_between()
-            .border_color(cx.theme().colors().border)
-            .child(v_flex().overflow_hidden().child(Label::new(self.text)))
+            .flex_wrap()
+            .border_color(cx.theme().colors().border_variant)
+            .child(Label::new(self.text))
             .child(h_flex().gap_2().children(self.children).when_some(
                 self.docs_url,
                 |el, docs_url| {
                     el.child(
-                        ButtonLike::new("open_docs")
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(Label::new("View docs"))
-                                    .child(Icon::new(IconName::ArrowUpRight)),
-                            )
+                        Button::new("open_docs", "View Documentation")
+                            .icon(IconName::ArrowUpRight)
+                            .icon_size(IconSize::XSmall)
+                            .icon_position(IconPosition::End)
                             .on_click({
                                 let docs_url = docs_url.clone();
                                 move |_event, _window, cx| {

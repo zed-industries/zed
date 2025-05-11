@@ -2,13 +2,12 @@ use anyhow::Context as _;
 use gpui::{App, UpdateGlobal};
 use json::json_task_context;
 use node_runtime::NodeRuntime;
-use python::PyprojectTomlManifestProvider;
 use rust::CargoManifestProvider;
 use rust_embed::RustEmbed;
 use settings::SettingsStore;
 use smol::stream::StreamExt;
 use std::{str, sync::Arc};
-use util::{asset_str, ResultExt};
+use util::{ResultExt, asset_str};
 
 pub use language::*;
 
@@ -303,13 +302,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
         anyhow::Ok(())
     })
     .detach();
-    let manifest_providers: [Arc<dyn ManifestProvider>; 2] = [
-        Arc::from(CargoManifestProvider),
-        Arc::from(PyprojectTomlManifestProvider),
-    ];
-    for provider in manifest_providers {
-        project::ManifestProviders::global(cx).register(provider);
-    }
+    project::ManifestProviders::global(cx).register(Arc::from(CargoManifestProvider));
 }
 
 #[derive(Default)]

@@ -14,13 +14,15 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+workspace-hack.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true
 ctor.workspace = true
 foreign-types = "0.5"
 metal.workspace = true
-objc = "0.2"
+core-video.workspace = true
+objc.workspace = true
 
 [build-dependencies]
-bindgen = "0.70.0"
+bindgen = "0.71"

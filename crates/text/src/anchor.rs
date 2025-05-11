@@ -1,6 +1,6 @@
 use crate::{
-    locator::Locator, BufferId, BufferSnapshot, Point, PointUtf16, TextDimension, ToOffset,
-    ToPoint, ToPointUtf16,
+    BufferId, BufferSnapshot, Point, PointUtf16, TextDimension, ToOffset, ToPoint, ToPointUtf16,
+    locator::Locator,
 };
 use std::{cmp::Ordering, fmt::Debug, ops::Range};
 use sum_tree::Bias;

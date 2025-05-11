@@ -1,22 +1,19 @@
 use ::serde::{Deserialize, Serialize};
-use gpui::{PromptLevel, WeakEntity};
+use anyhow::Context as _;
+use gpui::{App, Entity, PromptLevel, Task, WeakEntity};
 use lsp::LanguageServer;
+use rpc::proto;
 
-use crate::{LanguageServerPromptRequest, LspStore, LspStoreEvent};
+use crate::{
+    LanguageServerPromptRequest, LspStore, LspStoreEvent, Project, ProjectPath, lsp_store,
+};
 
 pub const RUST_ANALYZER_NAME: &str = "rust-analyzer";
-
-pub const EXTRA_SUPPORTED_COMMANDS: &[&str] = &[
-    "rust-analyzer.runSingle",
-    "rust-analyzer.showReferences",
-    "rust-analyzer.gotoLocation",
-    "rust-analyzer.triggerParameterHints",
-    "rust-analyzer.rename",
-];
+pub const CARGO_DIAGNOSTICS_SOURCE_NAME: &str = "rustc";
 
 /// Experimental: Informs the end user about the state of the server
 ///
-/// [Rust Analyzer Specification](https://github.com/rust-lang/rust-analyzer/blob/master/docs/dev/lsp-extensions.md#server-status)
+/// [Rust Analyzer Specification](https://rust-analyzer.github.io/book/contributing/lsp-extensions.html#server-status)
 #[derive(Debug)]
 enum ServerStatus {}
 
@@ -46,13 +43,10 @@ pub fn register_notifications(lsp_store: WeakEntity<LspStore>, language_server: 
     let name = language_server.name();
     let server_id = language_server.server_id();
 
-    let this = lsp_store;
-
     language_server
         .on_notification::<ServerStatus, _>({
             let name = name.to_string();
             move |params, cx| {
-                let this = this.clone();
                 let name = name.to_string();
                 if let Some(ref message) = params.message {
                     let message = message.trim();
@@ -61,10 +55,10 @@ pub fn register_notifications(lsp_store: WeakEntity<LspStore>, language_server: 
                             "Language server {name} (id {server_id}) status update: {message}"
                         );
                         match params.health {
-                            ServerHealthStatus::Ok => log::info!("{}", formatted_message),
-                            ServerHealthStatus::Warning => log::warn!("{}", formatted_message),
+                            ServerHealthStatus::Ok => log::info!("{formatted_message}"),
+                            ServerHealthStatus::Warning => log::warn!("{formatted_message}"),
                             ServerHealthStatus::Error => {
-                                log::error!("{}", formatted_message);
+                                log::error!("{formatted_message}");
                                 let (tx, _rx) = smol::channel::bounded(1);
                                 let request = LanguageServerPromptRequest {
                                     level: PromptLevel::Critical,
@@ -73,7 +67,7 @@ pub fn register_notifications(lsp_store: WeakEntity<LspStore>, language_server: 
                                     response_channel: tx,
                                     lsp_name: name.clone(),
                                 };
-                                let _ = this
+                                lsp_store
                                     .update(cx, |_, cx| {
                                         cx.emit(LspStoreEvent::LanguageServerPrompt(request));
                                     })
@@ -88,4 +82,162 @@ pub fn register_notifications(lsp_store: WeakEntity<LspStore>, language_server: 
             }
         })
         .detach();
+}
+
+pub fn cancel_flycheck(
+    project: Entity<Project>,
+    buffer_path: ProjectPath,
+    cx: &mut App,
+) -> Task<anyhow::Result<()>> {
+    let upstream_client = project.read(cx).lsp_store().read(cx).upstream_client();
+    let lsp_store = project.read(cx).lsp_store();
+    let buffer = project.update(cx, |project, cx| {
+        project.buffer_store().update(cx, |buffer_store, cx| {
+            buffer_store.open_buffer(buffer_path, cx)
+        })
+    });
+
+    cx.spawn(async move |cx| {
+        let buffer = buffer.await?;
+        let Some(rust_analyzer_server) = project
+            .update(cx, |project, cx| {
+                buffer.update(cx, |buffer, cx| {
+                    project.language_server_id_for_name(buffer, RUST_ANALYZER_NAME, cx)
+                })
+            })?
+            .await
+        else {
+            return Ok(());
+        };
+        let buffer_id = buffer.update(cx, |buffer, _| buffer.remote_id().to_proto())?;
+
+        if let Some((client, project_id)) = upstream_client {
+            let request = proto::LspExtCancelFlycheck {
+                project_id,
+                buffer_id,
+                language_server_id: rust_analyzer_server.to_proto(),
+            };
+            client
+                .request(request)
+                .await
+                .context("lsp ext cancel flycheck proto request")?;
+        } else {
+            lsp_store
+                .update(cx, |lsp_store, _| {
+                    if let Some(server) = lsp_store.language_server_for_id(rust_analyzer_server) {
+                        server.notify::<lsp_store::lsp_ext_command::LspExtCancelFlycheck>(&())?;
+                    }
+                    anyhow::Ok(())
+                })?
+                .context("lsp ext cancel flycheck")?;
+        };
+        anyhow::Ok(())
+    })
+}
+
+pub fn run_flycheck(
+    project: Entity<Project>,
+    buffer_path: ProjectPath,
+    cx: &mut App,
+) -> Task<anyhow::Result<()>> {
+    let upstream_client = project.read(cx).lsp_store().read(cx).upstream_client();
+    let lsp_store = project.read(cx).lsp_store();
+    let buffer = project.update(cx, |project, cx| {
+        project.buffer_store().update(cx, |buffer_store, cx| {
+            buffer_store.open_buffer(buffer_path, cx)
+        })
+    });
+
+    cx.spawn(async move |cx| {
+        let buffer = buffer.await?;
+        let Some(rust_analyzer_server) = project
+            .update(cx, |project, cx| {
+                buffer.update(cx, |buffer, cx| {
+                    project.language_server_id_for_name(buffer, RUST_ANALYZER_NAME, cx)
+                })
+            })?
+            .await
+        else {
+            return Ok(());
+        };
+        let buffer_id = buffer.update(cx, |buffer, _| buffer.remote_id().to_proto())?;
+
+        if let Some((client, project_id)) = upstream_client {
+            let request = proto::LspExtRunFlycheck {
+                project_id,
+                buffer_id,
+                language_server_id: rust_analyzer_server.to_proto(),
+                current_file_only: false,
+            };
+            client
+                .request(request)
+                .await
+                .context("lsp ext run flycheck proto request")?;
+        } else {
+            lsp_store
+                .update(cx, |lsp_store, _| {
+                    if let Some(server) = lsp_store.language_server_for_id(rust_analyzer_server) {
+                        server.notify::<lsp_store::lsp_ext_command::LspExtRunFlycheck>(
+                            &lsp_store::lsp_ext_command::RunFlycheckParams {
+                                text_document: None,
+                            },
+                        )?;
+                    }
+                    anyhow::Ok(())
+                })?
+                .context("lsp ext run flycheck")?;
+        };
+        anyhow::Ok(())
+    })
+}
+
+pub fn clear_flycheck(
+    project: Entity<Project>,
+    buffer_path: ProjectPath,
+    cx: &mut App,
+) -> Task<anyhow::Result<()>> {
+    let upstream_client = project.read(cx).lsp_store().read(cx).upstream_client();
+    let lsp_store = project.read(cx).lsp_store();
+    let buffer = project.update(cx, |project, cx| {
+        project.buffer_store().update(cx, |buffer_store, cx| {
+            buffer_store.open_buffer(buffer_path, cx)
+        })
+    });
+
+    cx.spawn(async move |cx| {
+        let buffer = buffer.await?;
+        let Some(rust_analyzer_server) = project
+            .update(cx, |project, cx| {
+                buffer.update(cx, |buffer, cx| {
+                    project.language_server_id_for_name(buffer, RUST_ANALYZER_NAME, cx)
+                })
+            })?
+            .await
+        else {
+            return Ok(());
+        };
+        let buffer_id = buffer.update(cx, |buffer, _| buffer.remote_id().to_proto())?;
+
+        if let Some((client, project_id)) = upstream_client {
+            let request = proto::LspExtClearFlycheck {
+                project_id,
+                buffer_id,
+                language_server_id: rust_analyzer_server.to_proto(),
+            };
+            client
+                .request(request)
+                .await
+                .context("lsp ext clear flycheck proto request")?;
+        } else {
+            lsp_store
+                .update(cx, |lsp_store, _| {
+                    if let Some(server) = lsp_store.language_server_for_id(rust_analyzer_server) {
+                        server.notify::<lsp_store::lsp_ext_command::LspExtClearFlycheck>(&())?;
+                    }
+                    anyhow::Ok(())
+                })?
+                .context("lsp ext clear flycheck")?;
+        };
+        anyhow::Ok(())
+    })
 }

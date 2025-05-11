@@ -1,23 +1,23 @@
 use collections::{HashMap, VecDeque};
 use copilot::Copilot;
-use editor::{actions::MoveToEnd, scroll::Autoscroll, Editor, EditorEvent};
-use futures::{channel::mpsc, StreamExt};
+use editor::{Editor, EditorEvent, actions::MoveToEnd, scroll::Autoscroll};
+use futures::{StreamExt, channel::mpsc};
 use gpui::{
-    actions, div, AnyView, App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable,
-    IntoElement, ParentElement, Render, Styled, Subscription, WeakEntity, Window,
+    AnyView, App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
+    ParentElement, Render, Styled, Subscription, WeakEntity, Window, actions, div,
 };
-use language::{language_settings::SoftWrap, LanguageServerId};
+use language::{LanguageServerId, language_settings::SoftWrap};
 use lsp::{
-    notification::SetTrace, IoKind, LanguageServer, LanguageServerName, MessageType,
-    SetTraceParams, TraceValue,
+    IoKind, LanguageServer, LanguageServerName, MessageType, SetTraceParams, TraceValue,
+    notification::SetTrace,
 };
-use project::{search::SearchQuery, Project, WorktreeId};
+use project::{Project, WorktreeId, search::SearchQuery};
 use std::{any::TypeId, borrow::Cow, sync::Arc};
-use ui::{prelude::*, Button, Checkbox, ContextMenu, Label, PopoverMenu, ToggleState};
+use ui::{Button, Checkbox, ContextMenu, Label, PopoverMenu, ToggleState, prelude::*};
 use workspace::{
+    SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,
     item::{Item, ItemHandle},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
-    SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,
 };
 
 const SEND_LINE: &str = "// Send:";
@@ -1058,8 +1058,8 @@ impl Item for LspLogView {
         Editor::to_item_events(event, f)
     }
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("LSP Logs".into())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "LSP Logs".into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -1421,18 +1421,21 @@ impl Render for LspLogToolbarItemView {
                                                         })
                                                     })?;
 
-                                                ContextMenu::build(window, cx, |mut menu, _, _| {
-                                                    let log_view = log_view.clone();
+                                                ContextMenu::build(
+                                                    window,
+                                                    cx,
+                                                    |mut menu, window, cx| {
+                                                        let log_view = log_view.clone();
 
-                                                    for (option, label) in [
-                                                        (TraceValue::Off, "Off"),
-                                                        (TraceValue::Messages, "Messages"),
-                                                        (TraceValue::Verbose, "Verbose"),
-                                                    ] {
-                                                        menu = menu.entry(label, None, {
-                                                            let log_view = log_view.clone();
-                                                            move |_, cx| {
-                                                                log_view.update(cx, |this, cx| {
+                                                        for (option, label) in [
+                                                            (TraceValue::Off, "Off"),
+                                                            (TraceValue::Messages, "Messages"),
+                                                            (TraceValue::Verbose, "Verbose"),
+                                                        ] {
+                                                            menu = menu.entry(label, None, {
+                                                                let log_view = log_view.clone();
+                                                                move |_, cx| {
+                                                                    log_view.update(cx, |this, cx| {
                                                                     if let Some(id) =
                                                                         this.current_server_id
                                                                     {
@@ -1441,15 +1444,16 @@ impl Render for LspLogToolbarItemView {
                                                                         );
                                                                     }
                                                                 });
+                                                                }
+                                                            });
+                                                            if option == trace_level {
+                                                                menu.select_last(window, cx);
                                                             }
-                                                        });
-                                                        if option == trace_level {
-                                                            menu.select_last();
                                                         }
-                                                    }
 
-                                                    menu
-                                                })
+                                                        menu
+                                                    },
+                                                )
                                                 .into()
                                             }
                                         }),
@@ -1480,19 +1484,22 @@ impl Render for LspLogToolbarItemView {
                                                         })
                                                     })?;
 
-                                                ContextMenu::build(window, cx, |mut menu, _, _| {
-                                                    let log_view = log_view.clone();
+                                                ContextMenu::build(
+                                                    window,
+                                                    cx,
+                                                    |mut menu, window, cx| {
+                                                        let log_view = log_view.clone();
 
-                                                    for (option, label) in [
-                                                        (MessageType::LOG, "Log"),
-                                                        (MessageType::INFO, "Info"),
-                                                        (MessageType::WARNING, "Warning"),
-                                                        (MessageType::ERROR, "Error"),
-                                                    ] {
-                                                        menu = menu.entry(label, None, {
-                                                            let log_view = log_view.clone();
-                                                            move |window, cx| {
-                                                                log_view.update(cx, |this, cx| {
+                                                        for (option, label) in [
+                                                            (MessageType::LOG, "Log"),
+                                                            (MessageType::INFO, "Info"),
+                                                            (MessageType::WARNING, "Warning"),
+                                                            (MessageType::ERROR, "Error"),
+                                                        ] {
+                                                            menu = menu.entry(label, None, {
+                                                                let log_view = log_view.clone();
+                                                                move |window, cx| {
+                                                                    log_view.update(cx, |this, cx| {
                                                                     if let Some(id) =
                                                                         this.current_server_id
                                                                     {
@@ -1501,15 +1508,16 @@ impl Render for LspLogToolbarItemView {
                                                                         );
                                                                     }
                                                                 });
+                                                                }
+                                                            });
+                                                            if option == log_level {
+                                                                menu.select_last(window, cx);
                                                             }
-                                                        });
-                                                        if option == log_level {
-                                                            menu.select_last();
                                                         }
-                                                    }
 
-                                                    menu
-                                                })
+                                                        menu
+                                                    },
+                                                )
                                                 .into()
                                             }
                                         }),

@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow, bail};
 use collections::{BTreeMap, HashMap};
 use fs::Fs;
 use language::LanguageName;
@@ -347,9 +347,11 @@ mod tests {
 
         assert!(manifest.allow_exec("cargo", &["test"]).is_ok());
         assert!(manifest.allow_exec("cargo", &["test", "--all"]).is_ok());
-        assert!(manifest
-            .allow_exec("cargo", &["test", "--all", "--no-fail-fast"])
-            .is_ok());
+        assert!(
+            manifest
+                .allow_exec("cargo", &["test", "--all", "--no-fail-fast"])
+                .is_ok()
+        );
         assert!(manifest.allow_exec("cargo", &["build"]).is_err()); // wrong first arg
     }
 
@@ -365,12 +367,16 @@ mod tests {
 
         assert!(manifest.allow_exec("docker", &["run", "nginx"]).is_ok());
         assert!(manifest.allow_exec("docker", &["run"]).is_err());
-        assert!(manifest
-            .allow_exec("docker", &["run", "ubuntu", "bash"])
-            .is_ok());
-        assert!(manifest
-            .allow_exec("docker", &["run", "alpine", "sh", "-c", "echo hello"])
-            .is_ok());
+        assert!(
+            manifest
+                .allow_exec("docker", &["run", "ubuntu", "bash"])
+                .is_ok()
+        );
+        assert!(
+            manifest
+                .allow_exec("docker", &["run", "alpine", "sh", "-c", "echo hello"])
+                .is_ok()
+        );
         assert!(manifest.allow_exec("docker", &["ps"]).is_err()); // wrong first arg
     }
 }

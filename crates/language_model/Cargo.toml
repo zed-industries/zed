@@ -27,7 +27,6 @@ gpui.workspace = true
 http_client.workspace = true
 icons.workspace = true
 image.workspace = true
-log.workspace = true
 open_ai = { workspace = true, features = ["schemars"] }
 parking_lot.workspace = true
 proto.workspace = true
@@ -39,6 +38,8 @@ strum.workspace = true
 telemetry_events.workspace = true
 thiserror.workspace = true
 util.workspace = true
+workspace-hack.workspace = true
+zed_llm_client.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

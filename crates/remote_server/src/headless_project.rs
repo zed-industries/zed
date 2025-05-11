@@ -1,13 +1,16 @@
 use ::proto::{FromProto, ToProto};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
+
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
 use fs::Fs;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel};
 use http_client::HttpClient;
-use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
+use language::{Buffer, BufferEvent, LanguageRegistry, proto::serialize_operation};
 use node_runtime::NodeRuntime;
 use project::{
+    LspStore, LspStoreEvent, PrettierStore, ProjectEnvironment, ProjectPath, ToolchainStore,
+    WorktreeId,
     buffer_store::{BufferStore, BufferStoreEvent},
     debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
     git_store::GitStore,
@@ -15,19 +18,18 @@ use project::{
     search::SearchQuery,
     task_store::TaskStore,
     worktree_store::WorktreeStore,
-    LspStore, LspStoreEvent, PrettierStore, ProjectPath, ToolchainStore, WorktreeId,
 };
 use remote::ssh_session::ChannelClient;
 use rpc::{
-    proto::{self, SSH_PEER_ID, SSH_PROJECT_ID},
     AnyProtoClient, TypedEnvelope,
+    proto::{self, SSH_PEER_ID, SSH_PROJECT_ID},
 };
 
 use settings::initial_server_settings_content;
 use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
-    sync::{atomic::AtomicUsize, Arc},
+    sync::{Arc, atomic::AtomicUsize},
 };
 use util::ResultExt;
 use worktree::Worktree;
@@ -39,6 +41,7 @@ pub struct HeadlessProject {
     pub buffer_store: Entity<BufferStore>,
     pub lsp_store: Entity<LspStore>,
     pub task_store: Entity<TaskStore>,
+    pub dap_store: Entity<DapStore>,
     pub settings_observer: Entity<SettingsObserver>,
     pub next_entry_id: Arc<AtomicUsize>,
     pub languages: Arc<LanguageRegistry>,
@@ -82,7 +85,7 @@ impl HeadlessProject {
             store
         });
 
-        let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
+        let environment = cx.new(|_| ProjectEnvironment::new(None));
 
         let toolchain_store = cx.new(|cx| {
             ToolchainStore::local(
@@ -103,17 +106,18 @@ impl HeadlessProject {
             cx.new(|_| BreakpointStore::local(worktree_store.clone(), buffer_store.clone()));
 
         let dap_store = cx.new(|cx| {
-            DapStore::new_local(
+            let mut dap_store = DapStore::new_local(
                 http_client.clone(),
                 node_runtime.clone(),
                 fs.clone(),
-                languages.clone(),
                 environment.clone(),
                 toolchain_store.read(cx).as_language_toolchain_store(),
-                breakpoint_store.clone(),
                 worktree_store.clone(),
+                breakpoint_store.clone(),
                 cx,
-            )
+            );
+            dap_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            dap_store
         });
 
         let git_store = cx.new(|cx| {
@@ -242,7 +246,7 @@ impl HeadlessProject {
         LspStore::init(&client);
         TaskStore::init(Some(&client));
         ToolchainStore::init(&client);
-        DapStore::init(&client);
+        DapStore::init(&client, cx);
         // todo(debugger): Re init breakpoint store when we set it up for collab
         // BreakpointStore::init(&client);
         GitStore::init(&client);
@@ -255,6 +259,7 @@ impl HeadlessProject {
             buffer_store,
             lsp_store,
             task_store,
+            dap_store,
             next_entry_id: Default::default(),
             languages,
             extensions,
@@ -367,8 +372,10 @@ impl HeadlessProject {
                     parent = util::paths::home_dir();
                 }
                 let parent = fs.canonicalize(parent).await.map_err(|_| {
-                    anyhow!(proto::ErrorCode::DevServerProjectPathDoesNotExist
-                        .with_tag("path", &path.to_string_lossy().as_ref()))
+                    anyhow!(
+                        proto::ErrorCode::DevServerProjectPathDoesNotExist
+                            .with_tag("path", &path.to_string_lossy().as_ref())
+                    )
                 })?;
                 parent.join(path.file_name().unwrap())
             }

@@ -8,12 +8,12 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use client::DevServerProjectId;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
-use gpui::{point, size, Axis, Bounds, WindowBounds, WindowId};
+use gpui::{Axis, Bounds, Task, WindowBounds, WindowId, point, size};
 use itertools::Itertools;
-use project::debugger::breakpoint_store::{BreakpointKind, BreakpointState, SerializedBreakpoint};
+use project::debugger::breakpoint_store::{BreakpointState, SourceBreakpoint};
 
 use language::{LanguageName, Toolchain};
 use project::WorktreeId;
@@ -21,16 +21,17 @@ use remote::ssh_session::SshProjectId;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::{SqlType, Statement},
+    thread_safe_connection::ThreadSafeConnection,
 };
 
-use ui::px;
-use util::{maybe, ResultExt};
+use ui::{App, px};
+use util::{ResultExt, maybe};
 use uuid::Uuid;
 
 use crate::WorkspaceId;
 
 use model::{
-    GroupId, LocalPaths, PaneId, SerializedItem, SerializedPane, SerializedPaneGroup,
+    GroupId, ItemId, LocalPaths, PaneId, SerializedItem, SerializedPane, SerializedPaneGroup,
     SerializedSshProject, SerializedWorkspace,
 };
 
@@ -147,7 +148,9 @@ impl Column for SerializedWindowBounds {
 #[derive(Debug)]
 pub struct Breakpoint {
     pub position: u32,
-    pub kind: BreakpointKind,
+    pub message: Option<Arc<str>>,
+    pub condition: Option<Arc<str>>,
+    pub hit_condition: Option<Arc<str>>,
     pub state: BreakpointState,
 }
 
@@ -183,50 +186,6 @@ impl Column for BreakpointStateWrapper<'_> {
     }
 }
 
-/// Wrapper for DB type of a breakpoint
-#[derive(Debug)]
-struct BreakpointKindWrapper<'a>(Cow<'a, BreakpointKind>);
-
-impl From<BreakpointKind> for BreakpointKindWrapper<'static> {
-    fn from(kind: BreakpointKind) -> Self {
-        BreakpointKindWrapper(Cow::Owned(kind))
-    }
-}
-impl StaticColumnCount for BreakpointKindWrapper<'_> {
-    fn column_count() -> usize {
-        1
-    }
-}
-
-impl Bind for BreakpointKindWrapper<'_> {
-    fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
-        let next_index = statement.bind(&self.0.to_int(), start_index)?;
-
-        match self.0.as_ref() {
-            BreakpointKind::Standard => {
-                statement.bind_null(next_index)?;
-                Ok(next_index + 1)
-            }
-            BreakpointKind::Log(message) => statement.bind(&message.as_ref(), next_index),
-        }
-    }
-}
-
-impl Column for BreakpointKindWrapper<'_> {
-    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
-        let kind = statement.column_int(start_index)?;
-
-        match kind {
-            0 => Ok((BreakpointKind::Standard.into(), start_index + 2)),
-            1 => {
-                let message = statement.column_text(start_index)?.to_string();
-                Ok((BreakpointKind::Log(message.into()).into(), start_index + 1))
-            }
-            _ => Err(anyhow::anyhow!("Invalid BreakpointKind discriminant")),
-        }
-    }
-}
-
 /// This struct is used to implement traits on Vec<breakpoint>
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -234,7 +193,8 @@ struct Breakpoints(Vec<Breakpoint>);
 
 impl sqlez::bindable::StaticColumnCount for Breakpoint {
     fn column_count() -> usize {
-        1 + BreakpointKindWrapper::column_count() + BreakpointStateWrapper::column_count()
+        // Position, log message, condition message, and hit condition message
+        4 + BreakpointStateWrapper::column_count()
     }
 }
 
@@ -245,10 +205,9 @@ impl sqlez::bindable::Bind for Breakpoint {
         start_index: i32,
     ) -> anyhow::Result<i32> {
         let next_index = statement.bind(&self.position, start_index)?;
-        let next_index = statement.bind(
-            &BreakpointKindWrapper(Cow::Borrowed(&self.kind)),
-            next_index,
-        )?;
+        let next_index = statement.bind(&self.message, next_index)?;
+        let next_index = statement.bind(&self.condition, next_index)?;
+        let next_index = statement.bind(&self.hit_condition, next_index)?;
         statement.bind(
             &BreakpointStateWrapper(Cow::Borrowed(&self.state)),
             next_index,
@@ -262,13 +221,17 @@ impl Column for Breakpoint {
             .column_int(start_index)
             .with_context(|| format!("Failed to read BreakPoint at index {start_index}"))?
             as u32;
-        let (kind, next_index) = BreakpointKindWrapper::column(statement, start_index + 1)?;
+        let (message, next_index) = Option::<String>::column(statement, start_index + 1)?;
+        let (condition, next_index) = Option::<String>::column(statement, next_index)?;
+        let (hit_condition, next_index) = Option::<String>::column(statement, next_index)?;
         let (state, next_index) = BreakpointStateWrapper::column(statement, next_index)?;
 
         Ok((
             Breakpoint {
                 position,
-                kind: kind.0.into_owned(),
+                message: message.map(Arc::from),
+                condition: condition.map(Arc::from),
+                hit_condition: hit_condition.map(Arc::from),
                 state: state.0.into_owned(),
             },
             next_index,
@@ -306,7 +269,7 @@ impl sqlez::bindable::Bind for SerializedPixels {
         statement: &sqlez::statement::Statement,
         start_index: i32,
     ) -> anyhow::Result<i32> {
-        let this: i32 = self.0 .0 as i32;
+        let this: i32 = self.0.0 as i32;
         this.bind(statement, start_index)
     }
 }
@@ -570,7 +533,15 @@ define_connection! {
     ),
     sql!(
         ALTER TABLE breakpoints ADD COLUMN state INTEGER DEFAULT(0) NOT NULL
-    )
+    ),
+    sql!(
+        ALTER TABLE breakpoints DROP COLUMN kind
+    ),
+    sql!(ALTER TABLE toolchains ADD COLUMN relative_worktree_path TEXT DEFAULT "" NOT NULL),
+    sql!(
+        ALTER TABLE breakpoints ADD COLUMN condition TEXT;
+        ALTER TABLE breakpoints ADD COLUMN hit_condition TEXT;
+    ),
     ];
 }
 
@@ -720,13 +691,10 @@ impl WorkspaceDb {
         })
     }
 
-    fn breakpoints(
-        &self,
-        workspace_id: WorkspaceId,
-    ) -> BTreeMap<Arc<Path>, Vec<SerializedBreakpoint>> {
+    fn breakpoints(&self, workspace_id: WorkspaceId) -> BTreeMap<Arc<Path>, Vec<SourceBreakpoint>> {
         let breakpoints: Result<Vec<(PathBuf, Breakpoint)>> = self
             .select_bound(sql! {
-                SELECT path, breakpoint_location, kind, log_message, state
+                SELECT path, breakpoint_location, log_message, condition, hit_condition, state
                 FROM breakpoints
                 WHERE workspace_id = ?
             })
@@ -738,18 +706,26 @@ impl WorkspaceDb {
                     log::debug!("Breakpoints are empty after querying database for them");
                 }
 
-                let mut map: BTreeMap<Arc<Path>, Vec<SerializedBreakpoint>> = Default::default();
+                let mut map: BTreeMap<Arc<Path>, Vec<SourceBreakpoint>> = Default::default();
 
                 for (path, breakpoint) in bp {
                     let path: Arc<Path> = path.into();
-                    map.entry(path.clone())
-                        .or_default()
-                        .push(SerializedBreakpoint {
-                            position: breakpoint.position,
-                            path,
-                            kind: breakpoint.kind,
-                            state: breakpoint.state,
-                        });
+                    map.entry(path.clone()).or_default().push(SourceBreakpoint {
+                        row: breakpoint.position,
+                        path,
+                        message: breakpoint.message,
+                        condition: breakpoint.condition,
+                        hit_condition: breakpoint.hit_condition,
+                        state: breakpoint.state,
+                    });
+                }
+
+                for (path, bps) in map.iter() {
+                    log::info!(
+                        "Got {} breakpoints from database at path: {}",
+                        bps.len(),
+                        path.to_string_lossy()
+                    );
                 }
 
                 map
@@ -764,31 +740,36 @@ impl WorkspaceDb {
     /// Saves a workspace using the worktree roots. Will garbage collect any workspaces
     /// that used this workspace previously
     pub(crate) async fn save_workspace(&self, workspace: SerializedWorkspace) {
+        log::debug!("Saving workspace at location: {:?}", workspace.location);
         self.write(move |conn| {
             conn.with_savepoint("update_worktrees", || {
                 // Clear out panes and pane_groups
                 conn.exec_bound(sql!(
                     DELETE FROM pane_groups WHERE workspace_id = ?1;
                     DELETE FROM panes WHERE workspace_id = ?1;))?(workspace.id)
-                .context("Clearing old panes")?;
+                    .context("Clearing old panes")?;
+
+                conn.exec_bound(sql!(DELETE FROM breakpoints WHERE workspace_id = ?1))?(workspace.id).context("Clearing old breakpoints")?;
+
                 for (path, breakpoints) in workspace.breakpoints {
-                    conn.exec_bound(sql!(DELETE FROM breakpoints WHERE workspace_id = ?1 AND path = ?2))?((workspace.id, path.as_ref()))
-                    .context("Clearing old breakpoints")?;
                     for bp in breakpoints {
-                        let kind = BreakpointKindWrapper::from(bp.kind);
                         let state = BreakpointStateWrapper::from(bp.state);
                         match conn.exec_bound(sql!(
-                            INSERT INTO breakpoints (workspace_id, path, breakpoint_location, kind, log_message, state)
-                            VALUES (?1, ?2, ?3, ?4, ?5, ?6);))?
+                            INSERT INTO breakpoints (workspace_id, path, breakpoint_location,  log_message, condition, hit_condition, state)
+                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7);))?
 
                         ((
                             workspace.id,
                             path.as_ref(),
-                            bp.position,
-                            kind,
+                            bp.row,
+                            bp.message,
+                            bp.condition,
+                            bp.hit_condition,
                             state,
                         )) {
-                            Ok(_) => {}
+                            Ok(_) => {
+                                log::debug!("Stored breakpoint at row: {} in path: {}", bp.row, path.to_string_lossy())
+                            }
                             Err(err) => {
                                 log::error!("{err}");
                                 continue;
@@ -930,6 +911,7 @@ impl WorkspaceDb {
         {
             Ok(project)
         } else {
+            log::debug!("Inserting SSH project at host {host}");
             self.insert_ssh_project(host, port, paths, user)
                 .await?
                 .ok_or_else(|| anyhow!("failed to insert ssh project"))
@@ -1230,6 +1212,9 @@ impl WorkspaceDb {
         pane_group: &SerializedPaneGroup,
         parent: Option<(GroupId, usize)>,
     ) -> Result<()> {
+        if parent.is_none() {
+            log::debug!("Saving a pane group for workspace {workspace_id:?}");
+        }
         match pane_group {
             SerializedPaneGroup::Group {
                 axis,
@@ -1355,17 +1340,18 @@ impl WorkspaceDb {
         &self,
         workspace_id: WorkspaceId,
         worktree_id: WorktreeId,
+        relative_path: String,
         language_name: LanguageName,
     ) -> Result<Option<Toolchain>> {
         self.write(move |this| {
             let mut select = this
                 .select_bound(sql!(
-                    SELECT name, path, raw_json FROM toolchains WHERE workspace_id = ? AND language_name = ? AND worktree_id = ?
+                    SELECT name, path, raw_json FROM toolchains WHERE workspace_id = ? AND language_name = ? AND worktree_id = ? AND relative_path = ?
                 ))
                 .context("Preparing insertion")?;
 
             let toolchain: Vec<(String, String, String)> =
-                select((workspace_id, language_name.as_ref().to_string(), worktree_id.to_usize()))?;
+                select((workspace_id, language_name.as_ref().to_string(), worktree_id.to_usize(), relative_path))?;
 
             Ok(toolchain.into_iter().next().and_then(|(name, path, raw_json)| Some(Toolchain {
                 name: name.into(),
@@ -1380,23 +1366,23 @@ impl WorkspaceDb {
     pub(crate) async fn toolchains(
         &self,
         workspace_id: WorkspaceId,
-    ) -> Result<Vec<(Toolchain, WorktreeId)>> {
+    ) -> Result<Vec<(Toolchain, WorktreeId, Arc<Path>)>> {
         self.write(move |this| {
             let mut select = this
                 .select_bound(sql!(
-                    SELECT name, path, worktree_id, language_name, raw_json FROM toolchains WHERE workspace_id = ?
+                    SELECT name, path, worktree_id, relative_worktree_path, language_name, raw_json FROM toolchains WHERE workspace_id = ?
                 ))
                 .context("Preparing insertion")?;
 
-            let toolchain: Vec<(String, String, u64, String, String)> =
+            let toolchain: Vec<(String, String, u64, String, String, String)> =
                 select(workspace_id)?;
 
-            Ok(toolchain.into_iter().filter_map(|(name, path, worktree_id, language_name, raw_json)| Some((Toolchain {
+            Ok(toolchain.into_iter().filter_map(|(name, path, worktree_id, relative_worktree_path, language_name, raw_json)| Some((Toolchain {
                 name: name.into(),
                 path: path.into(),
                 language_name: LanguageName::new(&language_name),
                 as_json: serde_json::Value::from_str(&raw_json).ok()?
-            }, WorktreeId::from_proto(worktree_id)))).collect())
+            }, WorktreeId::from_proto(worktree_id), Arc::from(relative_worktree_path.as_ref())))).collect())
         })
         .await
     }
@@ -1404,12 +1390,17 @@ impl WorkspaceDb {
         &self,
         workspace_id: WorkspaceId,
         worktree_id: WorktreeId,
+        relative_worktree_path: String,
         toolchain: Toolchain,
     ) -> Result<()> {
+        log::debug!(
+            "Setting toolchain for workspace, worktree: {worktree_id:?}, relative path: {relative_worktree_path:?}, toolchain: {}",
+            toolchain.name
+        );
         self.write(move |conn| {
             let mut insert = conn
                 .exec_bound(sql!(
-                    INSERT INTO toolchains(workspace_id, worktree_id, language_name, name, path) VALUES (?, ?, ?, ?,  ?)
+                    INSERT INTO toolchains(workspace_id, worktree_id, relative_worktree_path, language_name, name, path) VALUES (?, ?, ?, ?, ?,  ?)
                     ON CONFLICT DO
                     UPDATE SET
                         name = ?4,
@@ -1421,6 +1412,7 @@ impl WorkspaceDb {
             insert((
                 workspace_id,
                 worktree_id.to_usize(),
+                relative_worktree_path,
                 toolchain.language_name.as_ref(),
                 toolchain.name.as_ref(),
                 toolchain.path.as_ref(),
@@ -1431,6 +1423,37 @@ impl WorkspaceDb {
     }
 }
 
+pub fn delete_unloaded_items(
+    alive_items: Vec<ItemId>,
+    workspace_id: WorkspaceId,
+    table: &'static str,
+    db: &ThreadSafeConnection,
+    cx: &mut App,
+) -> Task<Result<()>> {
+    let db = db.clone();
+    cx.spawn(async move |_| {
+        let placeholders = alive_items
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<&str>>()
+            .join(", ");
+
+        let query = format!(
+            "DELETE FROM {table} WHERE workspace_id = ? AND item_id NOT IN ({placeholders})"
+        );
+
+        db.write(move |conn| {
+            let mut statement = Statement::prepare(conn, query)?;
+            let mut next_index = statement.bind(&workspace_id, 1)?;
+            for id in alive_items {
+                next_index = statement.bind(&id, next_index)?;
+            }
+            statement.exec()
+        })
+        .await
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::thread;
@@ -1439,34 +1462,55 @@ mod tests {
     use super::*;
     use crate::persistence::model::SerializedWorkspace;
     use crate::persistence::model::{SerializedItem, SerializedPane, SerializedPaneGroup};
-    use db::open_test_db;
     use gpui;
 
     #[gpui::test]
     async fn test_breakpoints() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_test_db("test_breakpoints").await);
+        let db = WorkspaceDb::open_test_db("test_breakpoints").await;
         let id = db.next_id().await.unwrap();
 
         let path = Path::new("/tmp/test.rs");
 
         let breakpoint = Breakpoint {
             position: 123,
-            kind: BreakpointKind::Standard,
+            message: None,
             state: BreakpointState::Enabled,
+            condition: None,
+            hit_condition: None,
         };
 
         let log_breakpoint = Breakpoint {
             position: 456,
-            kind: BreakpointKind::Log("Test log message".into()),
+            message: Some("Test log message".into()),
             state: BreakpointState::Enabled,
+            condition: None,
+            hit_condition: None,
         };
 
         let disable_breakpoint = Breakpoint {
             position: 578,
-            kind: BreakpointKind::Standard,
+            message: None,
             state: BreakpointState::Disabled,
+            condition: None,
+            hit_condition: None,
+        };
+
+        let condition_breakpoint = Breakpoint {
+            position: 789,
+            message: None,
+            state: BreakpointState::Enabled,
+            condition: Some("x > 5".into()),
+            hit_condition: None,
+        };
+
+        let hit_condition_breakpoint = Breakpoint {
+            position: 999,
+            message: None,
+            state: BreakpointState::Enabled,
+            condition: None,
+            hit_condition: Some(">= 3".into()),
         };
 
         let workspace = SerializedWorkspace {
@@ -1482,23 +1526,45 @@ mod tests {
                 map.insert(
                     Arc::from(path),
                     vec![
-                        SerializedBreakpoint {
-                            position: breakpoint.position,
+                        SourceBreakpoint {
+                            row: breakpoint.position,
                             path: Arc::from(path),
-                            kind: breakpoint.kind.clone(),
+                            message: breakpoint.message.clone(),
                             state: breakpoint.state,
+                            condition: breakpoint.condition.clone(),
+                            hit_condition: breakpoint.hit_condition.clone(),
                         },
-                        SerializedBreakpoint {
-                            position: log_breakpoint.position,
+                        SourceBreakpoint {
+                            row: log_breakpoint.position,
                             path: Arc::from(path),
-                            kind: log_breakpoint.kind.clone(),
+                            message: log_breakpoint.message.clone(),
                             state: log_breakpoint.state,
+                            condition: log_breakpoint.condition.clone(),
+                            hit_condition: log_breakpoint.hit_condition.clone(),
                         },
-                        SerializedBreakpoint {
-                            position: disable_breakpoint.position,
+                        SourceBreakpoint {
+                            row: disable_breakpoint.position,
                             path: Arc::from(path),
-                            kind: disable_breakpoint.kind.clone(),
+                            message: disable_breakpoint.message.clone(),
                             state: disable_breakpoint.state,
+                            condition: disable_breakpoint.condition.clone(),
+                            hit_condition: disable_breakpoint.hit_condition.clone(),
+                        },
+                        SourceBreakpoint {
+                            row: condition_breakpoint.position,
+                            path: Arc::from(path),
+                            message: condition_breakpoint.message.clone(),
+                            state: condition_breakpoint.state,
+                            condition: condition_breakpoint.condition.clone(),
+                            hit_condition: condition_breakpoint.hit_condition.clone(),
+                        },
+                        SourceBreakpoint {
+                            row: hit_condition_breakpoint.position,
+                            path: Arc::from(path),
+                            message: hit_condition_breakpoint.message.clone(),
+                            state: hit_condition_breakpoint.state,
+                            condition: hit_condition_breakpoint.condition.clone(),
+                            hit_condition: hit_condition_breakpoint.hit_condition.clone(),
                         },
                     ],
                 );
@@ -1513,29 +1579,168 @@ mod tests {
         let loaded = db.workspace_for_roots(&["/tmp"]).unwrap();
         let loaded_breakpoints = loaded.breakpoints.get(&Arc::from(path)).unwrap();
 
-        assert_eq!(loaded_breakpoints.len(), 3);
+        assert_eq!(loaded_breakpoints.len(), 5);
 
-        assert_eq!(loaded_breakpoints[0].position, breakpoint.position);
-        assert_eq!(loaded_breakpoints[0].kind, breakpoint.kind);
+        // normal breakpoint
+        assert_eq!(loaded_breakpoints[0].row, breakpoint.position);
+        assert_eq!(loaded_breakpoints[0].message, breakpoint.message);
+        assert_eq!(loaded_breakpoints[0].condition, breakpoint.condition);
+        assert_eq!(
+            loaded_breakpoints[0].hit_condition,
+            breakpoint.hit_condition
+        );
         assert_eq!(loaded_breakpoints[0].state, breakpoint.state);
         assert_eq!(loaded_breakpoints[0].path, Arc::from(path));
 
-        assert_eq!(loaded_breakpoints[1].position, log_breakpoint.position);
-        assert_eq!(loaded_breakpoints[1].kind, log_breakpoint.kind);
+        // enabled breakpoint
+        assert_eq!(loaded_breakpoints[1].row, log_breakpoint.position);
+        assert_eq!(loaded_breakpoints[1].message, log_breakpoint.message);
+        assert_eq!(loaded_breakpoints[1].condition, log_breakpoint.condition);
+        assert_eq!(
+            loaded_breakpoints[1].hit_condition,
+            log_breakpoint.hit_condition
+        );
         assert_eq!(loaded_breakpoints[1].state, log_breakpoint.state);
         assert_eq!(loaded_breakpoints[1].path, Arc::from(path));
 
-        assert_eq!(loaded_breakpoints[2].position, disable_breakpoint.position);
-        assert_eq!(loaded_breakpoints[2].kind, disable_breakpoint.kind);
+        // disable breakpoint
+        assert_eq!(loaded_breakpoints[2].row, disable_breakpoint.position);
+        assert_eq!(loaded_breakpoints[2].message, disable_breakpoint.message);
+        assert_eq!(
+            loaded_breakpoints[2].condition,
+            disable_breakpoint.condition
+        );
+        assert_eq!(
+            loaded_breakpoints[2].hit_condition,
+            disable_breakpoint.hit_condition
+        );
         assert_eq!(loaded_breakpoints[2].state, disable_breakpoint.state);
         assert_eq!(loaded_breakpoints[2].path, Arc::from(path));
+
+        // condition breakpoint
+        assert_eq!(loaded_breakpoints[3].row, condition_breakpoint.position);
+        assert_eq!(loaded_breakpoints[3].message, condition_breakpoint.message);
+        assert_eq!(
+            loaded_breakpoints[3].condition,
+            condition_breakpoint.condition
+        );
+        assert_eq!(
+            loaded_breakpoints[3].hit_condition,
+            condition_breakpoint.hit_condition
+        );
+        assert_eq!(loaded_breakpoints[3].state, condition_breakpoint.state);
+        assert_eq!(loaded_breakpoints[3].path, Arc::from(path));
+
+        // hit condition breakpoint
+        assert_eq!(loaded_breakpoints[4].row, hit_condition_breakpoint.position);
+        assert_eq!(
+            loaded_breakpoints[4].message,
+            hit_condition_breakpoint.message
+        );
+        assert_eq!(
+            loaded_breakpoints[4].condition,
+            hit_condition_breakpoint.condition
+        );
+        assert_eq!(
+            loaded_breakpoints[4].hit_condition,
+            hit_condition_breakpoint.hit_condition
+        );
+        assert_eq!(loaded_breakpoints[4].state, hit_condition_breakpoint.state);
+        assert_eq!(loaded_breakpoints[4].path, Arc::from(path));
+    }
+
+    #[gpui::test]
+    async fn test_remove_last_breakpoint() {
+        env_logger::try_init().ok();
+
+        let db = WorkspaceDb::open_test_db("test_remove_last_breakpoint").await;
+        let id = db.next_id().await.unwrap();
+
+        let singular_path = Path::new("/tmp/test_remove_last_breakpoint.rs");
+
+        let breakpoint_to_remove = Breakpoint {
+            position: 100,
+            message: None,
+            state: BreakpointState::Enabled,
+            condition: None,
+            hit_condition: None,
+        };
+
+        let workspace = SerializedWorkspace {
+            id,
+            location: SerializedWorkspaceLocation::from_local_paths(["/tmp"]),
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            breakpoints: {
+                let mut map = collections::BTreeMap::default();
+                map.insert(
+                    Arc::from(singular_path),
+                    vec![SourceBreakpoint {
+                        row: breakpoint_to_remove.position,
+                        path: Arc::from(singular_path),
+                        message: None,
+                        state: BreakpointState::Enabled,
+                        condition: None,
+                        hit_condition: None,
+                    }],
+                );
+                map
+            },
+            session_id: None,
+            window_id: None,
+        };
+
+        db.save_workspace(workspace.clone()).await;
+
+        let loaded = db.workspace_for_roots(&["/tmp"]).unwrap();
+        let loaded_breakpoints = loaded.breakpoints.get(&Arc::from(singular_path)).unwrap();
+
+        assert_eq!(loaded_breakpoints.len(), 1);
+        assert_eq!(loaded_breakpoints[0].row, breakpoint_to_remove.position);
+        assert_eq!(loaded_breakpoints[0].message, breakpoint_to_remove.message);
+        assert_eq!(
+            loaded_breakpoints[0].condition,
+            breakpoint_to_remove.condition
+        );
+        assert_eq!(
+            loaded_breakpoints[0].hit_condition,
+            breakpoint_to_remove.hit_condition
+        );
+        assert_eq!(loaded_breakpoints[0].state, breakpoint_to_remove.state);
+        assert_eq!(loaded_breakpoints[0].path, Arc::from(singular_path));
+
+        let workspace_without_breakpoint = SerializedWorkspace {
+            id,
+            location: SerializedWorkspaceLocation::from_local_paths(["/tmp"]),
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            breakpoints: collections::BTreeMap::default(),
+            session_id: None,
+            window_id: None,
+        };
+
+        db.save_workspace(workspace_without_breakpoint.clone())
+            .await;
+
+        let loaded_after_remove = db.workspace_for_roots(&["/tmp"]).unwrap();
+        let empty_breakpoints = loaded_after_remove
+            .breakpoints
+            .get(&Arc::from(singular_path));
+
+        assert!(empty_breakpoints.is_none());
     }
 
     #[gpui::test]
     async fn test_next_id_stability() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_test_db("test_next_id_stability").await);
+        let db = WorkspaceDb::open_test_db("test_next_id_stability").await;
 
         db.write(|conn| {
             conn.migrate(
@@ -1583,7 +1788,7 @@ mod tests {
     async fn test_workspace_id_stability() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_test_db("test_workspace_id_stability").await);
+        let db = WorkspaceDb::open_test_db("test_workspace_id_stability").await;
 
         db.write(|conn| {
             conn.migrate(
@@ -1677,7 +1882,7 @@ mod tests {
     async fn test_full_workspace_serialization() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_test_db("test_full_workspace_serialization").await);
+        let db = WorkspaceDb::open_test_db("test_full_workspace_serialization").await;
 
         //  -----------------
         //  | 1,2   | 5,6   |
@@ -1752,7 +1957,7 @@ mod tests {
     async fn test_workspace_assignment() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_test_db("test_basic_functionality").await);
+        let db = WorkspaceDb::open_test_db("test_basic_functionality").await;
 
         let workspace_1 = SerializedWorkspace {
             id: WorkspaceId(1),
@@ -1848,7 +2053,7 @@ mod tests {
     async fn test_session_workspaces() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_test_db("test_serializing_workspaces_session_id").await);
+        let db = WorkspaceDb::open_test_db("test_serializing_workspaces_session_id").await;
 
         let workspace_1 = SerializedWorkspace {
             id: WorkspaceId(1),
@@ -2001,7 +2206,7 @@ mod tests {
         let dir4 = tempfile::TempDir::with_prefix("dir4").unwrap();
 
         let db =
-            WorkspaceDb(open_test_db("test_serializing_workspaces_last_session_workspaces").await);
+            WorkspaceDb::open_test_db("test_serializing_workspaces_last_session_workspaces").await;
 
         let workspaces = [
             (1, vec![dir1.path()], vec![0], 9),
@@ -2090,9 +2295,10 @@ mod tests {
 
     #[gpui::test]
     async fn test_last_session_workspace_locations_ssh_projects() {
-        let db = WorkspaceDb(
-            open_test_db("test_serializing_workspaces_last_session_workspaces_ssh_projects").await,
-        );
+        let db = WorkspaceDb::open_test_db(
+            "test_serializing_workspaces_last_session_workspaces_ssh_projects",
+        )
+        .await;
 
         let ssh_projects = [
             ("host-1", "my-user-1"),
@@ -2166,7 +2372,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_get_or_create_ssh_project() {
-        let db = WorkspaceDb(open_test_db("test_get_or_create_ssh_project").await);
+        let db = WorkspaceDb::open_test_db("test_get_or_create_ssh_project").await;
 
         let (host, port, paths, user) = (
             "example.com".to_string(),
@@ -2212,7 +2418,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_get_or_create_ssh_project_with_null_user() {
-        let db = WorkspaceDb(open_test_db("test_get_or_create_ssh_project_with_null_user").await);
+        let db = WorkspaceDb::open_test_db("test_get_or_create_ssh_project_with_null_user").await;
 
         let (host, port, paths, user) = (
             "example.com".to_string(),
@@ -2241,7 +2447,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_get_ssh_projects() {
-        let db = WorkspaceDb(open_test_db("test_get_ssh_projects").await);
+        let db = WorkspaceDb::open_test_db("test_get_ssh_projects").await;
 
         let projects = vec![
             (
@@ -2284,7 +2490,7 @@ mod tests {
     async fn test_simple_split() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_test_db("simple_split").await);
+        let db = WorkspaceDb::open_test_db("simple_split").await;
 
         //  -----------------
         //  | 1,2   | 5,6   |
@@ -2339,7 +2545,7 @@ mod tests {
     async fn test_cleanup_panes() {
         env_logger::try_init().ok();
 
-        let db = WorkspaceDb(open_test_db("test_cleanup_panes").await);
+        let db = WorkspaceDb::open_test_db("test_cleanup_panes").await;
 
         let center_pane = group(
             Axis::Horizontal,

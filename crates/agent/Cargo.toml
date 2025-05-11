@@ -1,0 +1,110 @@
+[package]
+name = "agent"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/agent.rs"
+doctest = false
+
+[features]
+test-support = [
+    "gpui/test-support",
+    "language/test-support",
+]
+
+[dependencies]
+anyhow.workspace = true
+assistant_context_editor.workspace = true
+assistant_settings.workspace = true
+assistant_slash_command.workspace = true
+assistant_slash_commands.workspace = true
+assistant_tool.workspace = true
+async-watch.workspace = true
+buffer_diff.workspace = true
+chrono.workspace = true
+client.workspace = true
+collections.workspace = true
+component.workspace = true
+context_server.workspace = true
+convert_case.workspace = true
+db.workspace = true
+editor.workspace = true
+extension.workspace = true
+feature_flags.workspace = true
+file_icons.workspace = true
+fs.workspace = true
+futures.workspace = true
+fuzzy.workspace = true
+git.workspace = true
+gpui.workspace = true
+heed.workspace = true
+html_to_markdown.workspace = true
+http_client.workspace = true
+indexed_docs.workspace = true
+itertools.workspace = true
+jsonschema.workspace = true
+language.workspace = true
+language_model.workspace = true
+language_model_selector.workspace = true
+linkme.workspace = true
+log.workspace = true
+lsp.workspace = true
+markdown.workspace = true
+menu.workspace = true
+multi_buffer.workspace = true
+notifications.workspace = true
+ordered-float.workspace = true
+parking_lot.workspace = true
+paths.workspace = true
+picker.workspace = true
+postage.workspace = true
+project.workspace = true
+prompt_store.workspace = true
+proto.workspace = true
+ref-cast.workspace = true
+release_channel.workspace = true
+rope.workspace = true
+rules_library.workspace = true
+schemars.workspace = true
+search.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_json_lenient.workspace = true
+settings.workspace = true
+smallvec.workspace = true
+smol.workspace = true
+streaming_diff.workspace = true
+telemetry.workspace = true
+telemetry_events.workspace = true
+terminal.workspace = true
+terminal_view.workspace = true
+text.workspace = true
+theme.workspace = true
+thiserror.workspace = true
+time.workspace = true
+time_format.workspace = true
+ui.workspace = true
+ui_input.workspace = true
+urlencoding.workspace = true
+util.workspace = true
+uuid.workspace = true
+workspace-hack.workspace = true
+workspace.workspace = true
+zed_actions.workspace = true
+zed_llm_client.workspace = true
+
+[dev-dependencies]
+buffer_diff = { workspace = true, features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, "features" = ["test-support"] }
+indoc.workspace = true
+language = { workspace = true, "features" = ["test-support"] }
+language_model = { workspace = true, "features" = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
+rand.workspace = true

@@ -1,7 +1,7 @@
 use convert_case::{Case, Casing};
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, Attribute, Data, DeriveInput, Lit, Meta, NestedMeta};
+use syn::{Attribute, Data, DeriveInput, Lit, Meta, NestedMeta, parse_macro_input};
 
 pub fn derive_path_str(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);

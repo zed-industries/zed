@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+HAKARI_VERSION="0.9"
+
+cd "$(dirname "$0")/.." || exit 1
+
+if ! cargo hakari --version | grep "cargo-hakari $HAKARI_VERSION" >/dev/null; then
+    echo "Installing cargo-hakari@^$HAKARI_VERSION..."
+    cargo install "cargo-hakari@^$HAKARI_VERSION"
+else
+    echo "cargo-hakari@^$HAKARI_VERSION is already installed."
+fi
+
+# update the workspace-hack crate
+cargo hakari generate
+
+# make sure workspace-hack is added as a dep for all crates in the workspace
+cargo hakari manage-deps

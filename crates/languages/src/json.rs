@@ -1,16 +1,16 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
 use gpui::{App, AsyncApp};
-use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
+use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use language::{LanguageRegistry, LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
-use project::{lsp_store::language_server_settings, ContextProviderWithTasks, Fs};
-use serde_json::{json, Value};
+use project::{ContextProviderWithTasks, Fs, lsp_store::language_server_settings};
+use serde_json::{Value, json};
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::{
     fs::{self},
@@ -26,7 +26,7 @@ use std::{
     sync::Arc,
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
-use util::{fs::remove_matching, maybe, merge_json_value_into, ResultExt};
+use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
 
 const SERVER_PATH: &str =
     "node_modules/vscode-langservers-extracted/bin/vscode-json-language-server";
@@ -87,7 +87,7 @@ impl JsonLspAdapter {
         );
         let tasks_schema = task::TaskTemplates::generate_json_schema();
         let debug_schema = task::DebugTaskFile::generate_json_schema();
-        let snippets_schema = snippet_provider::format::VSSnippetsFile::generate_json_schema();
+        let snippets_schema = snippet_provider::format::VsSnippetsFile::generate_json_schema();
         let tsconfig_schema = serde_json::Value::from_str(TSCONFIG_SCHEMA).unwrap();
         let package_json_schema = serde_json::Value::from_str(PACKAGE_JSON_SCHEMA).unwrap();
 
@@ -141,7 +141,7 @@ impl JsonLspAdapter {
                     },
                     {
                         "fileMatch": [
-                            schema_file_match(paths::debug_tasks_file()),
+                            schema_file_match(paths::debug_scenarios_file()),
                             paths::local_debug_file_relative_path()
                         ],
                         "schema": debug_schema,

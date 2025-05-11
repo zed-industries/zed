@@ -54,6 +54,8 @@ async function main() {
   const q = [
     `repo:${owner}/${repo}`,
     "is:issue",
+    "-type:feature",
+    "-type:meta",
     "state:open",
     `created:${dateRangeFilter}`,
     "sort:created-asc",
@@ -61,12 +63,13 @@ async function main() {
     ...authorFilters,
   ];
 
-  const response = await octokit.rest.search.issuesAndPullRequests({
-    q: q.join("+"),
-    per_page: 100,
-  });
-
-  const issues = response.data.items;
+  const issues = await octokit.paginate(
+    octokit.rest.search.issuesAndPullRequests,
+    {
+      q: q.join("+"),
+      per_page: 100,
+    },
+  );
   const issueLines = issues.map((issue, index) => {
     const formattedDate = new Date(issue.created_at).toLocaleDateString(
       "en-US",

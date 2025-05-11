@@ -1,8 +1,8 @@
 use gpui::{
-    svg, ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent,
-    Render,
+    ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent, Render,
+    svg,
 };
-use ui::{prelude::*, TintColor};
+use ui::{TintColor, prelude::*};
 use workspace::{ModalView, Workspace};
 
 use crate::git_panel::GitPanel;

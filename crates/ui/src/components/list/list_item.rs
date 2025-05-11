@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use gpui::{px, AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels};
+use gpui::{AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels, px};
 use smallvec::SmallVec;
 
-use crate::{prelude::*, Disclosure};
+use crate::{Disclosure, prelude::*};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum ListItemSpacing {
@@ -16,6 +16,7 @@ pub enum ListItemSpacing {
 #[derive(IntoElement)]
 pub struct ListItem {
     id: ElementId,
+    group_name: Option<SharedString>,
     disabled: bool,
     selected: bool,
     spacing: ListItemSpacing,
@@ -32,6 +33,7 @@ pub struct ListItem {
     toggle: Option<bool>,
     inset: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    on_hover: Option<Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
     on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
     on_secondary_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>>,
@@ -48,6 +50,7 @@ impl ListItem {
     pub fn new(id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
+            group_name: None,
             disabled: false,
             selected: false,
             spacing: ListItemSpacing::Dense,
@@ -61,6 +64,7 @@ impl ListItem {
             on_click: None,
             on_secondary_mouse_down: None,
             on_toggle: None,
+            on_hover: None,
             tooltip: None,
             children: SmallVec::new(),
             selectable: true,
@@ -70,6 +74,11 @@ impl ListItem {
             overflow_x: false,
             focused: None,
         }
+    }
+
+    pub fn group_name(mut self, group_name: impl Into<SharedString>) -> Self {
+        self.group_name = Some(group_name.into());
+        self
     }
 
     pub fn spacing(mut self, spacing: ListItemSpacing) -> Self {
@@ -92,6 +101,11 @@ impl ListItem {
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_click = Some(Box::new(handler));
+        self
+    }
+
+    pub fn on_hover(mut self, handler: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
+        self.on_hover = Some(Box::new(handler));
         self
     }
 
@@ -196,6 +210,7 @@ impl RenderOnce for ListItem {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         h_flex()
             .id(self.id)
+            .when_some(self.group_name, |this, group| this.group(group))
             .w_full()
             .relative()
             // When an item is inset draw the indent spacing outside of the item
@@ -225,6 +240,7 @@ impl RenderOnce for ListItem {
                     })
             })
             .when(self.rounded, |this| this.rounded_sm())
+            .when_some(self.on_hover, |this, on_hover| this.on_hover(on_hover))
             .child(
                 h_flex()
                     .id("inner_list_item")

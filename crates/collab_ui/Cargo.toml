@@ -42,6 +42,7 @@ futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 language.workspace = true
+log.workspace = true
 menu.workspace = true
 notifications.workspace = true
 picker.workspace = true
@@ -64,6 +65,7 @@ title_bar.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }

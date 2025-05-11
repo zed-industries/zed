@@ -5,7 +5,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::{prelude::*, Avatar, ListItem, ListItemSpacing};
+use ui::{Avatar, ListItem, ListItemSpacing, prelude::*};
 use util::{ResultExt as _, TryFutureExt};
 use workspace::ModalView;
 

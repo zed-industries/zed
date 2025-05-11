@@ -1,6 +1,6 @@
-use crate::{motion::Motion, object::Object, state::Mode, Vim};
+use crate::{Vim, motion::Motion, object::Object, state::Mode};
 use collections::HashMap;
-use editor::{display_map::ToDisplayPoint, Bias, Editor};
+use editor::{Bias, Editor, display_map::ToDisplayPoint};
 use gpui::actions;
 use gpui::{Context, Window};
 use language::SelectionGoal;
@@ -18,6 +18,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Indent, window, cx| {
         vim.record_current_action(cx);
         let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
         vim.store_visual_marks(window, cx);
         vim.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
@@ -36,6 +37,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Outdent, window, cx| {
         vim.record_current_action(cx);
         let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
         vim.store_visual_marks(window, cx);
         vim.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
@@ -54,6 +56,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &AutoIndent, window, cx| {
         vim.record_current_action(cx);
         let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
         vim.store_visual_marks(window, cx);
         vim.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
@@ -75,6 +78,7 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
+        forced_motion: bool,
         dir: IndentDirection,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -88,7 +92,13 @@ impl Vim {
                     s.move_with(|map, selection| {
                         let anchor = map.display_point_to_anchor(selection.head(), Bias::Right);
                         selection_starts.insert(selection.id, anchor);
-                        motion.expand_selection(map, selection, times, false, &text_layout_details);
+                        motion.expand_selection(
+                            map,
+                            selection,
+                            times,
+                            &text_layout_details,
+                            forced_motion,
+                        );
                     });
                 });
                 match dir {

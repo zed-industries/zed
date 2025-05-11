@@ -1,14 +1,14 @@
 use crate::{
+    Vim,
     motion::{self, Motion},
     object::Object,
     state::Mode,
-    Vim,
 };
 use editor::{
-    display_map::ToDisplayPoint, scroll::Autoscroll, Anchor, Bias, Editor, EditorSnapshot,
-    ToOffset, ToPoint,
+    Anchor, Bias, Editor, EditorSnapshot, ToOffset, ToPoint, display_map::ToDisplayPoint,
+    scroll::Autoscroll,
 };
-use gpui::{actions, Context, Window};
+use gpui::{Context, Window, actions};
 use language::{Point, SelectionGoal};
 use std::ops::Range;
 use std::sync::Arc;
@@ -27,6 +27,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             return;
         }
         let count = Vim::take_count(cx);
+        Vim::take_forced_motion(cx);
         vim.undo_replace(count, window, cx)
     });
 }
@@ -179,6 +180,7 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
+        forced_motion: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -192,8 +194,8 @@ impl Vim {
                 &snapshot,
                 &mut selection,
                 times,
-                false,
                 &text_layout_details,
+                forced_motion,
             );
             let start = snapshot
                 .buffer_snapshot

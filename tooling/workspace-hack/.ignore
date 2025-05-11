@@ -1,0 +1,2 @@
+# prevent cargo-machete from analyzing this crate
+Cargo.toml

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use assistant_slash_command::SlashCommandWorkingSet;
 use gpui::{AnyElement, AnyView, DismissEvent, SharedString, Task, WeakEntity};
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
-use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverTrigger, Tooltip};
+use ui::{ListItem, ListItemSpacing, PopoverMenu, PopoverTrigger, Tooltip, prelude::*};
 
 use crate::context_editor::ContextEditor;
 

@@ -1,13 +1,13 @@
 use crate::{
-    point, size, Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, FontStyle,
-    FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams,
-    ShapedGlyph, SharedString, Size, SUBPIXEL_VARIANTS,
+    Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, FontStyle, FontWeight,
+    GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams, SUBPIXEL_VARIANTS,
+    ShapedGlyph, SharedString, Size, point, size,
 };
-use anyhow::{anyhow, Context as _, Ok, Result};
+use anyhow::{Context as _, Ok, Result, anyhow};
 use collections::HashMap;
 use cosmic_text::{
-    Attrs, AttrsList, CacheKey, Family, Font as CosmicTextFont, FontSystem, ShapeBuffer, ShapeLine,
-    SwashCache,
+    Attrs, AttrsList, CacheKey, Family, Font as CosmicTextFont, FontFeatures as CosmicFontFeatures,
+    FontSystem, ShapeBuffer, ShapeLine, SwashCache,
 };
 
 use itertools::Itertools;
@@ -21,15 +21,29 @@ use std::{borrow::Cow, sync::Arc};
 
 pub(crate) struct CosmicTextSystem(RwLock<CosmicTextSystemState>);
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct FontKey {
+    family: SharedString,
+    features: FontFeatures,
+}
+
+impl FontKey {
+    fn new(family: SharedString, features: FontFeatures) -> Self {
+        Self { family, features }
+    }
+}
+
 struct CosmicTextSystemState {
     swash_cache: SwashCache,
     font_system: FontSystem,
     scratch: ShapeBuffer,
     /// Contains all already loaded fonts, including all faces. Indexed by `FontId`.
     loaded_fonts_store: Vec<Arc<CosmicTextFont>>,
+    /// Contains enabled font features for each loaded font.
+    features_store: Vec<CosmicFontFeatures>,
     /// Caches the `FontId`s associated with a specific family to avoid iterating the font database
     /// for every font face in a family.
-    font_ids_by_family_cache: HashMap<SharedString, SmallVec<[FontId; 4]>>,
+    font_ids_by_family_cache: HashMap<FontKey, SmallVec<[FontId; 4]>>,
     /// The name of each font associated with the given font id
     postscript_names: HashMap<FontId, String>,
 }
@@ -44,6 +58,7 @@ impl CosmicTextSystem {
             swash_cache: SwashCache::new(),
             scratch: ShapeBuffer::default(),
             loaded_fonts_store: Vec::new(),
+            features_store: Vec::new(),
             font_ids_by_family_cache: HashMap::default(),
             postscript_names: HashMap::default(),
         }))
@@ -78,15 +93,13 @@ impl PlatformTextSystem for CosmicTextSystem {
     fn font_id(&self, font: &Font) -> Result<FontId> {
         // todo(linux): Do we need to use CosmicText's Font APIs? Can we consolidate this to use font_kit?
         let mut state = self.0.write();
-
-        let candidates = if let Some(font_ids) = state.font_ids_by_family_cache.get(&font.family) {
+        let key = FontKey::new(font.family.clone(), font.features.clone());
+        let candidates = if let Some(font_ids) = state.font_ids_by_family_cache.get(&key) {
             font_ids.as_slice()
         } else {
             let font_ids = state.load_family(&font.family, &font.features)?;
-            state
-                .font_ids_by_family_cache
-                .insert(font.family.clone(), font_ids);
-            state.font_ids_by_family_cache[&font.family].as_ref()
+            state.font_ids_by_family_cache.insert(key.clone(), font_ids);
+            state.font_ids_by_family_cache[&key].as_ref()
         };
 
         // todo(linux) ideally we would make fontdb's `find_best_match` pub instead of using font-kit here
@@ -229,9 +242,24 @@ impl CosmicTextSystemState {
                 continue;
             };
 
+            // Convert features into cosmic_text struct.
+            let mut font_features = CosmicFontFeatures::new();
+            for feature in _features.0.iter() {
+                let name_bytes: [u8; 4] = feature
+                    .0
+                    .as_bytes()
+                    .try_into()
+                    .map_err(|_| anyhow!("Incorrect feature flag format"))?;
+
+                let tag = cosmic_text::FeatureTag::new(&name_bytes);
+
+                font_features.set(tag, feature.1);
+            }
+
             let font_id = FontId(self.loaded_fonts_store.len());
             font_ids.push(font_id);
             self.loaded_fonts_store.push(font);
+            self.features_store.push(font_features);
             self.postscript_names.insert(font_id, postscript_name);
         }
 
@@ -361,18 +389,22 @@ impl CosmicTextSystemState {
 
     #[profiling::function]
     fn layout_line(&mut self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
-        let mut attrs_list = AttrsList::new(Attrs::new());
+        let mut attrs_list = AttrsList::new(&Attrs::new());
         let mut offs = 0;
         for run in font_runs {
             let font = &self.loaded_fonts_store[run.font_id.0];
             let font = self.font_system.db().face(font.id()).unwrap();
+
+            let features = self.features_store[run.font_id.0].clone();
+
             attrs_list.add_span(
                 offs..(offs + run.len),
-                Attrs::new()
+                &Attrs::new()
                     .family(Family::Name(&font.families.first().unwrap().0))
                     .stretch(font.stretch)
                     .style(font.style)
-                    .weight(font.weight),
+                    .weight(font.weight)
+                    .font_features(features),
             );
             offs += run.len;
         }

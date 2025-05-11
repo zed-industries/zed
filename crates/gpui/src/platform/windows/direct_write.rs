@@ -1,13 +1,12 @@
 use std::{borrow::Cow, sync::Arc};
 
 use ::util::ResultExt;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use collections::HashMap;
 use itertools::Itertools;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
 use windows::{
-    core::*,
     Win32::{
         Foundation::*,
         Globalization::GetUserDefaultLocaleName,
@@ -21,6 +20,7 @@ use windows::{
         System::SystemServices::LOCALE_NAME_MAX_LENGTH,
         UI::WindowsAndMessaging::*,
     },
+    core::*,
 };
 use windows_numerics::Vector2;
 
@@ -33,7 +33,6 @@ struct FontInfo {
     features: IDWriteTypography,
     fallbacks: Option<IDWriteFontFallback>,
     is_system_font: bool,
-    is_emoji: bool,
 }
 
 pub(crate) struct DirectWriteTextSystem(RwLock<DirectWriteState>);
@@ -333,7 +332,7 @@ impl DirectWriteState {
         &self,
         font_features: &FontFeatures,
     ) -> Result<IDWriteTypography> {
-        let direct_write_features = self.components.factory.CreateTypography()?;
+        let direct_write_features = unsafe { self.components.factory.CreateTypography()? };
         apply_font_features(&direct_write_features, font_features)?;
         Ok(direct_write_features)
     }
@@ -352,28 +351,31 @@ impl DirectWriteState {
         } else {
             &self.custom_font_collection
         };
-        let fontset = collection.GetFontSet().log_err()?;
-        let font = fontset
-            .GetMatchingFonts(
-                &HSTRING::from(family_name),
-                font_weight.into(),
-                DWRITE_FONT_STRETCH_NORMAL,
-                font_style.into(),
-            )
-            .log_err()?;
-        let total_number = font.GetFontCount();
+        let fontset = unsafe { collection.GetFontSet().log_err()? };
+        let font = unsafe {
+            fontset
+                .GetMatchingFonts(
+                    &HSTRING::from(family_name),
+                    font_weight.into(),
+                    DWRITE_FONT_STRETCH_NORMAL,
+                    font_style.into(),
+                )
+                .log_err()?
+        };
+        let total_number = unsafe { font.GetFontCount() };
         for index in 0..total_number {
-            let Some(font_face_ref) = font.GetFontFaceReference(index).log_err() else {
+            let Some(font_face_ref) = (unsafe { font.GetFontFaceReference(index).log_err() })
+            else {
                 continue;
             };
-            let Some(font_face) = font_face_ref.CreateFontFace().log_err() else {
+            let Some(font_face) = (unsafe { font_face_ref.CreateFontFace().log_err() }) else {
                 continue;
             };
             let Some(identifier) = get_font_identifier(&font_face, &self.components.locale) else {
                 continue;
             };
-            let is_emoji = font_face.IsColorFont().as_bool();
-            let Some(direct_write_features) = self.generate_font_features(font_features).log_err()
+            let Some(direct_write_features) =
+                (unsafe { self.generate_font_features(font_features).log_err() })
             else {
                 continue;
             };
@@ -385,7 +387,6 @@ impl DirectWriteState {
                 features: direct_write_features,
                 fallbacks,
                 is_system_font,
-                is_emoji,
             };
             let font_id = FontId(self.fonts.len());
             self.fonts.push(font_info);
@@ -396,14 +397,14 @@ impl DirectWriteState {
     }
 
     unsafe fn update_system_font_collection(&mut self) {
-        let mut collection = std::mem::zeroed();
-        if self
-            .components
-            .factory
-            .GetSystemFontCollection(false, &mut collection, true)
-            .log_err()
-            .is_some()
-        {
+        let mut collection = unsafe { std::mem::zeroed() };
+        if unsafe {
+            self.components
+                .factory
+                .GetSystemFontCollection(false, &mut collection, true)
+                .log_err()
+                .is_some()
+        } {
             self.system_font_collection = collection.unwrap();
         }
     }
@@ -461,35 +462,37 @@ impl DirectWriteState {
         fallbacks: Option<&FontFallbacks>,
     ) -> Option<FontId> {
         // try to find target font in custom font collection first
-        self.get_font_id_from_font_collection(
-            family_name,
-            weight,
-            style,
-            features,
-            fallbacks,
-            false,
-        )
-        .or_else(|| {
+        unsafe {
             self.get_font_id_from_font_collection(
                 family_name,
                 weight,
                 style,
                 features,
                 fallbacks,
-                true,
+                false,
             )
-        })
-        .or_else(|| {
-            self.update_system_font_collection();
-            self.get_font_id_from_font_collection(
-                family_name,
-                weight,
-                style,
-                features,
-                fallbacks,
-                true,
-            )
-        })
+            .or_else(|| {
+                self.get_font_id_from_font_collection(
+                    family_name,
+                    weight,
+                    style,
+                    features,
+                    fallbacks,
+                    true,
+                )
+            })
+            .or_else(|| {
+                self.update_system_font_collection();
+                self.get_font_id_from_font_collection(
+                    family_name,
+                    weight,
+                    style,
+                    features,
+                    fallbacks,
+                    true,
+                )
+            })
+        }
     }
 
     fn layout_line(
@@ -1168,6 +1171,7 @@ impl<'a> StringIndexConverter<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn advance_to_utf8_ix(&mut self, utf8_target: usize) {
         for (ix, c) in self.text[self.utf8_ix..].char_indices() {
             if self.utf8_ix + ix >= utf8_target {

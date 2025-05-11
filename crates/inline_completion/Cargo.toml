@@ -12,6 +12,9 @@ workspace = true
 path = "src/inline_completion.rs"
 
 [dependencies]
+anyhow.workspace = true
 gpui.workspace = true
 language.workspace = true
 project.workspace = true
+workspace-hack.workspace = true
+zed_llm_client.workspace = true

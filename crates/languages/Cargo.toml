@@ -46,6 +46,7 @@ language.workspace = true
 log.workspace = true
 lsp.workspace = true
 node_runtime.workspace = true
+parking_lot.workspace = true
 paths.workspace = true
 pet-conda.workspace = true
 pet-core.workspace = true
@@ -83,6 +84,7 @@ tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
 tree-sitter-yaml = { workspace = true, optional = true }
 util.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true

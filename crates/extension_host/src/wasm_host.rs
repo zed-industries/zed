@@ -1,21 +1,22 @@
 pub mod wit;
 
 use crate::ExtensionManifest;
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
 use extension::{
-    CodeLabel, Command, Completion, ExtensionHostProxy, KeyValueStoreDelegate, ProjectDelegate,
-    SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, Symbol, WorktreeDelegate,
+    CodeLabel, Command, Completion, ContextServerConfiguration, ExtensionHostProxy,
+    KeyValueStoreDelegate, ProjectDelegate, SlashCommand, SlashCommandArgumentCompletion,
+    SlashCommandOutput, Symbol, WorktreeDelegate,
 };
-use fs::{normalize_path, Fs};
+use fs::{Fs, normalize_path};
 use futures::future::LocalBoxFuture;
 use futures::{
+    Future, FutureExt, StreamExt as _,
     channel::{
         mpsc::{self, UnboundedSender},
         oneshot,
     },
     future::BoxFuture,
-    Future, FutureExt, StreamExt as _,
 };
 use gpui::{App, AsyncApp, BackgroundExecutor, Task};
 use http_client::HttpClient;
@@ -29,8 +30,8 @@ use std::{
     sync::{Arc, OnceLock},
 };
 use wasmtime::{
-    component::{Component, ResourceTable},
     Engine, Store,
+    component::{Component, ResourceTable},
 };
 use wasmtime_wasi::{self as wasi, WasiView};
 use wit::Extension;
@@ -300,6 +301,33 @@ impl extension::Extension for WasmExtension {
                     .await?
                     .map_err(|err| anyhow!("{err}"))?;
                 anyhow::Ok(command.into())
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn context_server_configuration(
+        &self,
+        context_server_id: Arc<str>,
+        project: Arc<dyn ProjectDelegate>,
+    ) -> Result<Option<ContextServerConfiguration>> {
+        self.call(|extension, store| {
+            async move {
+                let project_resource = store.data_mut().table().push(project)?;
+                let Some(configuration) = extension
+                    .call_context_server_configuration(
+                        store,
+                        context_server_id.clone(),
+                        project_resource,
+                    )
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?
+                else {
+                    return Ok(None);
+                };
+
+                Ok(Some(configuration.try_into()?))
             }
             .boxed()
         })

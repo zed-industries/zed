@@ -1,17 +1,16 @@
 pub mod auth;
 mod conn;
 mod extension;
-mod llm;
+mod message_stream;
 mod notification;
 mod peer;
-pub mod proto;
 
 pub use conn::Connection;
 pub use extension::*;
-pub use llm::*;
 pub use notification::*;
 pub use peer::*;
-pub use proto::{error::*, Receipt, TypedEnvelope};
+pub use proto;
+pub use proto::{Receipt, TypedEnvelope, error::*};
 mod macros;
 
 #[cfg(feature = "gpui")]

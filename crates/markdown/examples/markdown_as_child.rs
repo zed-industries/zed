@@ -1,7 +1,7 @@
 use assets::Assets;
-use gpui::{rgb, Application, Entity, KeyBinding, Length, StyleRefinement, WindowOptions};
-use language::{language_settings::AllLanguageSettings, LanguageRegistry};
-use markdown::{Markdown, MarkdownStyle};
+use gpui::{Application, Entity, KeyBinding, Length, StyleRefinement, WindowOptions, rgb};
+use language::{LanguageRegistry, language_settings::AllLanguageSettings};
+use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use node_runtime::NodeRuntime;
 use settings::SettingsStore;
 use std::sync::Arc;
@@ -37,58 +37,7 @@ pub fn main() {
         cx.activate(true);
         let _ = cx.open_window(WindowOptions::default(), |_, cx| {
             cx.new(|cx| {
-                let markdown_style = MarkdownStyle {
-                    base_text_style: gpui::TextStyle {
-                        font_family: "Zed Mono".into(),
-                        color: cx.theme().colors().text,
-                        ..Default::default()
-                    },
-                    code_block: StyleRefinement {
-                        text: Some(gpui::TextStyleRefinement {
-                            font_family: Some("Zed Mono".into()),
-                            background_color: Some(cx.theme().colors().editor_background),
-                            ..Default::default()
-                        }),
-                        margin: gpui::EdgesRefinement {
-                            top: Some(Length::Definite(rems(4.).into())),
-                            left: Some(Length::Definite(rems(4.).into())),
-                            right: Some(Length::Definite(rems(4.).into())),
-                            bottom: Some(Length::Definite(rems(4.).into())),
-                        },
-                        ..Default::default()
-                    },
-                    inline_code: gpui::TextStyleRefinement {
-                        font_family: Some("Zed Mono".into()),
-                        background_color: Some(cx.theme().colors().editor_background),
-                        ..Default::default()
-                    },
-                    rule_color: Color::Muted.color(cx),
-                    block_quote_border_color: Color::Muted.color(cx),
-                    block_quote: gpui::TextStyleRefinement {
-                        color: Some(Color::Muted.color(cx)),
-                        ..Default::default()
-                    },
-                    link: gpui::TextStyleRefinement {
-                        color: Some(Color::Accent.color(cx)),
-                        underline: Some(gpui::UnderlineStyle {
-                            thickness: px(1.),
-                            color: Some(Color::Accent.color(cx)),
-                            wavy: false,
-                        }),
-                        ..Default::default()
-                    },
-                    syntax: cx.theme().syntax().clone(),
-                    selection_background_color: {
-                        let mut selection = cx.theme().players().local().selection;
-                        selection.fade_out(0.7);
-                        selection
-                    },
-                    heading: Default::default(),
-                    ..Default::default()
-                };
-                let markdown = cx.new(|cx| {
-                    Markdown::new(MARKDOWN_EXAMPLE.into(), markdown_style, None, None, cx)
-                });
+                let markdown = cx.new(|cx| Markdown::new(MARKDOWN_EXAMPLE.into(), None, None, cx));
 
                 HelloWorld { markdown }
             })
@@ -100,7 +49,57 @@ struct HelloWorld {
 }
 
 impl Render for HelloWorld {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let markdown_style = MarkdownStyle {
+            base_text_style: gpui::TextStyle {
+                font_family: "Zed Mono".into(),
+                color: cx.theme().colors().text,
+                ..Default::default()
+            },
+            code_block: StyleRefinement {
+                text: Some(gpui::TextStyleRefinement {
+                    font_family: Some("Zed Mono".into()),
+                    background_color: Some(cx.theme().colors().editor_background),
+                    ..Default::default()
+                }),
+                margin: gpui::EdgesRefinement {
+                    top: Some(Length::Definite(rems(4.).into())),
+                    left: Some(Length::Definite(rems(4.).into())),
+                    right: Some(Length::Definite(rems(4.).into())),
+                    bottom: Some(Length::Definite(rems(4.).into())),
+                },
+                ..Default::default()
+            },
+            inline_code: gpui::TextStyleRefinement {
+                font_family: Some("Zed Mono".into()),
+                background_color: Some(cx.theme().colors().editor_background),
+                ..Default::default()
+            },
+            rule_color: Color::Muted.color(cx),
+            block_quote_border_color: Color::Muted.color(cx),
+            block_quote: gpui::TextStyleRefinement {
+                color: Some(Color::Muted.color(cx)),
+                ..Default::default()
+            },
+            link: gpui::TextStyleRefinement {
+                color: Some(Color::Accent.color(cx)),
+                underline: Some(gpui::UnderlineStyle {
+                    thickness: px(1.),
+                    color: Some(Color::Accent.color(cx)),
+                    wavy: false,
+                }),
+                ..Default::default()
+            },
+            syntax: cx.theme().syntax().clone(),
+            selection_background_color: {
+                let mut selection = cx.theme().players().local().selection;
+                selection.fade_out(0.7);
+                selection
+            },
+            heading: Default::default(),
+            ..Default::default()
+        };
+
         div()
             .flex()
             .bg(rgb(0x2e7d32))
@@ -112,6 +111,10 @@ impl Render for HelloWorld {
             .border_color(rgb(0x0000ff))
             .text_xl()
             .text_color(rgb(0xffffff))
-            .child(div().child(self.markdown.clone()).p_20())
+            .child(
+                div()
+                    .child(MarkdownElement::new(self.markdown.clone(), markdown_style))
+                    .p_20(),
+            )
     }
 }

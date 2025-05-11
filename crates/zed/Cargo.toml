@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.181.0"
+version = "0.187.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -16,12 +16,13 @@ path = "src/main.rs"
 
 [dependencies]
 activity_indicator.workspace = true
+agent.workspace = true
 anyhow.workspace = true
+askpass.workspace = true
 assets.workspace = true
-assistant.workspace = true
-assistant2.workspace = true
 assistant_context_editor.workspace = true
 assistant_settings.workspace = true
+assistant_tool.workspace = true
 assistant_tools.workspace = true
 async-watch.workspace = true
 audio.workspace = true
@@ -38,9 +39,9 @@ client.workspace = true
 collab_ui.workspace = true
 collections.workspace = true
 command_palette.workspace = true
-command_palette_hooks.workspace = true
-component_preview.workspace = true
+component.workspace = true
 copilot.workspace = true
+dap_adapters.workspace = true
 debugger_ui.workspace = true
 debugger_tools.workspace = true
 db.workspace = true
@@ -63,6 +64,7 @@ gpui = { workspace = true, features = ["wayland", "x11", "font-kit"] }
 gpui_tokio.workspace = true
 http_client.workspace = true
 image_viewer.workspace = true
+indoc.workspace = true
 inline_completion_button.workspace = true
 install_cli.workspace = true
 journal.workspace = true
@@ -106,7 +108,6 @@ session.workspace = true
 settings.workspace = true
 settings_ui.workspace = true
 shellexpand.workspace = true
-simplelog.workspace = true
 smol.workspace = true
 snippet_provider.workspace = true
 snippets_ui.workspace = true
@@ -125,6 +126,7 @@ time.workspace = true
 title_bar.workspace = true
 toolchain_selector.workspace = true
 ui.workspace = true
+ui_input.workspace = true
 ui_prompt.workspace = true
 url.workspace = true
 urlencoding.workspace = true
@@ -132,11 +134,15 @@ util.workspace = true
 uuid.workspace = true
 vim.workspace = true
 vim_mode_setting.workspace = true
+web_search.workspace = true
+web_search_providers.workspace = true
 welcome.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 zeta.workspace = true
+zlog.workspace = true
 zlog_settings.workspace = true
+workspace-hack.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
@@ -149,6 +155,7 @@ ashpd.workspace = true
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }
+dap = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 image_viewer = { workspace = true, features = ["test-support"] }

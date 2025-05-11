@@ -1,7 +1,7 @@
 use gpui::Render;
 use story::Story;
 
-use crate::{prelude::*, Tab, TabBar, TabPosition};
+use crate::{Tab, TabBar, TabPosition, prelude::*};
 
 pub struct TabBarStory;
 

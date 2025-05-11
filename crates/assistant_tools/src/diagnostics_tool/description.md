@@ -15,4 +15,7 @@ To get a project-wide diagnostic summary:
 {}
 </example>
 
-IMPORTANT: When you're done making changes, you **MUST** get the **project** diagnostics (input: `{}`) at the end of your edits so you can fix any problems you might have introduced. **DO NOT** tell the user you're done before doing this!
+<guidelines>
+- If you think you can fix a diagnostic, make 1-2 attempts and then give up.
+- Don't remove code you've generated just because you can't fix an error. The user can help you fix it.
+</guidelines>

@@ -1,6 +1,6 @@
 use super::latest;
-use crate::wasm_host::wit::since_v0_0_4;
 use crate::wasm_host::WasmState;
+use crate::wasm_host::wit::since_v0_0_4;
 use anyhow::Result;
 use extension::{ExtensionLanguageServerProxy, WorktreeDelegate};
 use language::BinaryStatus;

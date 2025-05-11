@@ -51,13 +51,15 @@ async fn test_channel_guests(
         Some(project_id),
     );
     assert!(project_b.read_with(cx_b, |project, cx| project.is_read_only(cx)));
-    assert!(project_b
-        .update(cx_b, |project, cx| {
-            let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
-            project.create_entry((worktree_id, "b.txt"), false, cx)
-        })
-        .await
-        .is_err());
+    assert!(
+        project_b
+            .update(cx_b, |project, cx| {
+                let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
+                project.create_entry((worktree_id, "b.txt"), false, cx)
+            })
+            .await
+            .is_err()
+    );
     assert!(room_b.read_with(cx_b, |room, _| room.is_muted()));
 }
 
@@ -110,10 +112,12 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
     cx_b.update(|_window, cx_b| {
         assert!(room_b.read_with(cx_b, |room, _| !room.can_use_microphone()));
     });
-    assert!(room_b
-        .update(cx_b, |room, cx| room.share_microphone(cx))
-        .await
-        .is_err());
+    assert!(
+        room_b
+            .update(cx_b, |room, cx| room.share_microphone(cx))
+            .await
+            .is_err()
+    );
 
     // B is promoted
     active_call_a
@@ -161,10 +165,12 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
     // project and buffers are no longer editable
     assert!(project_b.read_with(cx_b, |project, cx| project.is_read_only(cx)));
     assert!(editor_b.update(cx_b, |editor, cx| editor.read_only(cx)));
-    assert!(room_b
-        .update(cx_b, |room, cx| room.share_microphone(cx))
-        .await
-        .is_err());
+    assert!(
+        room_b
+            .update(cx_b, |room, cx| room.share_microphone(cx))
+            .await
+            .is_err()
+    );
 }
 
 #[gpui::test]

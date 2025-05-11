@@ -8,8 +8,9 @@ use settings::SettingsStore;
 use std::path::{Path, PathBuf};
 use util::{path, separator};
 use workspace::{
+    AppState, Pane,
     item::{Item, ProjectItem},
-    register_project_item, AppState,
+    register_project_item,
 };
 
 #[gpui::test]
@@ -750,6 +751,50 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
 
     // Dismiss the rename editor when it loses focus.
     workspace.update(cx, |_, window, _| window.blur()).unwrap();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root1",
+            "    > .git",
+            "    > a",
+            "    v b",
+            "        > 3",
+            "        > 4",
+            "        > new-dir",
+            "          a-different-filename.tar.gz  <== selected",
+            "    > C",
+            "      .dockerignore",
+        ]
+    );
+
+    // Test empty filename and filename with only whitespace
+    panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root1",
+            "    > .git",
+            "    > a",
+            "    v b",
+            "        > 3",
+            "        > 4",
+            "        > new-dir",
+            "          [EDITOR: '']  <== selected",
+            "          a-different-filename.tar.gz",
+            "    > C",
+        ]
+    );
+    panel.update_in(cx, |panel, window, cx| {
+        panel.filename_editor.update(cx, |editor, cx| {
+            editor.set_text("", window, cx);
+        });
+        assert!(panel.confirm_edit(window, cx).is_none());
+        panel.filename_editor.update(cx, |editor, cx| {
+            editor.set_text("   ", window, cx);
+        });
+        assert!(panel.confirm_edit(window, cx).is_none());
+        panel.cancel(&menu::Cancel, window, cx)
+    });
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -1582,24 +1627,24 @@ async fn test_copy_paste_directory_with_sibling_file(cx: &mut gpui::TestAppConte
     cx.executor().run_until_parked();
 
     assert_eq!(
-            visible_entries_as_strings(&panel, 0..15, cx),
-            &[
-                "v test",
-                "    v dir1  <== marked",
-                "          a.txt",
-                "          b.txt",
-                "    v dir2",
-                "        v dir1",
-                "              a.txt",
-                "              b.txt",
-                "        > dir1 copy  <== selected",
-                "          c.txt",
-                "          c copy.txt",
-                "      c.txt  <== marked",
-                "      d.txt",
-            ],
-            "Should copy dir1 as well as c.txt into dir2 and disambiguate them without opening the rename editor"
-        );
+        visible_entries_as_strings(&panel, 0..15, cx),
+        &[
+            "v test",
+            "    v dir1  <== marked",
+            "          a.txt",
+            "          b.txt",
+            "    v dir2",
+            "        v dir1",
+            "              a.txt",
+            "              b.txt",
+            "        > dir1 copy  <== selected",
+            "          c.txt",
+            "          c copy.txt",
+            "      c.txt  <== marked",
+            "      d.txt",
+        ],
+        "Should copy dir1 as well as c.txt into dir2 and disambiguate them without opening the rename editor"
+    );
 }
 
 #[gpui::test]
@@ -1834,13 +1879,21 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
         assert!(
             panel.confirm_edit(window, cx).is_none(),
             "Should not allow to confirm on conflicting new directory name"
-        )
+        );
+    });
+    cx.executor().run_until_parked();
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(
+            panel.edit_state.is_some(),
+            "Edit state should not be None after conflicting new directory name"
+        );
+        panel.cancel(&menu::Cancel, window, cx);
     });
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
             //
-            "v src",
+            "v src  <== selected",
             "    > test"
         ],
         "File list should be unchanged after failed folder create confirmation"
@@ -1879,13 +1932,21 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
         assert!(
             panel.confirm_edit(window, cx).is_none(),
             "Should not allow to confirm on conflicting new file name"
-        )
+        );
+    });
+    cx.executor().run_until_parked();
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(
+            panel.edit_state.is_some(),
+            "Edit state should not be None after conflicting new file name"
+        );
+        panel.cancel(&menu::Cancel, window, cx);
     });
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
             "v src",
-            "    v test",
+            "    v test  <== selected",
             "          first.rs",
             "          second.rs",
             "          third.rs"
@@ -1928,6 +1989,14 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
             panel.confirm_edit(window, cx).is_none(),
             "Should not allow to confirm on conflicting file rename"
         )
+    });
+    cx.executor().run_until_parked();
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(
+            panel.edit_state.is_some(),
+            "Edit state should not be None after conflicting file rename"
+        );
+        panel.cancel(&menu::Cancel, window, cx);
     });
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
@@ -2001,6 +2070,20 @@ async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
         cx,
     )
     .await;
+
+    let (scan1_complete, scan2_complete) = project.update(cx, |project, cx| {
+        let mut worktrees = project.worktrees(cx);
+        let worktree1 = worktrees.next().unwrap();
+        let worktree2 = worktrees.next().unwrap();
+        (
+            worktree1.read(cx).as_local().unwrap().scan_complete(),
+            worktree2.read(cx).as_local().unwrap().scan_complete(),
+        )
+    });
+    scan1_complete.await;
+    scan2_complete.await;
+    cx.run_until_parked();
+
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
@@ -2667,6 +2750,7 @@ async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
         shift: true,
         ..Default::default()
     };
+    cx.run_until_parked();
     cx.simulate_modifiers_change(modifiers_with_shift);
     cx.update(|window, cx| {
         panel.update(cx, |this, cx| {
@@ -2909,16 +2993,16 @@ async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
         });
         cx.run_until_parked();
         assert_eq!(
-                visible_entries_as_strings(&panel, 0..20, cx),
-                &[
-                    "v project_root",
-                    "    > .git",
-                    "    > dir_1  <== selected",
-                    "    > dir_2",
-                    "      .gitignore",
-                ],
-                "When no auto reveal is enabled, the selected entry should not be revealed in the project panel"
-            );
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v project_root",
+                "    > .git",
+                "    > dir_1  <== selected",
+                "    > dir_2",
+                "      .gitignore",
+            ],
+            "When no auto reveal is enabled, the selected entry should not be revealed in the project panel"
+        );
     }
 
     cx.update(|_, cx| {
@@ -2985,23 +3069,23 @@ async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
     });
     cx.run_until_parked();
     assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v project_root",
-                "    > .git",
-                "    v dir_1",
-                "        > gitignored_dir",
-                "          file_1.py",
-                "          file_2.py",
-                "          file_3.py",
-                "    v dir_2",
-                "          file_1.py  <== selected  <== marked",
-                "          file_2.py",
-                "          file_3.py",
-                "      .gitignore",
-            ],
-            "When auto reveal is enabled, a gitignored selected entry should not be revealed in the project panel"
-        );
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v project_root",
+            "    > .git",
+            "    v dir_1",
+            "        > gitignored_dir",
+            "          file_1.py",
+            "          file_2.py",
+            "          file_3.py",
+            "    v dir_2",
+            "          file_1.py  <== selected  <== marked",
+            "          file_2.py",
+            "          file_3.py",
+            "      .gitignore",
+        ],
+        "When auto reveal is enabled, a gitignored selected entry should not be revealed in the project panel"
+    );
 
     panel.update(cx, |panel, cx| {
         panel.project.update(cx, |_, cx| {
@@ -3128,24 +3212,24 @@ async fn test_gitignored_and_always_included(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
 
     assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v project_root",
-                "    > .git",
-                "    v always_included_but_ignored_dir",
-                "          file_a.py  <== selected  <== marked",
-                "          file_b.py",
-                "          file_c.py",
-                "    v dir_1",
-                "        > gitignored_dir",
-                "          file_1.py",
-                "          file_2.py",
-                "          file_3.py",
-                "    > dir_2",
-                "      .gitignore",
-            ],
-            "When auto reveal is enabled, a gitignored but always included selected entry should be revealed in the project panel"
-        );
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v project_root",
+            "    > .git",
+            "    v always_included_but_ignored_dir",
+            "          file_a.py  <== selected  <== marked",
+            "          file_b.py",
+            "          file_c.py",
+            "    v dir_1",
+            "        > gitignored_dir",
+            "          file_1.py",
+            "          file_2.py",
+            "          file_3.py",
+            "    > dir_2",
+            "      .gitignore",
+        ],
+        "When auto reveal is enabled, a gitignored but always included selected entry should be revealed in the project panel"
+    );
 }
 
 #[gpui::test]
@@ -3261,16 +3345,16 @@ async fn test_explicit_reveal(cx: &mut gpui::TestAppContext) {
         });
         cx.run_until_parked();
         assert_eq!(
-                visible_entries_as_strings(&panel, 0..20, cx),
-                &[
-                    "v project_root",
-                    "    > .git",
-                    "    > dir_1  <== selected",
-                    "    > dir_2",
-                    "      .gitignore",
-                ],
-                "When no auto reveal is enabled, the selected entry should not be revealed in the project panel"
-            );
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v project_root",
+                "    > .git",
+                "    > dir_1  <== selected",
+                "    > dir_2",
+                "      .gitignore",
+            ],
+            "When no auto reveal is enabled, the selected entry should not be revealed in the project panel"
+        );
     }
 
     panel.update(cx, |panel, cx| {
@@ -3327,26 +3411,26 @@ async fn test_explicit_reveal(cx: &mut gpui::TestAppContext) {
     });
     cx.run_until_parked();
     assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v project_root",
-                "    > .git",
-                "    v dir_1",
-                "        v gitignored_dir",
-                "              file_a.py  <== selected  <== marked",
-                "              file_b.py",
-                "              file_c.py",
-                "          file_1.py",
-                "          file_2.py",
-                "          file_3.py",
-                "    v dir_2",
-                "          file_1.py",
-                "          file_2.py",
-                "          file_3.py",
-                "      .gitignore",
-            ],
-            "With no auto reveal, explicit reveal should show the gitignored entry in the project panel"
-        );
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v project_root",
+            "    > .git",
+            "    v dir_1",
+            "        v gitignored_dir",
+            "              file_a.py  <== selected  <== marked",
+            "              file_b.py",
+            "              file_c.py",
+            "          file_1.py",
+            "          file_2.py",
+            "          file_3.py",
+            "    v dir_2",
+            "          file_1.py",
+            "          file_2.py",
+            "          file_3.py",
+            "      .gitignore",
+        ],
+        "With no auto reveal, explicit reveal should show the gitignored entry in the project panel"
+    );
 }
 
 #[gpui::test]
@@ -3475,10 +3559,10 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     assert_eq!(
-            visible_entries_as_strings(&panel, 0..13, cx),
-            &["v root1", "      .dockerignore"],
-            "Should not change the project panel after trying to create an excluded directorya directory with the same name as the excluded file"
-        );
+        visible_entries_as_strings(&panel, 0..13, cx),
+        &["v root1", "      .dockerignore"],
+        "Should not change the project panel after trying to create an excluded directorya directory with the same name as the excluded file"
+    );
     panel.update_in(cx, |panel, window, cx| {
         assert!(
             !panel.filename_editor.read(cx).is_focused(window),
@@ -4571,23 +4655,23 @@ async fn test_expand_all_for_entry(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
 
     assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                separator!("v root"),
-                separator!("    v dir1  <== selected"),
-                separator!("        v empty1"),
-                separator!("            v empty2"),
-                separator!("                v empty3"),
-                separator!("                      file.txt"),
-                separator!("        > ignored_dir"),
-                separator!("        v subdir1"),
-                separator!("            > ignored_nested"),
-                separator!("              file1.txt"),
-                separator!("              file2.txt"),
-                separator!("      .gitignore"),
-            ],
-            "After expand_all with auto-fold: should not expand ignored_dir, should expand folded dirs, and should not expand ignored_nested"
-        );
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            separator!("v root"),
+            separator!("    v dir1  <== selected"),
+            separator!("        v empty1"),
+            separator!("            v empty2"),
+            separator!("                v empty3"),
+            separator!("                      file.txt"),
+            separator!("        > ignored_dir"),
+            separator!("        v subdir1"),
+            separator!("            > ignored_nested"),
+            separator!("              file1.txt"),
+            separator!("              file2.txt"),
+            separator!("      .gitignore"),
+        ],
+        "After expand_all with auto-fold: should not expand ignored_dir, should expand folded dirs, and should not expand ignored_nested"
+    );
 
     // Test 2: When auto-fold is disabled
     cx.update(|_, cx| {
@@ -4864,6 +4948,71 @@ async fn test_collapse_all_for_entry(cx: &mut gpui::TestAppContext) {
     }
 }
 
+#[gpui::test]
+async fn test_create_entries_without_selection(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "dir1": {
+                "file1.txt": "",
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let panel = workspace
+        .update(cx, |workspace, window, cx| {
+            let panel = ProjectPanel::new(workspace, window, cx);
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        })
+        .unwrap();
+
+    #[rustfmt::skip]
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            separator!("v root"),
+            separator!("    > dir1"),
+        ],
+        "Initial state with nothing selected"
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.new_file(&NewFile, window, cx);
+    });
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.filename_editor.read(cx).is_focused(window));
+    });
+    panel
+        .update_in(cx, |panel, window, cx| {
+            panel.filename_editor.update(cx, |editor, cx| {
+                editor.set_text("hello_from_no_selections", window, cx)
+            });
+            panel.confirm_edit(window, cx).unwrap()
+        })
+        .await
+        .unwrap();
+
+    #[rustfmt::skip]
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            separator!("v root"),
+            separator!("    > dir1"),
+            separator!("      hello_from_no_selections  <== selected  <== marked"),
+        ],
+        "A new file is created under the root directory"
+    );
+}
+
 fn select_path(panel: &Entity<ProjectPanel>, path: impl AsRef<Path>, cx: &mut VisualTestContext) {
     let path = path.as_ref();
     panel.update(cx, |panel, cx| {
@@ -4950,11 +5099,7 @@ fn visible_entries_as_strings(
 
             let indent = "    ".repeat(details.depth);
             let icon = if details.kind.is_dir() {
-                if details.is_expanded {
-                    "v "
-                } else {
-                    "> "
-                }
+                if details.is_expanded { "v " } else { "> " }
             } else {
                 "  "
             };
@@ -5095,18 +5240,18 @@ fn ensure_no_open_items_and_panes(workspace: &WindowHandle<Workspace>, cx: &mut 
         "Should have no prompts after deletion operation closes the file"
     );
     workspace
-            .read_with(cx, |workspace, cx| {
-                let open_project_paths = workspace
-                    .panes()
-                    .iter()
-                    .filter_map(|pane| pane.read(cx).active_item()?.project_path(cx))
-                    .collect::<Vec<_>>();
-                assert!(
-                    open_project_paths.is_empty(),
-                    "Deleted file's buffer should be closed, but got open files: {open_project_paths:?}"
-                );
-            })
-            .unwrap();
+        .read_with(cx, |workspace, cx| {
+            let open_project_paths = workspace
+                .panes()
+                .iter()
+                .filter_map(|pane| pane.read(cx).active_item()?.project_path(cx))
+                .collect::<Vec<_>>();
+            assert!(
+                open_project_paths.is_empty(),
+                "Deleted file's buffer should be closed, but got open files: {open_project_paths:?}"
+            );
+        })
+        .unwrap();
 }
 
 struct TestProjectItemView {
@@ -5146,6 +5291,7 @@ impl ProjectItem for TestProjectItemView {
 
     fn for_project_item(
         _: Entity<Project>,
+        _: Option<&Pane>,
         project_item: Entity<Self::Item>,
         _: &mut Window,
         cx: &mut Context<Self>,
@@ -5162,6 +5308,10 @@ impl ProjectItem for TestProjectItemView {
 
 impl Item for TestProjectItemView {
     type Event = ();
+
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "Test".into()
+    }
 }
 
 impl EventEmitter<()> for TestProjectItemView {}

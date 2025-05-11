@@ -1,6 +1,6 @@
 use crate::{
-    tokens_for_bytes, CURSOR_MARKER, EDITABLE_REGION_END_MARKER, EDITABLE_REGION_START_MARKER,
-    START_OF_FILE_MARKER,
+    CURSOR_MARKER, EDITABLE_REGION_END_MARKER, EDITABLE_REGION_START_MARKER, START_OF_FILE_MARKER,
+    tokens_for_bytes,
 };
 use language::{BufferSnapshot, Point};
 use std::{fmt::Write, ops::Range};

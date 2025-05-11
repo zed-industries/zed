@@ -15,3 +15,4 @@ workspace = true
 gpui.workspace = true
 itertools.workspace = true
 smallvec.workspace = true
+workspace-hack.workspace = true

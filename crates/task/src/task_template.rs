@@ -1,16 +1,16 @@
-use std::path::PathBuf;
-use util::serde::default_true;
-
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use collections::{HashMap, HashSet};
-use schemars::{gen::SchemaSettings, JsonSchema};
+use schemars::{JsonSchema, r#gen::SchemaSettings};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use util::{truncate_and_remove_front, ResultExt};
+use std::path::PathBuf;
+use util::serde::default_true;
+use util::{ResultExt, truncate_and_remove_front};
 
 use crate::{
-    debug_format::DebugAdapterConfig, ResolvedTask, RevealTarget, Shell, SpawnInTerminal,
-    TaskContext, TaskId, VariableName, ZED_VARIABLE_NAME_PREFIX,
+    AttachRequest, ResolvedTask, RevealTarget, Shell, SpawnInTerminal, TaskContext, TaskId,
+    VariableName, ZED_VARIABLE_NAME_PREFIX,
+    serde_helpers::{non_empty_string_vec, non_empty_string_vec_json_schema},
 };
 
 /// A template definition of a Zed task to run.
@@ -58,11 +58,10 @@ pub struct TaskTemplate {
     /// * `on_success` — hide the terminal tab on task success only, otherwise behaves similar to `always`.
     #[serde(default)]
     pub hide: HideStrategy,
-    /// If this task should start a debugger or not
-    #[serde(default, skip)]
-    pub task_type: TaskType,
-    /// Represents the tags which this template attaches to. Adding this removes this task from other UI.
-    #[serde(default)]
+    /// Represents the tags which this template attaches to.
+    /// Adding this removes this task from other UI and gives you ability to run it by tag.
+    #[serde(default, deserialize_with = "non_empty_string_vec")]
+    #[schemars(schema_with = "non_empty_string_vec_json_schema")]
     pub tags: Vec<String>,
     /// Which shell to use when spawning the task.
     #[serde(default)]
@@ -75,70 +74,13 @@ pub struct TaskTemplate {
     pub show_command: bool,
 }
 
-/// Represents the type of task that is being ran
-#[derive(Default, Deserialize, Serialize, Eq, PartialEq, JsonSchema, Clone, Debug)]
-#[serde(rename_all = "snake_case", tag = "type")]
-#[expect(clippy::large_enum_variant)]
-pub enum TaskType {
-    /// Act like a typically task that runs commands
-    #[default]
-    Script,
-    /// This task starts the debugger for a language
-    Debug(DebugAdapterConfig),
-}
-
-#[cfg(test)]
-mod deserialization_tests {
-    use crate::{DebugAdapterKind, TCPHost};
-
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn deserialize_task_type_script() {
-        let json = json!({"type": "script"});
-
-        let task_type: TaskType =
-            serde_json::from_value(json).expect("Failed to deserialize TaskType::Script");
-        assert_eq!(task_type, TaskType::Script);
-    }
-
-    #[test]
-    fn deserialize_task_type_debug() {
-        let adapter_config = DebugAdapterConfig {
-            label: "test config".into(),
-            kind: DebugAdapterKind::Python(TCPHost::default()),
-            request: crate::DebugRequestType::Launch,
-            program: Some("main".to_string()),
-            supports_attach: false,
-            cwd: None,
-            initialize_args: None,
-        };
-        let json = json!({
-            "label": "test config",
-            "type": "debug",
-            "adapter": "python",
-            "program": "main",
-            "supports_attach": false,
-        });
-
-        let task_type: TaskType =
-            serde_json::from_value(json).expect("Failed to deserialize TaskType::Debug");
-        if let TaskType::Debug(config) = task_type {
-            assert_eq!(config, adapter_config);
-        } else {
-            panic!("Expected TaskType::Debug");
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-/// The type of task modal to spawn
-pub enum TaskModal {
-    /// Show regular tasks
-    ScriptModal,
-    /// Show debug tasks
-    DebugModal,
+#[derive(Deserialize, Eq, PartialEq, Clone, Debug)]
+/// Use to represent debug request type
+pub enum DebugArgsRequest {
+    /// launch (program, cwd) are stored in TaskTemplate as (command, cwd)
+    Launch,
+    /// Attach
+    Attach(AttachRequest),
 }
 
 /// What to do with the terminal pane and tab, after the command was started.
@@ -191,9 +133,7 @@ impl TaskTemplate {
     /// Every [`ResolvedTask`] gets a [`TaskId`], based on the `id_base` (to avoid collision with various task sources),
     /// and hashes of its template and [`TaskContext`], see [`ResolvedTask`] fields' documentation for more details.
     pub fn resolve_task(&self, id_base: &str, cx: &TaskContext) -> Option<ResolvedTask> {
-        if self.label.trim().is_empty()
-            || (self.command.trim().is_empty() && matches!(self.task_type, TaskType::Script))
-        {
+        if self.label.trim().is_empty() || self.command.trim().is_empty() {
             return None;
         }
 
@@ -269,22 +209,6 @@ impl TaskTemplate {
             &mut substituted_variables,
         )?;
 
-        let program = match &self.task_type {
-            TaskType::Script => None,
-            TaskType::Debug(adapter_config) => {
-                if let Some(program) = &adapter_config.program {
-                    Some(substitute_all_template_variables_in_str(
-                        program,
-                        &task_variables,
-                        &variable_names,
-                        &mut substituted_variables,
-                    )?)
-                } else {
-                    None
-                }
-            }
-        };
-
         let task_hash = to_hex_hash(self)
             .context("hashing task template")
             .log_err()?;
@@ -318,7 +242,7 @@ impl TaskTemplate {
             substituted_variables,
             original_task: self.clone(),
             resolved_label: full_label.clone(),
-            resolved: Some(SpawnInTerminal {
+            resolved: SpawnInTerminal {
                 id,
                 cwd,
                 full_label,
@@ -340,11 +264,10 @@ impl TaskTemplate {
                 reveal_target: self.reveal_target,
                 hide: self.hide,
                 shell: self.shell.clone(),
-                program,
                 show_summary: self.show_summary,
                 show_command: self.show_command,
                 show_rerun: true,
-            }),
+            },
         })
     }
 }
@@ -370,7 +293,29 @@ fn to_hex_hash(object: impl Serialize) -> anyhow::Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-fn substitute_all_template_variables_in_str<A: AsRef<str>>(
+pub fn substitute_variables_in_str(template_str: &str, context: &TaskContext) -> Option<String> {
+    let mut variable_names = HashMap::default();
+    let mut substituted_variables = HashSet::default();
+    let task_variables = context
+        .task_variables
+        .0
+        .iter()
+        .map(|(key, value)| {
+            let key_string = key.to_string();
+            if !variable_names.contains_key(&key_string) {
+                variable_names.insert(key_string.clone(), key.clone());
+            }
+            (key_string, value.as_str())
+        })
+        .collect::<HashMap<_, _>>();
+    substitute_all_template_variables_in_str(
+        template_str,
+        &task_variables,
+        &variable_names,
+        &mut substituted_variables,
+    )
+}
+pub fn substitute_all_template_variables_in_str<A: AsRef<str>>(
     template_str: &str,
     task_variables: &HashMap<String, A>,
     variable_names: &HashMap<String, VariableName>,
@@ -426,6 +371,31 @@ fn substitute_all_template_variables_in_vec(
     Some(expanded)
 }
 
+pub fn substitute_variables_in_map(
+    keys_and_values: &HashMap<String, String>,
+    context: &TaskContext,
+) -> Option<HashMap<String, String>> {
+    let mut variable_names = HashMap::default();
+    let mut substituted_variables = HashSet::default();
+    let task_variables = context
+        .task_variables
+        .0
+        .iter()
+        .map(|(key, value)| {
+            let key_string = key.to_string();
+            if !variable_names.contains_key(&key_string) {
+                variable_names.insert(key_string.clone(), key.clone());
+            }
+            (key_string, value.as_str())
+        })
+        .collect::<HashMap<_, _>>();
+    substitute_all_template_variables_in_map(
+        keys_and_values,
+        &task_variables,
+        &variable_names,
+        &mut substituted_variables,
+    )
+}
 fn substitute_all_template_variables_in_map(
     keys_and_values: &HashMap<String, String>,
     task_variables: &HashMap<String, &str>,
@@ -508,12 +478,7 @@ mod tests {
                 .resolve_task(TEST_ID_BASE, task_cx)
                 .unwrap_or_else(|| panic!("failed to resolve task {task_without_cwd:?}"));
             assert_substituted_variables(&resolved_task, Vec::new());
-            resolved_task
-                .resolved
-                .clone()
-                .unwrap_or_else(|| {
-                    panic!("failed to get resolve data for resolved task. Template: {task_without_cwd:?} Resolved: {resolved_task:?}")
-                })
+            resolved_task.resolved
         };
 
         let cx = TaskContext {
@@ -660,10 +625,7 @@ mod tests {
                 all_variables.iter().map(|(name, _)| name.clone()).collect(),
             );
 
-            let spawn_in_terminal = resolved_task
-                .resolved
-                .as_ref()
-                .expect("should have resolved a spawn in terminal task");
+            let spawn_in_terminal = &resolved_task.resolved;
             assert_eq!(
                 spawn_in_terminal.label,
                 format!(
@@ -688,7 +650,10 @@ mod tests {
             );
             assert_eq!(
                 spawn_in_terminal.command_label,
-                format!("{} arg1 test_selected_text arg2 5678 arg3 {long_value}", spawn_in_terminal.command),
+                format!(
+                    "{} arg1 test_selected_text arg2 5678 arg3 {long_value}",
+                    spawn_in_terminal.command
+                ),
                 "Command label args should be substituted with variables and those should not be shortened"
             );
 
@@ -725,7 +690,10 @@ mod tests {
                     project_env: HashMap::default(),
                 },
             );
-            assert_eq!(resolved_task_attempt, None, "If any of the Zed task variables is not substituted, the task should not be resolved, but got some resolution without the variable {removed_variable:?} (index {i})");
+            assert_eq!(
+                resolved_task_attempt, None,
+                "If any of the Zed task variables is not substituted, the task should not be resolved, but got some resolution without the variable {removed_variable:?} (index {i})"
+            );
         }
     }
 
@@ -741,7 +709,7 @@ mod tests {
             .resolve_task(TEST_ID_BASE, &TaskContext::default())
             .unwrap();
         assert_substituted_variables(&resolved_task, Vec::new());
-        let resolved = resolved_task.resolved.unwrap();
+        let resolved = resolved_task.resolved;
         assert_eq!(resolved.label, task.label);
         assert_eq!(resolved.command, task.command);
         assert_eq!(resolved.args, task.args);
@@ -755,9 +723,10 @@ mod tests {
             args: vec!["$ZED_VARIABLE".into()],
             ..TaskTemplate::default()
         };
-        assert!(task
-            .resolve_task(TEST_ID_BASE, &TaskContext::default())
-            .is_none());
+        assert!(
+            task.resolve_task(TEST_ID_BASE, &TaskContext::default())
+                .is_none()
+        );
     }
 
     #[test]
@@ -909,8 +878,7 @@ mod tests {
         let resolved = template
             .resolve_task(TEST_ID_BASE, &context)
             .unwrap()
-            .resolved
-            .unwrap();
+            .resolved;
 
         assert_eq!(resolved.env["TASK_ENV_VAR1"], "TASK_ENV_VAR1_VALUE");
         assert_eq!(resolved.env["TASK_ENV_VAR2"], "env_var_2 1234 5678");

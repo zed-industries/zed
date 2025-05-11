@@ -130,7 +130,7 @@ pub use elements::*;
 pub use executor::*;
 pub use geometry::*;
 pub use global::*;
-pub use gpui_macros::{register_action, test, AppContext, IntoElement, Render, VisualContext};
+pub use gpui_macros::{AppContext, IntoElement, Render, VisualContext, register_action, test};
 pub use http_client;
 pub use input::*;
 pub use interactive::*;
@@ -168,7 +168,7 @@ pub trait AppContext {
     /// Create a new entity in the app context.
     fn new<T: 'static>(
         &mut self,
-        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Self::Result<Entity<T>>;
 
     /// Reserve a slot for a entity to be inserted later.
@@ -181,14 +181,14 @@ pub trait AppContext {
     fn insert_entity<T: 'static>(
         &mut self,
         reservation: Reservation<T>,
-        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Self::Result<Entity<T>>;
 
     /// Update a entity in the app context.
     fn update_entity<T, R>(
         &mut self,
         handle: &Entity<T>,
-        update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Context<T>) -> R,
     ) -> Self::Result<R>
     where
         T: 'static;
@@ -254,7 +254,7 @@ pub trait VisualContext: AppContext {
     /// Update a view with the given callback
     fn new_window_entity<T: 'static>(
         &mut self,
-        build_entity: impl FnOnce(&mut Window, &mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Window, &mut Context<T>) -> T,
     ) -> Self::Result<Entity<T>>;
 
     /// Replace the root view of a window with a new view.

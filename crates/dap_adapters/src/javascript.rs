@@ -1,45 +1,54 @@
 use adapters::latest_github_release;
-use dap::transport::TcpTransport;
+use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
-use regex::Regex;
-use std::{collections::HashMap, net::Ipv4Addr, path::PathBuf};
-use sysinfo::{Pid, Process};
-use task::DebugRequestType;
+use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
+use task::DebugRequest;
+use util::ResultExt;
 
 use crate::*;
 
+#[derive(Debug, Default)]
 pub(crate) struct JsDebugAdapter {
-    port: u16,
-    host: Ipv4Addr,
-    timeout: Option<u64>,
+    checked: OnceLock<()>,
 }
 
 impl JsDebugAdapter {
-    const ADAPTER_NAME: &'static str = "vscode-js-debug";
+    const ADAPTER_NAME: &'static str = "JavaScript";
+    const ADAPTER_NPM_NAME: &'static str = "vscode-js-debug";
     const ADAPTER_PATH: &'static str = "js-debug/src/dapDebugServer.js";
 
-    pub(crate) async fn new(host: TCPHost) -> Result<Self> {
-        Ok(JsDebugAdapter {
-            host: host.host(),
-            timeout: host.timeout,
-            port: TcpTransport::port(&host).await?,
-        })
-    }
+    fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
+        let mut args = json!({
+            "type": "pwa-node",
+            "request": match config.request {
+                DebugRequest::Launch(_) => "launch",
+                DebugRequest::Attach(_) => "attach",
+            },
+        });
+        let map = args.as_object_mut().unwrap();
+        match &config.request {
+            DebugRequest::Attach(attach) => {
+                map.insert("processId".into(), attach.process_id.into());
+            }
+            DebugRequest::Launch(launch) => {
+                map.insert("program".into(), launch.program.clone().into());
 
-    pub fn attach_processes(processes: &HashMap<Pid, Process>) -> Vec<(&Pid, &Process)> {
-        let regex = Regex::new(r"(?i)^(?:node|bun|iojs)(?:$|\b)").unwrap();
+                if !launch.args.is_empty() {
+                    map.insert("args".into(), launch.args.clone().into());
+                }
 
-        processes
-            .iter()
-            .filter(|(_, process)| regex.is_match(&process.name().to_string_lossy()))
-            .collect::<Vec<_>>()
-    }
-}
-
-#[async_trait(?Send)]
-impl DebugAdapter for JsDebugAdapter {
-    fn name(&self) -> DebugAdapterName {
-        DebugAdapterName(Self::ADAPTER_NAME.into())
+                if let Some(stop_on_entry) = config.stop_on_entry {
+                    map.insert("stopOnEntry".into(), stop_on_entry.into());
+                }
+                if let Some(cwd) = launch.cwd.as_ref() {
+                    map.insert("cwd".into(), cwd.to_string_lossy().into_owned().into());
+                }
+            }
+        }
+        StartDebuggingRequestArguments {
+            configuration: args,
+            request: config.request.to_dap(),
+        }
     }
 
     async fn fetch_latest_adapter_version(
@@ -47,7 +56,7 @@ impl DebugAdapter for JsDebugAdapter {
         delegate: &dyn DapDelegate,
     ) -> Result<AdapterVersion> {
         let release = latest_github_release(
-            &format!("{}/{}", "microsoft", Self::ADAPTER_NAME),
+            &format!("{}/{}", "microsoft", Self::ADAPTER_NPM_NAME),
             true,
             false,
             delegate.http_client(),
@@ -71,14 +80,14 @@ impl DebugAdapter for JsDebugAdapter {
     async fn get_installed_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugAdapterConfig,
+        config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let adapter_path = if let Some(user_installed_path) = user_installed_path {
             user_installed_path
         } else {
-            let adapter_path = paths::debug_adapters_dir().join(self.name());
+            let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
 
             let file_name_prefix = format!("{}_", self.name());
 
@@ -89,6 +98,9 @@ impl DebugAdapter for JsDebugAdapter {
             .ok_or_else(|| anyhow!("Couldn't find JavaScript dap directory"))?
         };
 
+        let tcp_connection = config.tcp_connection.clone().unwrap_or_default();
+        let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
+
         Ok(DebugAdapterBinary {
             command: delegate
                 .node_runtime()
@@ -96,53 +108,53 @@ impl DebugAdapter for JsDebugAdapter {
                 .await?
                 .to_string_lossy()
                 .into_owned(),
-            arguments: Some(vec![
-                adapter_path.join(Self::ADAPTER_PATH).into(),
-                self.port.to_string().into(),
-                self.host.to_string().into(),
-            ]),
-            cwd: config.cwd.clone(),
-            envs: None,
+            arguments: vec![
+                adapter_path
+                    .join(Self::ADAPTER_PATH)
+                    .to_string_lossy()
+                    .to_string(),
+                port.to_string(),
+                host.to_string(),
+            ],
+            cwd: None,
+            envs: HashMap::default(),
             connection: Some(adapters::TcpArguments {
-                host: self.host,
-                port: self.port,
-                timeout: self.timeout,
+                host,
+                port,
+                timeout,
             }),
+            request_args: self.request_args(config),
         })
     }
+}
 
-    async fn install_binary(
+#[async_trait(?Send)]
+impl DebugAdapter for JsDebugAdapter {
+    fn name(&self) -> DebugAdapterName {
+        DebugAdapterName(Self::ADAPTER_NAME.into())
+    }
+
+    async fn get_binary(
         &self,
-        version: AdapterVersion,
         delegate: &dyn DapDelegate,
-    ) -> Result<()> {
-        adapters::download_adapter_from_github(
-            self.name(),
-            version,
-            adapters::DownloadedFileType::GzipTar,
-            delegate,
-        )
-        .await?;
+        config: &DebugTaskDefinition,
+        user_installed_path: Option<PathBuf>,
+        cx: &mut AsyncApp,
+    ) -> Result<DebugAdapterBinary> {
+        if self.checked.set(()).is_ok() {
+            delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
+            if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
+                adapters::download_adapter_from_github(
+                    self.name(),
+                    version,
+                    adapters::DownloadedFileType::GzipTar,
+                    delegate,
+                )
+                .await?;
+            }
+        }
 
-        return Ok(());
-    }
-
-    fn request_args(&self, config: &DebugAdapterConfig) -> Value {
-        let pid = if let DebugRequestType::Attach(attach_config) = &config.request {
-            attach_config.process_id
-        } else {
-            None
-        };
-
-        json!({
-            "program": config.program,
-            "type": "pwa-node",
-            "request": match config.request {
-                DebugRequestType::Launch => "launch",
-                DebugRequestType::Attach(_) => "attach",
-            },
-            "processId": pid,
-            "cwd": config.cwd,
-        })
+        self.get_installed_binary(delegate, &config, user_installed_path, cx)
+            .await
     }
 }

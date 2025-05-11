@@ -1,14 +1,14 @@
 use editor::Editor;
 use gpui::{
-    actions, prelude::*, AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable,
-    Subscription,
+    AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, actions,
+    prelude::*,
 };
 use project::ProjectItem as _;
-use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding};
+use ui::{ButtonLike, ElevationIndex, KeyBinding, prelude::*};
 use util::ResultExt as _;
-use workspace::item::ItemEvent;
 use workspace::WorkspaceId;
-use workspace::{item::Item, Workspace};
+use workspace::item::ItemEvent;
+use workspace::{Workspace, item::Item};
 
 use crate::jupyter_settings::JupyterSettings;
 use crate::repl_store::ReplStore;
@@ -178,8 +178,8 @@ impl Focusable for ReplSessionsPage {
 impl Item for ReplSessionsPage {
     type Event = ItemEvent;
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("REPL Sessions".into())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "REPL Sessions".into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

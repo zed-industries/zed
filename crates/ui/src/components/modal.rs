@@ -1,6 +1,6 @@
 use crate::{
-    h_flex, v_flex, Clickable, Color, DynamicSpacing, Headline, HeadlineSize, IconButton,
-    IconButtonShape, IconName, Label, LabelCommon, LabelSize,
+    Clickable, Color, DynamicSpacing, Headline, HeadlineSize, IconButton, IconButtonShape,
+    IconName, Label, LabelCommon, LabelSize, h_flex, v_flex,
 };
 use gpui::{prelude::FluentBuilder, *};
 use smallvec::SmallVec;
@@ -249,10 +249,14 @@ impl ModalFooter {
 impl RenderOnce for ModalFooter {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         h_flex()
-            .flex_none()
             .w_full()
+            .mt_4()
             .p(DynamicSpacing::Base08.rems(cx))
+            .flex_none()
             .justify_between()
+            .gap_1()
+            .border_t_1()
+            .border_color(cx.theme().colors().border_variant)
             .child(div().when_some(self.start_slot, |this, start_slot| this.child(start_slot)))
             .child(div().when_some(self.end_slot, |this, end_slot| this.child(end_slot)))
     }

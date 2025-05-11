@@ -1,41 +1,44 @@
+use std::any::Any;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use editor::Editor;
 use file_finder::OpenPathDelegate;
+use futures::FutureExt;
 use futures::channel::oneshot;
 use futures::future::Shared;
-use futures::FutureExt;
-use gpui::canvas;
 use gpui::ClipboardItem;
 use gpui::Task;
 use gpui::WeakEntity;
+use gpui::canvas;
 use gpui::{
     AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     PromptLevel, ScrollHandle, Window,
 };
 use picker::Picker;
 use project::Project;
-use remote::ssh_session::ConnectionIdentifier;
 use remote::SshConnectionOptions;
 use remote::SshRemoteClient;
-use settings::update_settings_file;
+use remote::ssh_session::ConnectionIdentifier;
 use settings::Settings;
+use settings::update_settings_file;
 use ui::Navigable;
 use ui::NavigableEntry;
 use ui::{
-    prelude::*, IconButtonShape, List, ListItem, ListSeparator, Modal, ModalHeader, Scrollbar,
-    ScrollbarState, Section, Tooltip,
+    IconButtonShape, List, ListItem, ListSeparator, Modal, ModalHeader, Scrollbar, ScrollbarState,
+    Section, Tooltip, prelude::*,
 };
 use util::ResultExt;
-use workspace::notifications::NotificationId;
 use workspace::OpenOptions;
 use workspace::Toast;
-use workspace::{notifications::DetachAndPromptErr, ModalView, Workspace};
+use workspace::notifications::NotificationId;
+use workspace::{
+    ModalView, Workspace, notifications::DetachAndPromptErr,
+    open_ssh_project_with_existing_connection,
+};
 
-use crate::ssh_connections::connect_over_ssh;
-use crate::ssh_connections::open_ssh_project;
+use crate::OpenRemote;
 use crate::ssh_connections::RemoteSettingsContent;
 use crate::ssh_connections::SshConnection;
 use crate::ssh_connections::SshConnectionHeader;
@@ -43,7 +46,8 @@ use crate::ssh_connections::SshConnectionModal;
 use crate::ssh_connections::SshProject;
 use crate::ssh_connections::SshPrompt;
 use crate::ssh_connections::SshSettings;
-use crate::OpenRemote;
+use crate::ssh_connections::connect_over_ssh;
+use crate::ssh_connections::open_ssh_project;
 
 mod navigation_base {}
 pub struct RemoteServerProjects {
@@ -120,20 +124,20 @@ impl ProjectPicker {
         ix: usize,
         connection: SshConnectionOptions,
         project: Entity<Project>,
+        home_dir: PathBuf,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<RemoteServerProjects>,
     ) -> Entity<Self> {
         let (tx, rx) = oneshot::channel();
         let lister = project::DirectoryLister::Project(project.clone());
-        let query = lister.default_query(cx);
         let delegate = file_finder::OpenPathDelegate::new(tx, lister);
 
         let picker = cx.new(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx)
                 .width(rems(34.))
                 .modal(false);
-            picker.set_query(query, window, cx);
+            picker.set_query(home_dir.to_string_lossy().to_string(), window, cx);
             picker
         });
         let connection_string = connection.connection_string().into();
@@ -157,13 +161,8 @@ impl ProjectPicker {
                     let app_state = workspace
                         .update(cx, |workspace, _| workspace.app_state().clone())
                         .ok()?;
-                    let options = cx
-                        .update(|_, cx| (app_state.build_window_options)(None, cx))
-                        .log_err()?;
 
-                    cx.open_window(options, |window, cx| {
-                        window.activate_window();
-
+                    cx.update(|_, cx| {
                         let fs = app_state.fs.clone();
                         update_settings_file::<SshSettings>(fs, cx, {
                             let paths = paths
@@ -180,32 +179,27 @@ impl ProjectPicker {
                                 }
                             }
                         });
-
-                        let tasks = paths
-                            .into_iter()
-                            .map(|path| {
-                                project.update(cx, |project, cx| {
-                                    project.find_or_create_worktree(&path, true, cx)
-                                })
-                            })
-                            .collect::<Vec<_>>();
-                        window
-                            .spawn(cx, async move |_| {
-                                for task in tasks {
-                                    task.await?;
-                                }
-                                Ok(())
-                            })
-                            .detach_and_prompt_err("Failed to open path", window, cx, |_, _, _| {
-                                None
-                            });
-
-                        cx.new(|cx| {
-                            telemetry::event!("SSH Project Created");
-                            Workspace::new(None, project.clone(), app_state.clone(), window, cx)
-                        })
                     })
                     .log_err();
+
+                    let options = cx
+                        .update(|_, cx| (app_state.build_window_options)(None, cx))
+                        .log_err()?;
+                    let window = cx
+                        .open_window(options, |window, cx| {
+                            cx.new(|cx| {
+                                telemetry::event!("SSH Project Created");
+                                Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+                            })
+                        })
+                        .log_err()?;
+
+                    open_ssh_project_with_existing_connection(
+                        connection, project, paths, app_state, window, cx,
+                    )
+                    .await
+                    .log_err();
+
                     this.update(cx, |_, cx| {
                         cx.emit(DismissEvent);
                     })
@@ -351,6 +345,7 @@ impl RemoteServerProjects {
         ix: usize,
         connection_options: remote::SshConnectionOptions,
         project: Entity<Project>,
+        home_dir: PathBuf,
         window: &mut Window,
         cx: &mut Context<Self>,
         workspace: WeakEntity<Workspace>,
@@ -360,6 +355,7 @@ impl RemoteServerProjects {
             ix,
             connection_options,
             project,
+            home_dir,
             workspace,
             window,
             cx,
@@ -473,6 +469,7 @@ impl RemoteServerProjects {
         let connection_options = ssh_connection.into();
         workspace.update(cx, |_, cx| {
             cx.defer_in(window, move |workspace, window, cx| {
+                let app_state = workspace.app_state().clone();
                 workspace.toggle_modal(window, cx, |window, cx| {
                     SshConnectionModal::new(&connection_options, Vec::new(), window, cx)
                 });
@@ -495,44 +492,48 @@ impl RemoteServerProjects {
                 cx.spawn_in(window, async move |workspace, cx| {
                     let session = connect.await;
 
-                    workspace
-                        .update(cx, |workspace, cx| {
-                            if let Some(prompt) = workspace.active_modal::<SshConnectionModal>(cx) {
-                                prompt.update(cx, |prompt, cx| prompt.finished(cx))
-                            }
-                        })
-                        .ok();
+                    workspace.update(cx, |workspace, cx| {
+                        if let Some(prompt) = workspace.active_modal::<SshConnectionModal>(cx) {
+                            prompt.update(cx, |prompt, cx| prompt.finished(cx))
+                        }
+                    })?;
 
                     let Some(Some(session)) = session else {
-                        workspace
-                            .update_in(cx, |workspace, window, cx| {
-                                let weak = cx.entity().downgrade();
-                                workspace.toggle_modal(window, cx, |window, cx| {
-                                    RemoteServerProjects::new(window, cx, weak)
-                                });
-                            })
-                            .log_err();
-                        return;
+                        return workspace.update_in(cx, |workspace, window, cx| {
+                            let weak = cx.entity().downgrade();
+                            workspace.toggle_modal(window, cx, |window, cx| {
+                                RemoteServerProjects::new(window, cx, weak)
+                            });
+                        });
                     };
+
+                    let project = cx.update(|_, cx| {
+                        project::Project::ssh(
+                            session,
+                            app_state.client.clone(),
+                            app_state.node_runtime.clone(),
+                            app_state.user_store.clone(),
+                            app_state.languages.clone(),
+                            app_state.fs.clone(),
+                            cx,
+                        )
+                    })?;
+
+                    let home_dir = project
+                        .read_with(cx, |project, cx| project.resolve_abs_path("~", cx))?
+                        .await
+                        .and_then(|path| path.into_abs_path())
+                        .unwrap_or(PathBuf::from("/"));
 
                     workspace
                         .update_in(cx, |workspace, window, cx| {
-                            let app_state = workspace.app_state().clone();
                             let weak = cx.entity().downgrade();
-                            let project = project::Project::ssh(
-                                session,
-                                app_state.client.clone(),
-                                app_state.node_runtime.clone(),
-                                app_state.user_store.clone(),
-                                app_state.languages.clone(),
-                                app_state.fs.clone(),
-                                cx,
-                            );
                             workspace.toggle_modal(window, cx, |window, cx| {
                                 RemoteServerProjects::project_picker(
                                     ix,
                                     connection_options,
                                     project,
+                                    home_dir,
                                     window,
                                     cx,
                                     weak,
@@ -540,8 +541,9 @@ impl RemoteServerProjects {
                             });
                         })
                         .ok();
+                    Ok(())
                 })
-                .detach()
+                .detach();
             })
         })
     }
@@ -1295,11 +1297,8 @@ impl RemoteServerProjects {
                 cx.notify();
             }));
 
-        let Some(scroll_handle) = scroll_state
-            .scroll_handle()
-            .as_any()
-            .downcast_ref::<ScrollHandle>()
-        else {
+        let handle = &**scroll_state.scroll_handle() as &dyn Any;
+        let Some(scroll_handle) = handle.downcast_ref::<ScrollHandle>() else {
             unreachable!()
         };
 
@@ -1345,7 +1344,7 @@ impl RemoteServerProjects {
         Modal::new("remote-projects", None)
             .header(
                 ModalHeader::new()
-                    .child(Headline::new("Remote Projects (beta)").size(HeadlineSize::XSmall)),
+                    .child(Headline::new("Remote Projects").size(HeadlineSize::XSmall)),
             )
             .section(
                 Section::new().padded(false).child(

@@ -1,4 +1,4 @@
-use gpui::{div, prelude::*, Div};
+use gpui::{Div, div, prelude::*};
 
 /// Creates a horizontal group with tight, consistent spacing.
 ///

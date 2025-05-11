@@ -1,30 +1,32 @@
-use anyhow::{anyhow, Context as _, Result};
-use collections::BTreeMap;
+use anyhow::{Context as _, Result, anyhow};
+use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::{future::BoxFuture, FutureExt, StreamExt};
+use futures::Stream;
+use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
 };
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
+    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason,
 };
-use open_ai::{
-    stream_completion, FunctionDefinition, ResponseStreamEvent, ToolChoice, ToolDefinition,
-};
+use open_ai::{Model, ResponseStreamEvent, stream_completion};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
+use std::pin::Pin;
+use std::str::FromStr as _;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
-use ui::{prelude::*, Icon, IconName, List, Tooltip};
+use ui::{Icon, IconName, List, Tooltip, prelude::*};
 use util::ResultExt;
 
-use crate::{ui::InstructionListItem, AllLanguageModelSettings};
+use crate::{AllLanguageModelSettings, ui::InstructionListItem};
 
 const PROVIDER_ID: &str = "openai";
 const PROVIDER_NAME: &str = "OpenAI";
@@ -146,6 +148,16 @@ impl OpenAiLanguageModelProvider {
 
         Self { http_client, state }
     }
+
+    fn create_language_model(&self, model: open_ai::Model) -> Arc<dyn LanguageModel> {
+        Arc::new(OpenAiLanguageModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            state: self.state.clone(),
+            http_client: self.http_client.clone(),
+            request_limiter: RateLimiter::new(4),
+        })
+    }
 }
 
 impl LanguageModelProviderState for OpenAiLanguageModelProvider {
@@ -170,14 +182,11 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let model = open_ai::Model::default();
-        Some(Arc::new(OpenAiLanguageModel {
-            id: LanguageModelId::from(model.id().to_string()),
-            model,
-            state: self.state.clone(),
-            http_client: self.http_client.clone(),
-            request_limiter: RateLimiter::new(4),
-        }))
+        Some(self.create_language_model(open_ai::Model::default()))
+    }
+
+    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        Some(self.create_language_model(open_ai::Model::default_fast()))
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -209,15 +218,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
 
         models
             .into_values()
-            .map(|model| {
-                Arc::new(OpenAiLanguageModel {
-                    id: LanguageModelId::from(model.id().to_string()),
-                    model,
-                    state: self.state.clone(),
-                    http_client: self.http_client.clone(),
-                    request_limiter: RateLimiter::new(4),
-                }) as Arc<dyn LanguageModel>
-            })
+            .map(|model| self.create_language_model(model))
             .collect()
     }
 
@@ -290,6 +291,18 @@ impl LanguageModel for OpenAiLanguageModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
+    fn supports_tools(&self) -> bool {
+        true
+    }
+
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        match choice {
+            LanguageModelToolChoice::Auto => true,
+            LanguageModelToolChoice::Any => true,
+            LanguageModelToolChoice::None => true,
+        }
+    }
+
     fn telemetry_id(&self) -> String {
         format!("openai/{}", self.model.id())
     }
@@ -316,92 +329,217 @@ impl LanguageModel for OpenAiLanguageModel {
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
-        Result<futures::stream::BoxStream<'static, Result<LanguageModelCompletionEvent>>>,
+        Result<
+            futures::stream::BoxStream<
+                'static,
+                Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+            >,
+        >,
     > {
-        let request = into_open_ai(request, self.model.id().into(), self.max_output_tokens());
+        let request = into_open_ai(request, &self.model, self.max_output_tokens());
         let completions = self.stream_completion(request, cx);
         async move {
-            Ok(open_ai::extract_text_from_events(completions.await?)
-                .map(|result| result.map(LanguageModelCompletionEvent::Text))
-                .boxed())
+            let mapper = OpenAiEventMapper::new();
+            Ok(mapper.map_stream(completions.await?).boxed())
         }
         .boxed()
-    }
-
-    fn use_any_tool(
-        &self,
-        request: LanguageModelRequest,
-        tool_name: String,
-        tool_description: String,
-        schema: serde_json::Value,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
-        let mut request = into_open_ai(request, self.model.id().into(), self.max_output_tokens());
-        request.tool_choice = Some(ToolChoice::Other(ToolDefinition::Function {
-            function: FunctionDefinition {
-                name: tool_name.clone(),
-                description: None,
-                parameters: None,
-            },
-        }));
-        request.tools = vec![ToolDefinition::Function {
-            function: FunctionDefinition {
-                name: tool_name.clone(),
-                description: Some(tool_description),
-                parameters: Some(schema),
-            },
-        }];
-
-        let response = self.stream_completion(request, cx);
-        self.request_limiter
-            .run(async move {
-                let response = response.await?;
-                Ok(
-                    open_ai::extract_tool_args_from_events(tool_name, Box::pin(response))
-                        .await?
-                        .boxed(),
-                )
-            })
-            .boxed()
     }
 }
 
 pub fn into_open_ai(
     request: LanguageModelRequest,
-    model: String,
+    model: &Model,
     max_output_tokens: Option<u32>,
 ) -> open_ai::Request {
-    let stream = !model.starts_with("o1-");
+    let stream = !model.id().starts_with("o1-");
+
+    let mut messages = Vec::new();
+    for message in request.messages {
+        for content in message.content {
+            match content {
+                MessageContent::Text(text) | MessageContent::Thinking { text, .. } => messages
+                    .push(match message.role {
+                        Role::User => open_ai::RequestMessage::User { content: text },
+                        Role::Assistant => open_ai::RequestMessage::Assistant {
+                            content: Some(text),
+                            tool_calls: Vec::new(),
+                        },
+                        Role::System => open_ai::RequestMessage::System { content: text },
+                    }),
+                MessageContent::RedactedThinking(_) => {}
+                MessageContent::Image(_) => {}
+                MessageContent::ToolUse(tool_use) => {
+                    let tool_call = open_ai::ToolCall {
+                        id: tool_use.id.to_string(),
+                        content: open_ai::ToolCallContent::Function {
+                            function: open_ai::FunctionContent {
+                                name: tool_use.name.to_string(),
+                                arguments: serde_json::to_string(&tool_use.input)
+                                    .unwrap_or_default(),
+                            },
+                        },
+                    };
+
+                    if let Some(open_ai::RequestMessage::Assistant { tool_calls, .. }) =
+                        messages.last_mut()
+                    {
+                        tool_calls.push(tool_call);
+                    } else {
+                        messages.push(open_ai::RequestMessage::Assistant {
+                            content: None,
+                            tool_calls: vec![tool_call],
+                        });
+                    }
+                }
+                MessageContent::ToolResult(tool_result) => {
+                    messages.push(open_ai::RequestMessage::Tool {
+                        content: tool_result.content.to_string(),
+                        tool_call_id: tool_result.tool_use_id.to_string(),
+                    });
+                }
+            }
+        }
+    }
+
     open_ai::Request {
-        model,
-        messages: request
-            .messages
-            .into_iter()
-            .map(|msg| match msg.role {
-                Role::User => open_ai::RequestMessage::User {
-                    content: msg.string_contents(),
-                },
-                Role::Assistant => open_ai::RequestMessage::Assistant {
-                    content: Some(msg.string_contents()),
-                    tool_calls: Vec::new(),
-                },
-                Role::System => open_ai::RequestMessage::System {
-                    content: msg.string_contents(),
-                },
-            })
-            .collect(),
+        model: model.id().into(),
+        messages,
         stream,
         stop: request.stop,
         temperature: request.temperature.unwrap_or(1.0),
         max_tokens: max_output_tokens,
-        tools: Vec::new(),
-        tool_choice: None,
+        parallel_tool_calls: if model.supports_parallel_tool_calls() && !request.tools.is_empty() {
+            // Disable parallel tool calls, as the Agent currently expects a maximum of one per turn.
+            Some(false)
+        } else {
+            None
+        },
+        tools: request
+            .tools
+            .into_iter()
+            .map(|tool| open_ai::ToolDefinition::Function {
+                function: open_ai::FunctionDefinition {
+                    name: tool.name,
+                    description: Some(tool.description),
+                    parameters: Some(tool.input_schema),
+                },
+            })
+            .collect(),
+        tool_choice: request.tool_choice.map(|choice| match choice {
+            LanguageModelToolChoice::Auto => open_ai::ToolChoice::Auto,
+            LanguageModelToolChoice::Any => open_ai::ToolChoice::Required,
+            LanguageModelToolChoice::None => open_ai::ToolChoice::None,
+        }),
     }
+}
+
+pub struct OpenAiEventMapper {
+    tool_calls_by_index: HashMap<usize, RawToolCall>,
+}
+
+impl OpenAiEventMapper {
+    pub fn new() -> Self {
+        Self {
+            tool_calls_by_index: HashMap::default(),
+        }
+    }
+
+    pub fn map_stream(
+        mut self,
+        events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
+    ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
+    {
+        events.flat_map(move |event| {
+            futures::stream::iter(match event {
+                Ok(event) => self.map_event(event),
+                Err(error) => vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))],
+            })
+        })
+    }
+
+    pub fn map_event(
+        &mut self,
+        event: ResponseStreamEvent,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let Some(choice) = event.choices.first() else {
+            return vec![Err(LanguageModelCompletionError::Other(anyhow!(
+                "Response contained no choices"
+            )))];
+        };
+
+        let mut events = Vec::new();
+        if let Some(content) = choice.delta.content.clone() {
+            events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+        }
+
+        if let Some(tool_calls) = choice.delta.tool_calls.as_ref() {
+            for tool_call in tool_calls {
+                let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
+
+                if let Some(tool_id) = tool_call.id.clone() {
+                    entry.id = tool_id;
+                }
+
+                if let Some(function) = tool_call.function.as_ref() {
+                    if let Some(name) = function.name.clone() {
+                        entry.name = name;
+                    }
+
+                    if let Some(arguments) = function.arguments.clone() {
+                        entry.arguments.push_str(&arguments);
+                    }
+                }
+            }
+        }
+
+        match choice.finish_reason.as_deref() {
+            Some("stop") => {
+                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+            }
+            Some("tool_calls") => {
+                events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
+                    match serde_json::Value::from_str(&tool_call.arguments) {
+                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
+                            LanguageModelToolUse {
+                                id: tool_call.id.clone().into(),
+                                name: tool_call.name.as_str().into(),
+                                is_input_complete: true,
+                                input,
+                                raw_input: tool_call.arguments.clone(),
+                            },
+                        )),
+                        Err(error) => Err(LanguageModelCompletionError::BadInputJson {
+                            id: tool_call.id.into(),
+                            tool_name: tool_call.name.as_str().into(),
+                            raw_input: tool_call.arguments.into(),
+                            json_parse_error: error.to_string(),
+                        }),
+                    }
+                }));
+
+                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
+            }
+            Some(stop_reason) => {
+                log::error!("Unexpected OpenAI stop_reason: {stop_reason:?}",);
+                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+            }
+            None => {}
+        }
+
+        events
+    }
+}
+
+#[derive(Default)]
+struct RawToolCall {
+    id: String,
+    name: String,
+    arguments: String,
 }
 
 pub fn count_open_ai_tokens(
     request: LanguageModelRequest,
-    model: open_ai::Model,
+    model: Model,
     cx: &App,
 ) -> BoxFuture<'static, Result<usize>> {
     cx.background_spawn(async move {
@@ -421,11 +559,33 @@ pub fn count_open_ai_tokens(
             .collect::<Vec<_>>();
 
         match model {
-            open_ai::Model::Custom { .. }
-            | open_ai::Model::O1Mini
-            | open_ai::Model::O1
-            | open_ai::Model::O3Mini => tiktoken_rs::num_tokens_from_messages("gpt-4", &messages),
-            _ => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
+            Model::Custom { max_tokens, .. } => {
+                let model = if max_tokens >= 100_000 {
+                    // If the max tokens is 100k or more, it is likely the o200k_base tokenizer from gpt4o
+                    "gpt-4o"
+                } else {
+                    // Otherwise fallback to gpt-4, since only cl100k_base and o200k_base are
+                    // supported with this tiktoken method
+                    "gpt-4"
+                };
+                tiktoken_rs::num_tokens_from_messages(model, &messages)
+            }
+            // Not currently supported by tiktoken_rs. All use the same tokenizer as gpt-4o (o200k_base)
+            Model::O1
+            | Model::FourPointOne
+            | Model::FourPointOneMini
+            | Model::FourPointOneNano
+            | Model::O3Mini
+            | Model::O3
+            | Model::O4Mini => tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages),
+            // Currently supported by tiktoken_rs
+            Model::ThreePointFiveTurbo
+            | Model::Four
+            | Model::FourTurbo
+            | Model::FourOmni
+            | Model::FourOmniMini
+            | Model::O1Preview
+            | Model::O1Mini => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
         }
     })
     .boxed()
@@ -569,7 +729,7 @@ impl Render for ConfigurationView {
                         .py_1()
                         .bg(cx.theme().colors().editor_background)
                         .border_1()
-                        .border_color(cx.theme().colors().border_variant)
+                        .border_color(cx.theme().colors().border)
                         .rounded_sm()
                         .child(self.render_api_key_editor(cx)),
                 )
@@ -588,8 +748,13 @@ impl Render for ConfigurationView {
                 .into_any()
         } else {
             h_flex()
-                .size_full()
+                .mt_1()
+                .p_1()
                 .justify_between()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().background)
                 .child(
                     h_flex()
                         .gap_1()
@@ -601,7 +766,8 @@ impl Render for ConfigurationView {
                         })),
                 )
                 .child(
-                    Button::new("reset-key", "Reset key")
+                    Button::new("reset-key", "Reset Key")
+                        .label_size(LabelSize::Small)
                         .icon(Some(IconName::Trash))
                         .icon_size(IconSize::Small)
                         .icon_position(IconPosition::Start)

@@ -1,4 +1,4 @@
-use gpui::{prelude::*, Entity};
+use gpui::{Entity, prelude::*};
 use indoc::indoc;
 use inline_completion::EditPredictionProvider;
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
@@ -7,7 +7,7 @@ use std::ops::Range;
 use text::{Point, ToOffset};
 
 use crate::{
-    editor_tests::init_test, test::editor_test_context::EditorTestContext, InlineCompletion,
+    InlineCompletion, editor_tests::init_test, test::editor_test_context::EditorTestContext,
 };
 
 #[gpui::test]

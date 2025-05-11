@@ -2,33 +2,36 @@ use std::{
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
     pin::pin,
-    sync::{atomic::AtomicUsize, Arc},
+    sync::{Arc, atomic::AtomicUsize},
 };
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use futures::{
-    future::{BoxFuture, Shared},
     FutureExt, SinkExt,
+    future::{BoxFuture, Shared},
 };
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, WeakEntity,
 };
 use postage::oneshot;
 use rpc::{
-    proto::{self, FromProto, ToProto, SSH_PROJECT_ID},
     AnyProtoClient, ErrorExt, TypedEnvelope,
+    proto::{self, FromProto, SSH_PROJECT_ID, ToProto},
 };
 use smol::{
     channel::{Receiver, Sender},
     stream::StreamExt,
 };
 use text::ReplicaId;
-use util::{paths::SanitizedPath, ResultExt};
-use worktree::{Entry, ProjectEntryId, UpdatedEntriesSet, Worktree, WorktreeId, WorktreeSettings};
+use util::{ResultExt, paths::SanitizedPath};
+use worktree::{
+    Entry, ProjectEntryId, UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId,
+    WorktreeSettings,
+};
 
-use crate::{search::SearchQuery, ProjectPath};
+use crate::{ProjectPath, search::SearchQuery};
 
 struct MatchingEntry {
     worktree_path: Arc<Path>,
@@ -66,7 +69,7 @@ pub enum WorktreeStoreEvent {
     WorktreeOrderChanged,
     WorktreeUpdateSent(Entity<Worktree>),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
-    WorktreeUpdatedGitRepositories(WorktreeId),
+    WorktreeUpdatedGitRepositories(WorktreeId, UpdatedGitRepositoriesSet),
     WorktreeDeletedEntry(WorktreeId, ProjectEntryId),
 }
 
@@ -154,6 +157,11 @@ impl WorktreeStore {
             }
         }
         None
+    }
+
+    pub fn absolutize(&self, project_path: &ProjectPath, cx: &App) -> Option<PathBuf> {
+        let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
+        worktree.read(cx).absolutize(&project_path.path).ok()
     }
 
     pub fn find_or_create_worktree(
@@ -254,7 +262,7 @@ impl WorktreeStore {
         if abs_path.starts_with("/~") {
             abs_path = abs_path[1..].to_string();
         }
-        if abs_path.is_empty() || abs_path == "/" {
+        if abs_path.is_empty() {
             abs_path = "~/".to_string();
         }
         cx.spawn(async move |this, cx| {
@@ -367,9 +375,10 @@ impl WorktreeStore {
                         changes.clone(),
                     ));
                 }
-                worktree::Event::UpdatedGitRepositories(_) => {
+                worktree::Event::UpdatedGitRepositories(set) => {
                     cx.emit(WorktreeStoreEvent::WorktreeUpdatedGitRepositories(
                         worktree_id,
+                        set.clone(),
                     ));
                 }
                 worktree::Event::DeletedEntry(id) => {
@@ -561,44 +570,12 @@ impl WorktreeStore {
                                 let client = client.clone();
                                 async move {
                                     if client.is_via_collab() {
-                                        match update {
-                                            proto::WorktreeRelatedMessage::UpdateWorktree(
-                                                update,
-                                            ) => {
-                                                client
-                                                    .request(update)
-                                                    .map(|result| result.log_err().is_some())
-                                                    .await
-                                            }
-                                            proto::WorktreeRelatedMessage::UpdateRepository(
-                                                update,
-                                            ) => {
-                                                client
-                                                    .request(update)
-                                                    .map(|result| result.log_err().is_some())
-                                                    .await
-                                            }
-                                            proto::WorktreeRelatedMessage::RemoveRepository(
-                                                update,
-                                            ) => {
-                                                client
-                                                    .request(update)
-                                                    .map(|result| result.log_err().is_some())
-                                                    .await
-                                            }
-                                        }
+                                        client
+                                            .request(update)
+                                            .map(|result| result.log_err().is_some())
+                                            .await
                                     } else {
-                                        match update {
-                                            proto::WorktreeRelatedMessage::UpdateWorktree(
-                                                update,
-                                            ) => client.send(update).log_err().is_some(),
-                                            proto::WorktreeRelatedMessage::UpdateRepository(
-                                                update,
-                                            ) => client.send(update).log_err().is_some(),
-                                            proto::WorktreeRelatedMessage::RemoveRepository(
-                                                update,
-                                            ) => client.send(update).log_err().is_some(),
-                                        }
+                                        client.send(update).log_err().is_some()
                                     }
                                 }
                             }
@@ -757,7 +734,6 @@ impl WorktreeStore {
         snapshot: &'a worktree::Snapshot,
         path: &'a Path,
         query: &'a SearchQuery,
-        include_root: bool,
         filter_tx: &'a Sender<MatchingEntry>,
         output_tx: &'a Sender<oneshot::Receiver<ProjectPath>>,
     ) -> BoxFuture<'a, Result<()>> {
@@ -796,12 +772,12 @@ impl WorktreeStore {
             for (path, is_file) in results {
                 if is_file {
                     if query.filters_path() {
-                        let matched_path = if include_root {
+                        let matched_path = if query.match_full_paths() {
                             let mut full_path = PathBuf::from(snapshot.root_name());
                             full_path.push(&path);
-                            query.file_matches(&full_path)
+                            query.match_path(&full_path)
                         } else {
-                            query.file_matches(&path)
+                            query.match_path(&path)
                         };
                         if !matched_path {
                             continue;
@@ -820,16 +796,8 @@ impl WorktreeStore {
                         })
                         .await?;
                 } else {
-                    Self::scan_ignored_dir(
-                        fs,
-                        snapshot,
-                        &path,
-                        query,
-                        include_root,
-                        filter_tx,
-                        output_tx,
-                    )
-                    .await?;
+                    Self::scan_ignored_dir(fs, snapshot, &path, query, filter_tx, output_tx)
+                        .await?;
                 }
             }
             Ok(())
@@ -845,7 +813,6 @@ impl WorktreeStore {
         filter_tx: Sender<MatchingEntry>,
         output_tx: Sender<oneshot::Receiver<ProjectPath>>,
     ) -> Result<()> {
-        let include_root = snapshots.len() > 1;
         for (snapshot, settings) in snapshots {
             for entry in snapshot.entries(query.include_ignored(), 0) {
                 if entry.is_dir() && entry.is_ignored {
@@ -855,7 +822,6 @@ impl WorktreeStore {
                             &snapshot,
                             &entry.path,
                             &query,
-                            include_root,
                             &filter_tx,
                             &output_tx,
                         )
@@ -869,12 +835,12 @@ impl WorktreeStore {
                 }
 
                 if query.filters_path() {
-                    let matched_path = if include_root {
+                    let matched_path = if query.match_full_paths() {
                         let mut full_path = PathBuf::from(snapshot.root_name());
                         full_path.push(&entry.path);
-                        query.file_matches(&full_path)
+                        query.match_path(&full_path)
                     } else {
-                        query.file_matches(&entry.path)
+                        query.match_path(&entry.path)
                     };
                     if !matched_path {
                         continue;

@@ -1,13 +1,15 @@
-use anyhow::{anyhow, Result};
-use assistant_tool::{ActionLog, Tool};
+use crate::schema::json_schema_for;
+use anyhow::{Result, anyhow};
+use assistant_tool::{ActionLog, Tool, ToolResult};
+use gpui::AnyWindowHandle;
 use gpui::{App, Entity, Task};
-use language_model::LanguageModelRequestMessage;
+use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use ui::IconName;
-use util::markdown::MarkdownString;
+use util::markdown::MarkdownInlineCode;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CreateDirectoryToolInput {
@@ -28,11 +30,11 @@ pub struct CreateDirectoryTool;
 
 impl Tool for CreateDirectoryTool {
     fn name(&self) -> String {
-        "create-directory".into()
+        "create_directory".into()
     }
 
-    fn needs_confirmation(&self) -> bool {
-        true
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+        false
     }
 
     fn description(&self) -> String {
@@ -43,15 +45,14 @@ impl Tool for CreateDirectoryTool {
         IconName::Folder
     }
 
-    fn input_schema(&self) -> serde_json::Value {
-        let schema = schemars::schema_for!(CreateDirectoryToolInput);
-        serde_json::to_value(&schema).unwrap()
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
+        json_schema_for::<CreateDirectoryToolInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
         match serde_json::from_value::<CreateDirectoryToolInput>(input.clone()) {
             Ok(input) => {
-                format!("Create directory `{}`", MarkdownString::escape(&input.path))
+                format!("Create directory {}", MarkdownInlineCode(&input.path))
             }
             Err(_) => "Create directory".to_string(),
         }
@@ -60,18 +61,22 @@ impl Tool for CreateDirectoryTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _model: Arc<dyn LanguageModel>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         let input = match serde_json::from_value::<CreateDirectoryToolInput>(input) {
             Ok(input) => input,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
         let project_path = match project.read(cx).find_project_path(&input.path, cx) {
             Some(project_path) => project_path,
-            None => return Task::ready(Err(anyhow!("Path to create was outside the project"))),
+            None => {
+                return Task::ready(Err(anyhow!("Path to create was outside the project"))).into();
+            }
         };
         let destination_path: Arc<str> = input.path.as_str().into();
 
@@ -83,7 +88,8 @@ impl Tool for CreateDirectoryTool {
                 .await
                 .map_err(|err| anyhow!("Unable to create directory {destination_path}: {err}"))?;
 
-            Ok(format!("Created directory {destination_path}"))
+            Ok(format!("Created directory {destination_path}").into())
         })
+        .into()
     }
 }

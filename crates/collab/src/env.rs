@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::fs;
 use std::path::Path;
 
@@ -20,7 +20,7 @@ pub fn get_dotenv_vars(current_dir: impl AsRef<Path>) -> Result<Vec<(String, Str
 
 pub fn load_dotenv() -> Result<()> {
     for (key, value) in get_dotenv_vars("./crates/collab")? {
-        std::env::set_var(key, value);
+        unsafe { std::env::set_var(key, value) };
     }
     Ok(())
 }

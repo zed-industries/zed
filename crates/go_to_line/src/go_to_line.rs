@@ -2,11 +2,12 @@ pub mod cursor_position;
 
 use cursor_position::{LineIndicatorFormat, UserCaretPosition};
 use editor::{
-    actions::Tab, scroll::Autoscroll, Anchor, Editor, MultiBufferSnapshot, ToOffset, ToPoint,
+    Anchor, Editor, MultiBufferSnapshot, RowHighlightOptions, ToOffset, ToPoint, actions::Tab,
+    scroll::Autoscroll,
 };
 use gpui::{
-    div, prelude::*, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render,
-    SharedString, Styled, Subscription,
+    App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, SharedString, Styled,
+    Subscription, div, prelude::*,
 };
 use language::Buffer;
 use settings::Settings;
@@ -180,7 +181,10 @@ impl GoToLine {
             editor.highlight_rows::<GoToLineRowHighlights>(
                 start..end,
                 cx.theme().colors().editor_highlighted_line_background,
-                true,
+                RowHighlightOptions {
+                    autoscroll: true,
+                    ..Default::default()
+                },
                 cx,
             );
             editor.request_autoscroll(Autoscroll::center(), cx);

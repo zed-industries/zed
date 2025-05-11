@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use async_zip::base::read::stream::ZipFileReader;
-use futures::{io::BufReader, AsyncRead};
+use futures::{AsyncRead, io::BufReader};
 
 pub async fn extract_zip<R: AsyncRead + Unpin>(destination: &Path, reader: R) -> Result<()> {
     let mut reader = ZipFileReader::new(BufReader::new(reader));
@@ -35,8 +35,8 @@ pub async fn extract_zip<R: AsyncRead + Unpin>(destination: &Path, reader: R) ->
 mod tests {
     use std::path::PathBuf;
 
-    use async_zip::base::write::ZipFileWriter;
     use async_zip::ZipEntryBuilder;
+    use async_zip::base::write::ZipFileWriter;
     use futures::AsyncWriteExt;
     use smol::io::Cursor;
     use tempfile::TempDir;

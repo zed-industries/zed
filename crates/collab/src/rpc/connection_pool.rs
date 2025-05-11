@@ -1,5 +1,5 @@
 use crate::db::{ChannelId, ChannelRole, UserId};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use collections::{BTreeMap, HashMap, HashSet};
 use rpc::ConnectionId;
 use semantic_version::SemanticVersion;
@@ -159,12 +159,13 @@ impl ConnectionPool {
     #[cfg(test)]
     pub fn check_invariants(&self) {
         for (connection_id, connection) in &self.connections {
-            assert!(self
-                .connected_users
-                .get(&connection.user_id)
-                .unwrap()
-                .connection_ids
-                .contains(connection_id));
+            assert!(
+                self.connected_users
+                    .get(&connection.user_id)
+                    .unwrap()
+                    .connection_ids
+                    .contains(connection_id)
+            );
         }
 
         for (user_id, state) in &self.connected_users {

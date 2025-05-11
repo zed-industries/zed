@@ -1,13 +1,12 @@
 [package]
 name = "zed_extension_api"
-version = "0.4.0"
+version = "0.5.0"
 description = "APIs for creating Zed extensions in Rust"
 repository = "https://github.com/zed-industries/zed"
 documentation = "https://docs.rs/zed_extension_api"
 keywords = ["zed", "extension"]
 edition.workspace = true
-# Change back to `true` when we're ready to publish v0.4.0.
-publish = false
+publish = true
 license = "Apache-2.0"
 
 [lints]
@@ -19,7 +18,7 @@ path = "src/extension_api.rs"
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-wit-bindgen = "0.22"
+wit-bindgen = "0.41"
 
 [package.metadata.component]
 target = { path = "wit" }

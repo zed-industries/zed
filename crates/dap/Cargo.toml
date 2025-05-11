@@ -8,6 +8,10 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[lib]
+path = "src/dap.rs"
+doctest = false
+
 [features]
 test-support = [
     "gpui/test-support",
@@ -35,6 +39,7 @@ log.workspace = true
 node_runtime.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
+proto.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -43,6 +48,7 @@ smallvec.workspace = true
 smol.workspace = true
 task.workspace = true
 util.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 async-pipe.workspace = true

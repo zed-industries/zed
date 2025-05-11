@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Context as _, Result};
-use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
-use http_client::{http, AsyncBody, HttpClient, Method, Request as HttpRequest};
+use anyhow::{Context as _, Result, anyhow};
+use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
+use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
 use serde::{Deserialize, Serialize};
-use serde_json::{value::RawValue, Value};
+use serde_json::{Value, value::RawValue};
 use std::{convert::TryFrom, sync::Arc, time::Duration};
 
 pub const LMSTUDIO_API_URL: &str = "http://localhost:1234/api/v0";
@@ -219,6 +219,14 @@ pub enum ModelState {
 pub enum CompatibilityType {
     Gguf,
     Mlx,
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct ResponseMessageDelta {
+    pub role: Option<Role>,
+    pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCallChunk>>,
 }
 
 pub async fn complete(

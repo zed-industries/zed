@@ -1,22 +1,22 @@
 use anyhow::anyhow;
 use axum::headers::HeaderMapExt;
 use axum::{
+    Extension, Router,
     extract::MatchedPath,
     http::{Request, Response},
     routing::get,
-    Extension, Router,
 };
 
-use collab::api::billing::sync_llm_usage_with_stripe_periodically;
 use collab::api::CloudflareIpCountryHeader;
-use collab::llm::{db::LlmDatabase, log_usage_periodically};
+use collab::api::billing::sync_llm_request_usage_with_stripe_periodically;
+use collab::llm::db::LlmDatabase;
 use collab::migrations::run_database_migrations;
 use collab::user_backfiller::spawn_user_backfiller;
-use collab::{api::billing::poll_stripe_events_periodically, llm::LlmState, ServiceMode};
 use collab::{
-    api::fetch_extensions_from_blob_store_periodically, db, env, executor::Executor,
-    rpc::ResultExt, AppState, Config, RateLimiter, Result,
+    AppState, Config, Result, api::fetch_extensions_from_blob_store_periodically, db, env,
+    executor::Executor, rpc::ResultExt,
 };
+use collab::{ServiceMode, api::billing::poll_stripe_events_periodically};
 use db::Database;
 use std::{
     env::args,
@@ -29,9 +29,9 @@ use std::{
 use tokio::signal::unix::SignalKind;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{
-    filter::EnvFilter, fmt::format::JsonFields, util::SubscriberInitExt, Layer,
+    Layer, filter::EnvFilter, fmt::format::JsonFields, util::SubscriberInitExt,
 };
-use util::{maybe, ResultExt as _};
+use util::{ResultExt as _, maybe};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const REVISION: Option<&'static str> = option_env!("GITHUB_SHA");
@@ -74,11 +74,10 @@ async fn main() -> Result<()> {
             let mode = match args.next().as_deref() {
                 Some("collab") => ServiceMode::Collab,
                 Some("api") => ServiceMode::Api,
-                Some("llm") => ServiceMode::Llm,
                 Some("all") => ServiceMode::All,
                 _ => {
                     return Err(anyhow!(
-                        "usage: collab <version | migrate | seed | serve <api|collab|llm|all>>"
+                        "usage: collab <version | migrate | seed | serve <api|collab|all>>"
                     ))?;
                 }
             };
@@ -97,20 +96,9 @@ async fn main() -> Result<()> {
 
             let mut on_shutdown = None;
 
-            if mode.is_llm() {
-                setup_llm_database(&config).await?;
-
-                let state = LlmState::new(config.clone(), Executor::Production).await?;
-
-                log_usage_periodically(state.clone());
-
-                app = app
-                    .merge(collab::llm::routes())
-                    .layer(Extension(state.clone()));
-            }
-
             if mode.is_collab() || mode.is_api() {
                 setup_app_database(&config).await?;
+                setup_llm_database(&config).await?;
 
                 let state = AppState::new(config, Executor::Production).await?;
 
@@ -123,10 +111,6 @@ async fn main() -> Result<()> {
 
                 if mode.is_collab() {
                     state.db.purge_old_embeddings().await.trace_err();
-                    RateLimiter::save_periodically(
-                        state.rate_limiter.clone(),
-                        state.executor.clone(),
-                    );
 
                     let epoch = state
                         .db
@@ -168,7 +152,7 @@ async fn main() -> Result<()> {
 
                     if let Some(mut llm_db) = llm_db {
                         llm_db.initialize().await?;
-                        sync_llm_usage_with_stripe_periodically(state.clone());
+                        sync_llm_request_usage_with_stripe_periodically(state.clone());
                     }
 
                     app = app
@@ -336,16 +320,9 @@ async fn handle_root(Extension(mode): Extension<ServiceMode>) -> String {
     format!("zed:{mode} v{VERSION} ({})", REVISION.unwrap_or("unknown"))
 }
 
-async fn handle_liveness_probe(
-    app_state: Option<Extension<Arc<AppState>>>,
-    llm_state: Option<Extension<Arc<LlmState>>>,
-) -> Result<String> {
+async fn handle_liveness_probe(app_state: Option<Extension<Arc<AppState>>>) -> Result<String> {
     if let Some(state) = app_state {
         state.db.get_all_users(0, 1).await?;
-    }
-
-    if let Some(llm_state) = llm_state {
-        llm_state.db.list_providers().await?;
     }
 
     Ok("ok".to_string())

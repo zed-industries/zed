@@ -1,7 +1,7 @@
 use notify::EventKind;
 use parking_lot::Mutex;
 use std::sync::{Arc, OnceLock};
-use util::{paths::SanitizedPath, ResultExt};
+use util::{ResultExt, paths::SanitizedPath};
 
 use crate::{PathEvent, PathEventKind, Watcher};
 
@@ -38,9 +38,6 @@ impl Watcher for FsWatcher {
                         EventKind::Create(_) => Some(PathEventKind::Created),
                         EventKind::Modify(_) => Some(PathEventKind::Changed),
                         EventKind::Remove(_) => Some(PathEventKind::Removed),
-                        // Adding this fix a weird bug on Linux after upgrading notify
-                        // https://github.com/zed-industries/zed/actions/runs/14085230504/job/39449448832
-                        EventKind::Access(_) => return,
                         _ => None,
                     };
                     let mut path_events = event
@@ -108,7 +105,14 @@ static FS_WATCHER_INSTANCE: OnceLock<anyhow::Result<GlobalWatcher, notify::Error
     OnceLock::new();
 
 fn handle_event(event: Result<notify::Event, notify::Error>) {
-    let Some(event) = event.log_err() else { return };
+    // Filter out access events, which could lead to a weird bug on Linux after upgrading notify
+    // https://github.com/zed-industries/zed/actions/runs/14085230504/job/39449448832
+    let Some(event) = event
+        .log_err()
+        .filter(|event| !matches!(event.kind, EventKind::Access(_)))
+    else {
+        return;
+    };
     global::<()>(move |watcher| {
         for f in watcher.watchers.lock().iter() {
             f(&event)

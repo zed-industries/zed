@@ -1,16 +1,17 @@
 use super::{
+    BoolExt, MacKeyboardLayout,
     attributed_string::{NSAttributedString, NSMutableAttributedString},
     events::key_to_native,
-    renderer, screen_capture, BoolExt,
+    is_macos_version_at_least, renderer, screen_capture,
 };
 use crate::{
-    hash, Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem,
-    ClipboardString, CursorStyle, ForegroundExecutor, Image, ImageFormat, Keymap, MacDispatcher,
-    MacDisplay, MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformTextSystem, PlatformWindow, Result, ScreenCaptureSource, SemanticVersion, Task,
-    WindowAppearance, WindowParams,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
+    CursorStyle, ForegroundExecutor, Image, ImageFormat, Keymap, MacDispatcher, MacDisplay,
+    MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
+    PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow, Result, ScreenCaptureSource,
+    SemanticVersion, Task, WindowAppearance, WindowParams, hash,
 };
-use anyhow::{anyhow, Context as _};
+use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
@@ -19,10 +20,10 @@ use cocoa::{
         NSPasteboardTypePNG, NSPasteboardTypeRTF, NSPasteboardTypeRTFD, NSPasteboardTypeString,
         NSPasteboardTypeTIFF, NSSavePanel, NSWindow,
     },
-    base::{id, nil, selector, BOOL, NO, YES},
+    base::{BOOL, NO, YES, id, nil, selector},
     foundation::{
-        NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSProcessInfo, NSRange, NSString,
-        NSUInteger, NSURL,
+        NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSOperatingSystemVersion,
+        NSProcessInfo, NSRange, NSString, NSUInteger, NSURL,
     },
 };
 use core_foundation::{
@@ -47,7 +48,7 @@ use ptr::null_mut;
 use std::{
     cell::Cell,
     convert::TryInto,
-    ffi::{c_void, CStr, OsStr},
+    ffi::{CStr, OsStr, c_void},
     os::{raw::c_char, unix::ffi::OsStrExt},
     path::{Path, PathBuf},
     process::Command,
@@ -68,79 +69,82 @@ static mut APP_DELEGATE_CLASS: *const Class = ptr::null();
 
 #[ctor]
 unsafe fn build_classes() {
-    APP_CLASS = {
-        let mut decl = ClassDecl::new("GPUIApplication", class!(NSApplication)).unwrap();
-        decl.add_ivar::<*mut c_void>(MAC_PLATFORM_IVAR);
-        decl.register()
+    unsafe {
+        APP_CLASS = {
+            let mut decl = ClassDecl::new("GPUIApplication", class!(NSApplication)).unwrap();
+            decl.add_ivar::<*mut c_void>(MAC_PLATFORM_IVAR);
+            decl.register()
+        }
     };
+    unsafe {
+        APP_DELEGATE_CLASS = unsafe {
+            let mut decl = ClassDecl::new("GPUIApplicationDelegate", class!(NSResponder)).unwrap();
+            decl.add_ivar::<*mut c_void>(MAC_PLATFORM_IVAR);
+            decl.add_method(
+                sel!(applicationDidFinishLaunching:),
+                did_finish_launching as extern "C" fn(&mut Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(applicationShouldHandleReopen:hasVisibleWindows:),
+                should_handle_reopen as extern "C" fn(&mut Object, Sel, id, bool),
+            );
+            decl.add_method(
+                sel!(applicationWillTerminate:),
+                will_terminate as extern "C" fn(&mut Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(handleGPUIMenuItem:),
+                handle_menu_item as extern "C" fn(&mut Object, Sel, id),
+            );
+            // Add menu item handlers so that OS save panels have the correct key commands
+            decl.add_method(
+                sel!(cut:),
+                handle_menu_item as extern "C" fn(&mut Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(copy:),
+                handle_menu_item as extern "C" fn(&mut Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(paste:),
+                handle_menu_item as extern "C" fn(&mut Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(selectAll:),
+                handle_menu_item as extern "C" fn(&mut Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(undo:),
+                handle_menu_item as extern "C" fn(&mut Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(redo:),
+                handle_menu_item as extern "C" fn(&mut Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(validateMenuItem:),
+                validate_menu_item as extern "C" fn(&mut Object, Sel, id) -> bool,
+            );
+            decl.add_method(
+                sel!(menuWillOpen:),
+                menu_will_open as extern "C" fn(&mut Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(applicationDockMenu:),
+                handle_dock_menu as extern "C" fn(&mut Object, Sel, id) -> id,
+            );
+            decl.add_method(
+                sel!(application:openURLs:),
+                open_urls as extern "C" fn(&mut Object, Sel, id, id),
+            );
 
-    APP_DELEGATE_CLASS = {
-        let mut decl = ClassDecl::new("GPUIApplicationDelegate", class!(NSResponder)).unwrap();
-        decl.add_ivar::<*mut c_void>(MAC_PLATFORM_IVAR);
-        decl.add_method(
-            sel!(applicationDidFinishLaunching:),
-            did_finish_launching as extern "C" fn(&mut Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(applicationShouldHandleReopen:hasVisibleWindows:),
-            should_handle_reopen as extern "C" fn(&mut Object, Sel, id, bool),
-        );
-        decl.add_method(
-            sel!(applicationWillTerminate:),
-            will_terminate as extern "C" fn(&mut Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(handleGPUIMenuItem:),
-            handle_menu_item as extern "C" fn(&mut Object, Sel, id),
-        );
-        // Add menu item handlers so that OS save panels have the correct key commands
-        decl.add_method(
-            sel!(cut:),
-            handle_menu_item as extern "C" fn(&mut Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(copy:),
-            handle_menu_item as extern "C" fn(&mut Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(paste:),
-            handle_menu_item as extern "C" fn(&mut Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(selectAll:),
-            handle_menu_item as extern "C" fn(&mut Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(undo:),
-            handle_menu_item as extern "C" fn(&mut Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(redo:),
-            handle_menu_item as extern "C" fn(&mut Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(validateMenuItem:),
-            validate_menu_item as extern "C" fn(&mut Object, Sel, id) -> bool,
-        );
-        decl.add_method(
-            sel!(menuWillOpen:),
-            menu_will_open as extern "C" fn(&mut Object, Sel, id),
-        );
-        decl.add_method(
-            sel!(applicationDockMenu:),
-            handle_dock_menu as extern "C" fn(&mut Object, Sel, id) -> id,
-        );
-        decl.add_method(
-            sel!(application:openURLs:),
-            open_urls as extern "C" fn(&mut Object, Sel, id, id),
-        );
+            decl.add_method(
+                sel!(onKeyboardLayoutChange:),
+                on_keyboard_layout_change as extern "C" fn(&mut Object, Sel, id),
+            );
 
-        decl.add_method(
-            sel!(onKeyboardLayoutChange:),
-            on_keyboard_layout_change as extern "C" fn(&mut Object, Sel, id),
-        );
-
-        decl.register()
+            decl.register()
+        }
     }
 }
 
@@ -206,14 +210,16 @@ impl MacPlatform {
     }
 
     unsafe fn read_from_pasteboard(&self, pasteboard: *mut Object, kind: id) -> Option<&[u8]> {
-        let data = pasteboard.dataForType(kind);
-        if data == nil {
-            None
-        } else {
-            Some(slice::from_raw_parts(
-                data.bytes() as *mut u8,
-                data.length() as usize,
-            ))
+        unsafe {
+            let data = pasteboard.dataForType(kind);
+            if data == nil {
+                None
+            } else {
+                Some(slice::from_raw_parts(
+                    data.bytes() as *mut u8,
+                    data.length() as usize,
+                ))
+            }
         }
     }
 
@@ -224,36 +230,38 @@ impl MacPlatform {
         actions: &mut Vec<Box<dyn Action>>,
         keymap: &Keymap,
     ) -> id {
-        let application_menu = NSMenu::new(nil).autorelease();
-        application_menu.setDelegate_(delegate);
+        unsafe {
+            let application_menu = NSMenu::new(nil).autorelease();
+            application_menu.setDelegate_(delegate);
 
-        for menu_config in menus {
-            let menu = NSMenu::new(nil).autorelease();
-            let menu_title = ns_string(&menu_config.name);
-            menu.setTitle_(menu_title);
-            menu.setDelegate_(delegate);
+            for menu_config in menus {
+                let menu = NSMenu::new(nil).autorelease();
+                let menu_title = ns_string(&menu_config.name);
+                menu.setTitle_(menu_title);
+                menu.setDelegate_(delegate);
 
-            for item_config in menu_config.items {
-                menu.addItem_(Self::create_menu_item(
-                    item_config,
-                    delegate,
-                    actions,
-                    keymap,
-                ));
+                for item_config in menu_config.items {
+                    menu.addItem_(Self::create_menu_item(
+                        item_config,
+                        delegate,
+                        actions,
+                        keymap,
+                    ));
+                }
+
+                let menu_item = NSMenuItem::new(nil).autorelease();
+                menu_item.setTitle_(menu_title);
+                menu_item.setSubmenu_(menu);
+                application_menu.addItem_(menu_item);
+
+                if menu_config.name == "Window" {
+                    let app: id = msg_send![APP_CLASS, sharedApplication];
+                    app.setWindowsMenu_(menu);
+                }
             }
 
-            let menu_item = NSMenuItem::new(nil).autorelease();
-            menu_item.setTitle_(menu_title);
-            menu_item.setSubmenu_(menu);
-            application_menu.addItem_(menu_item);
-
-            if menu_config.name == "Window" {
-                let app: id = msg_send![APP_CLASS, sharedApplication];
-                app.setWindowsMenu_(menu);
-            }
+            application_menu
         }
-
-        application_menu
     }
 
     unsafe fn create_dock_menu(
@@ -263,18 +271,20 @@ impl MacPlatform {
         actions: &mut Vec<Box<dyn Action>>,
         keymap: &Keymap,
     ) -> id {
-        let dock_menu = NSMenu::new(nil);
-        dock_menu.setDelegate_(delegate);
-        for item_config in menu_items {
-            dock_menu.addItem_(Self::create_menu_item(
-                item_config,
-                delegate,
-                actions,
-                keymap,
-            ));
-        }
+        unsafe {
+            let dock_menu = NSMenu::new(nil);
+            dock_menu.setDelegate_(delegate);
+            for item_config in menu_items {
+                dock_menu.addItem_(Self::create_menu_item(
+                    item_config,
+                    delegate,
+                    actions,
+                    keymap,
+                ));
+            }
 
-        dock_menu
+            dock_menu
+        }
     }
 
     unsafe fn create_menu_item(
@@ -283,70 +293,79 @@ impl MacPlatform {
         actions: &mut Vec<Box<dyn Action>>,
         keymap: &Keymap,
     ) -> id {
-        match item {
-            MenuItem::Separator => NSMenuItem::separatorItem(nil),
-            MenuItem::Action {
-                name,
-                action,
-                os_action,
-            } => {
-                let keystrokes = crate::Keymap::binding_to_display_from_bindings_iterator(
-                    keymap.bindings_for_action(action.as_ref()),
-                )
-                .map(|binding| binding.keystrokes());
+        unsafe {
+            match item {
+                MenuItem::Separator => NSMenuItem::separatorItem(nil),
+                MenuItem::Action {
+                    name,
+                    action,
+                    os_action,
+                } => {
+                    let keystrokes = crate::Keymap::binding_to_display_from_bindings_iterator(
+                        keymap.bindings_for_action(action.as_ref()),
+                    )
+                    .map(|binding| binding.keystrokes());
 
-                let selector = match os_action {
-                    Some(crate::OsAction::Cut) => selector("cut:"),
-                    Some(crate::OsAction::Copy) => selector("copy:"),
-                    Some(crate::OsAction::Paste) => selector("paste:"),
-                    Some(crate::OsAction::SelectAll) => selector("selectAll:"),
-                    // "undo:" and "redo:" are always disabled in our case, as
-                    // we don't have a NSTextView/NSTextField to enable them on.
-                    Some(crate::OsAction::Undo) => selector("handleGPUIMenuItem:"),
-                    Some(crate::OsAction::Redo) => selector("handleGPUIMenuItem:"),
-                    None => selector("handleGPUIMenuItem:"),
-                };
+                    let selector = match os_action {
+                        Some(crate::OsAction::Cut) => selector("cut:"),
+                        Some(crate::OsAction::Copy) => selector("copy:"),
+                        Some(crate::OsAction::Paste) => selector("paste:"),
+                        Some(crate::OsAction::SelectAll) => selector("selectAll:"),
+                        // "undo:" and "redo:" are always disabled in our case, as
+                        // we don't have a NSTextView/NSTextField to enable them on.
+                        Some(crate::OsAction::Undo) => selector("handleGPUIMenuItem:"),
+                        Some(crate::OsAction::Redo) => selector("handleGPUIMenuItem:"),
+                        None => selector("handleGPUIMenuItem:"),
+                    };
 
-                let item;
-                if let Some(keystrokes) = keystrokes {
-                    if keystrokes.len() == 1 {
-                        let keystroke = &keystrokes[0];
-                        let mut mask = NSEventModifierFlags::empty();
-                        for (modifier, flag) in &[
-                            (
-                                keystroke.modifiers.platform,
-                                NSEventModifierFlags::NSCommandKeyMask,
-                            ),
-                            (
-                                keystroke.modifiers.control,
-                                NSEventModifierFlags::NSControlKeyMask,
-                            ),
-                            (
-                                keystroke.modifiers.alt,
-                                NSEventModifierFlags::NSAlternateKeyMask,
-                            ),
-                            (
-                                keystroke.modifiers.shift,
-                                NSEventModifierFlags::NSShiftKeyMask,
-                            ),
-                        ] {
-                            if *modifier {
-                                mask |= *flag;
+                    let item;
+                    if let Some(keystrokes) = keystrokes {
+                        if keystrokes.len() == 1 {
+                            let keystroke = &keystrokes[0];
+                            let mut mask = NSEventModifierFlags::empty();
+                            for (modifier, flag) in &[
+                                (
+                                    keystroke.modifiers.platform,
+                                    NSEventModifierFlags::NSCommandKeyMask,
+                                ),
+                                (
+                                    keystroke.modifiers.control,
+                                    NSEventModifierFlags::NSControlKeyMask,
+                                ),
+                                (
+                                    keystroke.modifiers.alt,
+                                    NSEventModifierFlags::NSAlternateKeyMask,
+                                ),
+                                (
+                                    keystroke.modifiers.shift,
+                                    NSEventModifierFlags::NSShiftKeyMask,
+                                ),
+                            ] {
+                                if *modifier {
+                                    mask |= *flag;
+                                }
                             }
-                        }
 
-                        item = NSMenuItem::alloc(nil)
-                            .initWithTitle_action_keyEquivalent_(
-                                ns_string(&name),
-                                selector,
-                                ns_string(key_to_native(&keystroke.key).as_ref()),
-                            )
-                            .autorelease();
-                        if MacPlatform::os_version().unwrap() >= SemanticVersion::new(12, 0, 0) {
-                            let _: () =
-                                msg_send![item, setAllowsAutomaticKeyEquivalentLocalization: NO];
+                            item = NSMenuItem::alloc(nil)
+                                .initWithTitle_action_keyEquivalent_(
+                                    ns_string(&name),
+                                    selector,
+                                    ns_string(key_to_native(&keystroke.key).as_ref()),
+                                )
+                                .autorelease();
+                            if Self::os_version() >= SemanticVersion::new(12, 0, 0) {
+                                let _: () = msg_send![item, setAllowsAutomaticKeyEquivalentLocalization: NO];
+                            }
+                            item.setKeyEquivalentModifierMask_(mask);
+                        } else {
+                            item = NSMenuItem::alloc(nil)
+                                .initWithTitle_action_keyEquivalent_(
+                                    ns_string(&name),
+                                    selector,
+                                    ns_string(""),
+                                )
+                                .autorelease();
                         }
-                        item.setKeyEquivalentModifierMask_(mask);
                     } else {
                         item = NSMenuItem::alloc(nil)
                             .initWithTitle_action_keyEquivalent_(
@@ -356,50 +375,42 @@ impl MacPlatform {
                             )
                             .autorelease();
                     }
-                } else {
-                    item = NSMenuItem::alloc(nil)
-                        .initWithTitle_action_keyEquivalent_(
-                            ns_string(&name),
-                            selector,
-                            ns_string(""),
-                        )
-                        .autorelease();
-                }
 
-                let tag = actions.len() as NSInteger;
-                let _: () = msg_send![item, setTag: tag];
-                actions.push(action);
-                item
-            }
-            MenuItem::Submenu(Menu { name, items }) => {
-                let item = NSMenuItem::new(nil).autorelease();
-                let submenu = NSMenu::new(nil).autorelease();
-                submenu.setDelegate_(delegate);
-                for item in items {
-                    submenu.addItem_(Self::create_menu_item(item, delegate, actions, keymap));
+                    let tag = actions.len() as NSInteger;
+                    let _: () = msg_send![item, setTag: tag];
+                    actions.push(action);
+                    item
                 }
-                item.setSubmenu_(submenu);
-                item.setTitle_(ns_string(&name));
-                if name == "Services" {
-                    let app: id = msg_send![APP_CLASS, sharedApplication];
-                    app.setServicesMenu_(item);
-                }
+                MenuItem::Submenu(Menu { name, items }) => {
+                    let item = NSMenuItem::new(nil).autorelease();
+                    let submenu = NSMenu::new(nil).autorelease();
+                    submenu.setDelegate_(delegate);
+                    for item in items {
+                        submenu.addItem_(Self::create_menu_item(item, delegate, actions, keymap));
+                    }
+                    item.setSubmenu_(submenu);
+                    item.setTitle_(ns_string(&name));
+                    if name == "Services" {
+                        let app: id = msg_send![APP_CLASS, sharedApplication];
+                        app.setServicesMenu_(item);
+                    }
 
-                item
+                    item
+                }
             }
         }
     }
 
-    fn os_version() -> Result<SemanticVersion> {
-        unsafe {
+    fn os_version() -> SemanticVersion {
+        let version = unsafe {
             let process_info = NSProcessInfo::processInfo(nil);
-            let version = process_info.operatingSystemVersion();
-            Ok(SemanticVersion::new(
-                version.majorVersion as usize,
-                version.minorVersion as usize,
-                version.patchVersion as usize,
-            ))
-        }
+            process_info.operatingSystemVersion()
+        };
+        SemanticVersion::new(
+            version.majorVersion as usize,
+            version.minorVersion as usize,
+            version.patchVersion as usize,
+        )
     }
 }
 
@@ -460,8 +471,10 @@ impl Platform for MacPlatform {
         }
 
         unsafe extern "C" fn quit(_: *mut c_void) {
-            let app = NSApplication::sharedApplication(nil);
-            let _: () = msg_send![app, terminate: nil];
+            unsafe {
+                let app = NSApplication::sharedApplication(nil);
+                let _: () = msg_send![app, terminate: nil];
+            }
         }
     }
 
@@ -538,6 +551,11 @@ impl Platform for MacPlatform {
             .collect()
     }
 
+    fn is_screen_capture_supported(&self) -> bool {
+        let min_version = NSOperatingSystemVersion::new(12, 3, 0);
+        is_macos_version_at_least(min_version)
+    }
+
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
@@ -590,7 +608,7 @@ impl Platform for MacPlatform {
         // API only available post Monterey
         // https://developer.apple.com/documentation/appkit/nsworkspace/3753004-setdefaultapplicationaturl
         let (done_tx, done_rx) = oneshot::channel();
-        if Self::os_version().ok() < Some(SemanticVersion::new(12, 0, 0)) {
+        if Self::os_version() < SemanticVersion::new(12, 0, 0) {
             return Task::ready(Err(anyhow!(
                 "macOS 12.0 or later is required to register URL schemes"
             )));
@@ -717,9 +735,7 @@ impl Platform for MacPlatform {
                                     // you can manually create a file called `a.sql.s`. That said it seems better
                                     // to break that use-case than breaking `a.sql`.
                                     if chunks.len() == 3 && chunks[1].starts_with(chunks[2]) {
-                                        if Self::os_version()
-                                            .is_ok_and(|v| v >= SemanticVersion::new(15, 0, 0))
-                                        {
+                                        if Self::os_version() >= SemanticVersion::new(15, 0, 0) {
                                             let new_filename = OsStr::from_bytes(
                                                 &filename.as_bytes()
                                                     [..chunks[0].len() + 1 + chunks[1].len()],
@@ -809,20 +825,8 @@ impl Platform for MacPlatform {
         self.0.lock().validate_menu_command = Some(callback);
     }
 
-    fn keyboard_layout(&self) -> String {
-        unsafe {
-            let current_keyboard = TISCopyCurrentKeyboardLayoutInputSource();
-
-            let input_source_id: *mut Object = TISGetInputSourceProperty(
-                current_keyboard,
-                kTISPropertyInputSourceID as *const c_void,
-            );
-            let input_source_id: *const std::os::raw::c_char =
-                msg_send![input_source_id, UTF8String];
-            let input_source_id = CStr::from_ptr(input_source_id).to_str().unwrap();
-
-            input_source_id.to_string()
-        }
+    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
+        Box::new(MacKeyboardLayout::new())
     }
 
     fn app_path(&self) -> Result<PathBuf> {
@@ -1180,75 +1184,81 @@ impl MacPlatform {
         state: &MacPlatformState,
         text_bytes: &[u8],
     ) -> ClipboardItem {
-        let text = String::from_utf8_lossy(text_bytes).to_string();
-        let metadata = self
-            .read_from_pasteboard(state.pasteboard, state.text_hash_pasteboard_type)
-            .and_then(|hash_bytes| {
-                let hash_bytes = hash_bytes.try_into().ok()?;
-                let hash = u64::from_be_bytes(hash_bytes);
-                let metadata =
-                    self.read_from_pasteboard(state.pasteboard, state.metadata_pasteboard_type)?;
+        unsafe {
+            let text = String::from_utf8_lossy(text_bytes).to_string();
+            let metadata = self
+                .read_from_pasteboard(state.pasteboard, state.text_hash_pasteboard_type)
+                .and_then(|hash_bytes| {
+                    let hash_bytes = hash_bytes.try_into().ok()?;
+                    let hash = u64::from_be_bytes(hash_bytes);
+                    let metadata = self
+                        .read_from_pasteboard(state.pasteboard, state.metadata_pasteboard_type)?;
 
-                if hash == ClipboardString::text_hash(&text) {
-                    String::from_utf8(metadata.to_vec()).ok()
-                } else {
-                    None
-                }
-            });
+                    if hash == ClipboardString::text_hash(&text) {
+                        String::from_utf8(metadata.to_vec()).ok()
+                    } else {
+                        None
+                    }
+                });
 
-        ClipboardItem {
-            entries: vec![ClipboardEntry::String(ClipboardString { text, metadata })],
+            ClipboardItem {
+                entries: vec![ClipboardEntry::String(ClipboardString { text, metadata })],
+            }
         }
     }
 
     unsafe fn write_plaintext_to_clipboard(&self, string: &ClipboardString) {
-        let state = self.0.lock();
-        state.pasteboard.clearContents();
+        unsafe {
+            let state = self.0.lock();
+            state.pasteboard.clearContents();
 
-        let text_bytes = NSData::dataWithBytes_length_(
-            nil,
-            string.text.as_ptr() as *const c_void,
-            string.text.len() as u64,
-        );
-        state
-            .pasteboard
-            .setData_forType(text_bytes, NSPasteboardTypeString);
-
-        if let Some(metadata) = string.metadata.as_ref() {
-            let hash_bytes = ClipboardString::text_hash(&string.text).to_be_bytes();
-            let hash_bytes = NSData::dataWithBytes_length_(
+            let text_bytes = NSData::dataWithBytes_length_(
                 nil,
-                hash_bytes.as_ptr() as *const c_void,
-                hash_bytes.len() as u64,
+                string.text.as_ptr() as *const c_void,
+                string.text.len() as u64,
             );
             state
                 .pasteboard
-                .setData_forType(hash_bytes, state.text_hash_pasteboard_type);
+                .setData_forType(text_bytes, NSPasteboardTypeString);
 
-            let metadata_bytes = NSData::dataWithBytes_length_(
-                nil,
-                metadata.as_ptr() as *const c_void,
-                metadata.len() as u64,
-            );
-            state
-                .pasteboard
-                .setData_forType(metadata_bytes, state.metadata_pasteboard_type);
+            if let Some(metadata) = string.metadata.as_ref() {
+                let hash_bytes = ClipboardString::text_hash(&string.text).to_be_bytes();
+                let hash_bytes = NSData::dataWithBytes_length_(
+                    nil,
+                    hash_bytes.as_ptr() as *const c_void,
+                    hash_bytes.len() as u64,
+                );
+                state
+                    .pasteboard
+                    .setData_forType(hash_bytes, state.text_hash_pasteboard_type);
+
+                let metadata_bytes = NSData::dataWithBytes_length_(
+                    nil,
+                    metadata.as_ptr() as *const c_void,
+                    metadata.len() as u64,
+                );
+                state
+                    .pasteboard
+                    .setData_forType(metadata_bytes, state.metadata_pasteboard_type);
+            }
         }
     }
 
     unsafe fn write_image_to_clipboard(&self, image: &Image) {
-        let state = self.0.lock();
-        state.pasteboard.clearContents();
+        unsafe {
+            let state = self.0.lock();
+            state.pasteboard.clearContents();
 
-        let bytes = NSData::dataWithBytes_length_(
-            nil,
-            image.bytes.as_ptr() as *const c_void,
-            image.bytes.len() as u64,
-        );
+            let bytes = NSData::dataWithBytes_length_(
+                nil,
+                image.bytes.as_ptr() as *const c_void,
+                image.bytes.len() as u64,
+            );
 
-        state
-            .pasteboard
-            .setData_forType(bytes, Into::<UTType>::into(image.format).inner_mut());
+            state
+                .pasteboard
+                .setData_forType(bytes, Into::<UTType>::into(image.format).inner_mut());
+        }
     }
 }
 
@@ -1280,15 +1290,17 @@ fn try_clipboard_image(pasteboard: id, format: ImageFormat) -> Option<ClipboardI
 
 unsafe fn path_from_objc(path: id) -> PathBuf {
     let len = msg_send![path, lengthOfBytesUsingEncoding: NSUTF8StringEncoding];
-    let bytes = path.UTF8String() as *const u8;
-    let path = str::from_utf8(slice::from_raw_parts(bytes, len)).unwrap();
+    let bytes = unsafe { path.UTF8String() as *const u8 };
+    let path = str::from_utf8(unsafe { slice::from_raw_parts(bytes, len) }).unwrap();
     PathBuf::from(path)
 }
 
 unsafe fn get_mac_platform(object: &mut Object) -> &MacPlatform {
-    let platform_ptr: *mut c_void = *object.get_ivar(MAC_PLATFORM_IVAR);
-    assert!(!platform_ptr.is_null());
-    &*(platform_ptr as *const MacPlatform)
+    unsafe {
+        let platform_ptr: *mut c_void = *object.get_ivar(MAC_PLATFORM_IVAR);
+        assert!(!platform_ptr.is_null());
+        &*(platform_ptr as *const MacPlatform)
+    }
 }
 
 extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
@@ -1438,25 +1450,24 @@ extern "C" fn handle_dock_menu(this: &mut Object, _: Sel, _: id) -> id {
 }
 
 unsafe fn ns_string(string: &str) -> id {
-    NSString::alloc(nil).init_str(string).autorelease()
+    unsafe { NSString::alloc(nil).init_str(string).autorelease() }
 }
 
 unsafe fn ns_url_to_path(url: id) -> Result<PathBuf> {
     let path: *mut c_char = msg_send![url, fileSystemRepresentation];
     if path.is_null() {
-        Err(anyhow!(
-            "url is not a file path: {}",
+        Err(anyhow!("url is not a file path: {}", unsafe {
             CStr::from_ptr(url.absoluteString().UTF8String()).to_string_lossy()
-        ))
+        }))
     } else {
-        Ok(PathBuf::from(OsStr::from_bytes(
-            CStr::from_ptr(path).to_bytes(),
-        )))
+        Ok(PathBuf::from(OsStr::from_bytes(unsafe {
+            CStr::from_ptr(path).to_bytes()
+        })))
     }
 }
 
 #[link(name = "Carbon", kind = "framework")]
-extern "C" {
+unsafe extern "C" {
     pub(super) fn TISCopyCurrentKeyboardLayoutInputSource() -> *mut Object;
     pub(super) fn TISGetInputSourceProperty(
         inputSource: *mut Object,
@@ -1478,6 +1489,7 @@ extern "C" {
     pub(super) fn LMGetKbdType() -> u16;
     pub(super) static kTISPropertyUnicodeKeyLayoutData: CFStringRef;
     pub(super) static kTISPropertyInputSourceID: CFStringRef;
+    pub(super) static kTISPropertyLocalizedName: CFStringRef;
 }
 
 mod security {
@@ -1485,7 +1497,7 @@ mod security {
     use super::*;
 
     #[link(name = "Security", kind = "framework")]
-    extern "C" {
+    unsafe extern "C" {
         pub static kSecClass: CFStringRef;
         pub static kSecClassInternetPassword: CFStringRef;
         pub static kSecAttrServer: CFStringRef;

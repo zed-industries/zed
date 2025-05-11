@@ -1,40 +1,44 @@
 use crate::{
+    conflict_view::ConflictAddon,
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
+    git_panel_settings::GitPanelSettings,
     remote_button::{render_publish_button, render_push_button},
 };
 use anyhow::Result;
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::HashSet;
 use editor::{
+    Editor, EditorEvent,
     actions::{GoToHunk, GoToPreviousHunk},
     scroll::Autoscroll,
-    Editor, EditorEvent,
 };
 use futures::StreamExt;
 use git::{
+    Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::FileStatus,
-    Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext,
 };
 use gpui::{
-    actions, Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Entity,
-    EventEmitter, FocusHandle, Focusable, Render, Subscription, Task, WeakEntity,
+    Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, Entity, EventEmitter,
+    FocusHandle, Focusable, Render, Subscription, Task, WeakEntity, actions,
 };
 use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
-    git_store::{GitEvent, GitStore},
     Project, ProjectPath,
+    git_store::{GitStore, GitStoreEvent, RepositoryEvent},
 };
+use settings::{Settings, SettingsStore};
 use std::any::{Any, TypeId};
+use std::ops::Range;
 use theme::ActiveTheme;
-use ui::{prelude::*, vertical_divider, KeyBinding, Tooltip};
+use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::ResultExt as _;
 use workspace::{
-    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
-    searchable::SearchableItemHandle,
     CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
+    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
+    searchable::SearchableItemHandle,
 };
 
 actions!(git, [Diff, Add]);
@@ -48,7 +52,6 @@ pub struct ProjectDiff {
     focus_handle: FocusHandle,
     update_needed: postage::watch::Sender<()>,
     pending_scroll: Option<PathKey>,
-    current_branch: Option<Branch>,
     _task: Task<Result<()>>,
     _subscription: Subscription,
 }
@@ -61,9 +64,9 @@ struct DiffBuffer {
     file_status: FileStatus,
 }
 
-const CONFLICT_NAMESPACE: &'static str = "0";
-const TRACKED_NAMESPACE: &'static str = "1";
-const NEW_NAMESPACE: &'static str = "2";
+const CONFLICT_NAMESPACE: u32 = 1;
+const TRACKED_NAMESPACE: u32 = 2;
+const NEW_NAMESPACE: u32 = 3;
 
 impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
@@ -153,14 +156,24 @@ impl ProjectDiff {
             &git_store,
             window,
             move |this, _git_store, event, _window, _cx| match event {
-                GitEvent::ActiveRepositoryChanged
-                | GitEvent::FileSystemUpdated
-                | GitEvent::GitStateUpdated => {
+                GitStoreEvent::ActiveRepositoryChanged(_)
+                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, true)
+                | GitStoreEvent::ConflictsUpdated => {
                     *this.update_needed.borrow_mut() = ();
                 }
                 _ => {}
             },
         );
+
+        let mut was_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+        cx.observe_global::<SettingsStore>(move |this, cx| {
+            let is_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+            if is_sort_by_path != was_sort_by_path {
+                *this.update_needed.borrow_mut() = ();
+            }
+            was_sort_by_path = is_sort_by_path
+        })
+        .detach();
 
         let (mut send, recv) = postage::watch::channel::<()>();
         let worker = window.spawn(cx, {
@@ -179,7 +192,6 @@ impl ProjectDiff {
             multibuffer,
             pending_scroll: None,
             update_needed: send,
-            current_branch: None,
             _task: worker,
             _subscription: git_store_subscription,
         }
@@ -339,14 +351,17 @@ impl ProjectDiff {
 
         let mut result = vec![];
         repo.update(cx, |repo, cx| {
-            for entry in repo.status() {
+            for entry in repo.cached_status() {
                 if !entry.status.has_changes() {
                     continue;
                 }
-                let Some(project_path) = repo.repo_path_to_project_path(&entry.repo_path) else {
+                let Some(project_path) = repo.repo_path_to_project_path(&entry.repo_path, cx)
+                else {
                     continue;
                 };
-                let namespace = if repo.has_conflict(&entry.repo_path) {
+                let namespace = if GitPanelSettings::get_global(cx).sort_by_path {
+                    TRACKED_NAMESPACE
+                } else if repo.has_conflict(&entry.repo_path) {
                     CONFLICT_NAMESPACE
                 } else if entry.status.is_created() {
                     NEW_NAMESPACE
@@ -395,19 +410,33 @@ impl ProjectDiff {
         let buffer = diff_buffer.buffer;
         let diff = diff_buffer.diff;
 
+        let conflict_addon = self
+            .editor
+            .read(cx)
+            .addon::<ConflictAddon>()
+            .expect("project diff editor should have a conflict addon");
+
         let snapshot = buffer.read(cx).snapshot();
         let diff = diff.read(cx);
         let diff_hunk_ranges = diff
             .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
-            .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
+            .map(|diff_hunk| diff_hunk.buffer_range.clone());
+        let conflicts = conflict_addon
+            .conflict_set(snapshot.remote_id())
+            .map(|conflict_set| conflict_set.read(cx).snapshot().conflicts.clone())
+            .unwrap_or_default();
+        let conflicts = conflicts.iter().map(|conflict| conflict.range.clone());
+
+        let excerpt_ranges = merge_anchor_ranges(diff_hunk_ranges, conflicts, &snapshot)
+            .map(|range| range.to_point(&snapshot))
             .collect::<Vec<_>>();
 
         let (was_empty, is_excerpt_newly_added) = self.multibuffer.update(cx, |multibuffer, cx| {
             let was_empty = multibuffer.is_empty();
-            let is_newly_added = multibuffer.set_excerpts_for_path(
+            let (_, is_newly_added) = multibuffer.set_excerpts_for_path(
                 path_key.clone(),
                 buffer,
-                diff_hunk_ranges,
+                excerpt_ranges,
                 editor::DEFAULT_MULTIBUFFER_CONTEXT,
                 cx,
             );
@@ -450,20 +479,6 @@ impl ProjectDiff {
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
         while let Some(_) = recv.next().await {
-            this.update(cx, |this, cx| {
-                let new_branch =
-                    this.git_store
-                        .read(cx)
-                        .active_repository()
-                        .and_then(|active_repository| {
-                            active_repository.read(cx).current_branch().cloned()
-                        });
-                if new_branch != this.current_branch {
-                    this.current_branch = new_branch;
-                    cx.notify();
-                }
-            })?;
-
             let buffers_to_load = this.update(cx, |this, cx| this.load_buffers(cx))?;
             for buffer_to_load in buffers_to_load {
                 if let Some(buffer) = buffer_to_load.await.log_err() {
@@ -542,6 +557,10 @@ impl Item for ProjectDiff {
                 Color::Muted
             })
             .into_any_element()
+    }
+
+    fn tab_content_text(&self, _detail: usize, _: &App) -> SharedString {
+        "Uncommitted Changes".into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -874,10 +893,8 @@ impl Render for ProjectDiffToolbar {
 
         h_group_xl()
             .my_neg_1()
-            .items_center()
             .py_1()
-            .pl_2()
-            .pr_1()
+            .items_center()
             .flex_wrap()
             .justify_between()
             .child(
@@ -1007,8 +1024,7 @@ impl Render for ProjectDiffToolbar {
     }
 }
 
-#[derive(IntoElement, IntoComponent)]
-#[component(scope = "Version Control")]
+#[derive(IntoElement, RegisterComponent)]
 pub struct ProjectDiffEmptyState {
     pub no_repo: bool,
     pub can_push_and_pull: bool,
@@ -1081,7 +1097,7 @@ impl RenderOnce for ProjectDiffEmptyState {
                             v_flex()
                                 .child(Headline::new(ahead_string).size(HeadlineSize::Small))
                                 .child(
-                                    Label::new(format!("Push your changes to {}", branch.name))
+                                    Label::new(format!("Push your changes to {}", branch.name()))
                                         .color(Color::Muted),
                                 ),
                         )
@@ -1095,7 +1111,7 @@ impl RenderOnce for ProjectDiffEmptyState {
                             v_flex()
                                 .child(Headline::new("Publish Branch").size(HeadlineSize::Small))
                                 .child(
-                                    Label::new(format!("Create {} on remote", branch.name))
+                                    Label::new(format!("Create {} on remote", branch.name()))
                                         .color(Color::Muted),
                                 ),
                         )
@@ -1130,47 +1146,6 @@ impl RenderOnce for ProjectDiffEmptyState {
     }
 }
 
-// .when(self.can_push_and_pull, |this| {
-//     let remote_button = crate::render_remote_button(
-//         "project-diff-remote-button",
-//         &branch,
-//         self.focus_handle.clone(),
-//         false,
-//     );
-
-//     match remote_button {
-//         Some(button) => {
-//             this.child(h_flex().justify_around().child(button))
-//         }
-//         None => this.child(
-//             h_flex()
-//                 .justify_around()
-//                 .child(Label::new("Remote up to date")),
-//         ),
-//     }
-// }),
-//
-// // .map(|this| {
-//     this.child(h_flex().justify_around().mt_1().child(
-//         Button::new("project-diff-close-button", "Close").when_some(
-//             self.focus_handle.clone(),
-//             |this, focus_handle| {
-//                 this.key_binding(KeyBinding::for_action_in(
-//                     &CloseActiveItem::default(),
-//                     &focus_handle,
-//                     window,
-//                     cx,
-//                 ))
-//                 .on_click(move |_, window, cx| {
-//                     window.focus(&focus_handle);
-//                     window
-//                         .dispatch_action(Box::new(CloseActiveItem::default()), cx);
-//                 })
-//             },
-//         ),
-//     ))
-// }),
-
 mod preview {
     use git::repository::{
         Branch, CommitSummary, Upstream, UpstreamTracking, UpstreamTrackingStatus,
@@ -1180,8 +1155,12 @@ mod preview {
     use super::ProjectDiffEmptyState;
 
     // View this component preview using `workspace: open component-preview`
-    impl ComponentPreview for ProjectDiffEmptyState {
-        fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+    impl Component for ProjectDiffEmptyState {
+        fn scope() -> ComponentScope {
+            ComponentScope::VersionControl
+        }
+
+        fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
             let unknown_upstream: Option<UpstreamTracking> = None;
             let ahead_of_upstream: Option<UpstreamTracking> = Some(
                 UpstreamTrackingStatus {
@@ -1202,7 +1181,7 @@ mod preview {
             fn branch(upstream: Option<UpstreamTracking>) -> Branch {
                 Branch {
                     is_head: true,
-                    name: "some-branch".into(),
+                    ref_name: "some-branch".into(),
                     upstream: upstream.map(|tracking| Upstream {
                         ref_name: "origin/some-branch".into(),
                         tracking,
@@ -1246,53 +1225,104 @@ mod preview {
 
             let (width, height) = (px(480.), px(320.));
 
-            v_flex()
-                .gap_6()
-                .children(vec![example_group(vec![
-                    single_example(
-                        "No Repo",
-                        div()
-                            .w(width)
-                            .h(height)
-                            .child(no_repo_state)
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "No Changes",
-                        div()
-                            .w(width)
-                            .h(height)
-                            .child(no_changes_state)
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "Unknown Upstream",
-                        div()
-                            .w(width)
-                            .h(height)
-                            .child(unknown_upstream_state)
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "Ahead of Remote",
-                        div()
-                            .w(width)
-                            .h(height)
-                            .child(ahead_of_upstream_state)
-                            .into_any_element(),
-                    ),
-                ])
-                .vertical()])
-                .into_any_element()
+            Some(
+                v_flex()
+                    .gap_6()
+                    .children(vec![
+                        example_group(vec![
+                            single_example(
+                                "No Repo",
+                                div()
+                                    .w(width)
+                                    .h(height)
+                                    .child(no_repo_state)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "No Changes",
+                                div()
+                                    .w(width)
+                                    .h(height)
+                                    .child(no_changes_state)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Unknown Upstream",
+                                div()
+                                    .w(width)
+                                    .h(height)
+                                    .child(unknown_upstream_state)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Ahead of Remote",
+                                div()
+                                    .w(width)
+                                    .h(height)
+                                    .child(ahead_of_upstream_state)
+                                    .into_any_element(),
+                            ),
+                        ])
+                        .vertical(),
+                    ])
+                    .into_any_element(),
+            )
         }
     }
+}
+
+fn merge_anchor_ranges<'a>(
+    left: impl 'a + Iterator<Item = Range<Anchor>>,
+    right: impl 'a + Iterator<Item = Range<Anchor>>,
+    snapshot: &'a language::BufferSnapshot,
+) -> impl 'a + Iterator<Item = Range<Anchor>> {
+    let mut left = left.fuse().peekable();
+    let mut right = right.fuse().peekable();
+
+    std::iter::from_fn(move || {
+        let Some(left_range) = left.peek() else {
+            return right.next();
+        };
+        let Some(right_range) = right.peek() else {
+            return left.next();
+        };
+
+        let mut next_range = if left_range.start.cmp(&right_range.start, snapshot).is_lt() {
+            left.next().unwrap()
+        } else {
+            right.next().unwrap()
+        };
+
+        // Extend the basic range while there's overlap with a range from either stream.
+        loop {
+            if let Some(left_range) = left
+                .peek()
+                .filter(|range| range.start.cmp(&next_range.end, &snapshot).is_le())
+                .cloned()
+            {
+                left.next();
+                next_range.end = left_range.end;
+            } else if let Some(right_range) = right
+                .peek()
+                .filter(|range| range.start.cmp(&next_range.end, &snapshot).is_le())
+                .cloned()
+            {
+                right.next();
+                next_range.end = right_range.end;
+            } else {
+                break;
+            }
+        }
+
+        Some(next_range)
+    })
 }
 
 #[cfg(not(target_os = "windows"))]
 #[cfg(test)]
 mod tests {
     use db::indoc;
-    use editor::test::editor_test_context::{assert_state_with_diff, EditorTestContext};
+    use editor::test::editor_test_context::{EditorTestContext, assert_state_with_diff};
     use gpui::TestAppContext;
     use project::FakeFs;
     use serde_json::json;
@@ -1513,11 +1543,9 @@ mod tests {
             cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
                 let snapshot = buffer_editor.snapshot(window, cx);
                 let snapshot = &snapshot.buffer_snapshot;
-                let new_buffer_hunks = buffer_editor
+                buffer_editor
                     .diff_hunks_in_ranges(&[editor::Anchor::min()..editor::Anchor::max()], snapshot)
-                    .collect::<Vec<_>>();
-                buffer_editor.git_restore(&Default::default(), window, cx);
-                new_buffer_hunks
+                    .collect::<Vec<_>>()
             });
         assert_eq!(new_buffer_hunks.as_slice(), &[]);
 
@@ -1530,13 +1558,27 @@ mod tests {
 
         cx.run_until_parked();
 
+        cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
+            buffer_editor.expand_all_diff_hunks(&Default::default(), window, cx);
+        });
+
+        assert_state_with_diff(
+            &buffer_editor,
+            cx,
+            &"
+                - original
+                + different
+                  ˇ"
+            .unindent(),
+        );
+
         assert_state_with_diff(
             &diff_editor,
             cx,
             &"
                 - original
-                + ˇdifferent
-            "
+                + different
+                  ˇ"
             .unindent(),
         );
     }
@@ -1551,7 +1593,7 @@ mod tests {
         fs.insert_tree(
             "/a",
             json!({
-                ".git":{},
+                ".git": {},
                 "a.txt": "created\n",
                 "b.txt": "really changed\n",
                 "c.txt": "unchanged\n"
@@ -1628,5 +1670,88 @@ mod tests {
             created
         "
         ));
+    }
+
+    #[gpui::test]
+    async fn test_excerpts_splitting_after_restoring_the_middle_excerpt(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let git_contents = indoc! {r#"
+            #[rustfmt::skip]
+            fn main() {
+                let x = 0.0; // this line will be removed
+                // 1
+                // 2
+                // 3
+                let y = 0.0; // this line will be removed
+                // 1
+                // 2
+                // 3
+                let arr = [
+                    0.0, // this line will be removed
+                    0.0, // this line will be removed
+                    0.0, // this line will be removed
+                    0.0, // this line will be removed
+                ];
+            }
+        "#};
+        let buffer_contents = indoc! {"
+            #[rustfmt::skip]
+            fn main() {
+                // 1
+                // 2
+                // 3
+                // 1
+                // 2
+                // 3
+                let arr = [
+                ];
+            }
+        "};
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/a",
+            json!({
+                ".git": {},
+                "main.rs": buffer_contents,
+            }),
+        )
+        .await;
+
+        fs.set_git_content_for_repo(
+            Path::new("/a/.git"),
+            &[("main.rs".into(), git_contents.to_owned(), None)],
+        );
+
+        let project = Project::test(fs, [Path::new("/a")], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        cx.run_until_parked();
+
+        cx.focus(&workspace);
+        cx.update(|window, cx| {
+            window.dispatch_action(project_diff::Diff.boxed_clone(), cx);
+        });
+
+        cx.run_until_parked();
+
+        let item = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<ProjectDiff>(cx).unwrap()
+        });
+        cx.focus(&item);
+        let editor = item.update(cx, |item, _| item.editor.clone());
+
+        let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
+
+        cx.assert_excerpts_with_selections(&format!("[EXCERPT]\nˇ{git_contents}"));
+
+        cx.dispatch_action(editor::actions::GoToHunk);
+        cx.dispatch_action(editor::actions::GoToHunk);
+        cx.dispatch_action(git::Restore);
+        cx.dispatch_action(editor::actions::MoveToBeginning);
+
+        cx.assert_excerpts_with_selections(&format!("[EXCERPT]\nˇ{git_contents}"));
     }
 }

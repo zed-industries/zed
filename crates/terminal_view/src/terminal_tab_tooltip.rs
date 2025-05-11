@@ -1,5 +1,5 @@
 use gpui::{IntoElement, Render};
-use ui::{prelude::*, tooltip_container, Divider};
+use ui::{Divider, prelude::*, tooltip_container};
 
 pub struct TerminalTooltip {
     title: SharedString,

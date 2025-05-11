@@ -1,12 +1,12 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use arrayvec::ArrayString;
 use fs::{Fs, MTime};
-use futures::{stream::StreamExt, TryFutureExt};
+use futures::{TryFutureExt, stream::StreamExt};
 use futures_batch::ChunksTimeoutStreamExt;
 use gpui::{App, AppContext as _, Entity, Task};
 use heed::{
-    types::{SerdeBincode, Str},
     RoTxn,
+    types::{SerdeBincode, Str},
 };
 use language_model::{
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelRegistry, LanguageModelRequest,
@@ -130,7 +130,7 @@ impl SummaryIndex {
         &self,
         is_auto_available: bool,
         cx: &App,
-    ) -> impl Future<Output = Result<()>> {
+    ) -> impl Future<Output = Result<()>> + use<> {
         let start = Instant::now();
         let backlogged;
         let digest;
@@ -193,7 +193,7 @@ impl SummaryIndex {
         updated_entries: UpdatedEntriesSet,
         is_auto_available: bool,
         cx: &App,
-    ) -> impl Future<Output = Result<()>> {
+    ) -> impl Future<Output = Result<()>> + use<> {
         let start = Instant::now();
         let backlogged;
         let digest;
@@ -528,7 +528,11 @@ impl SummaryIndex {
         }
     }
 
-    fn summarize_code(code: &str, path: &Path, cx: &App) -> impl Future<Output = Result<String>> {
+    fn summarize_code(
+        code: &str,
+        path: &Path,
+        cx: &App,
+    ) -> impl Future<Output = Result<String>> + use<> {
         let start = Instant::now();
         let (summary_model_id, use_cache): (LanguageModelId, bool) = (
             "Qwen/Qwen2-7B-Instruct".to_string().into(), // TODO read this from the user's settings.
@@ -553,12 +557,16 @@ impl SummaryIndex {
         );
 
         let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            mode: None,
             messages: vec![LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![prompt.into()],
                 cache: use_cache,
             }],
             tools: Vec::new(),
+            tool_choice: None,
             stop: Vec::new(),
             temperature: None,
         };
@@ -639,7 +647,7 @@ impl SummaryIndex {
         &self,
         worktree_abs_path: Arc<Path>,
         cx: &App,
-    ) -> impl Future<Output = Result<()>> {
+    ) -> impl Future<Output = Result<()>> + use<> {
         let start = Instant::now();
         let backlogged = {
             let (tx, rx) = channel::bounded(512);

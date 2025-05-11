@@ -1,5 +1,7 @@
 mod avatar;
+mod banner;
 mod button;
+mod callout;
 mod content_group;
 mod context_menu;
 mod disclosure;
@@ -21,6 +23,7 @@ mod notification;
 mod numeric_stepper;
 mod popover;
 mod popover_menu;
+mod progress;
 mod radio;
 mod right_click_menu;
 mod scrollbar;
@@ -37,7 +40,9 @@ mod tooltip;
 mod stories;
 
 pub use avatar::*;
+pub use banner::*;
 pub use button::*;
+pub use callout::*;
 pub use content_group::*;
 pub use context_menu::*;
 pub use disclosure::*;
@@ -59,6 +64,7 @@ pub use notification::*;
 pub use numeric_stepper::*;
 pub use popover::*;
 pub use popover_menu::*;
+pub use progress::*;
 pub use radio::*;
 pub use right_click_menu::*;
 pub use scrollbar::*;
@@ -71,7 +77,5 @@ pub use table::*;
 pub use toggle::*;
 pub use tooltip::*;
 
-#[cfg(feature = "stories")]
-pub use image::story::*;
 #[cfg(feature = "stories")]
 pub use stories::*;

@@ -6,6 +6,7 @@ mod pty_info;
 pub mod terminal_settings;
 
 use alacritty_terminal::{
+    Term,
     event::{Event as AlacTermEvent, EventListener, Notify, WindowSize},
     event_loop::{EventLoop, Msg, Notifier},
     grid::{Dimensions, Grid, Row, Scroll as AlacScroll},
@@ -13,22 +14,21 @@ use alacritty_terminal::{
     selection::{Selection, SelectionRange, SelectionType},
     sync::FairMutex,
     term::{
+        Config, RenderableCursor, TermMode,
         cell::{Cell, Flags},
         search::{Match, RegexIter, RegexSearch},
-        Config, RenderableCursor, TermMode,
     },
     tty::{self},
     vi_mode::{ViModeCursor, ViMotion},
     vte::ansi::{
         ClearMode, CursorStyle as AlacCursorStyle, Handler, NamedPrivateMode, PrivateMode,
     },
-    Term,
 };
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 use futures::{
-    channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
     FutureExt,
+    channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded},
 };
 
 use mappings::mouse::{
@@ -53,16 +53,16 @@ use std::{
     fmt::Display,
     ops::{Deref, Index, RangeInclusive},
     path::PathBuf,
+    process::ExitStatus,
     sync::{Arc, LazyLock},
     time::Duration,
 };
 use thiserror::Error;
 
 use gpui::{
-    actions, black, px, AnyWindowHandle, App, AppContext as _, Bounds, ClipboardItem, Context,
-    EventEmitter, Hsla, Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Point, Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase,
-    Window,
+    AnyWindowHandle, App, AppContext as _, Bounds, ClipboardItem, Context, EventEmitter, Hsla,
+    Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase, Window, actions, black, px,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
@@ -313,7 +313,7 @@ impl Display for TerminalError {
 
 // https://github.com/alacritty/alacritty/blob/cb3a79dbf6472740daca8440d5166c1d4af5029e/extra/man/alacritty.5.scd?plain=1#L207-L213
 const DEFAULT_SCROLL_HISTORY_LINES: usize = 10_000;
-const MAX_SCROLL_HISTORY_LINES: usize = 100_000;
+pub const MAX_SCROLL_HISTORY_LINES: usize = 100_000;
 const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#;
 // Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathLikeWithPosition
 // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
@@ -351,8 +351,7 @@ impl TerminalBuilder {
         max_scroll_history_lines: Option<usize>,
         is_ssh_terminal: bool,
         window: AnyWindowHandle,
-        completion_tx: Sender<()>,
-        debug_terminal: bool,
+        completion_tx: Sender<Option<ExitStatus>>,
         cx: &App,
     ) -> Result<TerminalBuilder> {
         // If the parent environment doesn't have a locale set
@@ -380,7 +379,7 @@ impl TerminalBuilder {
                     #[cfg(target_os = "windows")]
                     {
                         Some(alacritty_terminal::tty::Shell::new(
-                            util::retrieve_system_shell(),
+                            util::get_windows_system_shell(),
                             Vec::new(),
                         ))
                     }
@@ -502,7 +501,6 @@ impl TerminalBuilder {
             word_regex: RegexSearch::new(WORD_REGEX).unwrap(),
             python_file_line_regex: RegexSearch::new(PYTHON_FILE_LINE_REGEX).unwrap(),
             vi_mode_enabled: false,
-            debug_terminal,
             is_ssh_terminal,
             python_venv_directory,
         };
@@ -603,9 +601,11 @@ pub struct TerminalContent {
     pub cursor_char: char,
     pub terminal_bounds: TerminalBounds,
     pub last_hovered_word: Option<HoveredWord>,
+    pub scrolled_to_top: bool,
+    pub scrolled_to_bottom: bool,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct HoveredWord {
     pub word: String,
     pub word_match: RangeInclusive<AlacPoint>,
@@ -627,6 +627,8 @@ impl Default for TerminalContent {
             cursor_char: Default::default(),
             terminal_bounds: Default::default(),
             last_hovered_word: None,
+            scrolled_to_top: false,
+            scrolled_to_bottom: false,
         }
     }
 }
@@ -639,7 +641,7 @@ pub enum SelectionPhase {
 
 pub struct Terminal {
     pty_tx: Notifier,
-    completion_tx: Sender<()>,
+    completion_tx: Sender<Option<ExitStatus>>,
     term: Arc<FairMutex<Term<ZedListener>>>,
     term_config: Config,
     events: VecDeque<InternalEvent>,
@@ -660,7 +662,6 @@ pub struct Terminal {
     python_file_line_regex: RegexSearch,
     task: Option<TaskState>,
     vi_mode_enabled: bool,
-    debug_terminal: bool,
     is_ssh_terminal: bool,
 }
 
@@ -670,7 +671,7 @@ pub struct TaskState {
     pub label: String,
     pub command_label: String,
     pub status: TaskStatus,
-    pub completion_rx: Receiver<()>,
+    pub completion_rx: Receiver<Option<ExitStatus>>,
     pub hide: HideStrategy,
     pub show_summary: bool,
     pub show_command: bool,
@@ -781,7 +782,7 @@ impl Terminal {
         cx: &mut Context<Self>,
     ) {
         match event {
-            InternalEvent::Resize(mut new_bounds) => {
+            &InternalEvent::Resize(mut new_bounds) => {
                 new_bounds.bounds.size.height =
                     cmp::max(new_bounds.line_height, new_bounds.height());
                 new_bounds.bounds.size.width = cmp::max(new_bounds.cell_width, new_bounds.width());
@@ -1211,6 +1212,14 @@ impl Terminal {
             .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
     }
 
+    pub fn scrolled_to_top(&self) -> bool {
+        self.last_content.scrolled_to_top
+    }
+
+    pub fn scrolled_to_bottom(&self) -> bool {
+        self.last_content.scrolled_to_bottom
+    }
+
     ///Resize the terminal and the PTY.
     pub fn set_size(&mut self, new_bounds: TerminalBounds) {
         if self.last_content.terminal_bounds != new_bounds {
@@ -1219,28 +1228,16 @@ impl Terminal {
     }
 
     ///Write the Input payload to the tty.
-    fn write_to_pty(&self, input: String) {
-        self.pty_tx.notify(input.into_bytes());
+    fn write_to_pty(&self, input: impl Into<Vec<u8>>) {
+        self.pty_tx.notify(input.into());
     }
 
-    fn write_bytes_to_pty(&self, input: Vec<u8>) {
-        self.pty_tx.notify(input);
-    }
-
-    pub fn input(&mut self, input: String) {
+    pub fn input(&mut self, input: impl Into<Vec<u8>>) {
         self.events
             .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
         self.events.push_back(InternalEvent::SetSelection(None));
 
         self.write_to_pty(input);
-    }
-
-    pub fn input_bytes(&mut self, input: Vec<u8>) {
-        self.events
-            .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
-        self.events.push_back(InternalEvent::SetSelection(None));
-
-        self.write_bytes_to_pty(input);
     }
 
     pub fn toggle_vi_mode(&mut self) {
@@ -1420,7 +1417,16 @@ impl Terminal {
             cursor_char: term.grid()[content.cursor.point].c,
             terminal_bounds: last_content.terminal_bounds,
             last_hovered_word: last_content.last_hovered_word.clone(),
+            scrolled_to_top: content.display_offset == term.history_size(),
+            scrolled_to_bottom: content.display_offset == 0,
         }
+    }
+
+    pub fn get_content(&self) -> String {
+        let term = self.term.lock_unfair();
+        let start = AlacPoint::new(term.topmost_line(), Column(0));
+        let end = AlacPoint::new(term.bottommost_line(), term.last_column());
+        term.bounds_to_string(start, end)
     }
 
     pub fn last_n_non_empty_lines(&self, n: usize) -> Vec<String> {
@@ -1547,6 +1553,18 @@ impl Terminal {
         }
     }
 
+    pub fn select_word_at_event_position(&mut self, e: &MouseDownEvent) {
+        let position = e.position - self.last_content.terminal_bounds.bounds.origin;
+        let (point, side) = grid_point_and_side(
+            position,
+            self.last_content.terminal_bounds,
+            self.last_content.display_offset,
+        );
+        let selection = Selection::new(SelectionType::Semantic, point, side);
+        self.events
+            .push_back(InternalEvent::SetSelection(Some((selection, point))));
+    }
+
     pub fn mouse_drag(
         &mut self,
         e: &MouseMoveEvent,
@@ -1590,7 +1608,7 @@ impl Terminal {
             return None;
         };
 
-        Some(scroll_lines)
+        Some(scroll_lines.clamp(-3, 3))
     }
 
     pub fn mouse_down(&mut self, e: &MouseDownEvent, _cx: &mut Context<Self>) {
@@ -1843,24 +1861,31 @@ impl Terminal {
         self.task.as_ref()
     }
 
-    pub fn debug_terminal(&self) -> bool {
-        self.debug_terminal
-    }
-
-    pub fn wait_for_completed_task(&self, cx: &App) -> Task<()> {
+    pub fn wait_for_completed_task(&self, cx: &App) -> Task<Option<ExitStatus>> {
         if let Some(task) = self.task() {
             if task.status == TaskStatus::Running {
                 let completion_receiver = task.completion_rx.clone();
-                return cx.spawn(async move |_| {
-                    let _ = completion_receiver.recv().await;
-                });
+                return cx.spawn(async move |_| completion_receiver.recv().await.ok().flatten());
+            } else if let Ok(status) = task.completion_rx.try_recv() {
+                return Task::ready(status);
             }
         }
-        Task::ready(())
+        Task::ready(None)
     }
 
-    fn register_task_finished(&mut self, error_code: Option<i32>, cx: &mut Context<'_, Terminal>) {
-        self.completion_tx.try_send(()).ok();
+    fn register_task_finished(&mut self, error_code: Option<i32>, cx: &mut Context<Terminal>) {
+        let e: Option<ExitStatus> = error_code.map(|code| {
+            #[cfg(unix)]
+            {
+                return std::os::unix::process::ExitStatusExt::from_raw(code);
+            }
+            #[cfg(windows)]
+            {
+                return std::os::windows::process::ExitStatusExt::from_raw(code as u32);
+            }
+        });
+
+        self.completion_tx.try_send(e).ok();
         let task = match &mut self.task {
             Some(task) => task,
             None => {
@@ -1937,15 +1962,20 @@ const TASK_DELIMITER: &str = "⏵ ";
 fn task_summary(task: &TaskState, error_code: Option<i32>) -> (bool, String, String) {
     let escaped_full_label = task.full_label.replace("\r\n", "\r").replace('\n', "\r");
     let (success, task_line) = match error_code {
-        Some(0) => {
-            (true, format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished successfully"))
-        }
-        Some(error_code) => {
-            (false, format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished with non-zero error code: {error_code}"))
-        }
-        None => {
-            (false, format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished"))
-        }
+        Some(0) => (
+            true,
+            format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished successfully"),
+        ),
+        Some(error_code) => (
+            false,
+            format!(
+                "{TASK_DELIMITER}Task `{escaped_full_label}` finished with non-zero error code: {error_code}"
+            ),
+        ),
+        None => (
+            false,
+            format!("{TASK_DELIMITER}Task `{escaped_full_label}` finished"),
+        ),
     };
     let escaped_command_label = task.command_label.replace("\r\n", "\r").replace('\n', "\r");
     let command_line = format!("{TASK_DELIMITER}Command: {escaped_command_label}");
@@ -2081,8 +2111,9 @@ pub fn get_color_at_index(index: usize, theme: &Theme) -> Hsla {
             rgba_color(i * step, i * step, i * step) // Map the ANSI-grayscale components to the RGB-grayscale
         }
         // For compatibility with the alacritty::Colors interface
-        256 => colors.text,
-        257 => colors.background,
+        // See: https://github.com/alacritty/alacritty/blob/master/alacritty_terminal/src/term/color.rs
+        256 => colors.terminal_foreground,
+        257 => colors.terminal_background,
         258 => theme.players().local().cursor,
         259 => colors.terminal_ansi_dim_black,
         260 => colors.terminal_ansi_dim_red,
@@ -2134,12 +2165,12 @@ mod tests {
         index::{Column, Line, Point as AlacPoint},
         term::cell::Cell,
     };
-    use gpui::{bounds, point, size, Pixels, Point};
-    use rand::{distributions::Alphanumeric, rngs::ThreadRng, thread_rng, Rng};
+    use gpui::{Pixels, Point, bounds, point, size};
+    use rand::{Rng, distributions::Alphanumeric, rngs::ThreadRng, thread_rng};
 
     use crate::{
-        content_index_for_mouse, python_extract_path_and_line, rgb_for_index, IndexedCell,
-        TerminalBounds, TerminalContent,
+        IndexedCell, TerminalBounds, TerminalContent, content_index_for_mouse,
+        python_extract_path_and_line, rgb_for_index,
     };
 
     #[test]

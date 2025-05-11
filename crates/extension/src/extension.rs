@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ::lsp::LanguageServerName;
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
 use fs::normalize_path;
 use gpui::{App, Task};
@@ -120,6 +120,12 @@ pub trait Extension: Send + Sync + 'static {
         context_server_id: Arc<str>,
         project: Arc<dyn ProjectDelegate>,
     ) -> Result<Command>;
+
+    async fn context_server_configuration(
+        &self,
+        context_server_id: Arc<str>,
+        project: Arc<dyn ProjectDelegate>,
+    ) -> Result<Option<ContextServerConfiguration>>;
 
     async fn suggest_docs_packages(&self, provider: Arc<str>) -> Result<Vec<String>>;
 

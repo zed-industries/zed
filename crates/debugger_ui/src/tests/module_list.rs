@@ -1,18 +1,18 @@
 use crate::{
     debugger_panel::DebugPanel,
-    session::ThreadItem,
-    tests::{active_debug_session_panel, init_test, init_test_workspace},
+    tests::{active_debug_session_panel, init_test, init_test_workspace, start_debug_session},
 };
 use dap::{
-    requests::{Modules, StackTrace, Threads},
-    DebugRequestType, StoppedEvent,
+    StoppedEvent,
+    requests::{Initialize, Modules},
 };
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::{FakeFs, Project};
 use std::sync::{
-    atomic::{AtomicBool, AtomicI32, Ordering},
     Arc,
+    atomic::{AtomicBool, AtomicI32, Ordering},
 };
+use util::path;
 
 #[gpui::test]
 async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext) {
@@ -20,7 +20,7 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
 
     let fs = FakeFs::new(executor.clone());
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     workspace
         .update(cx, |workspace, window, cx| {
@@ -29,32 +29,17 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
         .unwrap();
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let task = project.update(cx, |project, cx| {
-        project.start_debug_session(
-            dap::test_config(
-                DebugRequestType::Launch,
-                None,
-                Some(dap::Capabilities {
-                    supports_modules_request: Some(true),
-                    ..Default::default()
-                }),
-            ),
-            cx,
-        )
-    });
-
-    let session = task.await.unwrap();
-    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
-
-    client
-        .on_request::<StackTrace, _>(move |_, args| {
-            assert!(args.thread_id == 1);
-            Ok(dap::StackTraceResponse {
-                stack_frames: Vec::default(),
-                total_frames: None,
+    let session = start_debug_session(&workspace, cx, |client| {
+        client.on_request::<Initialize, _>(move |_, _| {
+            Ok(dap::Capabilities {
+                supports_modules_request: Some(true),
+                ..Default::default()
             })
-        })
-        .await;
+        });
+    })
+    .unwrap();
+
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
 
     let called_modules = Arc::new(AtomicBool::new(false));
     let modules = vec![
@@ -84,38 +69,25 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
         },
     ];
 
-    client
-        .on_request::<Threads, _>(move |_, _| {
-            Ok(dap::ThreadsResponse {
-                threads: vec![dap::Thread {
-                    id: 1,
-                    name: "Thread 1".into(),
-                }],
+    client.on_request::<Modules, _>({
+        let called_modules = called_modules.clone();
+        let modules_request_count = AtomicI32::new(0);
+        let modules = modules.clone();
+        move |_, _| {
+            modules_request_count.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(
+                1,
+                modules_request_count.load(Ordering::SeqCst),
+                "This request should only be called once from the host"
+            );
+            called_modules.store(true, Ordering::SeqCst);
+
+            Ok(dap::ModulesResponse {
+                modules: modules.clone(),
+                total_modules: Some(2u64),
             })
-        })
-        .await;
-
-    client
-        .on_request::<Modules, _>({
-            let called_modules = called_modules.clone();
-            let modules_request_count = AtomicI32::new(0);
-            let modules = modules.clone();
-            move |_, _| {
-                modules_request_count.fetch_add(1, Ordering::SeqCst);
-                assert_eq!(
-                    1,
-                    modules_request_count.load(Ordering::SeqCst),
-                    "This request should only be called once from the host"
-                );
-                called_modules.store(true, Ordering::SeqCst);
-
-                Ok(dap::ModulesResponse {
-                    modules: modules.clone(),
-                    total_modules: Some(2u64),
-                })
-            }
-        })
-        .await;
+        }
+    });
 
     client
         .fake_event(dap::messages::Events::Stopped(StoppedEvent {
@@ -134,19 +106,11 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
     let running_state =
         active_debug_session_panel(workspace, cx).update_in(cx, |item, window, cx| {
             cx.focus_self(window);
-            item.mode()
-                .as_running()
-                .expect("Session should be running by this point")
-                .clone()
+            item.running_state().clone()
         });
 
-    assert!(
-        !called_modules.load(std::sync::atomic::Ordering::SeqCst),
-        "Request Modules shouldn't be called before it's needed"
-    );
-
-    running_state.update(cx, |state, cx| {
-        state.set_thread_item(ThreadItem::Modules, cx);
+    running_state.update_in(cx, |this, window, cx| {
+        this.activate_item(crate::persistence::DebuggerPaneItem::Modules, window, cx);
         cx.refresh_windows();
     });
 
@@ -158,9 +122,6 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
     );
 
     active_debug_session_panel(workspace, cx).update(cx, |_, cx| {
-        running_state.update(cx, |state, cx| {
-            state.set_thread_item(ThreadItem::Modules, cx)
-        });
         let actual_modules = running_state.update(cx, |state, cx| {
             state.module_list().update(cx, |list, cx| list.modules(cx))
         });
@@ -251,12 +212,4 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
         assert_eq!(actual_modules.len(), 2);
         assert!(!actual_modules.contains(&changed_module));
     });
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }

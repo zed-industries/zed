@@ -1,12 +1,12 @@
 #![allow(unused, dead_code)]
-use gpui::{actions, hsla, AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Hsla};
+use gpui::{AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Hsla, actions, hsla};
 use strum::IntoEnumIterator;
 use theme::all_theme_colors;
 use ui::{
-    element_cell, prelude::*, string_cell, utils::calculate_contrast_ratio, AudioStatus, Avatar,
-    AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike, Checkbox,
-    CheckboxWithLabel, CollaboratorAvailability, ContentGroup, DecoratedIcon, ElevationIndex,
-    Facepile, IconDecoration, Indicator, KeybindingHint, Switch, Table, TintColor, Tooltip,
+    AudioStatus, Avatar, AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike,
+    Checkbox, CheckboxWithLabel, CollaboratorAvailability, ContentGroup, DecoratedIcon,
+    ElevationIndex, Facepile, IconDecoration, Indicator, KeybindingHint, Switch, Table, TintColor,
+    Tooltip, element_cell, prelude::*, string_cell, utils::calculate_contrast_ratio,
 };
 
 use crate::{Item, Workspace};
@@ -80,9 +80,9 @@ impl Item for ThemePreview {
 
     fn to_item_events(_: &Self::Event, _: impl FnMut(crate::item::ItemEvent)) {}
 
-    fn tab_content_text(&self, window: &Window, cx: &App) -> Option<SharedString> {
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
         let name = cx.theme().name.clone();
-        Some(format!("{} Preview", name).into())
+        format!("{} Preview", name).into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

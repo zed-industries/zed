@@ -1,11 +1,12 @@
 use super::{
-    wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot},
     Highlights,
+    fold_map::Chunk,
+    wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot},
 };
 use crate::{EditorStyle, GutterDimensions};
 use collections::{Bound, HashMap, HashSet};
 use gpui::{AnyElement, App, EntityId, Pixels, Window};
-use language::{Chunk, Patch, Point};
+use language::{Patch, Point};
 use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, RowInfo,
     ToOffset, ToPoint as _,
@@ -17,8 +18,8 @@ use std::{
     fmt::Debug,
     ops::{Deref, DerefMut, Range, RangeBounds, RangeInclusive},
     sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
+        atomic::{AtomicUsize, Ordering::SeqCst},
     },
 };
 use sum_tree::{Bias, SumTree, Summary, TreeMap};
@@ -40,6 +41,7 @@ pub struct BlockMap {
     buffer_header_height: u32,
     excerpt_header_height: u32,
     pub(super) folded_buffers: HashSet<BufferId>,
+    buffers_with_disabled_headers: HashSet<BufferId>,
 }
 
 pub struct BlockMapReader<'a> {
@@ -59,11 +61,11 @@ pub struct BlockSnapshot {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct CustomBlockId(usize);
+pub struct CustomBlockId(pub usize);
 
 impl From<CustomBlockId> for ElementId {
     fn from(val: CustomBlockId) -> Self {
-        ElementId::Integer(val.0)
+        val.0.into()
     }
 }
 
@@ -82,14 +84,16 @@ pub type RenderBlock = Arc<dyn Send + Sync + Fn(&mut BlockContext) -> AnyElement
 pub enum BlockPlacement<T> {
     Above(T),
     Below(T),
+    Near(T),
     Replace(RangeInclusive<T>),
 }
 
 impl<T> BlockPlacement<T> {
-    fn start(&self) -> &T {
+    pub fn start(&self) -> &T {
         match self {
             BlockPlacement::Above(position) => position,
             BlockPlacement::Below(position) => position,
+            BlockPlacement::Near(position) => position,
             BlockPlacement::Replace(range) => range.start(),
         }
     }
@@ -98,6 +102,7 @@ impl<T> BlockPlacement<T> {
         match self {
             BlockPlacement::Above(position) => position,
             BlockPlacement::Below(position) => position,
+            BlockPlacement::Near(position) => position,
             BlockPlacement::Replace(range) => range.end(),
         }
     }
@@ -106,6 +111,7 @@ impl<T> BlockPlacement<T> {
         match self {
             BlockPlacement::Above(position) => BlockPlacement::Above(position),
             BlockPlacement::Below(position) => BlockPlacement::Below(position),
+            BlockPlacement::Near(position) => BlockPlacement::Near(position),
             BlockPlacement::Replace(range) => BlockPlacement::Replace(range.start()..=range.end()),
         }
     }
@@ -114,44 +120,30 @@ impl<T> BlockPlacement<T> {
         match self {
             BlockPlacement::Above(position) => BlockPlacement::Above(f(position)),
             BlockPlacement::Below(position) => BlockPlacement::Below(f(position)),
+            BlockPlacement::Near(position) => BlockPlacement::Near(f(position)),
             BlockPlacement::Replace(range) => {
                 let (start, end) = range.into_inner();
                 BlockPlacement::Replace(f(start)..=f(end))
             }
         }
     }
+
+    fn sort_order(&self) -> u8 {
+        match self {
+            BlockPlacement::Above(_) => 0,
+            BlockPlacement::Replace(_) => 1,
+            BlockPlacement::Near(_) => 2,
+            BlockPlacement::Below(_) => 3,
+        }
+    }
 }
 
 impl BlockPlacement<Anchor> {
     fn cmp(&self, other: &Self, buffer: &MultiBufferSnapshot) -> Ordering {
-        match (self, other) {
-            (BlockPlacement::Above(anchor_a), BlockPlacement::Above(anchor_b))
-            | (BlockPlacement::Below(anchor_a), BlockPlacement::Below(anchor_b)) => {
-                anchor_a.cmp(anchor_b, buffer)
-            }
-            (BlockPlacement::Above(anchor_a), BlockPlacement::Below(anchor_b)) => {
-                anchor_a.cmp(anchor_b, buffer).then(Ordering::Less)
-            }
-            (BlockPlacement::Below(anchor_a), BlockPlacement::Above(anchor_b)) => {
-                anchor_a.cmp(anchor_b, buffer).then(Ordering::Greater)
-            }
-            (BlockPlacement::Above(anchor), BlockPlacement::Replace(range)) => {
-                anchor.cmp(range.start(), buffer).then(Ordering::Less)
-            }
-            (BlockPlacement::Replace(range), BlockPlacement::Above(anchor)) => {
-                range.start().cmp(anchor, buffer).then(Ordering::Greater)
-            }
-            (BlockPlacement::Below(anchor), BlockPlacement::Replace(range)) => {
-                anchor.cmp(range.start(), buffer).then(Ordering::Greater)
-            }
-            (BlockPlacement::Replace(range), BlockPlacement::Below(anchor)) => {
-                range.start().cmp(anchor, buffer).then(Ordering::Less)
-            }
-            (BlockPlacement::Replace(range_a), BlockPlacement::Replace(range_b)) => range_a
-                .start()
-                .cmp(range_b.start(), buffer)
-                .then_with(|| range_b.end().cmp(range_a.end(), buffer)),
-        }
+        self.start()
+            .cmp(other.start(), buffer)
+            .then_with(|| other.end().cmp(self.end(), buffer))
+            .then_with(|| self.sort_order().cmp(&other.sort_order()))
     }
 
     fn to_wrap_row(&self, wrap_snapshot: &WrapSnapshot) -> Option<BlockPlacement<WrapRow>> {
@@ -162,6 +154,12 @@ impl BlockPlacement<Anchor> {
                 position.column = 0;
                 let wrap_row = WrapRow(wrap_snapshot.make_wrap_point(position, Bias::Left).row());
                 Some(BlockPlacement::Above(wrap_row))
+            }
+            BlockPlacement::Near(position) => {
+                let mut position = position.to_point(buffer_snapshot);
+                position.column = buffer_snapshot.line_len(MultiBufferRow(position.row));
+                let wrap_row = WrapRow(wrap_snapshot.make_wrap_point(position, Bias::Left).row());
+                Some(BlockPlacement::Near(wrap_row))
             }
             BlockPlacement::Below(position) => {
                 let mut position = position.to_point(buffer_snapshot);
@@ -189,20 +187,25 @@ impl BlockPlacement<Anchor> {
 }
 
 pub struct CustomBlock {
-    id: CustomBlockId,
-    placement: BlockPlacement<Anchor>,
-    height: u32,
+    pub id: CustomBlockId,
+    pub placement: BlockPlacement<Anchor>,
+    pub height: Option<u32>,
     style: BlockStyle,
     render: Arc<Mutex<RenderBlock>>,
     priority: usize,
+    pub(crate) render_in_minimap: bool,
 }
 
+#[derive(Clone)]
 pub struct BlockProperties<P> {
     pub placement: BlockPlacement<P>,
-    pub height: u32,
+    // None if the block takes up no space
+    // (e.g. a horizontal line)
+    pub height: Option<u32>,
     pub style: BlockStyle,
     pub render: RenderBlock,
     pub priority: usize,
+    pub render_in_minimap: bool,
 }
 
 impl<P: Debug> Debug for BlockProperties<P> {
@@ -222,6 +225,12 @@ pub enum BlockStyle {
     Sticky,
 }
 
+#[derive(Debug, Default, Copy, Clone)]
+pub struct EditorMargins {
+    pub gutter: GutterDimensions,
+    pub right: Pixels,
+}
+
 #[derive(gpui::AppContext, gpui::VisualContext)]
 pub struct BlockContext<'a, 'b> {
     #[window]
@@ -230,7 +239,7 @@ pub struct BlockContext<'a, 'b> {
     pub app: &'b mut App,
     pub anchor_x: Pixels,
     pub max_width: Pixels,
-    pub gutter_dimensions: &'b GutterDimensions,
+    pub margins: &'b EditorMargins,
     pub em_width: Pixels,
     pub line_height: Pixels,
     pub block_id: BlockId,
@@ -300,9 +309,16 @@ impl Block {
         }
     }
 
+    pub fn has_height(&self) -> bool {
+        match self {
+            Block::Custom(block) => block.height.is_some(),
+            Block::ExcerptBoundary { .. } | Block::FoldedBuffer { .. } => true,
+        }
+    }
+
     pub fn height(&self) -> u32 {
         match self {
-            Block::Custom(block) => block.height,
+            Block::Custom(block) => block.height.unwrap_or(0),
             Block::ExcerptBoundary { height, .. } | Block::FoldedBuffer { height, .. } => *height,
         }
     }
@@ -322,9 +338,20 @@ impl Block {
         }
     }
 
+    pub fn place_near(&self) -> bool {
+        match self {
+            Block::Custom(block) => matches!(block.placement, BlockPlacement::Near(_)),
+            Block::FoldedBuffer { .. } => false,
+            Block::ExcerptBoundary { .. } => false,
+        }
+    }
+
     fn place_below(&self) -> bool {
         match self {
-            Block::Custom(block) => matches!(block.placement, BlockPlacement::Below(_)),
+            Block::Custom(block) => matches!(
+                block.placement,
+                BlockPlacement::Below(_) | BlockPlacement::Near(_)
+            ),
             Block::FoldedBuffer { .. } => false,
             Block::ExcerptBoundary { .. } => false,
         }
@@ -422,6 +449,7 @@ impl BlockMap {
             custom_blocks: Vec::new(),
             custom_blocks_by_id: TreeMap::default(),
             folded_buffers: HashSet::default(),
+            buffers_with_disabled_headers: HashSet::default(),
             transforms: RefCell::new(transforms),
             wrap_snapshot: RefCell::new(wrap_snapshot.clone()),
             buffer_header_height,
@@ -642,11 +670,8 @@ impl BlockMap {
             );
 
             if buffer.show_headers() {
-                blocks_in_edit.extend(BlockMap::header_and_footer_blocks(
-                    self.buffer_header_height,
-                    self.excerpt_header_height,
+                blocks_in_edit.extend(self.header_and_footer_blocks(
                     buffer,
-                    &self.folded_buffers,
                     (start_bound, end_bound),
                     wrap_snapshot,
                 ));
@@ -669,7 +694,10 @@ impl BlockMap {
                     BlockPlacement::Above(position) => {
                         rows_before_block = position.0 - new_transforms.summary().input_rows;
                     }
-                    BlockPlacement::Below(position) => {
+                    BlockPlacement::Near(position) | BlockPlacement::Below(position) => {
+                        if position.0 + 1 < new_transforms.summary().input_rows {
+                            continue;
+                        }
                         rows_before_block = (position.0 + 1) - new_transforms.summary().input_rows;
                     }
                     BlockPlacement::Replace(range) => {
@@ -714,10 +742,8 @@ impl BlockMap {
     }
 
     fn header_and_footer_blocks<'a, R, T>(
-        buffer_header_height: u32,
-        excerpt_header_height: u32,
+        &'a self,
         buffer: &'a multi_buffer::MultiBufferSnapshot,
-        folded_buffers: &'a HashSet<BufferId>,
         range: R,
         wrap_snapshot: &'a WrapSnapshot,
     ) -> impl Iterator<Item = (BlockPlacement<WrapRow>, Block)> + 'a
@@ -728,132 +754,116 @@ impl BlockMap {
         let mut boundaries = buffer.excerpt_boundaries_in_range(range).peekable();
 
         std::iter::from_fn(move || {
-            let excerpt_boundary = boundaries.next()?;
-            let wrap_row = wrap_snapshot
-                .make_wrap_point(Point::new(excerpt_boundary.row.0, 0), Bias::Left)
-                .row();
+            loop {
+                let excerpt_boundary = boundaries.next()?;
+                let wrap_row = wrap_snapshot
+                    .make_wrap_point(Point::new(excerpt_boundary.row.0, 0), Bias::Left)
+                    .row();
 
-            let new_buffer_id = match (&excerpt_boundary.prev, &excerpt_boundary.next) {
-                (None, next) => Some(next.buffer_id),
-                (Some(prev), next) => {
-                    if prev.buffer_id != next.buffer_id {
-                        Some(next.buffer_id)
-                    } else {
-                        None
-                    }
-                }
-            };
-
-            let mut height = 0;
-
-            if let Some(new_buffer_id) = new_buffer_id {
-                let first_excerpt = excerpt_boundary.next.clone();
-                if folded_buffers.contains(&new_buffer_id) {
-                    let mut last_excerpt_end_row = first_excerpt.end_row;
-
-                    while let Some(next_boundary) = boundaries.peek() {
-                        if next_boundary.next.buffer_id == new_buffer_id {
-                            last_excerpt_end_row = next_boundary.next.end_row;
+                let new_buffer_id = match (&excerpt_boundary.prev, &excerpt_boundary.next) {
+                    (None, next) => Some(next.buffer_id),
+                    (Some(prev), next) => {
+                        if prev.buffer_id != next.buffer_id {
+                            Some(next.buffer_id)
                         } else {
-                            break;
+                            None
+                        }
+                    }
+                };
+
+                let mut height = 0;
+
+                if let Some(new_buffer_id) = new_buffer_id {
+                    let first_excerpt = excerpt_boundary.next.clone();
+                    if self.buffers_with_disabled_headers.contains(&new_buffer_id) {
+                        continue;
+                    }
+                    if self.folded_buffers.contains(&new_buffer_id) {
+                        let mut last_excerpt_end_row = first_excerpt.end_row;
+
+                        while let Some(next_boundary) = boundaries.peek() {
+                            if next_boundary.next.buffer_id == new_buffer_id {
+                                last_excerpt_end_row = next_boundary.next.end_row;
+                            } else {
+                                break;
+                            }
+
+                            boundaries.next();
                         }
 
-                        boundaries.next();
+                        let wrap_end_row = wrap_snapshot
+                            .make_wrap_point(
+                                Point::new(
+                                    last_excerpt_end_row.0,
+                                    buffer.line_len(last_excerpt_end_row),
+                                ),
+                                Bias::Right,
+                            )
+                            .row();
+
+                        return Some((
+                            BlockPlacement::Replace(WrapRow(wrap_row)..=WrapRow(wrap_end_row)),
+                            Block::FoldedBuffer {
+                                height: height + self.buffer_header_height,
+                                first_excerpt,
+                            },
+                        ));
                     }
-
-                    let wrap_end_row = wrap_snapshot
-                        .make_wrap_point(
-                            Point::new(
-                                last_excerpt_end_row.0,
-                                buffer.line_len(last_excerpt_end_row),
-                            ),
-                            Bias::Right,
-                        )
-                        .row();
-
-                    return Some((
-                        BlockPlacement::Replace(WrapRow(wrap_row)..=WrapRow(wrap_end_row)),
-                        Block::FoldedBuffer {
-                            height: height + buffer_header_height,
-                            first_excerpt,
-                        },
-                    ));
                 }
-            }
 
-            if new_buffer_id.is_some() {
-                height += buffer_header_height;
-            } else {
-                height += excerpt_header_height;
-            }
+                if new_buffer_id.is_some() {
+                    height += self.buffer_header_height;
+                } else {
+                    height += self.excerpt_header_height;
+                }
 
-            Some((
-                BlockPlacement::Above(WrapRow(wrap_row)),
-                Block::ExcerptBoundary {
-                    excerpt: excerpt_boundary.next,
-                    height,
-                    starts_new_buffer: new_buffer_id.is_some(),
-                },
-            ))
+                return Some((
+                    BlockPlacement::Above(WrapRow(wrap_row)),
+                    Block::ExcerptBoundary {
+                        excerpt: excerpt_boundary.next,
+                        height,
+                        starts_new_buffer: new_buffer_id.is_some(),
+                    },
+                ));
+            }
         })
     }
 
     fn sort_blocks(blocks: &mut Vec<(BlockPlacement<WrapRow>, Block)>) {
         blocks.sort_unstable_by(|(placement_a, block_a), (placement_b, block_b)| {
-            let placement_comparison = match (placement_a, placement_b) {
-                (BlockPlacement::Above(row_a), BlockPlacement::Above(row_b))
-                | (BlockPlacement::Below(row_a), BlockPlacement::Below(row_b)) => row_a.cmp(row_b),
-                (BlockPlacement::Above(row_a), BlockPlacement::Below(row_b)) => {
-                    row_a.cmp(row_b).then(Ordering::Less)
-                }
-                (BlockPlacement::Below(row_a), BlockPlacement::Above(row_b)) => {
-                    row_a.cmp(row_b).then(Ordering::Greater)
-                }
-                (BlockPlacement::Above(row), BlockPlacement::Replace(range)) => {
-                    row.cmp(range.start()).then(Ordering::Greater)
-                }
-                (BlockPlacement::Replace(range), BlockPlacement::Above(row)) => {
-                    range.start().cmp(row).then(Ordering::Less)
-                }
-                (BlockPlacement::Below(row), BlockPlacement::Replace(range)) => {
-                    row.cmp(range.start()).then(Ordering::Greater)
-                }
-                (BlockPlacement::Replace(range), BlockPlacement::Below(row)) => {
-                    range.start().cmp(row).then(Ordering::Less)
-                }
-                (BlockPlacement::Replace(range_a), BlockPlacement::Replace(range_b)) => range_a
-                    .start()
-                    .cmp(range_b.start())
-                    .then_with(|| range_b.end().cmp(range_a.end()))
-                    .then_with(|| {
-                        if block_a.is_header() {
-                            Ordering::Less
-                        } else if block_b.is_header() {
-                            Ordering::Greater
-                        } else {
-                            Ordering::Equal
-                        }
-                    }),
-            };
-            placement_comparison.then_with(|| match (block_a, block_b) {
-                (
-                    Block::ExcerptBoundary {
-                        excerpt: excerpt_a, ..
-                    },
-                    Block::ExcerptBoundary {
-                        excerpt: excerpt_b, ..
-                    },
-                ) => Some(excerpt_a.id).cmp(&Some(excerpt_b.id)),
-                (Block::ExcerptBoundary { .. }, Block::Custom(_)) => Ordering::Less,
-                (Block::Custom(_), Block::ExcerptBoundary { .. }) => Ordering::Greater,
-                (Block::Custom(block_a), Block::Custom(block_b)) => block_a
-                    .priority
-                    .cmp(&block_b.priority)
-                    .then_with(|| block_a.id.cmp(&block_b.id)),
-                _ => {
-                    unreachable!()
-                }
-            })
+            placement_a
+                .start()
+                .cmp(placement_b.start())
+                .then_with(|| placement_b.end().cmp(placement_a.end()))
+                .then_with(|| {
+                    if block_a.is_header() {
+                        Ordering::Less
+                    } else if block_b.is_header() {
+                        Ordering::Greater
+                    } else {
+                        Ordering::Equal
+                    }
+                })
+                .then_with(|| placement_a.sort_order().cmp(&placement_b.sort_order()))
+                .then_with(|| match (block_a, block_b) {
+                    (
+                        Block::ExcerptBoundary {
+                            excerpt: excerpt_a, ..
+                        },
+                        Block::ExcerptBoundary {
+                            excerpt: excerpt_b, ..
+                        },
+                    ) => Some(excerpt_a.id).cmp(&Some(excerpt_b.id)),
+                    (Block::ExcerptBoundary { .. }, Block::Custom(_)) => Ordering::Less,
+                    (Block::Custom(_), Block::ExcerptBoundary { .. }) => Ordering::Greater,
+                    (Block::Custom(block_a), Block::Custom(block_b)) => block_a
+                        .priority
+                        .cmp(&block_b.priority)
+                        .then_with(|| block_a.id.cmp(&block_b.id)),
+                    _ => {
+                        unreachable!()
+                    }
+                })
         });
         blocks.dedup_by(|right, left| match (left.0.clone(), right.0.clone()) {
             (BlockPlacement::Replace(range), BlockPlacement::Above(row))
@@ -996,7 +1006,7 @@ impl BlockMapWriter<'_> {
         let mut previous_wrap_row_range: Option<Range<u32>> = None;
         for block in blocks {
             if let BlockPlacement::Replace(_) = &block.placement {
-                debug_assert!(block.height > 0);
+                debug_assert!(block.height.unwrap() > 0);
             }
 
             let id = CustomBlockId(self.0.next_block_id.fetch_add(1, SeqCst));
@@ -1035,6 +1045,7 @@ impl BlockMapWriter<'_> {
                 render: Arc::new(Mutex::new(block.render)),
                 style: block.style,
                 priority: block.priority,
+                render_in_minimap: block.render_in_minimap,
             });
             self.0.custom_blocks.insert(block_ix, new_block.clone());
             self.0.custom_blocks_by_id.insert(id, new_block);
@@ -1061,14 +1072,15 @@ impl BlockMapWriter<'_> {
                     debug_assert!(new_height > 0);
                 }
 
-                if block.height != new_height {
+                if block.height != Some(new_height) {
                     let new_block = CustomBlock {
                         id: block.id,
                         placement: block.placement.clone(),
-                        height: new_height,
+                        height: Some(new_height),
                         style: block.style,
                         render: block.render.clone(),
                         priority: block.priority,
+                        render_in_minimap: block.render_in_minimap,
                     };
                     let new_block = Arc::new(new_block);
                     *block = new_block.clone();
@@ -1168,6 +1180,10 @@ impl BlockMapWriter<'_> {
         self.remove(blocks_to_remove);
     }
 
+    pub fn disable_header_for_buffer(&mut self, buffer_id: BufferId) {
+        self.0.buffers_with_disabled_headers.insert(buffer_id);
+    }
+
     pub fn fold_buffers(
         &mut self,
         buffer_ids: impl IntoIterator<Item = BufferId>,
@@ -1228,21 +1244,21 @@ impl BlockMapWriter<'_> {
     ) -> &[Arc<CustomBlock>] {
         let wrap_snapshot = self.0.wrap_snapshot.borrow();
         let buffer = wrap_snapshot.buffer_snapshot();
-        let start_block_ix = match self.0.custom_blocks.binary_search_by(|probe| {
-            probe
-                .end()
-                .to_offset(buffer)
-                .cmp(&range.start)
-                .then(if inclusive {
+
+        let start_block_ix = match self.0.custom_blocks.binary_search_by(|block| {
+            let block_end = block.end().to_offset(buffer);
+            block_end.cmp(&range.start).then_with(|| {
+                if inclusive || (range.is_empty() && block.start().to_offset(buffer) == block_end) {
                     Ordering::Greater
                 } else {
                     Ordering::Less
-                })
+                }
+            })
         }) {
             Ok(ix) | Err(ix) => ix,
         };
-        let end_block_ix = match self.0.custom_blocks.binary_search_by(|probe| {
-            probe
+        let end_block_ix = match self.0.custom_blocks.binary_search_by(|block| {
+            block
                 .start()
                 .to_offset(buffer)
                 .cmp(&range.end)
@@ -1254,6 +1270,7 @@ impl BlockMapWriter<'_> {
         }) {
             Ok(ix) | Err(ix) => ix,
         };
+
         &self.0.custom_blocks[start_block_ix..end_block_ix]
     }
 }
@@ -1282,8 +1299,8 @@ impl BlockSnapshot {
 
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
         cursor.seek(&BlockRow(rows.start), Bias::Right, &());
-        let transform_output_start = cursor.start().0 .0;
-        let transform_input_start = cursor.start().1 .0;
+        let transform_output_start = cursor.start().0.0;
+        let transform_input_start = cursor.start().1.0;
 
         let mut input_start = transform_input_start;
         let mut input_end = transform_input_start;
@@ -1370,7 +1387,7 @@ impl BlockSnapshot {
         while let Some(transform) = cursor.item() {
             match &transform.block {
                 Some(Block::ExcerptBoundary { excerpt, .. }) => {
-                    return Some(StickyHeaderExcerpt { excerpt })
+                    return Some(StickyHeaderExcerpt { excerpt });
                 }
                 Some(block) if block.is_buffer_header() => return None,
                 _ => {
@@ -1441,7 +1458,7 @@ impl BlockSnapshot {
                 let wrap_start_row = input_start.0 + overshoot;
                 let wrap_end_row = cmp::min(
                     input_start.0 + (range.end.0 - output_start.0),
-                    cursor.end(&()).1 .0,
+                    cursor.end(&()).1.0,
                 );
                 let summary = self
                     .wrap_snapshot
@@ -1532,7 +1549,7 @@ impl BlockSnapshot {
 
         let max_input_row = WrapRow(self.transforms.summary().input_rows);
         let mut search_left =
-            (bias == Bias::Left && cursor.start().1 .0 > 0) || cursor.end(&()).1 == max_input_row;
+            (bias == Bias::Left && cursor.start().1.0 > 0) || cursor.end(&()).1 == max_input_row;
         let mut reversed = false;
 
         loop {
@@ -1591,7 +1608,7 @@ impl BlockSnapshot {
         cursor.seek(&WrapRow(wrap_point.row()), Bias::Right, &());
         if let Some(transform) = cursor.item() {
             if transform.block.is_some() {
-                BlockPoint::new(cursor.start().1 .0, 0)
+                BlockPoint::new(cursor.start().1.0, 0)
             } else {
                 let (input_start_row, output_start_row) = cursor.start();
                 let input_start = Point::new(input_start_row.0, 0);
@@ -1611,20 +1628,20 @@ impl BlockSnapshot {
             match transform.block.as_ref() {
                 Some(block) => {
                     if block.place_below() {
-                        let wrap_row = cursor.start().1 .0 - 1;
+                        let wrap_row = cursor.start().1.0 - 1;
                         WrapPoint::new(wrap_row, self.wrap_snapshot.line_len(wrap_row))
                     } else if block.place_above() {
-                        WrapPoint::new(cursor.start().1 .0, 0)
+                        WrapPoint::new(cursor.start().1.0, 0)
                     } else if bias == Bias::Left {
-                        WrapPoint::new(cursor.start().1 .0, 0)
+                        WrapPoint::new(cursor.start().1.0, 0)
                     } else {
-                        let wrap_row = cursor.end(&()).1 .0 - 1;
+                        let wrap_row = cursor.end(&()).1.0 - 1;
                         WrapPoint::new(wrap_row, self.wrap_snapshot.line_len(wrap_row))
                     }
                 }
                 None => {
-                    let overshoot = block_point.row - cursor.start().0 .0;
-                    let wrap_row = cursor.start().1 .0 + overshoot;
+                    let overshoot = block_point.row - cursor.start().0.0;
+                    let wrap_row = cursor.start().1.0 + overshoot;
                     WrapPoint::new(wrap_row, block_point.column)
                 }
             }
@@ -1656,11 +1673,11 @@ impl BlockChunks<'_> {
             .item()
             .map_or(false, |transform| transform.block.is_none())
         {
-            let start_input_row = self.transforms.start().1 .0;
-            let start_output_row = self.transforms.start().0 .0;
+            let start_input_row = self.transforms.start().1.0;
+            let start_output_row = self.transforms.start().0.0;
             if start_output_row < self.max_output_row {
                 let end_input_row = cmp::min(
-                    self.transforms.end(&()).1 .0,
+                    self.transforms.end(&()).1.0,
                     start_input_row + (self.max_output_row - start_output_row),
                 );
                 self.input_chunks.seek(start_input_row..end_input_row);
@@ -1683,8 +1700,8 @@ impl<'a> Iterator for BlockChunks<'a> {
 
         let transform = self.transforms.item()?;
         if transform.block.is_some() {
-            let block_start = self.transforms.start().0 .0;
-            let mut block_end = self.transforms.end(&()).0 .0;
+            let block_start = self.transforms.start().0.0;
+            let mut block_end = self.transforms.end(&()).0.0;
             self.advance();
             if self.transforms.item().is_none() {
                 block_end -= 1;
@@ -1719,7 +1736,7 @@ impl<'a> Iterator for BlockChunks<'a> {
             }
         }
 
-        let transform_end = self.transforms.end(&()).0 .0;
+        let transform_end = self.transforms.end(&()).0.0;
         let (prefix_rows, prefix_bytes) =
             offset_for_row(self.input_chunk.text, transform_end - self.output_row);
         self.output_row += prefix_rows;
@@ -1758,7 +1775,7 @@ impl Iterator for BlockRows<'_> {
             self.started = true;
         }
 
-        if self.output_row.0 >= self.transforms.end(&()).0 .0 {
+        if self.output_row.0 >= self.transforms.end(&()).0.0 {
             self.transforms.next(&());
             while let Some(transform) = self.transforms.item() {
                 if transform
@@ -1778,7 +1795,7 @@ impl Iterator for BlockRows<'_> {
                 .as_ref()
                 .map_or(true, |block| block.is_replacement())
             {
-                self.input_rows.seek(self.transforms.start().1 .0);
+                self.input_rows.seek(self.transforms.start().1.0);
             }
         }
 
@@ -1913,7 +1930,7 @@ mod tests {
         display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap, wrap_map::WrapMap},
         test::test_font,
     };
-    use gpui::{div, font, px, App, AppContext as _, Element};
+    use gpui::{App, AppContext as _, Element, div, font, px};
     use itertools::Itertools;
     use language::{Buffer, Capability};
     use multi_buffer::{ExcerptRange, MultiBuffer};
@@ -1957,23 +1974,26 @@ mod tests {
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 0))),
-                height: 1,
+                height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
+                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 2))),
-                height: 2,
+                height: Some(2),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
+                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(3, 3))),
-                height: 3,
+                height: Some(3),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
+                render_in_minimap: true,
             },
         ]);
 
@@ -1984,7 +2004,7 @@ mod tests {
             .blocks_in_range(0..8)
             .map(|(start_row, block)| {
                 let block = block.as_custom().unwrap();
-                (start_row..start_row + block.height, block.id)
+                (start_row..start_row + block.height.unwrap(), block.id)
             })
             .collect::<Vec<_>>();
 
@@ -2119,26 +2139,17 @@ mod tests {
             let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
             excerpt_ids.extend(multi_buffer.push_excerpts(
                 buffer1.clone(),
-                [ExcerptRange {
-                    context: 0..buffer1.read(cx).len(),
-                    primary: None,
-                }],
+                [ExcerptRange::new(0..buffer1.read(cx).len())],
                 cx,
             ));
             excerpt_ids.extend(multi_buffer.push_excerpts(
                 buffer2.clone(),
-                [ExcerptRange {
-                    context: 0..buffer2.read(cx).len(),
-                    primary: None,
-                }],
+                [ExcerptRange::new(0..buffer2.read(cx).len())],
                 cx,
             ));
             excerpt_ids.extend(multi_buffer.push_excerpts(
                 buffer3.clone(),
-                [ExcerptRange {
-                    context: 0..buffer3.read(cx).len(),
-                    primary: None,
-                }],
+                [ExcerptRange::new(0..buffer3.read(cx).len())],
                 cx,
             ));
 
@@ -2204,23 +2215,26 @@ mod tests {
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 0))),
-                height: 1,
+                height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
+                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 2))),
-                height: 2,
+                height: Some(2),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
+                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(3, 3))),
-                height: 3,
+                height: Some(3),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
+                render_in_minimap: true,
             },
         ]);
 
@@ -2283,7 +2297,6 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "macos")]
     #[gpui::test]
     fn test_blocks_on_wrapped_lines(cx: &mut gpui::TestAppContext) {
         cx.update(init_test);
@@ -2298,7 +2311,7 @@ mod tests {
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
         let (_, wraps_snapshot) = cx.update(|cx| {
-            WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), Some(px(60.)), cx)
+            WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), Some(px(90.)), cx)
         });
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
 
@@ -2308,15 +2321,17 @@ mod tests {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 12))),
                 render: Arc::new(|_| div().into_any()),
-                height: 1,
+                height: Some(1),
                 priority: 0,
+                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(1, 1))),
                 render: Arc::new(|_| div().into_any()),
-                height: 1,
+                height: Some(1),
                 priority: 0,
+                render_in_minimap: true,
             },
         ]);
 
@@ -2353,9 +2368,10 @@ mod tests {
                 buffer_snapshot.anchor_after(Point::new(1, 3))
                     ..=buffer_snapshot.anchor_before(Point::new(3, 1)),
             ),
-            height: 4,
+            height: Some(4),
             render: Arc::new(|_| div().into_any()),
             priority: 0,
+            render_in_minimap: true,
         }])[0];
 
         let blocks_snapshot = block_map.read(wraps_snapshot, Default::default());
@@ -2406,23 +2422,26 @@ mod tests {
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(0, 3))),
-                height: 1,
+                height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
+                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 3))),
-                height: 1,
+                height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
+                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(6, 2))),
-                height: 1,
+                height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
+                render_in_minimap: true,
             },
         ]);
         let blocks_snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
@@ -2434,23 +2453,26 @@ mod tests {
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(1, 3))),
-                height: 1,
+                height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
+                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(2, 1))),
-                height: 1,
+                height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
+                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(6, 1))),
-                height: 1,
+                height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
+                render_in_minimap: true,
             },
         ]);
         let blocks_snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
@@ -2547,39 +2569,44 @@ mod tests {
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 0))),
-                height: 1,
+                height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
+                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(2, 0))),
-                height: 1,
+                height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
+                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(3, 0))),
-                height: 1,
+                height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
+                render_in_minimap: true,
             },
         ]);
         let excerpt_blocks_3 = writer.insert(vec![
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(4, 0))),
-                height: 1,
+                height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
+                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(5, 0))),
-                height: 1,
+                height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
+                render_in_minimap: true,
             },
         ]);
 
@@ -2624,9 +2651,10 @@ mod tests {
         let excerpt_blocks_1 = writer.insert(vec![BlockProperties {
             style: BlockStyle::Fixed,
             placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(0, 0))),
-            height: 1,
+            height: Some(1),
             render: Arc::new(|_| div().into_any()),
             priority: 0,
+            render_in_minimap: true,
         }]);
         let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
         let blocks = blocks_snapshot
@@ -2913,7 +2941,7 @@ mod tests {
 
         log::info!("Wrap width: {:?}", wrap_width);
         log::info!("Excerpt Header Height: {:?}", excerpt_header_height);
-        let is_singleton = rng.gen();
+        let is_singleton = rng.r#gen();
         let buffer = if is_singleton {
             let len = rng.gen_range(0..10);
             let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
@@ -2981,9 +3009,10 @@ mod tests {
                             BlockProperties {
                                 style: BlockStyle::Fixed,
                                 placement,
-                                height,
+                                height: Some(height),
                                 render: Arc::new(|_| div().into_any()),
                                 priority: 0,
+                                render_in_minimap: true,
                             }
                         })
                         .collect::<Vec<_>>();
@@ -3004,11 +3033,12 @@ mod tests {
                             style: props.style,
                             render: Arc::new(|_| div().into_any()),
                             priority: 0,
+                            render_in_minimap: true,
                         }));
 
                     for (block_properties, block_id) in block_properties.iter().zip(block_ids) {
                         log::info!(
-                            "inserted block {:?} with height {} and id {:?}",
+                            "inserted block {:?} with height {:?} and id {:?}",
                             block_properties
                                 .placement
                                 .as_ref()
@@ -3077,7 +3107,9 @@ mod tests {
                     let fold = !unfolded_buffers.is_empty() && rng.gen_bool(0.5);
                     let unfold = !folded_buffers.is_empty() && rng.gen_bool(0.5);
                     if !fold && !unfold {
-                        log::info!("Noop fold/unfold operation. Unfolded buffers: {unfolded_count}, folded buffers: {folded_count}");
+                        log::info!(
+                            "Noop fold/unfold operation. Unfolded buffers: {unfolded_count}, folded buffers: {folded_count}"
+                        );
                         continue;
                     }
 
@@ -3157,11 +3189,8 @@ mod tests {
             }));
 
             // Note that this needs to be synced with the related section in BlockMap::sync
-            expected_blocks.extend(BlockMap::header_and_footer_blocks(
-                buffer_start_header_height,
-                excerpt_header_height,
+            expected_blocks.extend(block_map.header_and_footer_blocks(
                 &buffer_snapshot,
-                &block_map.folded_buffers,
                 0..,
                 &wraps_snapshot,
             ));
@@ -3506,6 +3535,43 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[gpui::test]
+    fn test_remove_intersecting_replace_blocks_edge_case(cx: &mut gpui::TestAppContext) {
+        cx.update(init_test);
+
+        let text = "abc\ndef\nghi\njkl\nmno";
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
+        let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
+        let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (_tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (_wrap_map, wraps_snapshot) =
+            cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+        let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
+
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
+        let _block_id = writer.insert(vec![BlockProperties {
+            style: BlockStyle::Fixed,
+            placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 0))),
+            height: Some(1),
+            render: Arc::new(|_| div().into_any()),
+            priority: 0,
+            render_in_minimap: true,
+        }])[0];
+
+        let blocks_snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+        assert_eq!(blocks_snapshot.text(), "abc\n\ndef\nghi\njkl\nmno");
+
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
+        writer.remove_intersecting_replace_blocks(
+            [buffer_snapshot.anchor_after(Point::new(1, 0))
+                ..buffer_snapshot.anchor_after(Point::new(1, 0))],
+            false,
+        );
+        let blocks_snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+        assert_eq!(blocks_snapshot.text(), "abc\n\ndef\nghi\njkl\nmno");
     }
 
     fn init_test(cx: &mut gpui::App) {

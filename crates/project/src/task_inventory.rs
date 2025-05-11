@@ -12,14 +12,19 @@ use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{App, AppContext as _, Entity, SharedString, Task};
 use itertools::Itertools;
-use language::{ContextProvider, File, Language, LanguageToolchainStore, Location};
-use settings::{parse_json_with_comments, InvalidSettingsError, TaskKind};
-use task::{
-    DebugTaskDefinition, ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates,
-    TaskVariables, VariableName,
+use language::{
+    Buffer, ContextProvider, File, Language, LanguageToolchainStore, Location,
+    language_settings::language_settings,
 };
-use text::{Point, ToPoint};
-use util::{paths::PathExt as _, post_inc, NumericPrefixWithSuffix, ResultExt as _};
+use lsp::{LanguageServerId, LanguageServerName};
+use paths::{debug_task_file_name, task_file_name};
+use settings::{InvalidSettingsError, parse_json_with_comments};
+use task::{
+    DebugScenario, ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates, TaskVariables,
+    VariableName,
+};
+use text::{BufferId, Point, ToPoint};
+use util::{NumericPrefixWithSuffix, ResultExt as _, paths::PathExt as _, post_inc};
 use worktree::WorktreeId;
 
 use crate::{task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
@@ -28,13 +33,84 @@ use crate::{task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
 #[derive(Debug, Default)]
 pub struct Inventory {
     last_scheduled_tasks: VecDeque<(TaskSourceKind, ResolvedTask)>,
-    templates_from_settings: ParsedTemplates,
+    templates_from_settings: InventoryFor<TaskTemplate>,
+    scenarios_from_settings: InventoryFor<DebugScenario>,
 }
 
-#[derive(Debug, Default)]
-struct ParsedTemplates {
-    global: HashMap<PathBuf, Vec<TaskTemplate>>,
-    worktree: HashMap<WorktreeId, HashMap<(Arc<Path>, TaskKind), Vec<TaskTemplate>>>,
+// Helper trait for better error messages in [InventoryFor]
+trait InventoryContents: Clone {
+    const GLOBAL_SOURCE_FILE: &'static str;
+    const LABEL: &'static str;
+}
+
+impl InventoryContents for TaskTemplate {
+    const GLOBAL_SOURCE_FILE: &'static str = "tasks.json";
+    const LABEL: &'static str = "tasks";
+}
+
+impl InventoryContents for DebugScenario {
+    const GLOBAL_SOURCE_FILE: &'static str = "debug.json";
+
+    const LABEL: &'static str = "debug scenarios";
+}
+
+#[derive(Debug)]
+struct InventoryFor<T> {
+    global: HashMap<PathBuf, Vec<T>>,
+    worktree: HashMap<WorktreeId, HashMap<Arc<Path>, Vec<T>>>,
+}
+
+impl<T: InventoryContents> InventoryFor<T> {
+    fn worktree_scenarios(
+        &self,
+        worktree: Option<WorktreeId>,
+    ) -> impl '_ + Iterator<Item = (TaskSourceKind, T)> {
+        worktree.into_iter().flat_map(|worktree| {
+            self.worktree
+                .get(&worktree)
+                .into_iter()
+                .flatten()
+                .flat_map(|(directory, templates)| {
+                    templates.iter().map(move |template| (directory, template))
+                })
+                .map(move |(directory, template)| {
+                    (
+                        TaskSourceKind::Worktree {
+                            id: worktree,
+                            directory_in_worktree: directory.to_path_buf(),
+                            id_base: Cow::Owned(format!(
+                                "local worktree {} from directory {directory:?}",
+                                T::LABEL
+                            )),
+                        },
+                        template.clone(),
+                    )
+                })
+        })
+    }
+
+    fn global_scenarios(&self) -> impl '_ + Iterator<Item = (TaskSourceKind, T)> {
+        self.global.iter().flat_map(|(file_path, templates)| {
+            templates.into_iter().map(|template| {
+                (
+                    TaskSourceKind::AbsPath {
+                        id_base: Cow::Owned(format!("global {}", T::GLOBAL_SOURCE_FILE)),
+                        abs_path: file_path.clone(),
+                    },
+                    template.clone(),
+                )
+            })
+        })
+    }
+}
+
+impl<T> Default for InventoryFor<T> {
+    fn default() -> Self {
+        Self {
+            global: HashMap::default(),
+            worktree: HashMap::default(),
+        }
+    }
 }
 
 /// Kind of a source the tasks are fetched from, used to display more source information in the UI.
@@ -55,6 +131,8 @@ pub enum TaskSourceKind {
     },
     /// Languages-specific tasks coming from extensions.
     Language { name: SharedString },
+    /// Language-specific tasks coming from LSP servers.
+    Lsp(LanguageServerId),
 }
 
 /// A collection of task contexts, derived from the current state of the workspace.
@@ -68,6 +146,8 @@ pub struct TaskContexts {
     pub active_worktree_context: Option<(WorktreeId, TaskContext)>,
     /// If there are multiple worktrees in the workspace, all non-active ones are included here.
     pub other_worktree_contexts: Vec<(WorktreeId, TaskContext)>,
+    pub lsp_task_sources: HashMap<LanguageServerName, Vec<BufferId>>,
+    pub latest_selection: Option<text::Anchor>,
 }
 
 impl TaskContexts {
@@ -99,23 +179,32 @@ impl TaskContexts {
             })
             .copied()
     }
+
+    pub fn task_context_for_worktree_id(&self, worktree_id: WorktreeId) -> Option<&TaskContext> {
+        self.active_worktree_context
+            .iter()
+            .chain(self.other_worktree_contexts.iter())
+            .find(|(id, _)| *id == worktree_id)
+            .map(|(_, context)| context)
+    }
 }
 
 impl TaskSourceKind {
     pub fn to_id_base(&self) -> String {
         match self {
-            TaskSourceKind::UserInput => "oneshot".to_string(),
-            TaskSourceKind::AbsPath { id_base, abs_path } => {
+            Self::UserInput => "oneshot".to_string(),
+            Self::AbsPath { id_base, abs_path } => {
                 format!("{id_base}_{}", abs_path.display())
             }
-            TaskSourceKind::Worktree {
+            Self::Worktree {
                 id,
                 id_base,
                 directory_in_worktree,
             } => {
                 format!("{id_base}_{id}_{}", directory_in_worktree.display())
             }
-            TaskSourceKind::Language { name } => format!("language_{name}"),
+            Self::Language { name } => format!("language_{name}"),
+            Self::Lsp(server_id) => format!("lsp_{server_id}"),
         }
     }
 }
@@ -123,6 +212,43 @@ impl TaskSourceKind {
 impl Inventory {
     pub fn new(cx: &mut App) -> Entity<Self> {
         cx.new(|_| Self::default())
+    }
+
+    pub fn list_debug_scenarios(
+        &self,
+        worktrees: impl Iterator<Item = WorktreeId>,
+    ) -> Vec<(TaskSourceKind, DebugScenario)> {
+        let global_scenarios = self.global_debug_scenarios_from_settings();
+
+        worktrees
+            .flat_map(|tree_id| self.worktree_scenarios_from_settings(Some(tree_id)))
+            .chain(global_scenarios)
+            .collect()
+    }
+
+    pub fn task_template_by_label(
+        &self,
+        buffer: Option<Entity<Buffer>>,
+        worktree_id: Option<WorktreeId>,
+        label: &str,
+        cx: &App,
+    ) -> Option<TaskTemplate> {
+        let (buffer_worktree_id, file, language) = buffer
+            .map(|buffer| {
+                let buffer = buffer.read(cx);
+                let file = buffer.file().cloned();
+                (
+                    file.as_ref().map(|file| file.worktree_id(cx)),
+                    file,
+                    buffer.language().cloned(),
+                )
+            })
+            .unwrap_or((None, None, None));
+
+        self.list_tasks(file, language, worktree_id.or(buffer_worktree_id), cx)
+            .iter()
+            .find(|(_, template)| template.label == label)
+            .map(|val| val.1.clone())
     }
 
     /// Pulls its task sources relevant to the worktree and the language given,
@@ -135,19 +261,25 @@ impl Inventory {
         worktree: Option<WorktreeId>,
         cx: &App,
     ) -> Vec<(TaskSourceKind, TaskTemplate)> {
+        let global_tasks = self.global_templates_from_settings();
+        let worktree_tasks = self.worktree_templates_from_settings(worktree);
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
             name: language.name().into(),
         });
-        let global_tasks = self.global_templates_from_settings();
         let language_tasks = language
+            .filter(|language| {
+                language_settings(Some(language.name()), file.as_ref(), cx)
+                    .tasks
+                    .enabled
+            })
             .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
             .into_iter()
             .flat_map(|tasks| tasks.0.into_iter())
-            .flat_map(|task| Some((task_source_kind.clone()?, task)))
-            .chain(global_tasks);
+            .flat_map(|task| Some((task_source_kind.clone()?, task)));
 
-        self.worktree_templates_from_settings(worktree)
+        worktree_tasks
             .chain(language_tasks)
+            .chain(global_tasks)
             .collect()
     }
 
@@ -155,10 +287,10 @@ impl Inventory {
     /// Joins the new resolutions with the resolved tasks that were used (spawned) before,
     /// orders them so that the most recently used come first, all equally used ones are ordered so that the most specific tasks come first.
     /// Deduplicates the tasks by their labels and context and splits the ordered list into two: used tasks and the rest, newly resolved tasks.
-    pub fn used_and_current_resolved_tasks(
-        &self,
-        task_contexts: &TaskContexts,
-        cx: &App,
+    pub fn used_and_current_resolved_tasks<'a>(
+        &'a self,
+        task_contexts: &'a TaskContexts,
+        cx: &'a App,
     ) -> (
         Vec<(TaskSourceKind, ResolvedTask)>,
         Vec<(TaskSourceKind, ResolvedTask)>,
@@ -211,7 +343,13 @@ impl Inventory {
 
         let not_used_score = post_inc(&mut lru_score);
         let global_tasks = self.global_templates_from_settings();
+
         let language_tasks = language
+            .filter(|language| {
+                language_settings(Some(language.name()), file.as_ref(), cx)
+                    .tasks
+                    .enabled
+            })
             .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
             .into_iter()
             .flat_map(|tasks| tasks.0.into_iter())
@@ -322,51 +460,27 @@ impl Inventory {
     fn global_templates_from_settings(
         &self,
     ) -> impl '_ + Iterator<Item = (TaskSourceKind, TaskTemplate)> {
-        self.templates_from_settings
-            .global
-            .iter()
-            .flat_map(|(file_path, templates)| {
-                templates.into_iter().map(|template| {
-                    (
-                        TaskSourceKind::AbsPath {
-                            id_base: match template.task_type {
-                                task::TaskType::Script => Cow::Borrowed("global tasks.json"),
-                                task::TaskType::Debug(_) => Cow::Borrowed("global debug.json"),
-                            },
-                            abs_path: file_path.clone(),
-                        },
-                        template.clone(),
-                    )
-                })
-            })
+        self.templates_from_settings.global_scenarios()
+    }
+
+    fn global_debug_scenarios_from_settings(
+        &self,
+    ) -> impl '_ + Iterator<Item = (TaskSourceKind, DebugScenario)> {
+        self.scenarios_from_settings.global_scenarios()
+    }
+
+    fn worktree_scenarios_from_settings(
+        &self,
+        worktree: Option<WorktreeId>,
+    ) -> impl '_ + Iterator<Item = (TaskSourceKind, DebugScenario)> {
+        self.scenarios_from_settings.worktree_scenarios(worktree)
     }
 
     fn worktree_templates_from_settings(
         &self,
         worktree: Option<WorktreeId>,
     ) -> impl '_ + Iterator<Item = (TaskSourceKind, TaskTemplate)> {
-        worktree.into_iter().flat_map(|worktree| {
-            self.templates_from_settings
-                .worktree
-                .get(&worktree)
-                .into_iter()
-                .flatten()
-                .flat_map(|(directory, templates)| {
-                    templates.iter().map(move |template| (directory, template))
-                })
-                .map(move |((directory, _task_kind), template)| {
-                    (
-                        TaskSourceKind::Worktree {
-                            id: worktree,
-                            directory_in_worktree: directory.to_path_buf(),
-                            id_base: Cow::Owned(format!(
-                                "local worktree tasks from directory {directory:?}"
-                            )),
-                        },
-                        template.clone(),
-                    )
-                })
-        })
+        self.templates_from_settings.worktree_scenarios(worktree)
     }
 
     /// Updates in-memory task metadata from the JSON string given.
@@ -377,7 +491,6 @@ impl Inventory {
         &mut self,
         location: TaskSettingsLocation<'_>,
         raw_tasks_json: Option<&str>,
-        task_kind: TaskKind,
     ) -> Result<(), InvalidSettingsError> {
         let raw_tasks = match parse_json_with_comments::<Vec<serde_json::Value>>(
             raw_tasks_json.unwrap_or("[]"),
@@ -388,21 +501,16 @@ impl Inventory {
                     path: match location {
                         TaskSettingsLocation::Global(path) => path.to_owned(),
                         TaskSettingsLocation::Worktree(settings_location) => {
-                            task_kind.config_in_dir(settings_location.path)
+                            settings_location.path.join(task_file_name())
                         }
                     },
                     message: format!("Failed to parse tasks file content as a JSON array: {e}"),
-                })
+                });
             }
         };
-        let new_templates = raw_tasks
-            .into_iter()
-            .filter_map(|raw_template| match &task_kind {
-                TaskKind::Script => serde_json::from_value::<TaskTemplate>(raw_template).log_err(),
-                TaskKind::Debug => serde_json::from_value::<DebugTaskDefinition>(raw_template)
-                    .log_err()
-                    .and_then(|content| content.to_zed_format().log_err()),
-            });
+        let new_templates = raw_tasks.into_iter().filter_map(|raw_template| {
+            serde_json::from_value::<TaskTemplate>(raw_template).log_err()
+        });
 
         let parsed_templates = &mut self.templates_from_settings;
         match location {
@@ -418,14 +526,73 @@ impl Inventory {
                     if let Some(worktree_tasks) =
                         parsed_templates.worktree.get_mut(&location.worktree_id)
                     {
-                        worktree_tasks.remove(&(Arc::from(location.path), task_kind));
+                        worktree_tasks.remove(location.path);
                     }
                 } else {
                     parsed_templates
                         .worktree
                         .entry(location.worktree_id)
                         .or_default()
-                        .insert((Arc::from(location.path), task_kind), new_templates);
+                        .insert(Arc::from(location.path), new_templates);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Updates in-memory task metadata from the JSON string given.
+    /// Will fail if the JSON is not a valid array of objects, but will continue if any object will not parse into a [`TaskTemplate`].
+    ///
+    /// Global tasks are updated for no worktree provided, otherwise the worktree metadata for a given path will be updated.
+    pub(crate) fn update_file_based_scenarios(
+        &mut self,
+        location: TaskSettingsLocation<'_>,
+        raw_tasks_json: Option<&str>,
+    ) -> Result<(), InvalidSettingsError> {
+        let raw_tasks = match parse_json_with_comments::<Vec<serde_json::Value>>(
+            raw_tasks_json.unwrap_or("[]"),
+        ) {
+            Ok(tasks) => tasks,
+            Err(e) => {
+                return Err(InvalidSettingsError::Debug {
+                    path: match location {
+                        TaskSettingsLocation::Global(path) => path.to_owned(),
+                        TaskSettingsLocation::Worktree(settings_location) => {
+                            settings_location.path.join(debug_task_file_name())
+                        }
+                    },
+                    message: format!("Failed to parse tasks file content as a JSON array: {e}"),
+                });
+            }
+        };
+
+        let new_templates = raw_tasks.into_iter().filter_map(|raw_template| {
+            serde_json::from_value::<DebugScenario>(raw_template).log_err()
+        });
+
+        let parsed_scenarios = &mut self.scenarios_from_settings;
+        match location {
+            TaskSettingsLocation::Global(path) => {
+                parsed_scenarios
+                    .global
+                    .entry(path.to_owned())
+                    .insert_entry(new_templates.collect());
+            }
+            TaskSettingsLocation::Worktree(location) => {
+                let new_templates = new_templates.collect::<Vec<_>>();
+                if new_templates.is_empty() {
+                    if let Some(worktree_tasks) =
+                        parsed_scenarios.worktree.get_mut(&location.worktree_id)
+                    {
+                        worktree_tasks.remove(location.path);
+                    }
+                } else {
+                    parsed_scenarios
+                        .worktree
+                        .entry(location.worktree_id)
+                        .or_default()
+                        .insert(Arc::from(location.path), new_templates);
                 }
             }
         }
@@ -459,6 +626,7 @@ fn task_lru_comparator(
 
 fn task_source_kind_preference(kind: &TaskSourceKind) -> u32 {
     match kind {
+        TaskSourceKind::Lsp(..) => 0,
         TaskSourceKind::Language { .. } => 1,
         TaskSourceKind::UserInput => 2,
         TaskSourceKind::Worktree { .. } => 3,
@@ -682,7 +850,7 @@ mod tests {
     async fn test_task_list_sorting(cx: &mut TestAppContext) {
         init_test(cx);
         let inventory = cx.update(Inventory::new);
-        let initial_tasks = resolved_task_names(&inventory, None, cx).await;
+        let initial_tasks = resolved_task_names(&inventory, None, cx);
         assert!(
             initial_tasks.is_empty(),
             "No tasks expected for empty inventory, but got {initial_tasks:?}"
@@ -707,7 +875,6 @@ mod tests {
                     Some(&mock_tasks_from_names(
                         expected_initial_state.iter().map(|name| name.as_str()),
                     )),
-                    settings::TaskKind::Script,
                 )
                 .unwrap();
         });
@@ -716,7 +883,7 @@ mod tests {
             &expected_initial_state,
         );
         assert_eq!(
-            resolved_task_names(&inventory, None, cx).await,
+            resolved_task_names(&inventory, None, cx),
             &expected_initial_state,
             "Tasks with equal amount of usages should be sorted alphanumerically"
         );
@@ -727,7 +894,7 @@ mod tests {
             &expected_initial_state,
         );
         assert_eq!(
-            resolved_task_names(&inventory, None, cx).await,
+            resolved_task_names(&inventory, None, cx),
             vec![
                 "2_task".to_string(),
                 "1_a_task".to_string(),
@@ -745,7 +912,7 @@ mod tests {
             &expected_initial_state,
         );
         assert_eq!(
-            resolved_task_names(&inventory, None, cx).await,
+            resolved_task_names(&inventory, None, cx),
             vec![
                 "3_task".to_string(),
                 "1_task".to_string(),
@@ -763,7 +930,6 @@ mod tests {
                             .into_iter()
                             .chain(expected_initial_state.iter().map(|name| name.as_str())),
                     )),
-                    settings::TaskKind::Script,
                 )
                 .unwrap();
         });
@@ -781,7 +947,7 @@ mod tests {
             &expected_updated_state,
         );
         assert_eq!(
-            resolved_task_names(&inventory, None, cx).await,
+            resolved_task_names(&inventory, None, cx),
             vec![
                 "3_task".to_string(),
                 "1_task".to_string(),
@@ -798,7 +964,7 @@ mod tests {
             &expected_updated_state,
         );
         assert_eq!(
-            resolved_task_names(&inventory, None, cx).await,
+            resolved_task_names(&inventory, None, cx),
             vec![
                 "11_hello".to_string(),
                 "3_task".to_string(),
@@ -888,7 +1054,6 @@ mod tests {
                             .iter()
                             .map(|(_, name)| name.as_str()),
                     )),
-                    settings::TaskKind::Script,
                 )
                 .unwrap();
             inventory
@@ -900,7 +1065,6 @@ mod tests {
                     Some(&mock_tasks_from_names(
                         worktree_1_tasks.iter().map(|(_, name)| name.as_str()),
                     )),
-                    settings::TaskKind::Script,
                 )
                 .unwrap();
             inventory
@@ -912,7 +1076,6 @@ mod tests {
                     Some(&mock_tasks_from_names(
                         worktree_2_tasks.iter().map(|(_, name)| name.as_str()),
                     )),
-                    settings::TaskKind::Script,
                 )
                 .unwrap();
         });
@@ -971,21 +1134,21 @@ mod tests {
         TaskStore::init(None);
     }
 
-    async fn resolved_task_names(
+    fn resolved_task_names(
         inventory: &Entity<Inventory>,
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
     ) -> Vec<String> {
-        let (used, current) = inventory.update(cx, |inventory, cx| {
+        inventory.update(cx, |inventory, cx| {
             let mut task_contexts = TaskContexts::default();
             task_contexts.active_worktree_context =
                 worktree.map(|worktree| (worktree, TaskContext::default()));
-            inventory.used_and_current_resolved_tasks(&task_contexts, cx)
-        });
-        used.into_iter()
-            .chain(current)
-            .map(|(_, task)| task.original_task().label.clone())
-            .collect()
+            let (used, current) = inventory.used_and_current_resolved_tasks(&task_contexts, cx);
+            used.into_iter()
+                .chain(current)
+                .map(|(_, task)| task.original_task().label.clone())
+                .collect()
+        })
     }
 
     fn mock_tasks_from_names<'a>(task_names: impl Iterator<Item = &'a str> + 'a) -> String {
@@ -1008,17 +1171,17 @@ mod tests {
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
     ) -> Vec<(TaskSourceKind, String)> {
-        let (used, current) = inventory.update(cx, |inventory, cx| {
+        inventory.update(cx, |inventory, cx| {
             let mut task_contexts = TaskContexts::default();
             task_contexts.active_worktree_context =
                 worktree.map(|worktree| (worktree, TaskContext::default()));
-            inventory.used_and_current_resolved_tasks(&task_contexts, cx)
-        });
-        let mut all = used;
-        all.extend(current);
-        all.into_iter()
-            .map(|(source_kind, task)| (source_kind, task.resolved_label))
-            .sorted_by_key(|(kind, label)| (task_source_kind_preference(kind), label.clone()))
-            .collect()
+            let (used, current) = inventory.used_and_current_resolved_tasks(&task_contexts, cx);
+            let mut all = used;
+            all.extend(current);
+            all.into_iter()
+                .map(|(source_kind, task)| (source_kind, task.resolved_label))
+                .sorted_by_key(|(kind, label)| (task_source_kind_preference(kind), label.clone()))
+                .collect()
+        })
     }
 }

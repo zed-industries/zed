@@ -1,12 +1,12 @@
 use crate::{Client, Connection, Credentials, EstablishConnectionError, UserStore};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::Duration;
-use futures::{stream::BoxStream, StreamExt};
+use futures::{StreamExt, stream::BoxStream};
 use gpui::{AppContext as _, BackgroundExecutor, Entity, TestAppContext};
 use parking_lot::Mutex;
 use rpc::{
-    proto::{self, GetPrivateUserInfo, GetPrivateUserInfoResponse},
     ConnectionId, Peer, Receipt, TypedEnvelope,
+    proto::{self, GetPrivateUserInfo, GetPrivateUserInfoResponse},
 };
 use std::sync::Arc;
 
@@ -107,6 +107,7 @@ impl FakeServer {
         client
             .authenticate_and_connect(false, &cx.to_async())
             .await
+            .into_response()
             .unwrap();
 
         server

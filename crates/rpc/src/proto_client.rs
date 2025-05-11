@@ -1,16 +1,16 @@
 use anyhow::anyhow;
 use collections::HashMap;
 use futures::{
-    future::{BoxFuture, LocalBoxFuture},
     Future, FutureExt as _,
+    future::{BoxFuture, LocalBoxFuture},
 };
 use gpui::{AnyEntity, AnyWeakEntity, AsyncApp, Entity};
 use proto::{
-    error::ErrorExt as _, AnyTypedEnvelope, EntityMessage, Envelope, EnvelopedMessage,
-    RequestMessage, TypedEnvelope,
+    AnyTypedEnvelope, EntityMessage, Envelope, EnvelopedMessage, RequestMessage, TypedEnvelope,
+    error::ErrorExt as _,
 };
 use std::{
-    any::TypeId,
+    any::{Any, TypeId},
     sync::{Arc, Weak},
 };
 
@@ -185,7 +185,7 @@ impl AnyProtoClient {
     pub fn request<T: RequestMessage>(
         &self,
         request: T,
-    ) -> impl Future<Output = anyhow::Result<T::Response>> {
+    ) -> impl Future<Output = anyhow::Result<T::Response>> + use<T> {
         let envelope = request.into_envelope(0, None, None);
         let response = self.0.request(envelope, T::NAME);
         async move {
@@ -250,8 +250,7 @@ impl AnyProtoClient {
         let message_type_id = TypeId::of::<M>();
         let entity_type_id = TypeId::of::<E>();
         let entity_id_extractor = |envelope: &dyn AnyTypedEnvelope| {
-            envelope
-                .as_any()
+            (envelope as &dyn Any)
                 .downcast_ref::<TypedEnvelope<M>>()
                 .unwrap()
                 .payload
@@ -296,8 +295,7 @@ impl AnyProtoClient {
         let message_type_id = TypeId::of::<M>();
         let entity_type_id = TypeId::of::<E>();
         let entity_id_extractor = |envelope: &dyn AnyTypedEnvelope| {
-            envelope
-                .as_any()
+            (envelope as &dyn Any)
                 .downcast_ref::<TypedEnvelope<M>>()
                 .unwrap()
                 .payload

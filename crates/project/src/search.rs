@@ -15,6 +15,7 @@ use std::{
 use text::Anchor;
 use util::paths::PathMatcher;
 
+#[derive(Debug)]
 pub enum SearchResult {
     Buffer {
         buffer: Entity<Buffer>,
@@ -35,6 +36,7 @@ pub struct SearchInputs {
     query: Arc<str>,
     files_to_include: PathMatcher,
     files_to_exclude: PathMatcher,
+    match_full_paths: bool,
     buffers: Option<Vec<Entity<Buffer>>>,
 }
 
@@ -70,6 +72,7 @@ pub enum SearchQuery {
         whole_word: bool,
         case_sensitive: bool,
         include_ignored: bool,
+        one_match_per_line: bool,
         inner: SearchInputs,
     },
 }
@@ -81,6 +84,10 @@ static WORD_MATCH_TEST: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 impl SearchQuery {
+    /// Create a text query
+    ///
+    /// If `match_full_paths` is true, include/exclude patterns will always be matched against fully qualified project paths beginning with a project root.
+    /// If `match_full_paths` is false, patterns will be matched against full paths only when the project has multiple roots.
     pub fn text(
         query: impl ToString,
         whole_word: bool,
@@ -88,9 +95,26 @@ impl SearchQuery {
         include_ignored: bool,
         files_to_include: PathMatcher,
         files_to_exclude: PathMatcher,
+        match_full_paths: bool,
         buffers: Option<Vec<Entity<Buffer>>>,
     ) -> Result<Self> {
         let query = query.to_string();
+        if !case_sensitive && !query.is_ascii() {
+            // AhoCorasickBuilder doesn't support case-insensitive search with unicode characters
+            // Fallback to regex search as recommended by
+            // https://docs.rs/aho-corasick/1.1/aho_corasick/struct.AhoCorasickBuilder.html#method.ascii_case_insensitive
+            return Self::regex(
+                regex::escape(&query),
+                whole_word,
+                case_sensitive,
+                include_ignored,
+                false,
+                files_to_include,
+                files_to_exclude,
+                false,
+                buffers,
+            );
+        }
         let search = AhoCorasickBuilder::new()
             .ascii_case_insensitive(!case_sensitive)
             .build([&query])?;
@@ -98,6 +122,7 @@ impl SearchQuery {
             query: query.into(),
             files_to_exclude,
             files_to_include,
+            match_full_paths,
             buffers,
         };
         Ok(Self::Text {
@@ -110,13 +135,20 @@ impl SearchQuery {
         })
     }
 
+    /// Create a regex query
+    ///
+    /// If `match_full_paths` is true, include/exclude patterns will be matched against fully qualified project paths
+    /// beginning with a project root name. If false, they will be matched against project-relative paths (which don't start
+    /// with their respective project root).
     pub fn regex(
         query: impl ToString,
         whole_word: bool,
         case_sensitive: bool,
         include_ignored: bool,
+        one_match_per_line: bool,
         files_to_include: PathMatcher,
         files_to_exclude: PathMatcher,
+        match_full_paths: bool,
         buffers: Option<Vec<Entity<Buffer>>>,
     ) -> Result<Self> {
         let mut query = query.to_string();
@@ -145,6 +177,7 @@ impl SearchQuery {
             query: initial_query,
             files_to_exclude,
             files_to_include,
+            match_full_paths,
             buffers,
         };
         Ok(Self::Regex {
@@ -155,6 +188,7 @@ impl SearchQuery {
             case_sensitive,
             include_ignored,
             inner,
+            one_match_per_line,
         })
     }
 
@@ -165,8 +199,10 @@ impl SearchQuery {
                 message.whole_word,
                 message.case_sensitive,
                 message.include_ignored,
+                false,
                 deserialize_path_matches(&message.files_to_include)?,
                 deserialize_path_matches(&message.files_to_exclude)?,
+                message.match_full_paths,
                 None, // search opened only don't need search remote
             )
         } else {
@@ -177,6 +213,7 @@ impl SearchQuery {
                 message.include_ignored,
                 deserialize_path_matches(&message.files_to_include)?,
                 deserialize_path_matches(&message.files_to_exclude)?,
+                false,
                 None, // search opened only don't need search remote
             )
         }
@@ -207,6 +244,7 @@ impl SearchQuery {
             include_ignored: self.include_ignored(),
             files_to_include: self.files_to_include().sources().join(","),
             files_to_exclude: self.files_to_exclude().sources().join(","),
+            match_full_paths: self.match_full_paths(),
         }
     }
 
@@ -439,7 +477,13 @@ impl SearchQuery {
             && self.files_to_include().sources().is_empty())
     }
 
-    pub fn file_matches(&self, file_path: &Path) -> bool {
+    pub fn match_full_paths(&self) -> bool {
+        self.as_inner().match_full_paths
+    }
+
+    /// Check match full paths to determine whether you're required to pass a fully qualified
+    /// project path (starts with a project root).
+    pub fn match_path(&self, file_path: &Path) -> bool {
         let mut path = file_path.to_path_buf();
         loop {
             if self.files_to_exclude().is_match(&path) {
@@ -456,6 +500,19 @@ impl SearchQuery {
     pub fn as_inner(&self) -> &SearchInputs {
         match self {
             Self::Regex { inner, .. } | Self::Text { inner, .. } => inner,
+        }
+    }
+
+    /// Whether this search should replace only one match per line, instead of
+    /// all matches.
+    /// Returns `None` for text searches, as only regex searches support this
+    /// option.
+    pub fn one_match_per_line(&self) -> Option<bool> {
+        match self {
+            Self::Regex {
+                one_match_per_line, ..
+            } => Some(*one_match_per_line),
+            Self::Text { .. } => None,
         }
     }
 }

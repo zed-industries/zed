@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use collections::HashMap;
 use editor::Editor;
-use gpui::{impl_actions, App, Context, Keystroke, KeystrokeEvent, Window};
+use gpui::{App, Context, Keystroke, KeystrokeEvent, Window, impl_actions};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::LazyLock;
 
-use crate::{state::Operator, Vim, VimSettings};
+use crate::{Vim, VimSettings, state::Operator};
 
 mod default;
 
@@ -229,9 +229,9 @@ mod test {
     use settings::SettingsStore;
 
     use crate::{
+        VimSettings,
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
-        VimSettings,
     };
 
     #[gpui::test]

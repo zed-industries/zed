@@ -126,6 +126,11 @@ impl PlatformWindow for TestWindow {
         self.bounds().size
     }
 
+    fn resize(&mut self, size: Size<Pixels>) {
+        let mut lock = self.0.lock();
+        lock.bounds.size = size;
+    }
+
     fn scale_factor(&self) -> f32 {
         2.0
     }

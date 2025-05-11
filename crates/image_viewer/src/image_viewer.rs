@@ -4,22 +4,22 @@ mod image_viewer_settings;
 use std::path::PathBuf;
 
 use anyhow::Context as _;
-use editor::{items::entry_git_aware_label_color, EditorSettings};
+use editor::{EditorSettings, items::entry_git_aware_label_color};
 use file_icons::FileIcons;
 use gpui::{
-    canvas, div, fill, img, opaque_grey, point, size, AnyElement, App, Bounds, Context, Entity,
-    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ObjectFit,
-    ParentElement, Render, Styled, Task, WeakEntity, Window,
+    AnyElement, App, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, ObjectFit, ParentElement, Render, Styled, Task, WeakEntity,
+    Window, canvas, div, fill, img, opaque_grey, point, size,
 };
 use persistence::IMAGE_VIEWER;
-use project::{image_store::ImageItemEvent, ImageItem, Project, ProjectPath};
+use project::{ImageItem, Project, ProjectPath, image_store::ImageItemEvent};
 use settings::Settings;
 use theme::Theme;
 use ui::prelude::*;
 use util::paths::PathExt;
 use workspace::{
+    ItemId, ItemSettings, Pane, ToolbarItemLocation, Workspace, WorkspaceId, delete_unloaded_items,
     item::{BreadcrumbText, Item, ProjectItem, SerializableItem, TabContentParams},
-    ItemId, ItemSettings, ToolbarItemLocation, Workspace, WorkspaceId,
 };
 
 pub use crate::image_info::*;
@@ -35,9 +35,19 @@ impl ImageView {
     pub fn new(
         image_item: Entity<ImageItem>,
         project: Entity<Project>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         cx.subscribe(&image_item, Self::on_image_event).detach();
+        cx.on_release_in(window, |this, window, cx| {
+            let image_data = this.image_item.read(cx).image.clone();
+            if let Some(image) = image_data.clone().get_render_image(window, cx) {
+                cx.drop_image(image, None);
+            }
+            image_data.remove_asset(cx);
+        })
+        .detach();
+
         Self {
             image_item,
             project,
@@ -99,7 +109,7 @@ impl Item for ImageView {
         Some(file_path.into())
     }
 
-    fn tab_content(&self, params: TabContentParams, _: &Window, cx: &App) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
         let project_path = self.image_item.read(cx).project_path(cx);
 
         let label_color = if ItemSettings::get_global(cx).git_status {
@@ -121,18 +131,21 @@ impl Item for ImageView {
             params.text_color()
         };
 
-        let title = self
-            .image_item
-            .read(cx)
-            .file
-            .file_name(cx)
-            .to_string_lossy()
-            .to_string();
-        Label::new(title)
+        Label::new(self.tab_content_text(params.detail.unwrap_or_default(), cx))
             .single_line()
             .color(label_color)
             .when(params.preview, |this| this.italic())
             .into_any_element()
+    }
+
+    fn tab_content_text(&self, _: usize, cx: &App) -> SharedString {
+        self.image_item
+            .read(cx)
+            .file
+            .file_name(cx)
+            .to_string_lossy()
+            .to_string()
+            .into()
     }
 
     fn tab_icon(&self, _: &Window, cx: &App) -> Option<Icon> {
@@ -231,21 +244,25 @@ impl SerializableItem for ImageView {
                 .update(cx, |project, cx| project.open_image(project_path, cx))?
                 .await?;
 
-            cx.update(|_, cx| Ok(cx.new(|cx| ImageView::new(image_item, project, cx))))?
+            cx.update(
+                |window, cx| Ok(cx.new(|cx| ImageView::new(image_item, project, window, cx))),
+            )?
         })
     }
 
     fn cleanup(
         workspace_id: WorkspaceId,
         alive_items: Vec<ItemId>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut App,
     ) -> Task<gpui::Result<()>> {
-        window.spawn(cx, async move |_| {
-            IMAGE_VIEWER
-                .delete_unloaded_items(workspace_id, alive_items)
-                .await
-        })
+        delete_unloaded_items(
+            alive_items,
+            workspace_id,
+            "image_viewers",
+            &IMAGE_VIEWER,
+            cx,
+        )
     }
 
     fn serialize(
@@ -261,6 +278,7 @@ impl SerializableItem for ImageView {
 
         Some(cx.background_spawn({
             async move {
+                log::debug!("Saving image at path {image_path:?}");
                 IMAGE_VIEWER
                     .save_image_path(item_id, workspace_id, image_path)
                     .await
@@ -357,14 +375,15 @@ impl ProjectItem for ImageView {
 
     fn for_project_item(
         project: Entity<Project>,
+        _: Option<&Pane>,
         item: Entity<Self::Item>,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self
     where
         Self: Sized,
     {
-        Self::new(item, project, cx)
+        Self::new(item, project, window, cx)
     }
 }
 
@@ -375,10 +394,9 @@ pub fn init(cx: &mut App) {
 }
 
 mod persistence {
-    use anyhow::Result;
     use std::path::PathBuf;
 
-    use db::{define_connection, query, sqlez::statement::Statement, sqlez_macros::sql};
+    use db::{define_connection, query, sqlez_macros::sql};
     use workspace::{ItemId, WorkspaceDb, WorkspaceId};
 
     define_connection! {
@@ -399,18 +417,6 @@ mod persistence {
 
     impl ImageViewerDb {
         query! {
-           pub async fn update_workspace_id(
-                new_id: WorkspaceId,
-                old_id: WorkspaceId,
-                item_id: ItemId
-            ) -> Result<()> {
-                UPDATE image_viewers
-                SET workspace_id = ?
-                WHERE workspace_id = ? AND item_id = ?
-            }
-        }
-
-        query! {
             pub async fn save_image_path(
                 item_id: ItemId,
                 workspace_id: WorkspaceId,
@@ -427,30 +433,6 @@ mod persistence {
                 FROM image_viewers
                 WHERE item_id = ? AND workspace_id = ?
             }
-        }
-
-        pub async fn delete_unloaded_items(
-            &self,
-            workspace: WorkspaceId,
-            alive_items: Vec<ItemId>,
-        ) -> Result<()> {
-            let placeholders = alive_items
-                .iter()
-                .map(|_| "?")
-                .collect::<Vec<&str>>()
-                .join(", ");
-
-            let query = format!("DELETE FROM image_viewers WHERE workspace_id = ? AND item_id NOT IN ({placeholders})");
-
-            self.write(move |conn| {
-                let mut statement = Statement::prepare(conn, query)?;
-                let mut next_index = statement.bind(&workspace, 1)?;
-                for id in alive_items {
-                    next_index = statement.bind(&id, next_index)?;
-                }
-                statement.exec()
-            })
-            .await
         }
     }
 }

@@ -12,6 +12,9 @@ workspace = true
 path = "src/debugger_tools.rs"
 doctest = false
 
+[features]
+test-support = []
+
 [dependencies]
 anyhow.workspace = true
 dap.workspace = true
@@ -24,3 +27,4 @@ settings.workspace = true
 smol.workspace = true
 util.workspace = true
 workspace.workspace = true
+workspace-hack.workspace = true

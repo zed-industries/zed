@@ -22,7 +22,6 @@ async-tar.workspace = true
 async-trait.workspace = true
 client.workspace = true
 collections.workspace = true
-context_server_settings.workspace = true
 extension.workspace = true
 fs.workspace = true
 futures.workspace = true
@@ -51,6 +50,7 @@ util.workspace = true
 wasmparser.workspace = true
 wasmtime-wasi.workspace = true
 wasmtime.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true

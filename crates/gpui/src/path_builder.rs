@@ -8,7 +8,7 @@ use lyon::tessellation::{
 pub use lyon::math::Transform;
 pub use lyon::tessellation::{FillOptions, FillRule, StrokeOptions};
 
-use crate::{point, px, Path, Pixels, Point};
+use crate::{Path, Pixels, Point, point, px};
 
 /// Style of the PathBuilder
 pub enum PathStyle {

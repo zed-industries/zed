@@ -4,24 +4,24 @@ mod tables;
 #[cfg(test)]
 pub mod tests;
 
-use crate::{executor::Executor, Error, Result};
+use crate::{Error, Result, executor::Executor};
 use anyhow::anyhow;
 use collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use dashmap::DashMap;
 use futures::StreamExt;
 use project_repository_statuses::StatusKind;
-use rand::{prelude::StdRng, Rng, SeedableRng};
+use rand::{Rng, SeedableRng, prelude::StdRng};
 use rpc::ExtensionProvides;
 use rpc::{
-    proto::{self},
     ConnectionId, ExtensionMetadata,
+    proto::{self},
 };
 use sea_orm::{
-    entity::prelude::*,
-    sea_query::{Alias, Expr, OnConflict},
     ActiveValue, Condition, ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbErr,
     FromQueryResult, IntoActiveModel, IsolationLevel, JoinType, QueryOrder, QuerySelect, Statement,
     TransactionTrait,
+    entity::prelude::*,
+    sea_query::{Alias, Expr, OnConflict},
 };
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
@@ -800,6 +800,7 @@ impl LocalSettingsKind {
             proto::LocalSettingsKind::Settings => Self::Settings,
             proto::LocalSettingsKind::Tasks => Self::Tasks,
             proto::LocalSettingsKind::Editorconfig => Self::Editorconfig,
+            proto::LocalSettingsKind::Debug => Self::Debug,
         }
     }
 
@@ -808,6 +809,7 @@ impl LocalSettingsKind {
             Self::Settings => proto::LocalSettingsKind::Settings,
             Self::Tasks => proto::LocalSettingsKind::Tasks,
             Self::Editorconfig => proto::LocalSettingsKind::Editorconfig,
+            Self::Debug => proto::LocalSettingsKind::Debug,
         }
     }
 }
@@ -853,7 +855,7 @@ fn db_status_to_proto(
             _ => {
                 return Err(anyhow!(
                     "Unexpected combination of status fields: {entry:?}"
-                ))
+                ));
             }
         };
     Ok(proto::StatusEntry {

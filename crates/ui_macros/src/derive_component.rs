@@ -1,7 +1,7 @@
 use convert_case::{Case, Casing};
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, DeriveInput, Lit, Meta, MetaList, MetaNameValue, NestedMeta};
+use syn::{DeriveInput, Lit, Meta, MetaList, MetaNameValue, NestedMeta, parse_macro_input};
 
 pub fn derive_into_component(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);

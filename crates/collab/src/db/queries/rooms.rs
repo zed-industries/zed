@@ -755,6 +755,13 @@ impl Database {
                         .transpose()?
                         .unwrap_or_default();
 
+                    let head_commit_details = db_repository
+                        .head_commit_details
+                        .as_ref()
+                        .map(|head_commit_details| serde_json::from_str(&head_commit_details))
+                        .transpose()?
+                        .unwrap_or_default();
+
                     let entry_ids = serde_json::from_str(&db_repository.entry_ids)
                         .context("failed to deserialize repository's entry ids")?;
 
@@ -764,7 +771,7 @@ impl Database {
                             .find(|worktree| worktree.id as i64 == legacy_worktree_id)
                         {
                             worktree.updated_repositories.push(proto::RepositoryEntry {
-                                work_directory_id: db_repository.id as u64,
+                                repository_id: db_repository.id as u64,
                                 updated_statuses,
                                 removed_statuses,
                                 current_merge_conflicts,
@@ -778,10 +785,12 @@ impl Database {
                             removed_statuses,
                             current_merge_conflicts,
                             branch_summary,
+                            head_commit_details,
                             project_id: project_id.to_proto(),
                             id: db_repository.id as u64,
                             abs_path: db_repository.abs_path,
                             scan_id: db_repository.scan_id as u64,
+                            is_last_update: true,
                         });
                     }
                 }

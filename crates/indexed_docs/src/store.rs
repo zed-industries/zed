@@ -1,17 +1,17 @@
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use derive_more::{Deref, Display};
-use futures::future::{self, BoxFuture, Shared};
 use futures::FutureExt;
+use futures::future::{self, BoxFuture, Shared};
 use fuzzy::StringMatchCandidate;
 use gpui::{App, BackgroundExecutor, Task};
-use heed::types::SerdeBincode;
 use heed::Database;
+use heed::types::SerdeBincode;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use util::ResultExt;

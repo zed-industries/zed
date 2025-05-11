@@ -1,13 +1,13 @@
 use crate::db::ExtensionVersionConstraints;
-use crate::{db::NewExtensionVersion, AppState, Error, Result};
-use anyhow::{anyhow, Context as _};
+use crate::{AppState, Error, Result, db::NewExtensionVersion};
+use anyhow::{Context as _, anyhow};
 use aws_sdk_s3::presigning::PresigningConfig;
 use axum::{
+    Extension, Json, Router,
     extract::{Path, Query},
     http::StatusCode,
     response::Redirect,
     routing::get,
-    Extension, Json, Router,
 };
 use collections::{BTreeSet, HashMap};
 use rpc::{ExtensionApiManifest, ExtensionProvides, GetExtensionsResponse};
@@ -16,7 +16,7 @@ use serde::Deserialize;
 use std::str::FromStr;
 use std::{sync::Arc, time::Duration};
 use time::PrimitiveDateTime;
-use util::{maybe, ResultExt};
+use util::{ResultExt, maybe};
 
 pub fn router() -> Router {
     Router::new()

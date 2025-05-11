@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use url::Url;
 
 use git::{

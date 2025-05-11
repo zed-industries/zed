@@ -36,14 +36,15 @@ circular-buffer.workspace = true
 client.workspace = true
 clock.workspace = true
 collections.workspace = true
+context_server.workspace = true
 dap.workspace = true
-dap_adapters.workspace = true
 extension.workspace = true
 fancy-regex.workspace = true
 fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 git.workspace = true
+git_hosting_providers.workspace = true
 globset.workspace = true
 gpui.workspace = true
 http_client.workspace = true
@@ -84,6 +85,7 @@ util.workspace = true
 which.workspace = true
 worktree.workspace = true
 zlog.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

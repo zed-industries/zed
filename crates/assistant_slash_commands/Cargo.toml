@@ -29,13 +29,9 @@ html_to_markdown.workspace = true
 http_client.workspace = true
 indexed_docs.workspace = true
 language.workspace = true
-language_model.workspace = true
-log.workspace = true
 project.workspace = true
 prompt_store.workspace = true
 rope.workspace = true
-schemars.workspace = true
-semantic_index.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 smol.workspace = true
@@ -46,6 +42,7 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 worktree.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 env_logger.workspace = true

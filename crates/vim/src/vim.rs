@@ -22,12 +22,12 @@ mod visual;
 use anyhow::Result;
 use collections::HashMap;
 use editor::{
+    Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, ToPoint,
     movement::{self, FindRange},
-    Anchor, Bias, Editor, EditorEvent, EditorMode, EditorSettings, ToPoint,
 };
 use gpui::{
-    actions, impl_actions, Action, App, AppContext, Axis, Context, Entity, EventEmitter,
-    KeyContext, KeystrokeEvent, Render, Subscription, Task, WeakEntity, Window,
+    Action, App, AppContext, Axis, Context, Entity, EventEmitter, KeyContext, KeystrokeEvent,
+    Render, Subscription, Task, WeakEntity, Window, actions, impl_actions,
 };
 use insert::{NormalBefore, TemporaryNormal};
 use language::{CharKind, CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -38,12 +38,12 @@ use object::Object;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
-use settings::{update_settings_file, Settings, SettingsSources, SettingsStore};
+use settings::{Settings, SettingsSources, SettingsStore, update_settings_file};
 use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
-use ui::{px, IntoElement, SharedString};
+use ui::{IntoElement, SharedString, px};
 use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, Workspace};
 
@@ -145,6 +145,7 @@ actions!(
         PushDeleteSurrounds,
         PushMark,
         ToggleMarksView,
+        PushForcedMotion,
         PushIndent,
         PushOutdent,
         PushAutoIndent,
@@ -153,6 +154,8 @@ actions!(
         PushLowercase,
         PushUppercase,
         PushOppositeCase,
+        PushRot13,
+        PushRot47,
         ToggleRegistersView,
         PushRegister,
         PushRecordRegister,
@@ -231,6 +234,7 @@ pub fn init(cx: &mut App) {
 
         workspace.register_action(|workspace, _: &ResizePaneRight, window, cx| {
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
+            Vim::take_forced_motion(cx);
             let theme = ThemeSettings::get_global(cx);
             let Ok(font_id) = window.text_system().font_id(&theme.buffer_font) else {
                 return;
@@ -246,6 +250,7 @@ pub fn init(cx: &mut App) {
 
         workspace.register_action(|workspace, _: &ResizePaneLeft, window, cx| {
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
+            Vim::take_forced_motion(cx);
             let theme = ThemeSettings::get_global(cx);
             let Ok(font_id) = window.text_system().font_id(&theme.buffer_font) else {
                 return;
@@ -261,6 +266,7 @@ pub fn init(cx: &mut App) {
 
         workspace.register_action(|workspace, _: &ResizePaneUp, window, cx| {
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
+            Vim::take_forced_motion(cx);
             let theme = ThemeSettings::get_global(cx);
             let height = theme.buffer_font_size(cx) * theme.buffer_line_height.value();
             workspace.resize_pane(Axis::Vertical, height * count, window, cx);
@@ -268,6 +274,7 @@ pub fn init(cx: &mut App) {
 
         workspace.register_action(|workspace, _: &ResizePaneDown, window, cx| {
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
+            Vim::take_forced_motion(cx);
             let theme = ThemeSettings::get_global(cx);
             let height = theme.buffer_font_size(cx) * theme.buffer_line_height.value();
             workspace.resize_pane(Axis::Vertical, -height * count, window, cx);
@@ -316,8 +323,6 @@ pub(crate) struct Vim {
     pub(crate) replacements: Vec<(Range<editor::Anchor>, String)>,
 
     pub(crate) stored_visual_mode: Option<(Mode, Vec<bool>)>,
-    pub(crate) change_list: Vec<Vec<Anchor>>,
-    pub(crate) change_list_position: Option<usize>,
 
     pub(crate) current_tx: Option<TransactionId>,
     pub(crate) current_anchor: Option<Selection<Anchor>>,
@@ -363,8 +368,6 @@ impl Vim {
             replacements: Vec::new(),
 
             stored_visual_mode: None,
-            change_list: Vec::new(),
-            change_list_position: None,
             current_tx: None,
             current_anchor: None,
             undo_modes: HashMap::default(),
@@ -436,7 +439,7 @@ impl Vim {
 
         vim.update(cx, |_, cx| {
             Vim::action(editor, cx, |vim, _: &SwitchToNormalMode, window, cx| {
-                vim.switch_mode(Mode::Normal, false, window, cx)
+                vim.switch_mode(vim.default_mode(cx), false, window, cx)
             });
 
             Vim::action(editor, cx, |vim, _: &SwitchToInsertMode, window, cx| {
@@ -470,7 +473,9 @@ impl Vim {
                     vim.switch_mode(Mode::HelixNormal, false, window, cx)
                 },
             );
-
+            Vim::action(editor, cx, |_, _: &PushForcedMotion, _, cx| {
+                Vim::globals(cx).forced_motion = true;
+            });
             Vim::action(editor, cx, |vim, action: &PushObject, window, cx| {
                 vim.push_operator(
                     Operator::Object {
@@ -619,6 +624,14 @@ impl Vim {
                 vim.push_operator(Operator::OppositeCase, window, cx)
             });
 
+            Vim::action(editor, cx, |vim, _: &PushRot13, window, cx| {
+                vim.push_operator(Operator::Rot13, window, cx)
+            });
+
+            Vim::action(editor, cx, |vim, _: &PushRot47, window, cx| {
+                vim.push_operator(Operator::Rot47, window, cx)
+            });
+
             Vim::action(editor, cx, |vim, _: &PushRegister, window, cx| {
                 vim.push_operator(Operator::Register, window, cx)
             });
@@ -729,6 +742,10 @@ impl Vim {
         cx.on_release(|_, _| drop(subscription)).detach();
     }
 
+    pub fn default_mode(&self, cx: &App) -> Mode {
+        VimSettings::get_global(cx).default_mode
+    }
+
     pub fn editor(&self) -> Option<Entity<Editor>> {
         self.editor.upgrade()
     }
@@ -767,6 +784,9 @@ impl Vim {
         if let Some(action) = keystroke_event.action.as_ref() {
             // Keystroke is handled by the vim system, so continue forward
             if action.name().starts_with("vim::") {
+                self.update_editor(window, cx, |_, editor, _, _| {
+                    editor.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction)
+                });
                 return;
             }
         } else if window.has_pending_keystrokes() || keystroke_event.keystroke.is_ime_in_progress()
@@ -851,6 +871,7 @@ impl Vim {
             Operator::AddSurrounds { .. }
                 | Operator::ChangeSurrounds { .. }
                 | Operator::DeleteSurrounds
+                | Operator::Exchange
         ) {
             self.operator_stack.clear();
         };
@@ -889,6 +910,7 @@ impl Vim {
             self.current_tx.take();
             self.current_anchor.take();
         }
+        Vim::take_forced_motion(cx);
         if mode != Mode::Insert && mode != Mode::Replace {
             Vim::take_count(cx);
         }
@@ -993,7 +1015,15 @@ impl Vim {
         count
     }
 
+    pub fn take_forced_motion(cx: &mut App) -> bool {
+        let global_state = cx.global_mut::<VimGlobals>();
+        let forced_motion = global_state.forced_motion;
+        global_state.forced_motion = false;
+        forced_motion
+    }
+
     pub fn cursor_shape(&self, cx: &mut App) -> CursorShape {
+        let cursor_shape = VimSettings::get_global(cx).cursor_shape;
         match self.mode {
             Mode::Normal => {
                 if let Some(operator) = self.operator_stack.last() {
@@ -1011,18 +1041,18 @@ impl Vim {
                         _ => CursorShape::Underline,
                     }
                 } else {
-                    // No operator active -> Block cursor
-                    CursorShape::Block
+                    cursor_shape.normal.unwrap_or(CursorShape::Block)
                 }
             }
-            Mode::Replace => CursorShape::Underline,
-            Mode::HelixNormal | Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                CursorShape::Block
+            Mode::HelixNormal => cursor_shape.normal.unwrap_or(CursorShape::Block),
+            Mode::Replace => cursor_shape.replace.unwrap_or(CursorShape::Underline),
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                cursor_shape.visual.unwrap_or(CursorShape::Block)
             }
-            Mode::Insert => {
+            Mode::Insert => cursor_shape.insert.unwrap_or({
                 let editor_settings = EditorSettings::get_global(cx);
                 editor_settings.cursor_shape.unwrap_or_default()
-            }
+            }),
         }
     }
 
@@ -1092,7 +1122,7 @@ impl Vim {
             }
         }
 
-        if mode == "normal" || mode == "visual" || mode == "operator" {
+        if mode == "normal" || mode == "visual" || mode == "operator" || mode == "helix_normal" {
             context.add("VimControl");
         }
         context.set("vim_mode", mode);
@@ -1109,11 +1139,11 @@ impl Vim {
         let editor = editor.read(cx);
         let editor_mode = editor.mode();
 
-        if editor_mode == EditorMode::Full
-                && !newest_selection_empty
-                && self.mode == Mode::Normal
-                // When following someone, don't switch vim mode.
-                && editor.leader_peer_id().is_none()
+        if editor_mode.is_full()
+            && !newest_selection_empty
+            && self.mode == Mode::Normal
+            // When following someone, don't switch vim mode.
+            && editor.leader_id().is_none()
         {
             if preserve_selection {
                 self.switch_mode(Mode::Visual, true, window, cx);
@@ -1354,6 +1384,7 @@ impl Vim {
 
     fn clear_operator(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         Vim::take_count(cx);
+        Vim::take_forced_motion(cx);
         self.selected_register.take();
         self.operator_stack.clear();
         self.sync_vim_settings(window, cx);
@@ -1437,7 +1468,7 @@ impl Vim {
     fn local_selections_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(editor) = self.editor() else { return };
 
-        if editor.read(cx).leader_peer_id().is_some() {
+        if editor.read(cx).leader_id().is_some() {
             return;
         }
 
@@ -1663,6 +1694,27 @@ pub enum UseSystemClipboard {
     OnYank,
 }
 
+/// The settings for cursor shape.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+struct CursorShapeSettings {
+    /// Cursor shape for the normal mode.
+    ///
+    /// Default: block
+    pub normal: Option<CursorShape>,
+    /// Cursor shape for the replace mode.
+    ///
+    /// Default: underline
+    pub replace: Option<CursorShape>,
+    /// Cursor shape for the visual mode.
+    ///
+    /// Default: block
+    pub visual: Option<CursorShape>,
+    /// Cursor shape for the insert mode.
+    ///
+    /// The default value follows the primary cursor_shape.
+    pub insert: Option<CursorShape>,
+}
+
 #[derive(Deserialize)]
 struct VimSettings {
     pub default_mode: Mode,
@@ -1672,6 +1724,7 @@ struct VimSettings {
     pub use_smartcase_find: bool,
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
+    pub cursor_shape: CursorShapeSettings,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -1683,6 +1736,7 @@ struct VimSettingsContent {
     pub use_smartcase_find: Option<bool>,
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
+    pub cursor_shape: Option<CursorShapeSettings>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -1741,6 +1795,11 @@ impl Settings for VimSettings {
             highlight_on_yank_duration: settings
                 .highlight_on_yank_duration
                 .ok_or_else(Self::missing_default)?,
+            cursor_shape: settings.cursor_shape.ok_or_else(Self::missing_default)?,
         })
+    }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {
+        // TODO: translate vim extension settings
     }
 }

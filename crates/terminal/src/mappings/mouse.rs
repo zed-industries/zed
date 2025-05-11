@@ -6,7 +6,7 @@ use alacritty_terminal::grid::Dimensions;
 /// with modifications for our circumstances
 use alacritty_terminal::index::{Column as GridCol, Line as GridLine, Point as AlacPoint, Side};
 use alacritty_terminal::term::TermMode;
-use gpui::{px, Modifiers, MouseButton, Pixels, Point, ScrollWheelEvent};
+use gpui::{Modifiers, MouseButton, Pixels, Point, ScrollWheelEvent, px};
 
 use crate::TerminalBounds;
 

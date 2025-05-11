@@ -1,33 +1,34 @@
 use crate::{
     json_log::LogRecord,
     protocol::{
-        message_len_from_buffer, read_message_with_len, write_message, MessageId, MESSAGE_LEN_SIZE,
+        MESSAGE_LEN_SIZE, MessageId, message_len_from_buffer, read_message_with_len, write_message,
     },
     proxy::ProxyLaunchError,
 };
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{
+    AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
     channel::{
         mpsc::{self, Sender, UnboundedReceiver, UnboundedSender},
         oneshot,
     },
     future::{BoxFuture, Shared},
-    select, select_biased, AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
+    select, select_biased,
 };
 use gpui::{
-    App, AppContext as _, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Global,
-    SemanticVersion, Task, WeakEntity,
+    App, AppContext as _, AsyncApp, BackgroundExecutor, BorrowAppContext, Context, Entity,
+    EventEmitter, Global, SemanticVersion, Task, WeakEntity,
 };
 use itertools::Itertools;
 use parking_lot::Mutex;
 use paths;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rpc::{
-    proto::{self, build_typed_envelope, Envelope, EnvelopedMessage, PeerId, RequestMessage},
     AnyProtoClient, EntityMessageSubscriber, ErrorExt, ProtoClient, ProtoMessageHandlerSet,
     RpcError,
+    proto::{self, Envelope, EnvelopedMessage, PeerId, RequestMessage, build_typed_envelope},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -42,8 +43,8 @@ use std::{
     ops::ControlFlow,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicU32, AtomicU64, Ordering::SeqCst},
         Arc, Weak,
+        atomic::{AtomicU32, AtomicU64, Ordering::SeqCst},
     },
     time::{Duration, Instant},
 };
@@ -682,7 +683,8 @@ impl SshRemoteClient {
     pub fn shutdown_processes<T: RequestMessage>(
         &self,
         shutdown_request: Option<T>,
-    ) -> Option<impl Future<Output = ()>> {
+        executor: BackgroundExecutor,
+    ) -> Option<impl Future<Output = ()> + use<T>> {
         let state = self.state.lock().take()?;
         log::info!("shutting down ssh processes");
 
@@ -704,7 +706,7 @@ impl SshRemoteClient {
                 // We wait 50ms instead of waiting for a response, because
                 // waiting for a response would require us to wait on the main thread
                 // which we want to avoid in an `on_app_quit` callback.
-                smol::Timer::after(Duration::from_millis(50)).await;
+                executor.timer(Duration::from_millis(50)).await;
             }
 
             // Drop `multiplex_task` because it owns our ssh_proxy_process, which is a
@@ -1291,7 +1293,7 @@ trait RemoteConnection: Send + Sync {
         cx: &mut AsyncApp,
     ) -> Task<Result<i32>>;
     fn upload_directory(&self, src_path: PathBuf, dest_path: PathBuf, cx: &App)
-        -> Task<Result<()>>;
+    -> Task<Result<()>>;
     async fn kill(&self) -> Result<()>;
     fn has_been_killed(&self) -> bool;
     fn ssh_args(&self) -> Vec<String>;
@@ -1423,7 +1425,7 @@ impl RemoteConnection for SshRemoteConnection {
         {
             Ok(process) => process,
             Err(error) => {
-                return Task::ready(Err(anyhow!("failed to spawn remote server: {}", error)))
+                return Task::ready(Err(anyhow!("failed to spawn remote server: {}", error)));
             }
         };
 
@@ -2371,11 +2373,12 @@ mod fake {
     use anyhow::Result;
     use async_trait::async_trait;
     use futures::{
+        FutureExt, SinkExt, StreamExt,
         channel::{
             mpsc::{self, Sender},
             oneshot,
         },
-        select_biased, FutureExt, SinkExt, StreamExt,
+        select_biased,
     };
     use gpui::{App, AppContext as _, AsyncApp, SemanticVersion, Task, TestAppContext};
     use release_channel::ReleaseChannel;

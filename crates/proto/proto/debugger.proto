@@ -1,0 +1,615 @@
+syntax = "proto3";
+package zed.messages;
+
+import "core.proto";
+import "buffer.proto";
+
+enum BreakpointState {
+    Enabled = 0;
+    Disabled = 1;
+}
+
+message Breakpoint {
+    Anchor position = 1;
+    BreakpointState state = 2;
+    reserved 3;
+    optional string message = 4;
+    optional string condition = 5;
+    optional string hit_condition = 6;
+}
+
+message BreakpointsForFile {
+    uint64 project_id = 1;
+    string path = 2;
+    repeated Breakpoint breakpoints = 3;
+}
+
+message ToggleBreakpoint {
+    uint64 project_id = 1;
+    string path = 2;
+    Breakpoint breakpoint = 3;
+}
+
+enum DebuggerThreadItem {
+    Console = 0;
+    LoadedSource = 1;
+    Modules = 2;
+    Variables = 3;
+}
+
+message DebuggerSetVariableState {
+    string name = 1;
+    DapScope scope = 2;
+    string value = 3;
+    uint64 stack_frame_id = 4;
+    optional string evaluate_name = 5;
+    uint64 parent_variables_reference = 6;
+}
+
+message VariableListOpenEntry {
+    oneof entry {
+        DebuggerOpenEntryScope scope = 1;
+        DebuggerOpenEntryVariable variable = 2;
+    }
+}
+
+message DebuggerOpenEntryScope {
+    string name = 1;
+}
+
+message DebuggerOpenEntryVariable {
+    string scope_name = 1;
+    string name = 2;
+    uint64 depth = 3;
+}
+
+message VariableListEntrySetState {
+    uint64 depth = 1;
+    DebuggerSetVariableState state = 2;
+}
+
+message VariableListEntryVariable {
+    uint64 depth = 1;
+    DapScope scope = 2;
+    DapVariable variable = 3;
+    bool has_children = 4;
+    uint64 container_reference = 5;
+}
+
+message DebuggerScopeVariableIndex {
+    repeated uint64 fetched_ids = 1;
+    repeated DebuggerVariableContainer variables = 2;
+}
+
+message DebuggerVariableContainer {
+    uint64 container_reference = 1;
+    DapVariable variable = 2;
+    uint64 depth = 3;
+}
+
+enum DapThreadStatus {
+    Running = 0;
+    Stopped = 1;
+    Exited = 2;
+    Ended = 3;
+}
+
+message VariableListScopes {
+    uint64 stack_frame_id = 1;
+    repeated DapScope scopes = 2;
+}
+
+message VariableListVariables {
+    uint64 stack_frame_id = 1;
+    uint64 scope_id = 2;
+    DebuggerScopeVariableIndex variables = 3;
+}
+
+
+enum VariablesArgumentsFilter {
+    Indexed = 0;
+    Named = 1;
+}
+
+message ValueFormat {
+    optional bool hex = 1;
+}
+
+message VariablesRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    uint64 variables_reference = 3;
+    optional VariablesArgumentsFilter filter = 4;
+    optional uint64 start = 5;
+    optional uint64 count = 6;
+    optional ValueFormat format = 7;
+}
+
+enum SteppingGranularity {
+    Statement = 0;
+    Line = 1;
+    Instruction = 2;
+}
+
+message DapLocationsRequest {
+    uint64 project_id = 1;
+    uint64 session_id = 2;
+    uint64 location_reference = 3;
+}
+
+message DapLocationsResponse {
+    DapSource source = 1;
+    uint64 line = 2;
+    optional uint64 column = 3;
+    optional uint64 end_line = 4;
+    optional uint64 end_column = 5;
+}
+
+enum DapEvaluateContext {
+    Repl = 0;
+    Watch = 1;
+    Hover = 2;
+    Clipboard = 3;
+    EvaluateVariables = 4;
+    EvaluateUnknown = 5;
+}
+
+message DapEvaluateRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    string expression = 3;
+    optional uint64 frame_id = 4;
+    optional DapEvaluateContext context = 5;
+}
+
+message DapEvaluateResponse {
+    string result = 1;
+    optional string evaluate_type = 2;
+    uint64 variable_reference = 3;
+    optional uint64 named_variables = 4;
+    optional uint64 indexed_variables = 5;
+    optional string memory_reference = 6;
+}
+
+
+message DapCompletionRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    string query = 3;
+    optional uint64 frame_id = 4;
+    optional uint64 line = 5;
+    uint64 column = 6;
+}
+
+enum DapCompletionItemType {
+    Method = 0;
+    Function = 1;
+    Constructor = 2;
+    Field = 3;
+    Variable = 4;
+    Class = 5;
+    Interface = 6;
+    Module = 7;
+    Property = 8;
+    Unit = 9;
+    Value = 10;
+    Enum = 11;
+    Keyword = 12;
+    Snippet = 13;
+    Text = 14;
+    Color = 15;
+    CompletionItemFile = 16;
+    Reference = 17;
+    Customcolor = 19;
+}
+
+message DapCompletionItem {
+    string label = 1;
+    optional string text = 2;
+    optional string sort_text = 3;
+    optional string detail = 4;
+    optional DapCompletionItemType typ = 5;
+    optional uint64 start = 6;
+    optional uint64 length = 7;
+    optional uint64 selection_start = 8;
+    optional uint64 selection_length = 9;
+}
+
+message DapCompletionResponse {
+    uint64 client_id = 1;
+    repeated DapCompletionItem completions = 2;
+}
+
+message DapScopesRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    uint64 stack_frame_id = 3;
+}
+
+message DapScopesResponse {
+    repeated DapScope scopes = 1;
+}
+
+message DapSetVariableValueRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    string name = 3;
+    string value = 4;
+    uint64 variables_reference = 5;
+}
+
+message DapSetVariableValueResponse {
+    uint64 client_id = 1;
+    string value = 2;
+    optional string variable_type = 3;
+    optional uint64 variables_reference = 4;
+    optional uint64 named_variables = 5;
+    optional uint64 indexed_variables = 6;
+    optional string memory_reference = 7;
+}
+
+message DapPauseRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    uint64 thread_id = 3;
+}
+
+message DapDisconnectRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    optional bool restart = 3;
+    optional bool terminate_debuggee = 4;
+    optional bool suspend_debuggee = 5;
+}
+
+message DapTerminateThreadsRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    repeated uint64 thread_ids = 3;
+}
+
+message DapThreadsRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+}
+
+message DapThreadsResponse {
+    repeated DapThread threads = 1;
+}
+
+message DapTerminateRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    optional bool restart = 3;
+}
+
+message DapRestartRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    bytes raw_args = 3;
+}
+
+message DapRestartStackFrameRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    uint64 stack_frame_id = 3;
+}
+
+message ToggleIgnoreBreakpoints {
+    uint64 project_id = 1;
+    uint32 session_id = 2;
+}
+
+message IgnoreBreakpointState {
+    uint64 project_id = 1;
+    uint64 session_id = 2;
+    bool ignore = 3;
+}
+
+message DapNextRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    uint64 thread_id = 3;
+    optional bool single_thread = 4;
+    optional SteppingGranularity granularity = 5;
+}
+
+message DapStepInRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    uint64 thread_id = 3;
+    optional uint64 target_id = 4;
+    optional bool single_thread = 5;
+    optional SteppingGranularity granularity = 6;
+}
+
+message DapStepOutRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    uint64 thread_id = 3;
+    optional bool single_thread = 4;
+    optional SteppingGranularity granularity = 5;
+}
+
+message DapStepBackRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    uint64 thread_id = 3;
+    optional bool single_thread = 4;
+    optional SteppingGranularity granularity = 5;
+}
+
+message DapContinueRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    uint64 thread_id = 3;
+    optional bool single_thread = 4;
+}
+
+message DapContinueResponse {
+    uint64 client_id = 1;
+    optional bool all_threads_continued = 2;
+}
+
+message DapModulesRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+}
+
+message DapModulesResponse {
+    uint64 client_id = 1;
+    repeated DapModule modules = 2;
+}
+
+message DapLoadedSourcesRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+}
+
+message DapLoadedSourcesResponse {
+    uint64 client_id = 1;
+    repeated DapSource sources = 2;
+}
+
+message DapStackTraceRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    uint64 thread_id = 3;
+    optional uint64 start_frame = 4;
+    optional uint64 stack_trace_levels = 5;
+}
+
+message DapStackTraceResponse {
+    repeated DapStackFrame frames = 1;
+}
+
+message DapStackFrame {
+    uint64 id = 1;
+    string name = 2;
+    optional DapSource source = 3;
+    uint64 line = 4;
+    uint64 column = 5;
+    optional uint64 end_line = 6;
+    optional uint64 end_column = 7;
+    optional bool can_restart = 8;
+    optional string instruction_pointer_reference = 9;
+    optional DapModuleId module_id = 10;
+    optional DapStackPresentationHint presentation_hint = 11;
+}
+
+message DebuggerLoadedSourceList {
+    uint64 client_id = 1;
+    repeated DapSource sources = 2;
+}
+
+message DapVariables {
+    uint64 client_id = 1;
+    repeated DapVariable variables = 2;
+}
+
+// Remote Debugging: Dap Types
+message DapVariable {
+    string name = 1;
+    string value = 2;
+    optional string type = 3;
+    // optional DapVariablePresentationHint presentation_hint = 4;
+    optional string evaluate_name = 5;
+    uint64 variables_reference = 6;
+    optional uint64 named_variables = 7;
+    optional uint64 indexed_variables = 8;
+    optional string memory_reference = 9;
+}
+
+message DapThread {
+    uint64 id = 1;
+    string name = 2;
+}
+
+message DapScope {
+    string name = 1;
+    optional DapScopePresentationHint presentation_hint = 2;
+    uint64 variables_reference = 3;
+    optional uint64 named_variables = 4;
+    optional uint64 indexed_variables = 5;
+    bool expensive = 6;
+    optional DapSource source = 7;
+    optional uint64 line = 8;
+    optional uint64 column = 9;
+    optional uint64 end_line = 10;
+    optional uint64 end_column = 11;
+}
+
+message DapSource {
+    optional string name = 1;
+    optional string path = 2;
+    optional uint64 source_reference = 3;
+    optional DapSourcePresentationHint presentation_hint = 4;
+    optional string origin = 5;
+    repeated DapSource sources = 6;
+    optional bytes adapter_data = 7;
+    repeated DapChecksum checksums = 8;
+}
+
+enum DapOutputCategory {
+    ConsoleOutput = 0;
+    Important = 1;
+    Stdout = 2;
+    Stderr = 3;
+    Unknown = 4;
+}
+
+enum DapOutputEventGroup {
+    Start = 0;
+    StartCollapsed = 1;
+    End = 2;
+}
+
+message DapOutputEvent {
+    string output = 1;
+    optional DapOutputCategory category = 2;
+    optional uint64 variables_reference = 3;
+    optional DapOutputEventGroup group = 4;
+    optional DapSource source = 5;
+    optional uint32 line = 6;
+    optional uint32 column = 7;
+}
+
+enum DapChecksumAlgorithm {
+    CHECKSUM_ALGORITHM_UNSPECIFIED = 0;
+    MD5 = 1;
+    SHA1 = 2;
+    SHA256 = 3;
+    TIMESTAMP = 4;
+}
+
+message DapChecksum {
+    DapChecksumAlgorithm algorithm = 1;
+    string checksum = 2;
+}
+
+enum DapScopePresentationHint {
+    Arguments = 0;
+    Locals = 1;
+    Registers = 2;
+    ReturnValue = 3;
+    ScopeUnknown = 4;
+}
+
+enum DapSourcePresentationHint {
+    SourceNormal = 0;
+    Emphasize = 1;
+    Deemphasize = 2;
+    SourceUnknown = 3;
+}
+
+enum DapStackPresentationHint {
+    StackNormal = 0;
+    Label = 1;
+    Subtle = 2;
+    StackUnknown = 3;
+}
+message DapModule {
+    DapModuleId id = 1;
+    string name = 2;
+    optional string path = 3;
+    optional bool is_optimized = 4;
+    optional bool is_user_code = 5;
+    optional string version = 6;
+    optional string symbol_status = 7;
+    optional string symbol_file_path = 8;
+    optional string date_time_stamp = 9;
+    optional string address_range = 10;
+}
+
+message DebugTaskDefinition {
+    string adapter = 1;
+    string label = 2;
+    oneof request {
+        DebugLaunchRequest debug_launch_request = 3;
+        DebugAttachRequest debug_attach_request = 4;
+    }
+    optional string initialize_args = 5;
+    optional TcpHost tcp_connection = 6;
+    optional bool stop_on_entry = 7;
+}
+
+message TcpHost {
+    optional uint32 port = 1;
+    optional string host = 2;
+    optional uint64 timeout = 3;
+}
+
+message DebugLaunchRequest {
+    string program = 1;
+    optional string cwd = 2;
+    repeated string args = 3;
+    map<string, string> env = 4;
+}
+
+message DebugAttachRequest {
+    uint32 process_id = 1;
+}
+
+message DapModuleId {
+    oneof id {
+        uint32 number = 1;
+        string string = 2;
+    }
+}
+
+message GetDebugAdapterBinary {
+    uint64 project_id = 1;
+    uint64 session_id = 3;
+    DebugTaskDefinition definition = 2;
+}
+
+message DebugAdapterBinary {
+    string command = 1;
+    repeated string arguments = 2;
+    map<string, string> envs = 3;
+    optional string cwd = 4;
+    optional TcpHost connection = 5;
+    string configuration = 7;
+    LaunchType launch_type = 8;
+    enum LaunchType {
+        Attach = 0;
+        Launch = 1;
+    }
+}
+
+message RunDebugLocators {
+    uint64 project_id = 1;
+    SpawnInTerminal build_command = 2;
+    string locator = 3;
+}
+
+message DebugRequest {
+    oneof request {
+        DebugLaunchRequest debug_launch_request = 1;
+        DebugAttachRequest debug_attach_request = 2;
+    }
+}
+
+message DebugScenario {
+    string label = 1;
+    string adapter = 2;
+    reserved 3;
+    DebugRequest request = 4;
+    optional TcpHost connection = 5;
+    optional bool stop_on_entry = 6;
+    optional string configuration = 7;
+}
+
+message SpawnInTerminal {
+    string label = 1;
+    string command = 2;
+    repeated string args = 3;
+    map<string, string> env = 4;
+    optional string cwd = 5;
+}
+
+message LogToDebugConsole {
+    uint64 project_id = 1;
+    uint64 session_id = 2;
+    string message = 3;
+}

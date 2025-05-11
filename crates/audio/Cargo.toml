@@ -20,3 +20,4 @@ gpui.workspace = true
 parking_lot.workspace = true
 rodio = { version = "0.20.0", default-features = false, features = ["wav"] }
 util.workspace = true
+workspace-hack.workspace = true

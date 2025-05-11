@@ -3,7 +3,6 @@ use std::rc::Rc;
 use ::util::ResultExt;
 use anyhow::Context as _;
 use windows::{
-    core::PCWSTR,
     Win32::{
         Foundation::*,
         Graphics::Gdi::*,
@@ -15,6 +14,7 @@ use windows::{
             WindowsAndMessaging::*,
         },
     },
+    core::PCWSTR,
 };
 
 use crate::*;
@@ -39,6 +39,7 @@ pub(crate) fn handle_msg(
         WM_CREATE => handle_create_msg(handle, state_ptr),
         WM_MOVE => handle_move_msg(handle, lparam, state_ptr),
         WM_SIZE => handle_size_msg(wparam, lparam, state_ptr),
+        WM_GETMINMAXINFO => handle_get_min_max_info_msg(lparam, state_ptr),
         WM_ENTERSIZEMOVE | WM_ENTERMENULOOP => handle_size_move_loop(handle),
         WM_EXITSIZEMOVE | WM_EXITMENULOOP => handle_size_move_loop_exit(handle),
         WM_TIMER => handle_timer_msg(handle, wparam, state_ptr),
@@ -140,6 +141,29 @@ fn handle_move_msg(
     Some(0)
 }
 
+fn handle_get_min_max_info_msg(
+    lparam: LPARAM,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
+    let lock = state_ptr.state.borrow();
+    if let Some(min_size) = lock.min_size {
+        let scale_factor = lock.scale_factor;
+        let boarder_offset = lock.border_offset;
+        drop(lock);
+
+        unsafe {
+            let minmax_info = &mut *(lparam.0 as *mut MINMAXINFO);
+            minmax_info.ptMinTrackSize.x =
+                min_size.width.scale(scale_factor).0 as i32 + boarder_offset.width_offset;
+            minmax_info.ptMinTrackSize.y =
+                min_size.height.scale(scale_factor).0 as i32 + boarder_offset.height_offset;
+        }
+        Some(0)
+    } else {
+        None
+    }
+}
+
 fn handle_size_msg(
     wparam: WPARAM,
     lparam: LPARAM,
@@ -232,11 +256,7 @@ fn handle_close_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
         drop(lock);
         let should_close = callback();
         state_ptr.state.borrow_mut().callbacks.should_close = Some(callback);
-        if should_close {
-            None
-        } else {
-            Some(0)
-        }
+        if should_close { None } else { Some(0) }
     } else {
         None
     }
@@ -361,7 +381,7 @@ fn handle_keydown_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let Some(keystroke_or_modifier) = parse_keydown_msg_keystroke(wparam) else {
+    let Some(keystroke_or_modifier) = parse_keystroke_from_vkey(wparam, false) else {
         return Some(1);
     };
     let mut lock = state_ptr.state.borrow_mut();
@@ -391,7 +411,7 @@ fn handle_keydown_msg(
 }
 
 fn handle_keyup_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let Some(keystroke_or_modifier) = parse_keydown_msg_keystroke(wparam) else {
+    let Some(keystroke_or_modifier) = parse_keystroke_from_vkey(wparam, true) else {
         return Some(1);
     };
     let mut lock = state_ptr.state.borrow_mut();
@@ -1288,7 +1308,7 @@ enum KeystrokeOrModifier {
     Modifier(Modifiers),
 }
 
-fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
+fn parse_keystroke_from_vkey(wparam: WPARAM, is_keyup: bool) -> Option<KeystrokeOrModifier> {
     let vk_code = wparam.loword();
 
     let modifiers = current_modifiers();
@@ -1316,7 +1336,7 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
                 return Some(KeystrokeOrModifier::Modifier(modifiers));
             }
 
-            if modifiers.control || modifiers.alt {
+            if modifiers.control || modifiers.alt || is_keyup {
                 let basic_key = basic_vkcode_to_string(vk_code, modifiers);
                 if let Some(basic_key) = basic_key {
                     return Some(KeystrokeOrModifier::Keystroke(basic_key));

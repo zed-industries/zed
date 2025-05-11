@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
@@ -19,12 +19,12 @@ use std::{
     process::Output,
     str,
     sync::{
-        atomic::{AtomicBool, Ordering::SeqCst},
         Arc, LazyLock,
+        atomic::{AtomicBool, Ordering::SeqCst},
     },
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
-use util::{fs::remove_matching, maybe, ResultExt};
+use util::{ResultExt, fs::remove_matching, maybe};
 
 fn server_binary_arguments() -> Vec<OsString> {
     vec!["-mode=stdio".into()]
@@ -168,7 +168,9 @@ impl super::LspAdapter for GoLspAdapter {
                 String::from_utf8_lossy(&install_output.stderr)
             );
 
-            return Err(anyhow!("failed to install gopls with `go install`. Is `go` installed and in the PATH? Check logs for more information."));
+            return Err(anyhow!(
+                "failed to install gopls with `go install`. Is `go` installed and in the PATH? Check logs for more information."
+            ));
         }
 
         let installed_binary_path = gobin_dir.join(BINARY);
@@ -526,7 +528,7 @@ impl ContextProvider for GoContextProvider {
                 args: vec![
                     "test".into(),
                     "-run".into(),
-                    format!("^{}\\$", VariableName::Symbol.template_value(),),
+                    format!("\\^{}\\$", VariableName::Symbol.template_value(),),
                 ],
                 tags: vec!["go-test".to_owned()],
                 cwd: package_cwd.clone(),
@@ -559,7 +561,7 @@ impl ContextProvider for GoContextProvider {
                     "-v".into(),
                     "-run".into(),
                     format!(
-                        "^{}\\$/^{}\\$",
+                        "\\^{}\\$/\\^{}\\$",
                         VariableName::Symbol.template_value(),
                         GO_SUBTEST_NAME_TASK_VARIABLE.template_value(),
                     ),
@@ -578,9 +580,9 @@ impl ContextProvider for GoContextProvider {
                 args: vec![
                     "test".into(),
                     "-benchmem".into(),
-                    "-run=^$".into(),
+                    "-run='^$'".into(),
                     "-bench".into(),
-                    format!("^{}\\$", VariableName::Symbol.template_value()),
+                    format!("\\^{}\\$", VariableName::Symbol.template_value()),
                 ],
                 cwd: package_cwd.clone(),
                 tags: vec!["go-benchmark".to_owned()],
@@ -597,7 +599,7 @@ impl ContextProvider for GoContextProvider {
                     "test".into(),
                     "-fuzz=Fuzz".into(),
                     "-run".into(),
-                    format!("^{}\\$", VariableName::Symbol.template_value(),),
+                    format!("\\^{}\\$", VariableName::Symbol.template_value(),),
                 ],
                 tags: vec!["go-fuzz".to_owned()],
                 cwd: package_cwd.clone(),

@@ -1,27 +1,34 @@
 use crate::{
     rpc::RECONNECT_TIMEOUT,
-    tests::{rust_lang, TestServer},
+    tests::{TestServer, rust_lang},
 };
 use call::ActiveCall;
 use editor::{
-    actions::{
-        ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst, Redo, Rename,
-        ToggleCodeActions, Undo,
-    },
-    test::editor_test_context::{AssertionContextManager, EditorTestContext},
     Editor, RowInfo,
+    actions::{
+        ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst,
+        ExpandMacroRecursively, Redo, Rename, ToggleCodeActions, Undo,
+    },
+    test::{
+        editor_test_context::{AssertionContextManager, EditorTestContext},
+        expand_macro_recursively,
+    },
 };
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{TestAppContext, UpdateGlobal, VisualContext, VisualTestContext};
 use indoc::indoc;
 use language::{
-    language_settings::{AllLanguageSettings, InlayHintSettings},
     FakeLspAdapter,
+    language_settings::{AllLanguageSettings, InlayHintSettings},
 };
 use project::{
-    project_settings::{InlineBlameSettings, ProjectSettings},
     ProjectPath, SERVER_PROGRESS_THROTTLE_TIMEOUT,
+    lsp_store::{
+        lsp_ext_command::{ExpandedMacro, LspExtExpandMacro},
+        rust_analyzer_ext::RUST_ANALYZER_NAME,
+    },
+    project_settings::{InlineBlameSettings, ProjectSettings},
 };
 use recent_projects::disconnected_overlay::DisconnectedOverlay;
 use rpc::RECEIVE_TIMEOUT;
@@ -31,11 +38,12 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     sync::{
-        atomic::{self, AtomicBool, AtomicUsize},
         Arc,
+        atomic::{self, AtomicBool, AtomicUsize},
     },
 };
 use text::Point;
+use util::{path, uri};
 use workspace::{CloseIntent, Workspace};
 
 #[gpui::test(iterations = 10)]
@@ -190,9 +198,9 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
 
     client_a
         .fs()
-        .insert_tree("/dir", json!({ "a.txt": "Some text\n" }))
+        .insert_tree(path!("/dir"), json!({ "a.txt": "Some text\n" }))
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/dir"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -306,14 +314,14 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "main.rs": "fn main() { a }",
                 "other.rs": "",
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -351,7 +359,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .set_request_handler::<lsp::request::Completion, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
-                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(
                 params.text_document_position.position,
@@ -468,7 +476,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .set_request_handler::<lsp::request::Completion, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
-                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(
                 params.text_document_position.position,
@@ -562,14 +570,14 @@ async fn test_collaborating_with_code_actions(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "main.rs": "mod other;\nfn main() { let foo = other::foo(); }",
                 "other.rs": "pub fn foo() -> usize { 4 }",
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -592,7 +600,7 @@ async fn test_collaborating_with_code_actions(
         .set_request_handler::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(params.range.start, lsp::Position::new(0, 0));
             assert_eq!(params.range.end, lsp::Position::new(0, 0));
@@ -614,7 +622,7 @@ async fn test_collaborating_with_code_actions(
         .set_request_handler::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(params.range.start, lsp::Position::new(1, 31));
             assert_eq!(params.range.end, lsp::Position::new(1, 31));
@@ -626,7 +634,7 @@ async fn test_collaborating_with_code_actions(
                         changes: Some(
                             [
                                 (
-                                    lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                                    lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
                                     vec![lsp::TextEdit::new(
                                         lsp::Range::new(
                                             lsp::Position::new(1, 22),
@@ -636,7 +644,7 @@ async fn test_collaborating_with_code_actions(
                                     )],
                                 ),
                                 (
-                                    lsp::Url::from_file_path("/a/other.rs").unwrap(),
+                                    lsp::Url::from_file_path(path!("/a/other.rs")).unwrap(),
                                     vec![lsp::TextEdit::new(
                                         lsp::Range::new(
                                             lsp::Position::new(0, 0),
@@ -672,6 +680,7 @@ async fn test_collaborating_with_code_actions(
         editor.toggle_code_actions(
             &ToggleCodeActions {
                 deployed_from_indicator: None,
+                quick_launch: false,
             },
             window,
             cx,
@@ -697,7 +706,7 @@ async fn test_collaborating_with_code_actions(
                     changes: Some(
                         [
                             (
-                                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
                                 vec![lsp::TextEdit::new(
                                     lsp::Range::new(
                                         lsp::Position::new(1, 22),
@@ -707,7 +716,7 @@ async fn test_collaborating_with_code_actions(
                                 )],
                             ),
                             (
-                                lsp::Url::from_file_path("/a/other.rs").unwrap(),
+                                lsp::Url::from_file_path(path!("/a/other.rs")).unwrap(),
                                 vec![lsp::TextEdit::new(
                                     lsp::Range::new(
                                         lsp::Position::new(0, 0),
@@ -780,14 +789,14 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
     client_a
         .fs()
         .insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 "one.rs": "const ONE: usize = 1;",
                 "two.rs": "const TWO: usize = one::ONE + one::ONE;"
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/dir"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -813,7 +822,10 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
 
     fake_language_server
         .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
-            assert_eq!(params.text_document.uri.as_str(), "file:///dir/one.rs");
+            assert_eq!(
+                params.text_document.uri.as_str(),
+                uri!("file:///dir/one.rs")
+            );
             assert_eq!(params.position, lsp::Position::new(0, 7));
             Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
                 lsp::Position::new(0, 6),
@@ -856,7 +868,10 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
 
     fake_language_server
         .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
-            assert_eq!(params.text_document.uri.as_str(), "file:///dir/one.rs");
+            assert_eq!(
+                params.text_document.uri.as_str(),
+                uri!("file:///dir/one.rs")
+            );
             assert_eq!(params.position, lsp::Position::new(0, 8));
             Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
                 lsp::Position::new(0, 6),
@@ -894,7 +909,7 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
         .set_request_handler::<lsp::request::Rename, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri.as_str(),
-                "file:///dir/one.rs"
+                uri!("file:///dir/one.rs")
             );
             assert_eq!(
                 params.text_document_position.position,
@@ -905,14 +920,14 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
                 changes: Some(
                     [
                         (
-                            lsp::Url::from_file_path("/dir/one.rs").unwrap(),
+                            lsp::Url::from_file_path(path!("/dir/one.rs")).unwrap(),
                             vec![lsp::TextEdit::new(
                                 lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
                                 "THREE".to_string(),
                             )],
                         ),
                         (
-                            lsp::Url::from_file_path("/dir/two.rs").unwrap(),
+                            lsp::Url::from_file_path(path!("/dir/two.rs")).unwrap(),
                             vec![
                                 lsp::TextEdit::new(
                                     lsp::Range::new(
@@ -999,17 +1014,17 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
     client_a
         .fs()
         .insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 "main.rs": "const ONE: usize = 1;",
             }),
         )
         .await;
-    let (project_a, _) = client_a.build_local_project("/dir", cx_a).await;
+    let (project_a, _) = client_a.build_local_project(path!("/dir"), cx_a).await;
 
     let _buffer_a = project_a
         .update(cx_a, |p, cx| {
-            p.open_local_buffer_with_lsp("/dir/main.rs", cx)
+            p.open_local_buffer_with_lsp(path!("/dir/main.rs"), cx)
         })
         .await
         .unwrap();
@@ -1106,7 +1121,7 @@ async fn test_share_project(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 ".gitignore": "ignored-dir",
                 "a.txt": "a-contents",
@@ -1120,7 +1135,7 @@ async fn test_share_project(
         .await;
 
     // Invite client B to collaborate on a project
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     active_call_a
         .update(cx_a, |call, cx| {
             call.invite(client_b.user_id().unwrap(), Some(project_a.clone()), cx)
@@ -1292,14 +1307,14 @@ async fn test_on_input_format_from_host_to_guest(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "main.rs": "fn main() { a }",
                 "other.rs": "// Test file",
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -1325,7 +1340,7 @@ async fn test_on_input_format_from_host_to_guest(
         |params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
-                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(
                 params.text_document_position.position,
@@ -1414,14 +1429,14 @@ async fn test_on_input_format_from_guest_to_host(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "main.rs": "fn main() { a }",
                 "other.rs": "// Test file",
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -1455,7 +1470,7 @@ async fn test_on_input_format_from_guest_to_host(
         .set_request_handler::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
-                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(
                 params.text_document_position.position,
@@ -1530,6 +1545,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: true,
+                    show_value_hints: true,
                     edit_debounce_ms: 0,
                     scroll_debounce_ms: 0,
                     show_type_hints: true,
@@ -1545,6 +1561,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
+                    show_value_hints: true,
                     enabled: true,
                     edit_debounce_ms: 0,
                     scroll_debounce_ms: 0,
@@ -1575,14 +1592,14 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "main.rs": "fn main() { a } // and some long comment to ensure inlay hints are not trimmed out",
                 "other.rs": "// Test file",
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     active_call_a
         .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
         .await
@@ -1605,7 +1622,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     // The host opens a rust file.
     let _buffer_a = project_a
         .update(cx_a, |project, cx| {
-            project.open_local_buffer("/a/main.rs", cx)
+            project.open_local_buffer(path!("/a/main.rs"), cx)
         })
         .await
         .unwrap();
@@ -1629,7 +1646,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
             async move {
                 assert_eq!(
                     params.text_document.uri,
-                    lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                    lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
                 );
                 let edits_made = task_edits_made.load(atomic::Ordering::Acquire);
                 Ok(Some(vec![lsp::InlayHint {
@@ -1723,6 +1740,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     fake_language_server
         .request::<lsp::request::InlayHintRefreshRequest>(())
         .await
+        .into_response()
         .expect("inlay refresh request failed");
 
     executor.run_until_parked();
@@ -1764,6 +1782,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
+                    show_value_hints: true,
                     enabled: false,
                     edit_debounce_ms: 0,
                     scroll_debounce_ms: 0,
@@ -1780,6 +1799,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
+                    show_value_hints: true,
                     enabled: true,
                     edit_debounce_ms: 0,
                     scroll_debounce_ms: 0,
@@ -1809,14 +1829,14 @@ async fn test_inlay_hint_refresh_is_forwarded(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "main.rs": "fn main() { a } // and some long comment to ensure inlay hints are not trimmed out",
                 "other.rs": "// Test file",
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     active_call_a
         .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
         .await
@@ -1864,7 +1884,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
             async move {
                 assert_eq!(
                     params.text_document.uri,
-                    lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                    lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
                 );
                 let other_hints = task_other_hints.load(atomic::Ordering::Acquire);
                 let character = if other_hints { 0 } else { 2 };
@@ -1911,6 +1931,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
     fake_language_server
         .request::<lsp::request::InlayHintRefreshRequest>(())
         .await
+        .into_response()
         .expect("inlay refresh request failed");
     executor.run_until_parked();
     editor_a.update(cx_a, |editor, _| {
@@ -1967,7 +1988,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
     client_a
         .fs()
         .insert_tree(
-            "/my-repo",
+            path!("/my-repo"),
             json!({
                 ".git": {},
                 "file.txt": "line1\nline2\nline3\nline\n",
@@ -1993,11 +2014,12 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         .collect(),
         remote_url: Some("git@github.com:zed-industries/zed.git".to_string()),
     };
-    client_a
-        .fs()
-        .set_blame_for_repo(Path::new("/my-repo/.git"), vec![("file.txt".into(), blame)]);
+    client_a.fs().set_blame_for_repo(
+        Path::new(path!("/my-repo/.git")),
+        vec![("file.txt".into(), blame)],
+    );
 
-    let (project_a, worktree_id) = client_a.build_local_project("/my-repo", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/my-repo"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -2177,7 +2199,7 @@ async fn test_collaborating_with_editorconfig(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "src": {
                     "main.rs": "mod other;\nfn main() { let foo = other::foo(); }",
@@ -2190,7 +2212,7 @@ async fn test_collaborating_with_editorconfig(
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -2309,7 +2331,7 @@ fn main() { let foo = other::foo(); }"};
     client_a
         .fs()
         .atomic_write(
-            PathBuf::from("/a/src/.editorconfig"),
+            PathBuf::from(path!("/a/src/.editorconfig")),
             "[*]\ntab_width = 3\n".to_owned(),
         )
         .await
@@ -2609,6 +2631,149 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
 
     assert_eq!(0, breakpoints_a.len());
     assert_eq!(breakpoints_a, breakpoints_b);
+}
+
+#[gpui::test]
+async fn test_client_can_query_lsp_ext(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    client_a.language_registry().add(rust_lang());
+    client_b.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: RUST_ANALYZER_NAME,
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": "fn main() {}",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+
+    let editor_a = workspace_a
+        .update_in(cx_a, |workspace, window, cx| {
+            workspace.open_path((worktree_id, "main.rs"), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    let editor_b = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path((worktree_id, "main.rs"), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    let fake_language_server = fake_language_servers.next().await.unwrap();
+
+    // host
+    let mut expand_request_a = fake_language_server.set_request_handler::<LspExtExpandMacro, _, _>(
+        |params, _| async move {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+            );
+            assert_eq!(params.position, lsp::Position::new(0, 0),);
+            Ok(Some(ExpandedMacro {
+                name: "test_macro_name".to_string(),
+                expansion: "test_macro_expansion on the host".to_string(),
+            }))
+        },
+    );
+
+    editor_a.update_in(cx_a, |editor, window, cx| {
+        expand_macro_recursively(editor, &ExpandMacroRecursively, window, cx)
+    });
+    expand_request_a.next().await.unwrap();
+    cx_a.run_until_parked();
+
+    workspace_a.update(cx_a, |workspace, cx| {
+        workspace.active_pane().update(cx, |pane, cx| {
+            assert_eq!(
+                pane.items_len(),
+                2,
+                "Should have added a macro expansion to the host's pane"
+            );
+            let new_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+            new_editor.update(cx, |editor, cx| {
+                assert_eq!(editor.text(cx), "test_macro_expansion on the host");
+            });
+        })
+    });
+
+    // client
+    let mut expand_request_b = fake_language_server.set_request_handler::<LspExtExpandMacro, _, _>(
+        |params, _| async move {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+            );
+            assert_eq!(params.position, lsp::Position::new(0, 0),);
+            Ok(Some(ExpandedMacro {
+                name: "test_macro_name".to_string(),
+                expansion: "test_macro_expansion on the client".to_string(),
+            }))
+        },
+    );
+
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        expand_macro_recursively(editor, &ExpandMacroRecursively, window, cx)
+    });
+    expand_request_b.next().await.unwrap();
+    cx_b.run_until_parked();
+
+    workspace_b.update(cx_b, |workspace, cx| {
+        workspace.active_pane().update(cx, |pane, cx| {
+            assert_eq!(
+                pane.items_len(),
+                2,
+                "Should have added a macro expansion to the client's pane"
+            );
+            let new_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+            new_editor.update(cx, |editor, cx| {
+                assert_eq!(editor.text(cx), "test_macro_expansion on the client");
+            });
+        })
+    });
 }
 
 #[track_caller]

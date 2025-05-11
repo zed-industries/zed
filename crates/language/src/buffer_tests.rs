@@ -1,8 +1,8 @@
 use super::*;
+use crate::Buffer;
 use crate::language_settings::{
     AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent,
 };
-use crate::Buffer;
 use clock::ReplicaId;
 use collections::BTreeMap;
 use futures::FutureExt as _;
@@ -27,7 +27,7 @@ use text::{Point, ToPoint};
 use theme::ActiveTheme;
 use unindent::Unindent as _;
 use util::test::marked_text_offsets;
-use util::{assert_set_eq, post_inc, test::marked_text_ranges, RandomCharIter};
+use util::{RandomCharIter, assert_set_eq, post_inc, test::marked_text_ranges};
 
 pub static TRAILING_WHITESPACE_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
     RegexBuilder::new(r"[ \t]+$")
@@ -156,12 +156,14 @@ async fn test_first_line_pattern(cx: &mut TestAppContext) {
         ..Default::default()
     });
 
-    assert!(cx
-        .read(|cx| languages.language_for_file(&file("the/script"), None, cx))
-        .is_none());
-    assert!(cx
-        .read(|cx| languages.language_for_file(&file("the/script"), Some(&"nothing".into()), cx))
-        .is_none());
+    assert!(
+        cx.read(|cx| languages.language_for_file(&file("the/script"), None, cx))
+            .is_none()
+    );
+    assert!(
+        cx.read(|cx| languages.language_for_file(&file("the/script"), Some(&"nothing".into()), cx))
+            .is_none()
+    );
 
     assert_eq!(
         cx.read(|cx| languages.language_for_file(
@@ -1711,6 +1713,56 @@ fn test_autoindent_block_mode(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_autoindent_block_mode_with_newline(cx: &mut App) {
+    init_settings(cx, |_| {});
+
+    cx.new(|cx| {
+        let text = r#"
+            fn a() {
+                b();
+            }
+        "#
+        .unindent();
+        let mut buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
+
+        // First line contains just '\n', it's indentation is stored in "original_indent_columns"
+        let original_indent_columns = vec![Some(4)];
+        let inserted_text = r#"
+
+                c();
+                    d();
+                        e();
+        "#
+        .unindent();
+        buffer.edit(
+            [(Point::new(2, 0)..Point::new(2, 0), inserted_text.clone())],
+            Some(AutoindentMode::Block {
+                original_indent_columns: original_indent_columns.clone(),
+            }),
+            cx,
+        );
+
+        // While making edit, we ignore first line as it only contains '\n'
+        // hence second line indent is used to calculate delta
+        assert_eq!(
+            buffer.text(),
+            r#"
+            fn a() {
+                b();
+
+                c();
+                    d();
+                        e();
+            }
+            "#
+            .unindent()
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
 fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut App) {
     init_settings(cx, |_| {});
 
@@ -2449,6 +2501,59 @@ fn test_language_at_with_hidden_languages(cx: &mut App) {
 
             let language = snapshot.language_at(point).unwrap();
             assert_eq!(language.name().as_ref(), "Markdown");
+        }
+
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_language_at_for_markdown_code_block(cx: &mut App) {
+    init_settings(cx, |_| {});
+
+    cx.new(|cx| {
+        let text = r#"
+            ```rs
+            let a = 2;
+            // let b = 3;
+            ```
+        "#
+        .unindent();
+
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+        language_registry.add(Arc::new(markdown_lang()));
+        language_registry.add(Arc::new(markdown_inline_lang()));
+        language_registry.add(Arc::new(rust_lang()));
+
+        let mut buffer = Buffer::local(text, cx);
+        buffer.set_language_registry(language_registry.clone());
+        buffer.set_language(
+            language_registry
+                .language_for_name("Markdown")
+                .now_or_never()
+                .unwrap()
+                .ok(),
+            cx,
+        );
+
+        let snapshot = buffer.snapshot();
+
+        // Test points in the code line
+        for point in [Point::new(1, 4), Point::new(1, 6)] {
+            let config = snapshot.language_scope_at(point).unwrap();
+            assert_eq!(config.language_name(), "Rust".into());
+
+            let language = snapshot.language_at(point).unwrap();
+            assert_eq!(language.name().as_ref(), "Rust");
+        }
+
+        // Test points in the comment line to verify it's still detected as Rust
+        for point in [Point::new(2, 4), Point::new(2, 6)] {
+            let config = snapshot.language_scope_at(point).unwrap();
+            assert_eq!(config.language_name(), "Rust".into());
+
+            let language = snapshot.language_at(point).unwrap();
+            assert_eq!(language.name().as_ref(), "Rust");
         }
 
         buffer

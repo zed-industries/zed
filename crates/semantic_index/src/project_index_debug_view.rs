@@ -1,8 +1,8 @@
 use crate::ProjectIndex;
 use gpui::{
-    canvas, div, list, uniform_list, AnyElement, App, CursorStyle, Entity, EventEmitter,
-    FocusHandle, Focusable, IntoElement, ListOffset, ListState, MouseMoveEvent, Render,
-    UniformListScrollHandle,
+    AnyElement, App, CursorStyle, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
+    ListOffset, ListState, MouseMoveEvent, Render, UniformListScrollHandle, canvas, div, list,
+    uniform_list,
 };
 use project::WorktreeId;
 use settings::Settings;
@@ -289,8 +289,8 @@ impl EventEmitter<()> for ProjectIndexDebugView {}
 impl Item for ProjectIndexDebugView {
     type Event = ();
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("Project Index (Debug)".into())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "Project Index (Debug)".into()
     }
 
     fn clone_on_split(

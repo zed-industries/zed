@@ -9,6 +9,7 @@ use git_ui::project_diff::ProjectDiff;
 use gpui::{TestAppContext, VisualTestContext};
 use project::ProjectPath;
 use serde_json::json;
+use util::path;
 use workspace::Workspace;
 
 //
@@ -29,7 +30,7 @@ async fn test_project_diff(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext)
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 ".git": {},
                 "changed.txt": "after\n",
@@ -41,7 +42,7 @@ async fn test_project_diff(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext)
         .await;
 
     client_a.fs().set_git_content_for_repo(
-        Path::new("/a/.git"),
+        Path::new(path!("/a/.git")),
         &[
             ("changed.txt".into(), "before\n".to_string(), None),
             ("unchanged.txt".into(), "unchanged\n".to_string(), None),
@@ -49,7 +50,7 @@ async fn test_project_diff(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext)
             ("secret.pem".into(), "shh\n".to_string(), None),
         ],
     );
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     let active_call_a = cx_a.read(ActiveCall::global);
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
@@ -93,7 +94,7 @@ async fn test_project_diff(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext)
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 ".git": {},
                 "changed.txt": "before\n",

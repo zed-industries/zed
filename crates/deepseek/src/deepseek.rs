@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use futures::{
+    AsyncBufReadExt, AsyncReadExt,
     io::BufReader,
     stream::{BoxStream, StreamExt},
-    AsyncBufReadExt, AsyncReadExt,
 };
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
@@ -64,6 +64,10 @@ pub enum Model {
 }
 
 impl Model {
+    pub fn default_fast() -> Self {
+        Model::Chat
+    }
+
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
             "deepseek-chat" => Ok(Self::Chat),

@@ -1,11 +1,11 @@
 use std::{any::Any, cell::Cell, fmt::Debug, ops::Range, rc::Rc, sync::Arc};
 
-use crate::{prelude::*, px, relative, IntoElement};
+use crate::{IntoElement, prelude::*, px, relative};
 use gpui::{
-    quad, Along, App, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Corners, Edges,
-    Element, ElementId, Entity, EntityId, GlobalElementId, Hitbox, Hsla, IsZero, LayoutId,
-    ListState, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle,
-    ScrollWheelEvent, Size, Style, UniformListScrollHandle, Window,
+    Along, App, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Corners, Edges, Element,
+    ElementId, Entity, EntityId, GlobalElementId, Hitbox, Hsla, IsZero, LayoutId, ListState,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, ScrollWheelEvent,
+    Size, Style, UniformListScrollHandle, Window, quad,
 };
 
 pub struct Scrollbar {
@@ -29,10 +29,6 @@ impl ScrollableHandle for UniformListScrollHandle {
 
     fn viewport(&self) -> Bounds<Pixels> {
         self.0.borrow().base_handle.bounds()
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }
 
@@ -60,10 +56,6 @@ impl ScrollableHandle for ListState {
     fn viewport(&self) -> Bounds<Pixels> {
         self.viewport_bounds()
     }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
 }
 
 impl ScrollableHandle for ScrollHandle {
@@ -82,18 +74,13 @@ impl ScrollableHandle for ScrollHandle {
     fn viewport(&self) -> Bounds<Pixels> {
         self.bounds()
     }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
 }
 
-pub trait ScrollableHandle: Debug + 'static {
+pub trait ScrollableHandle: Any + Debug {
     fn content_size(&self) -> Size<Pixels>;
     fn set_offset(&self, point: Point<Pixels>);
     fn offset(&self) -> Point<Pixels>;
     fn viewport(&self) -> Bounds<Pixels>;
-    fn as_any(&self) -> &dyn Any;
     fn drag_started(&self) {}
     fn drag_ended(&self) {}
 }

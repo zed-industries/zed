@@ -1,4 +1,4 @@
-use gpui::{prelude::*, AnyElement};
+use gpui::{AnyElement, prelude::*};
 use smallvec::SmallVec;
 use ui::prelude::*;
 
@@ -40,7 +40,7 @@ impl RenderOnce for ExtensionCard {
                 .bg(cx.theme().colors().elevated_surface_background)
                 .border_1()
                 .border_color(cx.theme().colors().border)
-                .rounded_sm()
+                .rounded_md()
                 .children(self.children)
                 .when(self.overridden_by_dev_extension, |card| {
                     card.child(

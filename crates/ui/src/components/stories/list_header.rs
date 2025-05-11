@@ -1,7 +1,7 @@
 use gpui::Render;
 use story::Story;
 
-use crate::{prelude::*, IconButton};
+use crate::{IconButton, prelude::*};
 use crate::{IconName, ListHeader};
 
 pub struct ListHeaderStory;

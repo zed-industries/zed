@@ -2,8 +2,8 @@ use collections::HashMap;
 use std::{ops::Range, sync::LazyLock};
 use tree_sitter::{Query, QueryMatch};
 
-use crate::patterns::KEYMAP_ACTION_STRING_PATTERN;
 use crate::MigrationPatterns;
+use crate::patterns::KEYMAP_ACTION_STRING_PATTERN;
 
 pub const KEYMAP_PATTERNS: MigrationPatterns =
     &[(KEYMAP_ACTION_STRING_PATTERN, replace_string_action)];

@@ -29,6 +29,28 @@ When configuring a language server, it helps to open the LSP Logs window using t
 
 The [Ruby extension](https://github.com/zed-extensions/ruby) offers both `solargraph` and `ruby-lsp` language server support.
 
+### Language Server Activation
+
+For all Ruby language servers (`solargraph`, `ruby-lsp`, and `rubocop`), the Ruby extension follows this activation sequence:
+
+1. If the language server is found in your project's `Gemfile`, it will be used through `bundle exec`.
+2. If not found in the `Gemfile`, the Ruby extension will look for the executable in your system `PATH`.
+3. If the language server is not found in either location, the Ruby extension will automatically install it as a global gem (note: this will not install to your current Ruby gemset).
+
+You can skip step 1 and force using the system executable by setting `use_bundler` to `false` in your settings:
+
+```jsonc
+{
+  "lsp": {
+    "<SERVER_NAME>": {
+      "settings": {
+        "use_bundler": false,
+      },
+    },
+  },
+}
+```
+
 ### Using `solargraph`
 
 `solargraph` is enabled by default in the Ruby extension.
@@ -79,20 +101,6 @@ Or, conversely, you can disable `ruby-lsp` and enable `solargraph` and `rubocop`
 
 ## Setting up `solargraph`
 
-Zed currently doesn't install Solargraph automatically. To use Solargraph, you need to install the gem. Zed just looks for an executable called `solargraph` on your `PATH`.
-
-You can install the gem manually with the following command:
-
-```sh
-gem install solargraph
-```
-
-Alternatively, if your project uses Bundler, you can add the Solargraph gem to your `Gemfile`:
-
-```rb
-gem 'solargraph', group: :development
-```
-
 Solargraph has formatting and diagnostics disabled by default. We can tell Zed to enable them by adding the following to your `settings.json`:
 
 ```json
@@ -108,33 +116,11 @@ Solargraph has formatting and diagnostics disabled by default. We can tell Zed t
 }
 ```
 
-By default, Solargraph uses `bundle exec` to run in the context of the bundle. To disable that, you can use the `use_bundler` configuration option:
-
-```json
-{
-  "lsp": {
-    "solargraph": {
-      "settings": {
-        "use_bundler": false
-      }
-    }
-  }
-}
-```
-
 ### Configuration
 
 Solargraph reads its configuration from a file called `.solargraph.yml` in the root of your project. For more information about this file, see the [Solargraph configuration documentation](https://solargraph.org/guides/configuration).
 
 ## Setting up `ruby-lsp`
-
-Zed currently doesn't install Ruby LSP automatically. To use Ruby LSP, you need to install the gem. Zed just looks for an executable called `ruby-lsp` on your `PATH`.
-
-You can install the gem manually with the following command:
-
-```sh
-gem install ruby-lsp
-```
 
 Ruby LSP uses pull-based diagnostics which Zed doesn't support yet. We can tell Zed to disable it by adding the following to your `settings.json`:
 
@@ -173,29 +159,7 @@ LSP `settings` and `initialization_options` can also be project-specific. For ex
 }
 ```
 
-By default, Ruby LSP does not use `bundle exec` to run in the context of the bundle. To enable that, you can use the `use_bundler` configuration option:
-
-```json
-{
-  "lsp": {
-    "ruby-lsp": {
-      "settings": {
-        "use_bundler": true
-      }
-    }
-  }
-}
-```
-
 ## Setting up `rubocop` LSP
-
-Zed currently doesn't install `rubocop` automatically. To use `rubocop`, you need to install the gem. Zed just looks for an executable called `rubocop` on your `PATH`.
-
-You can install the gem manually with the following command:
-
-```sh
-gem install rubocop
-```
 
 Rubocop has unsafe autocorrection disabled by default. We can tell Zed to enable it by adding the following to your `settings.json`:
 
@@ -218,20 +182,6 @@ Rubocop has unsafe autocorrection disabled by default. We can tell Zed to enable
         "enabledFeatures": {
           "diagnostics": false
         }
-      }
-    }
-  }
-}
-```
-
-By default, `rubocop` uses `bundle exec` to run in the context of the bundle. To disable that, you can use the `use_bundler` configuration option:
-
-```json
-{
-  "lsp": {
-    "rubocop": {
-      "settings": {
-        "use_bundler": false
       }
     }
   }
@@ -291,15 +241,29 @@ To run tests in your Ruby project, you can set up custom tasks in your local `.z
 ```json
 [
   {
-    "label": "test $ZED_RELATIVE_FILE:$ZED_ROW",
-    "command": "bundle exec rails",
-    "args": ["test", "\"$ZED_RELATIVE_FILE:$ZED_ROW\""],
+    "label": "test $ZED_RELATIVE_FILE -n /$ZED_SYMBOL/",
+    "command": "bin/rails test $ZED_RELATIVE_FILE -n /$ZED_SYMBOL/",
     "tags": ["ruby-test"]
   }
 ]
 ```
 
-Note: Plain minitest does not support running tests by line number.
+Note: We can't use `args` here because of the way quotes are handled.
+
+### Minitest
+
+Plain minitest does not support running tests by line number, only by name, so we need to use `$ZED_SYMBOL` instead:
+
+```json
+[
+  {
+    "label": "-Itest $ZED_RELATIVE_FILE -n /$ZED_SYMBOL/",
+    "command": "bundle exec ruby",
+    "args": ["-Itest", "$ZED_RELATIVE_FILE", "-n /$ZED_SYMBOL/"],
+    "tags": ["ruby-test"]
+  }
+]
+```
 
 ### RSpec
 

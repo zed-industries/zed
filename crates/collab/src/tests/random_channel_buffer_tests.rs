@@ -1,6 +1,6 @@
 use crate::db::ChannelRole;
 
-use super::{run_randomized_test, RandomizedTest, TestClient, TestError, TestServer, UserTestPlan};
+use super::{RandomizedTest, TestClient, TestError, TestServer, UserTestPlan, run_randomized_test};
 use anyhow::Result;
 use async_trait::async_trait;
 use gpui::{BackgroundExecutor, SharedString, TestAppContext};

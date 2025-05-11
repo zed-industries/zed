@@ -15,6 +15,7 @@ doctest = false
 [dependencies]
 collections.workspace = true
 editor.workspace = true
+fuzzy.workspace = true
 gpui.workspace = true
 menu.workspace = true
 picker.workspace = true
@@ -22,9 +23,11 @@ project.workspace = true
 schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
+smol.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 anyhow.workspace = true

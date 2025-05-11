@@ -1,6 +1,3 @@
-// todo(windows): Actually run the tests
-#![cfg(not(target_os = "windows"))]
-
 use std::sync::Arc;
 
 use call::Room;
@@ -23,9 +20,9 @@ mod randomized_test_helpers;
 mod remote_editing_collaboration_tests;
 mod test_server;
 
-use language::{tree_sitter_rust, Language, LanguageConfig, LanguageMatcher};
+use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
 pub use randomized_test_helpers::{
-    run_randomized_test, save_randomized_test_plan, RandomizedTest, TestError, UserTestPlan,
+    RandomizedTest, TestError, UserTestPlan, run_randomized_test, save_randomized_test_plan,
 };
 pub use test_server::{TestClient, TestServer};
 

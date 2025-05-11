@@ -2,7 +2,7 @@
 mod syntax_map_tests;
 
 use crate::{
-    with_parser, Grammar, InjectionConfig, Language, LanguageId, LanguageRegistry, QUERY_CURSORS,
+    Grammar, InjectionConfig, Language, LanguageId, LanguageRegistry, QUERY_CURSORS, with_parser,
 };
 use collections::HashMap;
 use futures::FutureExt;
@@ -1890,7 +1890,7 @@ impl fmt::Debug for LogChangedRegions<'_> {
         f.debug_list()
             .entries(
                 self.0
-                     .0
+                    .0
                     .iter()
                     .map(|region| LogAnchorRange(&region.range, self.1)),
             )

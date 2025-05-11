@@ -16,14 +16,14 @@ use std::{
 use collections::{HashMap, IndexMap};
 use gpui::{App, AppContext as _, Entity, Subscription};
 use language::{
-    language_settings::AllLanguageSettings, Attach, CachedLspAdapter, LanguageName,
-    LanguageRegistry, LspAdapterDelegate,
+    Attach, CachedLspAdapter, LanguageName, LanguageRegistry, LspAdapterDelegate,
+    language_settings::AllLanguageSettings,
 };
 use lsp::LanguageServerName;
 use settings::{Settings, SettingsLocation, WorktreeId};
 use std::sync::OnceLock;
 
-use crate::{project_settings::LspSettings, LanguageServerId, ProjectPath};
+use crate::{LanguageServerId, ProjectPath, project_settings::LspSettings};
 
 use super::{ManifestTree, ManifestTreeEvent};
 

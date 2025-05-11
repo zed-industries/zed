@@ -3,18 +3,20 @@ use std::sync::Arc;
 
 use editor::{Editor, EditorMode, MultiBuffer};
 use futures::future::Shared;
-use gpui::{prelude::*, App, Entity, Hsla, Task, TextStyleRefinement};
+use gpui::{
+    App, Entity, Hsla, RetainAllImageCache, Task, TextStyleRefinement, image_cache, prelude::*,
+};
 use language::{Buffer, Language, LanguageRegistry};
 use markdown_preview::{markdown_parser::parse_markdown, markdown_renderer::render_markdown_block};
 use nbformat::v4::{CellId, CellMetadata, CellType};
 use settings::Settings as _;
 use theme::ThemeSettings;
-use ui::{prelude::*, IconButtonShape};
+use ui::{IconButtonShape, prelude::*};
 use util::ResultExt;
 
 use crate::{
     notebook::{CODE_BLOCK_INSET, GUTTER_WIDTH},
-    outputs::{plain::TerminalOutput, user_error::ErrorView, Output},
+    outputs::{Output, plain::TerminalOutput, user_error::ErrorView},
 };
 
 #[derive(Copy, Clone, PartialEq, PartialOrd)]
@@ -148,6 +150,7 @@ impl Cell {
 
                     MarkdownCell {
                         markdown_parsing_task,
+                        image_cache: RetainAllImageCache::new(cx),
                         languages: languages.clone(),
                         id: id.clone(),
                         metadata: metadata.clone(),
@@ -329,6 +332,7 @@ pub trait RunnableCell: RenderableCell {
 pub struct MarkdownCell {
     id: CellId,
     metadata: CellMetadata,
+    image_cache: Entity<RetainAllImageCache>,
     source: String,
     parsed_markdown: Option<markdown_preview::markdown_elements::ParsedMarkdown>,
     markdown_parsing_task: Task<()>,
@@ -403,12 +407,12 @@ impl Render for MarkdownCell {
                     .child(self.gutter(window, cx))
                     .child(
                         v_flex()
+                            .image_cache(self.image_cache.clone())
                             .size_full()
                             .flex_1()
                             .p_3()
                             .font_ui(cx)
                             .text_size(TextSize::Default.rems(cx))
-                            //
                             .children(parsed.children.iter().map(|child| {
                                 div().relative().child(div().relative().child(
                                     render_markdown_block(child, &mut markdown_render_context),

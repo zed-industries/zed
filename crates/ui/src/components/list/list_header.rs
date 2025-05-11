@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{h_flex, prelude::*, Disclosure, Label};
+use crate::{Disclosure, Label, h_flex, prelude::*};
 use gpui::{AnyElement, ClickEvent};
 use settings::Settings;
 use theme::ThemeSettings;

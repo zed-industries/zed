@@ -1,18 +1,18 @@
-use editor::{scroll::Autoscroll, Anchor, Editor, ExcerptId};
+use editor::{Anchor, Editor, ExcerptId, scroll::Autoscroll};
 use gpui::{
-    actions, div, rems, uniform_list, App, AppContext as _, Context, Div, Entity, EventEmitter,
-    FocusHandle, Focusable, Hsla, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
-    MouseMoveEvent, ParentElement, Render, ScrollStrategy, SharedString, Styled,
-    UniformListScrollHandle, WeakEntity, Window,
+    App, AppContext as _, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, Hsla,
+    InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement,
+    Render, ScrollStrategy, SharedString, Styled, UniformListScrollHandle, WeakEntity, Window,
+    actions, div, rems, uniform_list,
 };
 use language::{Buffer, OwnedSyntaxLayer};
 use std::{mem, ops::Range};
 use theme::ActiveTheme;
 use tree_sitter::{Node, TreeCursor};
-use ui::{h_flex, ButtonLike, Color, ContextMenu, Label, LabelCommon, PopoverMenu};
+use ui::{ButtonLike, Color, ContextMenu, Label, LabelCommon, PopoverMenu, h_flex};
 use workspace::{
-    item::{Item, ItemHandle},
     SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
+    item::{Item, ItemHandle},
 };
 
 actions!(debug, [OpenSyntaxTreeView]);
@@ -401,8 +401,8 @@ impl Item for SyntaxTreeView {
 
     fn to_item_events(_: &Self::Event, _: impl FnMut(workspace::item::ItemEvent)) {}
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("Syntax Tree".into())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "Syntax Tree".into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

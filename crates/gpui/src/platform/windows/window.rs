@@ -17,13 +17,13 @@ use futures::channel::oneshot::{self, Receiver};
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
 use windows::{
-    core::*,
     Win32::{
         Foundation::*,
         Graphics::Gdi::*,
         System::{Com::*, LibraryLoader::*, Ole::*, SystemServices::*},
         UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
+    core::*,
 };
 
 use crate::platform::blade::{BladeContext, BladeRenderer};
@@ -34,6 +34,7 @@ pub(crate) struct WindowsWindow(pub Rc<WindowsWindowStatePtr>);
 pub struct WindowsWindowState {
     pub origin: Point<Pixels>,
     pub logical_size: Size<Pixels>,
+    pub min_size: Option<Size<Pixels>>,
     pub fullscreen_restore_bounds: Bounds<Pixels>,
     pub border_offset: WindowBorderOffset,
     pub scale_factor: f32,
@@ -79,6 +80,7 @@ impl WindowsWindowState {
         current_cursor: Option<HCURSOR>,
         display: WindowsDisplay,
         gpu_context: &BladeContext,
+        min_size: Option<Size<Pixels>>,
     ) -> Result<Self> {
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
@@ -113,6 +115,7 @@ impl WindowsWindowState {
             border_offset,
             scale_factor,
             restore_from_minimized,
+            min_size,
             callbacks,
             input_handler,
             system_key_handled,
@@ -229,6 +232,7 @@ impl WindowsWindowStatePtr {
             context.current_cursor,
             context.display,
             context.gpu_context,
+            context.min_size,
         )?);
 
         Ok(Rc::new_cyclic(|this| Self {
@@ -350,6 +354,7 @@ struct WindowCreateContext<'a> {
     display: WindowsDisplay,
     transparent: bool,
     is_movable: bool,
+    min_size: Option<Size<Pixels>>,
     executor: ForegroundExecutor,
     current_cursor: Option<HCURSOR>,
     windows_version: WindowsVersion,
@@ -390,10 +395,10 @@ impl WindowsWindow {
                 .unwrap_or(""),
         );
         let (dwexstyle, mut dwstyle) = if params.kind == WindowKind::PopUp {
-            (WS_EX_TOOLWINDOW, WINDOW_STYLE(0x0))
+            (WS_EX_TOOLWINDOW | WS_EX_LAYERED, WINDOW_STYLE(0x0))
         } else {
             (
-                WS_EX_APPWINDOW,
+                WS_EX_APPWINDOW | WS_EX_LAYERED,
                 WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
             )
         };
@@ -412,6 +417,7 @@ impl WindowsWindow {
             display,
             transparent: true,
             is_movable: params.is_movable,
+            min_size: params.window_min_size,
             executor,
             current_cursor,
             windows_version,
@@ -459,6 +465,14 @@ impl WindowsWindow {
                 state: WindowOpenState::Windowed,
             });
         }
+        // The render pipeline will perform compositing on the GPU when the
+        // swapchain is configured correctly (see downstream of
+        // update_transparency).
+        // The following configuration is a one-time setup to ensure that the
+        // window is going to be composited with per-pixel alpha, but the render
+        // pipeline is responsible for effectively calling UpdateLayeredWindow
+        // at the appropriate time.
+        unsafe { SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA)? };
 
         Ok(Self(state_ptr))
     }
@@ -518,6 +532,32 @@ impl PlatformWindow for WindowsWindow {
     /// whether the mouse collides with other elements of GPUI).
     fn content_size(&self) -> Size<Pixels> {
         self.0.state.borrow().content_size()
+    }
+
+    fn resize(&mut self, size: Size<Pixels>) {
+        let hwnd = self.0.hwnd;
+        let bounds =
+            crate::bounds(self.bounds().origin, size).to_device_pixels(self.scale_factor());
+        let rect = calculate_window_rect(bounds, self.0.state.borrow().border_offset);
+
+        self.0
+            .executor
+            .spawn(async move {
+                unsafe {
+                    SetWindowPos(
+                        hwnd,
+                        None,
+                        bounds.origin.x.0,
+                        bounds.origin.y.0,
+                        rect.right - rect.left,
+                        rect.bottom - rect.top,
+                        SWP_NOMOVE,
+                    )
+                    .context("unable to set window content size")
+                    .log_err();
+                }
+            })
+            .detach();
     }
 
     fn scale_factor(&self) -> f32 {
@@ -677,41 +717,20 @@ impl PlatformWindow for WindowsWindow {
         window_state
             .renderer
             .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
-        let mut version = unsafe { std::mem::zeroed() };
-        let status = unsafe { windows::Wdk::System::SystemServices::RtlGetVersion(&mut version) };
-        if status.is_ok() {
-            if background_appearance == WindowBackgroundAppearance::Blurred {
-                if version.dwBuildNumber >= 17763 {
-                    set_window_composition_attribute(window_state.hwnd, Some((0, 0, 0, 10)), 4);
-                }
-            } else {
-                if version.dwBuildNumber >= 17763 {
-                    set_window_composition_attribute(window_state.hwnd, None, 0);
-                }
+
+        match background_appearance {
+            WindowBackgroundAppearance::Opaque => {
+                // ACCENT_DISABLED
+                set_window_composition_attribute(window_state.hwnd, None, 0);
             }
-            //Transparent effect might cause some flickering and performance issues due `WS_EX_COMPOSITED` is enabled
-            //if `WS_EX_COMPOSITED` is removed the window instance won't initiate
-            if background_appearance == WindowBackgroundAppearance::Transparent {
-                unsafe {
-                    let current_style = GetWindowLongW(window_state.hwnd, GWL_EXSTYLE);
-                    SetWindowLongW(
-                        window_state.hwnd,
-                        GWL_EXSTYLE,
-                        current_style | WS_EX_LAYERED.0 as i32 | WS_EX_COMPOSITED.0 as i32,
-                    );
-                    SetLayeredWindowAttributes(window_state.hwnd, COLORREF(0), 225, LWA_ALPHA)
-                        .inspect_err(|e| log::error!("Unable to set window to transparent: {e}"))
-                        .ok();
-                };
-            } else {
-                unsafe {
-                    let current_style = GetWindowLongW(window_state.hwnd, GWL_EXSTYLE);
-                    SetWindowLongW(
-                        window_state.hwnd,
-                        GWL_EXSTYLE,
-                        current_style & !WS_EX_LAYERED.0 as i32 & !WS_EX_COMPOSITED.0 as i32,
-                    );
-                }
+            WindowBackgroundAppearance::Transparent => {
+                // Use ACCENT_ENABLE_TRANSPARENTGRADIENT for transparent background
+                set_window_composition_attribute(window_state.hwnd, None, 2);
+            }
+            WindowBackgroundAppearance::Blurred => {
+                // Enable acrylic blur
+                // ACCENT_ENABLE_ACRYLICBLURBEHIND
+                set_window_composition_attribute(window_state.hwnd, Some((0, 0, 0, 0)), 4);
             }
         }
     }
@@ -1012,8 +1031,8 @@ type Color = (u8, u8, u8, u8);
 
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct WindowBorderOffset {
-    width_offset: i32,
-    height_offset: i32,
+    pub(crate) width_offset: i32,
+    pub(crate) height_offset: i32,
 }
 
 impl WindowBorderOffset {
@@ -1058,6 +1077,7 @@ fn register_wnd_class(icon_handle: HICON) -> PCWSTR {
             lpszClassName: PCWSTR(CLASS_NAME.as_ptr()),
             style: CS_HREDRAW | CS_VREDRAW,
             hInstance: get_module_handle().into(),
+            hbrBackground: unsafe { CreateSolidBrush(COLORREF(0x00000000)) },
             ..Default::default()
         };
         unsafe { RegisterClassW(&wc) };
@@ -1215,6 +1235,12 @@ fn retrieve_window_placement(
 }
 
 fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32) {
+    let mut version = unsafe { std::mem::zeroed() };
+    let status = unsafe { windows::Wdk::System::SystemServices::RtlGetVersion(&mut version) };
+    if !status.is_ok() || version.dwBuildNumber < 17763 {
+        return;
+    }
+
     unsafe {
         type SetWindowCompositionAttributeType =
             unsafe extern "system" fn(HWND, *mut WINDOWCOMPOSITIONATTRIBDATA) -> BOOL;
@@ -1300,7 +1326,7 @@ mod windows_renderer {
 #[cfg(test)]
 mod tests {
     use super::ClickState;
-    use crate::{point, DevicePixels, MouseButton};
+    use crate::{DevicePixels, MouseButton, point};
     use std::time::Duration;
 
     #[test]

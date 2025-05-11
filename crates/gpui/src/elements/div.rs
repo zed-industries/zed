@@ -16,12 +16,12 @@
 //! constructed by combining these two systems into an all-in-one element.
 
 use crate::{
-    point, px, size, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent,
-    DispatchPhase, Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox,
-    HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
-    StyleRefinement, Styled, Task, TooltipId, Visibility, Window,
+    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
+    Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox, HitboxId,
+    IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
+    Render, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task, TooltipId,
+    Visibility, Window, point, px, size,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -39,6 +39,8 @@ use std::{
 };
 use taffy::style::Overflow;
 use util::ResultExt;
+
+use super::ImageCacheProvider;
 
 const DRAG_THRESHOLD: f64 = 2.;
 const TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(500);
@@ -488,7 +490,7 @@ impl Interactivity {
 
     /// Bind the given callback on the hover start and end events of this element. Note that the boolean
     /// passed to the callback is true when the hover starts and false when it ends.
-    /// The imperative API equivalent to [`StatefulInteractiveElement::on_drag`]
+    /// The imperative API equivalent to [`StatefulInteractiveElement::on_hover`]
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_hover(&mut self, listener: impl Fn(&bool, &mut Window, &mut App) + 'static)
@@ -541,6 +543,15 @@ impl Interactivity {
     /// The imperative API equivalent to [`InteractiveElement::occlude`]
     pub fn occlude_mouse(&mut self) {
         self.occlude_mouse = true;
+    }
+
+    /// Registers event handles that stop propagation of mouse events for non-scroll events.
+    /// The imperative API equivalent to [`InteractiveElement::block_mouse_except_scroll`]
+    pub fn stop_mouse_events_except_scroll(&mut self) {
+        self.on_any_mouse_down(|_, _, cx| cx.stop_propagation());
+        self.on_any_mouse_up(|_, _, cx| cx.stop_propagation());
+        self.on_click(|_, _, cx| cx.stop_propagation());
+        self.on_hover(|_, _, cx| cx.stop_propagation());
     }
 }
 
@@ -917,10 +928,16 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Block the mouse from interacting with this element or any of its children
-    /// The fluent API equivalent to [`Interactivity::occlude_mouse`]
+    /// Stops propagation of left mouse down event.
     fn block_mouse_down(mut self) -> Self {
         self.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+    }
+
+    /// Registers event handles that stop propagation of mouse events for non-scroll events.
+    /// The fluent API equivalent to [`Interactivity::block_mouse_except_scroll`]
+    fn stop_mouse_events_except_scroll(mut self) -> Self {
+        self.interactivity().stop_mouse_events_except_scroll();
+        self
     }
 }
 
@@ -1134,6 +1151,7 @@ pub fn div() -> Div {
         interactivity,
         children: SmallVec::default(),
         prepaint_listener: None,
+        image_cache: None,
     }
 }
 
@@ -1142,6 +1160,7 @@ pub struct Div {
     interactivity: Interactivity,
     children: SmallVec<[AnyElement; 2]>,
     prepaint_listener: Option<Box<dyn Fn(Vec<Bounds<Pixels>>, &mut Window, &mut App) + 'static>>,
+    image_cache: Option<Box<dyn ImageCacheProvider>>,
 }
 
 impl Div {
@@ -1152,6 +1171,12 @@ impl Div {
         listener: impl Fn(Vec<Bounds<Pixels>>, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.prepaint_listener = Some(Box::new(listener));
+        self
+    }
+
+    /// Add an image cache at the location of this div in the element tree.
+    pub fn image_cache(mut self, cache: impl ImageCacheProvider) -> Self {
+        self.image_cache = Some(Box::new(cache));
         self
     }
 }
@@ -1199,7 +1224,12 @@ impl Element for Div {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut child_layout_ids = SmallVec::new();
-        let layout_id =
+        let image_cache = self
+            .image_cache
+            .as_mut()
+            .map(|provider| provider.provide(window, cx));
+
+        let layout_id = window.with_image_cache(image_cache, |window| {
             self.interactivity
                 .request_layout(global_id, window, cx, |style, window, cx| {
                     window.with_text_style(style.text_style().cloned(), |window| {
@@ -1210,7 +1240,9 @@ impl Element for Div {
                             .collect::<SmallVec<_>>();
                         window.request_layout(style, child_layout_ids.iter().copied(), cx)
                     })
-                });
+                })
+        });
+
         (layout_id, DivFrameState { child_layout_ids })
     }
 
@@ -1291,18 +1323,25 @@ impl Element for Div {
         window: &mut Window,
         cx: &mut App,
     ) {
-        self.interactivity.paint(
-            global_id,
-            bounds,
-            hitbox.as_ref(),
-            window,
-            cx,
-            |_style, window, cx| {
-                for child in &mut self.children {
-                    child.paint(window, cx);
-                }
-            },
-        );
+        let image_cache = self
+            .image_cache
+            .as_mut()
+            .map(|provider| provider.provide(window, cx));
+
+        window.with_image_cache(image_cache, |window| {
+            self.interactivity.paint(
+                global_id,
+                bounds,
+                hitbox.as_ref(),
+                window,
+                cx,
+                |_style, window, cx| {
+                    for child in &mut self.children {
+                        child.paint(window, cx);
+                    }
+                },
+            )
+        });
     }
 }
 
@@ -1607,7 +1646,11 @@ impl Interactivity {
                                             global_id, hitbox, &style, window, cx,
                                         );
 
-                                        if !cx.has_active_drag() {
+                                        if let Some(drag) = cx.active_drag.as_ref() {
+                                            if let Some(mouse_cursor) = drag.cursor_style {
+                                                window.set_cursor_style(mouse_cursor, None);
+                                            }
+                                        } else {
                                             if let Some(mouse_cursor) = style.mouse_cursor {
                                                 window.set_cursor_style(mouse_cursor, Some(hitbox));
                                             }
@@ -1830,6 +1873,7 @@ impl Interactivity {
                 }
             });
         }
+        let drag_cursor_style = self.base_style.as_ref().mouse_cursor;
 
         let mut drag_listener = mem::take(&mut self.drag_listener);
         let drop_listeners = mem::take(&mut self.drop_listeners);
@@ -1921,6 +1965,7 @@ impl Interactivity {
                                         view: drag,
                                         value: drag_value,
                                         cursor_offset,
+                                        cursor_style: drag_cursor_style,
                                     });
                                     pending_mouse_down.take();
                                     window.refresh();
@@ -2261,6 +2306,7 @@ impl Interactivity {
                     }
                 }
 
+                style.mouse_cursor = drag.cursor_style;
                 cx.active_drag = Some(drag);
             }
         }

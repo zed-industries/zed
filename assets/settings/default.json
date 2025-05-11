@@ -67,6 +67,8 @@
   "ui_font_weight": 400,
   // The default font size for text in the UI
   "ui_font_size": 16,
+  // The default font size for text in the agent panel
+  "agent_font_size": 16,
   // How much to fade out unused code.
   "unnecessary_code_fade": 0.3,
   // Active pane styling settings.
@@ -80,6 +82,8 @@
     // Values are clamped to the [0.0, 1.0] range.
     "inactive_opacity": 1.0
   },
+  // Layout mode of the bottom dock. Defaults to "contained"
+  "bottom_dock_layout": "contained",
   // The direction that you want to split panes horizontally. Defaults to "up"
   "pane_split_direction_horizontal": "up",
   // The direction that you want to split panes horizontally. Defaults to "left"
@@ -115,6 +119,15 @@
   "confirm_quit": false,
   // Whether to restore last closed project when fresh Zed instance is opened.
   "restore_on_startup": "last_session",
+  // Whether to attempt to restore previous file's state when opening it again.
+  // The state is stored per pane.
+  // When disabled, defaults are applied instead of the state restoration.
+  //
+  // E.g. for editors, selections, folds and scroll positions are restored, if the same file is closed and, later, opened again in the same pane.
+  // When disabled, a single selection in the very beginning of the file, zero scroll position and no folds state is used as a default.
+  //
+  // Default: true
+  "restore_on_file_reopen": true,
   // Size of the drop target in the editor.
   "drop_target_size": 0.2,
   // Whether the window should be closed when using 'close active item' on a window with no tabs.
@@ -155,8 +168,24 @@
   //
   // Default: not set, defaults to "bar"
   "cursor_shape": null,
-  // Determines whether the mouse cursor is hidden when typing in an editor or input box.
-  "hide_mouse_while_typing": true,
+  // Determines when the mouse cursor should be hidden in an editor or input box.
+  //
+  // 1. Never hide the mouse cursor:
+  //    "never"
+  // 2. Hide only when typing:
+  //    "on_typing"
+  // 3. Hide on both typing and cursor movement:
+  //    "on_typing_and_movement"
+  "hide_mouse": "on_typing_and_movement",
+  // Determines how snippets are sorted relative to other completion items.
+  //
+  // 1. Place snippets at the top of the completion list:
+  //    "top"
+  // 2. Place snippets normally without any preference:
+  //    "inline"
+  // 3. Place snippets at the bottom of the completion list:
+  //    "bottom"
+  "snippet_sort_order": "inline",
   // How to highlight the current line in the editor.
   //
   // 1. Don't highlight the current line:
@@ -170,8 +199,6 @@
   "current_line_highlight": "all",
   // Whether to highlight all occurrences of the selected text in an editor.
   "selection_highlight": true,
-  // The debounce delay before querying highlights based on the selected text.
-  "selection_highlight_debounce": 50,
   // The debounce delay before querying highlights from the language
   // server based on the current cursor location.
   "lsp_highlight_debounce": 75,
@@ -191,6 +218,23 @@
   // 1. Do nothing: `none`
   // 2. Find references for the same symbol: `find_all_references` (default)
   "go_to_definition_fallback": "find_all_references",
+  // Which level to use to filter out diagnostics displayed in the editor.
+  //
+  // Affects the editor rendering only, and does not interrupt
+  // the functionality of diagnostics fetching and project diagnostics editor.
+  // Which files containing diagnostic errors/warnings to mark in the tabs.
+  // Diagnostics are only shown when file icons are also active.
+  // This setting only works when can take the following three values:
+  //
+  // Which diagnostic indicators to show in the scrollbar, their level should be more or equal to the specified severity level.
+  // Possible values:
+  //  - "off" — no diagnostics are allowed
+  //  - "error"
+  //  - "warning" (default)
+  //  - "info"
+  //  - "hint"
+  //  - null — allow all diagnostics
+  "diagnostics_max_severity": "warning",
   // Whether to show wrap guides (vertical rulers) in the editor.
   // Setting this to true will show a guide at the 'preferred_line_length' value
   // if 'soft_wrap' is set to 'preferred_line_length', and will show any
@@ -201,7 +245,7 @@
   // Hide the values of in variables from visual display in private files
   "redact_private_values": false,
   // The default number of lines to expand excerpts in the multibuffer by.
-  "expand_excerpt_lines": 3,
+  "expand_excerpt_lines": 5,
   // Globs to match against file paths to determine if a file is private.
   "private_files": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"],
   // Whether to use additional LSP queries to format (and amend) the code after
@@ -275,8 +319,19 @@
     "breadcrumbs": true,
     // Whether to show quick action buttons.
     "quick_actions": true,
-    // Whether to show the Selections menu in the editor toolbar
-    "selections_menu": true
+    // Whether to show the Selections menu in the editor toolbar.
+    "selections_menu": true,
+    // Whether to show agent review buttons in the editor toolbar.
+    "agent_review": true
+  },
+  // Titlebar related settings
+  "title_bar": {
+    // Whether to show the branch icon beside branch switcher in the titlebar.
+    "show_branch_icon": false,
+    // Whether to show onboarding banners in the titlebar.
+    "show_onboarding_banner": true,
+    // Whether to show user picture in the titlebar.
+    "show_user_picture": true
   },
   // Scrollbar related settings
   "scrollbar": {
@@ -318,6 +373,45 @@
       "vertical": true
     }
   },
+  // Minimap related settings
+  "minimap": {
+    // When to show the minimap in the editor.
+    // This setting can take three values:
+    // 1. Show the minimap if the editor's scrollbar is visible:
+    //    "auto"
+    // 2. Always show the minimap:
+    //    "always"
+    // 3. Never show the minimap:
+    //    "never" (default)
+    "show": "never",
+    // When to show the minimap thumb.
+    // This setting can take two values:
+    // 1. Show the minimap thumb if the mouse is over the minimap:
+    //    "hover"
+    // 2. Always show the minimap thumb:
+    //    "always" (default)
+    "thumb": "always",
+    // How the minimap thumb border should look.
+    // This setting can take five values:
+    // 1. Display a border on all sides of the thumb:
+    //    "thumb_border": "full"
+    // 2. Display a border on all sides except the left side of the thumb:
+    //    "thumb_border": "left_open" (default)
+    // 3. Display a border on all sides except the right side of the thumb:
+    //    "thumb_border": "right_open"
+    // 4. Display a border only on the left side of the thumb:
+    //    "thumb_border": "left_only"
+    // 5. Display the thumb without any border:
+    //    "thumb_border": "none"
+    "thumb_border": "left_open",
+    // How to highlight the current line in the minimap.
+    // This setting can take the following values:
+    //
+    // 1. `null` to inherit the editor `current_line_highlight` setting (default)
+    // 2. "line" or "all" to highlight the current line in the minimap.
+    // 3. "gutter" or "none" to not highlight the current line in the minimap.
+    "current_line_highlight": null
+  },
   // Enable middle-click paste on Linux.
   "middle_click_paste": true,
   // What to do when multibuffer is double clicked in some of its excerpts
@@ -332,8 +426,6 @@
   "gutter": {
     // Whether to show line numbers in the gutter.
     "line_numbers": true,
-    // Whether to show code action buttons in the gutter.
-    "code_actions": true,
     // Whether to show runnables buttons in the gutter.
     "runnables": true,
     // Whether to show breakpoints in the gutter.
@@ -576,7 +668,11 @@
     //
     // Default: main
     "fallback_branch_name": "main",
-
+    // Whether to sort entries in the panel by path
+    // or by status (the default).
+    //
+    // Default: false
+    "sort_by_path": false,
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
@@ -597,70 +693,118 @@
     // Default width of the notification panel.
     "default_width": 380
   },
-  "assistant": {
+  "agent": {
     // Version of this setting.
     "version": "2",
-    // Whether the assistant is enabled.
+    // Whether the agent is enabled.
     "enabled": true,
-    // Whether to show the assistant panel button in the status bar.
+    /// What completion mode to start new threads in, if available. Can be 'normal' or 'max'.
+    "preferred_completion_mode": "normal",
+    // Whether to show the agent panel button in the status bar.
     "button": true,
-    // Where to dock the assistant panel. Can be 'left', 'right' or 'bottom'.
+    // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
     "dock": "right",
-    // Default width when the assistant is docked to the left or right.
+    // Default width when the agent panel is docked to the left or right.
     "default_width": 640,
-    // Default height when the assistant is docked to the bottom.
+    // Default height when the agent panel is docked to the bottom.
     "default_height": 320,
-    // The default model to use when creating new chats.
+    // The default model to use when creating new threads.
     "default_model": {
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
-      "model": "claude-3-5-sonnet-latest"
+      "model": "claude-3-7-sonnet-latest"
     },
-    // The model to use when applying edits from the assistant.
+    // The model to use when applying edits from the agent.
     "editor_model": {
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
-      "model": "claude-3-5-sonnet-latest"
+      "model": "claude-3-7-sonnet-latest"
     },
-    "default_profile": "code-writer",
+    // Additional parameters for language model requests. When making a request to a model, parameters will be taken
+    // from the last entry in this list that matches the model's provider and name. In each entry, both provider
+    // and model are optional, so that you can specify parameters for either one.
+    "model_parameters": [
+      // To set parameters for all requests to OpenAI models:
+      // {
+      //   "provider": "openai",
+      //   "temperature": 0.5
+      // }
+      //
+      // To set parameters for all requests in general:
+      // {
+      //   "temperature": 0
+      // }
+      //
+      // To set parameters for a specific provider and model:
+      // {
+      //   "provider": "zed.dev",
+      //   "model": "claude-3-7-sonnet-latest",
+      //   "temperature": 1.0
+      // }
+    ],
+    // When enabled, the agent can run potentially destructive actions without asking for your confirmation.
+    "always_allow_tool_actions": false,
+    // When enabled, the agent will stream edits.
+    "stream_edits": false,
+    // When enabled, agent edits will be displayed in single-file editors for review
+    "single_file_review": true,
+    "default_profile": "write",
     "profiles": {
-      "read-only": {
-        "name": "Read-only",
+      "write": {
+        "name": "Write",
+        "enable_all_context_servers": true,
         "tools": {
+          "copy_path": true,
+          "create_directory": true,
+          "create_file": true,
+          "delete_path": true,
           "diagnostics": true,
+          "edit_file": true,
           "fetch": true,
-          "list-directory": true,
+          "list_directory": true,
+          "move_path": true,
           "now": true,
-          "path-search": true,
-          "read-file": true,
-          "regex-search": true,
-          "thinking": true
+          "find_path": true,
+          "read_file": true,
+          "grep": true,
+          "terminal": true,
+          "thinking": true,
+          "web_search": true
         }
       },
-      "code-writer": {
-        "name": "Code Writer",
+      "ask": {
+        "name": "Ask",
+        // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
+        // "enable_all_context_servers": true,
         "tools": {
-          "bash": true,
-          "copy-path": true,
-          "create-file": true,
-          "delete-path": true,
+          "contents": true,
           "diagnostics": true,
-          "find-replace-file": true,
-          "edit-files": false,
           "fetch": true,
-          "list-directory": true,
-          "move-path": true,
+          "list_directory": true,
           "now": true,
-          "path-search": true,
-          "read-file": true,
-          "regex-search": true,
-          "thinking": true
+          "find_path": true,
+          "read_file": true,
+          "open": true,
+          "grep": true,
+          "thinking": true,
+          "web_search": true
         }
+      },
+      "minimal": {
+        "name": "Minimal",
+        "enable_all_context_servers": false,
+        "tools": {}
       }
     },
-    "notify_when_agent_waiting": true
+    // Where to show notifications when the agent has either completed
+    // its response, or else needs confirmation before it can run a
+    // tool action.
+    // "primary_screen" - Show the notification only on your primary screen (default)
+    // "all_screens" - Show these notifications on all screens
+    // "never" - Never show these notifications
+    "notify_when_agent_waiting": "primary_screen"
   },
   // The settings for slash commands.
   "slash_commands": {
@@ -779,7 +923,20 @@
     //    "modal_max_width": "full"
     //
     // Default: small
-    "modal_max_width": "small"
+    "modal_max_width": "small",
+    // Determines whether the file finder should skip focus for the active file in search results.
+    // There are 2 possible values:
+    //
+    // 1. true: When searching for files, if the currently active file appears as the first result,
+    //    auto-focus will skip it and focus the second result instead.
+    //    "skip_focus_for_active_in_search": true
+    //
+    // 2. false: When searching for files, the first result will always receive focus,
+    //    even if it's the currently active file.
+    //    "skip_focus_for_active_in_search": false
+    //
+    // Default: true
+    "skip_focus_for_active_in_search": true
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
@@ -831,6 +988,8 @@
   "hard_tabs": false,
   // How many columns a tab should occupy.
   "tab_size": 4,
+  // What debuggers are preferred by default for all languages.
+  "debuggers": [],
   // Control what info is collected by Zed.
   "telemetry": {
     // Send debug info like crash reports.
@@ -860,8 +1019,13 @@
       // longer than this value will still push diagnostics further to the right.
       "min_column": 0,
       // The minimum severity of the diagnostics to show inline.
-      // Shows all diagnostics when not specified.
+      // Inherits editor's diagnostics' max severity settings when `null`.
       "max_severity": null
+    },
+    "cargo": {
+      // When enabled, Zed disables rust-analyzer's check on save and starts to query
+      // Cargo diagnostics separately.
+      "fetch_cargo_diagnostics": false
     }
   },
   // Files or globs of files that will be excluded by Zed entirely. They will be skipped during file
@@ -941,9 +1105,9 @@
     // 2. Display predictions inline only when holding a modifier key (alt by default).
     //     "mode": "subtle"
     "mode": "eager",
-    // Whether edit predictions are enabled in the assistant panel.
+    // Whether edit predictions are enabled when editing text threads.
     // This setting has no effect if globally disabled.
-    "enabled_in_assistant": true
+    "enabled_in_text_threads": true
   },
   // Settings specific to journaling
   "journal": {
@@ -1114,7 +1278,8 @@
   "code_actions_on_format": {},
   // Settings related to running tasks.
   "tasks": {
-    "variables": {}
+    "variables": {},
+    "enabled": true
   },
   // An object whose keys are language names, and whose values
   // are arrays of filenames or extensions of files that should
@@ -1132,21 +1297,22 @@
     "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json"],
     "Shell Script": [".env.*"]
   },
-  // By default use a recent system version of node, or install our own.
-  // You can override this to use a version of node that is not in $PATH with:
-  // {
-  //   "node": {
-  //     "path": "/path/to/node"
-  //     "npm_path": "/path/to/npm" (defaults to node_path/../npm)
-  //   }
-  // }
-  // or to ensure Zed always downloads and installs an isolated version of node:
-  // {
-  //   "node": {
-  //     "ignore_system_version": true,
-  //   }
-  // NOTE: changing this setting currently requires restarting Zed.
-  "node": {},
+  // Settings for which version of Node.js and NPM to use when installing
+  // language servers and Copilot.
+  //
+  // Note: changing this setting currently requires restarting Zed.
+  "node": {
+    // By default, Zed will look for `node` and `npm` on your `$PATH`, and use the
+    // existing executables if their version is recent enough. Set this to `true`
+    // to prevent this, and force Zed to always download and install its own
+    // version of Node.
+    "ignore_system_version": false,
+    // You can also specify alternative paths to Node and NPM. If you specify
+    // `path`, but not `npm_path`, Zed will assume that `npm` is located at
+    // `${path}/../npm`.
+    "path": null,
+    "npm_path": null
+  },
   // The extensions that Zed should automatically install on startup.
   //
   // If you don't want any of these extensions, add this field to your settings
@@ -1178,7 +1344,27 @@
     // When set to 0, waits indefinitely.
     //
     // Default: 0
-    "lsp_fetch_timeout_ms": 0
+    "lsp_fetch_timeout_ms": 0,
+    // Controls what range to replace when accepting LSP completions.
+    //
+    // When LSP servers give an `InsertReplaceEdit` completion, they provides two ranges: `insert` and `replace`. Usually, `insert`
+    // contains the word prefix before your cursor and `replace` contains the whole word.
+    //
+    // Effectively, this setting just changes whether Zed will use the received range for `insert` or `replace`, so the results may
+    // differ depending on the underlying LSP server.
+    //
+    // Possible values:
+    // 1. "insert"
+    //   Replaces text before the cursor, using the `insert` range described in the LSP specification.
+    // 2. "replace"
+    //   Replaces text before and after the cursor, using the `replace` range described in the LSP specification.
+    // 3. "replace_subsequence"
+    //   Behaves like `"replace"` if the text that would be replaced is a subsequence of the completion text,
+    //   and like `"insert"` otherwise.
+    // 4. "replace_suffix"
+    //   Behaves like `"replace"` if the text after the cursor is a suffix of the completion, and like
+    //   `"insert"` otherwise.
+    "lsp_insert_mode": "replace_suffix"
   },
   // Different settings for specific languages.
   "languages": {
@@ -1223,6 +1409,9 @@
     },
     "Elixir": {
       "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
+    },
+    "Elm": {
+      "tab_size": 4
     },
     "Erlang": {
       "language_servers": ["erlang-ls", "!elp", "..."]
@@ -1414,6 +1603,8 @@
   "lsp": {
     // Specify the LSP name as a key here.
     // "rust-analyzer": {
+    //     // A special flag for rust-analyzer integration, to use server-provided tasks
+    //     enable_lsp_tasks": true,
     //     // These initialization options are merged into Zed's defaults
     //     "initialization_options": {
     //         "check": {
@@ -1439,7 +1630,12 @@
     "use_multiline_find": false,
     "use_smartcase_find": false,
     "highlight_on_yank_duration": 200,
-    "custom_digraphs": {}
+    "custom_digraphs": {},
+    // Cursor shape for the each mode.
+    // Specify the mode as the key and the shape as the value.
+    // The mode can be one of the following: "normal", "replace", "insert", "visual".
+    // The shape can be one of the following: "block", "bar", "underline", "hollow".
+    "cursor_shape": {}
   },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.
@@ -1463,11 +1659,6 @@
   // Mostly useful for developers who are managing multiple instances of Zed.
   "dev": {
     // "theme": "Andromeda"
-  },
-  // Task-related settings.
-  "task": {
-    // Whether to show task status indicator in the status bar. Default: true
-    "show_status_indicator": true
   },
   // Whether to show full labels in line indicator or short ones
   //
@@ -1496,8 +1687,6 @@
   //   "W": "workspace::Save"
   // }
   "command_aliases": {},
-  // Whether to show user picture in titlebar.
-  "show_user_picture": true,
   // ssh_connections is an array of ssh connections.
   // You can configure these from `project: Open Remote` in the command palette.
   // Zed's ssh support will pull configuration from your ~/.ssh too.
@@ -1514,8 +1703,7 @@
   //   }
   // ]
   "ssh_connections": [],
-
-  // Configures context servers for use in the Assistant.
+  // Configures context servers for use by the agent.
   "context_servers": {},
   "debugger": {
     "stepping_granularity": "line",

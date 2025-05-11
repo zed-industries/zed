@@ -6,8 +6,8 @@ use theme::{
     ThemeColorsContent, ThemeContent, ThemeStyleContent,
 };
 
-use crate::vscode::{VsCodeTheme, VsCodeTokenScope};
 use crate::ThemeMetadata;
+use crate::vscode::{VsCodeTheme, VsCodeTokenScope};
 
 use super::ZedSyntaxToken;
 
@@ -166,6 +166,10 @@ impl VsCodeThemeConverter {
             scrollbar_thumb_hover_background: vscode_colors
                 .scrollbar_slider
                 .hover_background
+                .clone(),
+            scrollbar_thumb_active_background: vscode_colors
+                .scrollbar_slider
+                .active_background
                 .clone(),
             scrollbar_thumb_border: vscode_scrollbar_slider_background.clone(),
             scrollbar_track_background: vscode_editor_background.clone(),

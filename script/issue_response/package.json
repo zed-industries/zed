@@ -17,7 +17,7 @@
   "devDependencies": {
     "@octokit/types": "^13.8.0",
     "@slack/types": "^2.14.0",
-    "@tsconfig/node20": "20.1.4",
+    "@tsconfig/node20": "20.1.5",
     "@tsconfig/strictest": "2.0.5",
     "typescript": "5.7.3"
   }

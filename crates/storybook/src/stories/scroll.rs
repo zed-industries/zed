@@ -1,6 +1,6 @@
-use gpui::{div, prelude::*, px, App, Entity, Render, SharedString, Styled, Window};
-use ui::prelude::*;
+use gpui::{App, Entity, Render, SharedString, Styled, Window, div, prelude::*, px};
 use ui::Tooltip;
+use ui::prelude::*;
 
 pub struct ScrollStory;
 

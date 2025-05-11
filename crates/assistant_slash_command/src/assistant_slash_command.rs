@@ -6,17 +6,17 @@ pub use crate::extension_slash_command::*;
 pub use crate::slash_command_registry::*;
 pub use crate::slash_command_working_set::*;
 use anyhow::Result;
-use futures::stream::{self, BoxStream};
 use futures::StreamExt;
+use futures::stream::{self, BoxStream};
 use gpui::{App, SharedString, Task, WeakEntity, Window};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate, OffsetRangeExt};
 pub use language_model::Role;
 use serde::{Deserialize, Serialize};
 use std::{
     ops::Range,
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
 };
-use workspace::{ui::IconName, Workspace};
+use workspace::{Workspace, ui::IconName};
 
 pub fn init(cx: &mut App) {
     SlashCommandRegistry::default_global(cx);

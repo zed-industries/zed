@@ -15,21 +15,22 @@ pub use serde_json;
 // We explicitly enumerate the symbols we want to re-export, as there are some
 // that we may want to shadow to provide a cleaner Rust API.
 pub use wit::{
-    download_file, make_file_executable,
+    CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
+    KeyValueStore, LanguageServerInstallationStatus, Project, Range, Worktree, download_file,
+    make_file_executable,
+    zed::extension::context_server::ContextServerConfiguration,
     zed::extension::github::{
-        github_release_by_tag_name, latest_github_release, GithubRelease, GithubReleaseAsset,
-        GithubReleaseOptions,
+        GithubRelease, GithubReleaseAsset, GithubReleaseOptions, github_release_by_tag_name,
+        latest_github_release,
     },
     zed::extension::nodejs::{
         node_binary_path, npm_install_package, npm_package_installed_version,
         npm_package_latest_version,
     },
-    zed::extension::platform::{current_platform, Architecture, Os},
+    zed::extension::platform::{Architecture, Os, current_platform},
     zed::extension::slash_command::{
         SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, SlashCommandOutputSection,
     },
-    CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
-    KeyValueStore, LanguageServerInstallationStatus, Project, Range, Worktree,
 };
 
 // Undocumented WIT re-exports.
@@ -159,6 +160,15 @@ pub trait Extension: Send + Sync {
         Err("`context_server_command` not implemented".to_string())
     }
 
+    /// Returns the configuration options for the specified context server.
+    fn context_server_configuration(
+        &mut self,
+        _context_server_id: &ContextServerId,
+        _project: &Project,
+    ) -> Result<Option<ContextServerConfiguration>> {
+        Ok(None)
+    }
+
     /// Returns a list of package names as suggestions to be included in the
     /// search results of the `/docs` slash command.
     ///
@@ -185,7 +195,7 @@ pub trait Extension: Send + Sync {
 #[macro_export]
 macro_rules! register_extension {
     ($extension_type:ty) => {
-        #[export_name = "init-extension"]
+        #[unsafe(export_name = "init-extension")]
         pub extern "C" fn __init_extension() {
             std::env::set_current_dir(std::env::var("PWD").unwrap()).unwrap();
             zed_extension_api::register_extension(|| {
@@ -210,7 +220,7 @@ fn extension() -> &'static mut dyn Extension {
 static mut EXTENSION: Option<Box<dyn Extension>> = None;
 
 #[cfg(target_arch = "wasm32")]
-#[link_section = "zed:api-version"]
+#[unsafe(link_section = "zed:api-version")]
 #[doc(hidden)]
 pub static ZED_API_VERSION: [u8; 6] = *include_bytes!(concat!(env!("OUT_DIR"), "/version_bytes"));
 
@@ -218,7 +228,7 @@ mod wit {
 
     wit_bindgen::generate!({
         skip: ["init-extension"],
-        path: "./wit/since_v0.4.0",
+        path: "./wit/since_v0.5.0",
     });
 }
 
@@ -340,6 +350,14 @@ impl wit::Guest for Component {
     ) -> Result<wit::Command> {
         let context_server_id = ContextServerId(context_server_id);
         extension().context_server_command(&context_server_id, project)
+    }
+
+    fn context_server_configuration(
+        context_server_id: String,
+        project: &Project,
+    ) -> Result<Option<ContextServerConfiguration>, String> {
+        let context_server_id = ContextServerId(context_server_id);
+        extension().context_server_configuration(&context_server_id, project)
     }
 
     fn suggest_docs_packages(provider: String) -> Result<Vec<String>, String> {

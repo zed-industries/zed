@@ -1,16 +1,16 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AsyncApp;
-use http_client::github::{build_asset_url, AssetKind, GitHubLspBinaryVersion};
+use http_client::github::{AssetKind, GitHubLspBinaryVersion, build_asset_url};
 use language::{LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
-use project::{lsp_store::language_server_settings, Fs};
-use serde_json::{json, Value};
+use project::{Fs, lsp_store::language_server_settings};
+use serde_json::{Value, json};
 use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
     any::Any,
@@ -19,7 +19,7 @@ use std::{
     sync::Arc,
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
-use util::{fs::remove_matching, maybe, ResultExt};
+use util::{ResultExt, fs::remove_matching, maybe};
 
 pub(super) fn typescript_task_context() -> ContextProviderWithTasks {
     ContextProviderWithTasks::new(TaskTemplates(vec![
@@ -341,8 +341,14 @@ impl EsLintLspAdapter {
     const SERVER_PATH: &'static str = "vscode-eslint/server/out/eslintServer.js";
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("eslint");
 
-    const FLAT_CONFIG_FILE_NAMES: &'static [&'static str] =
-        &["eslint.config.js", "eslint.config.mjs", "eslint.config.cjs"];
+    const FLAT_CONFIG_FILE_NAMES: &'static [&'static str] = &[
+        "eslint.config.js",
+        "eslint.config.mjs",
+        "eslint.config.cjs",
+        "eslint.config.ts",
+        "eslint.config.cts",
+        "eslint.config.mts",
+    ];
 
     pub fn new(node: NodeRuntime) -> Self {
         EsLintLspAdapter { node }

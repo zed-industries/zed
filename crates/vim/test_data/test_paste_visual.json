@@ -35,6 +35,7 @@
 {"Key":"shift-v"}
 {"Key":"d"}
 {"Get":{"state":"The quick brown\nthe laˇzy dog","mode":"Normal"}}
+{"ReadRegister":{"name":"\"","value":"fox jumps over\n"}}
 {"Key":"k"}
 {"Key":"shift-v"}
 {"Key":"p"}

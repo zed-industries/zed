@@ -4,7 +4,7 @@ use client::{ChannelId, Client, UserStore};
 use collections::HashMap;
 use db::smol::stream::StreamExt;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, Task};
-use rpc::{proto, Notification, TypedEnvelope};
+use rpc::{Notification, TypedEnvelope, proto};
 use std::{ops::Range, sync::Arc};
 use sum_tree::{Bias, SumTree};
 use time::OffsetDateTime;
@@ -358,7 +358,7 @@ impl NotificationStore {
         &mut self,
         notifications: impl IntoIterator<Item = (u64, Option<NotificationEntry>)>,
         is_new: bool,
-        cx: &mut Context<'_, NotificationStore>,
+        cx: &mut Context<NotificationStore>,
     ) {
         let mut cursor = self.notifications.cursor::<(NotificationId, Count)>(&());
         let mut new_notifications = SumTree::default();
@@ -368,7 +368,7 @@ impl NotificationStore {
             new_notifications.append(cursor.slice(&NotificationId(id), Bias::Left, &()), &());
 
             if i == 0 {
-                old_range.start = cursor.start().1 .0;
+                old_range.start = cursor.start().1.0;
             }
 
             let old_notification = cursor.item();
@@ -401,7 +401,7 @@ impl NotificationStore {
             }
         }
 
-        old_range.end = cursor.start().1 .0;
+        old_range.end = cursor.start().1.0;
         let new_count = new_notifications.summary().count - old_range.start;
         new_notifications.append(cursor.suffix(&()), &());
         drop(cursor);

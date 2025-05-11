@@ -1,11 +1,11 @@
 use std::path::Path;
 use std::time::Duration;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use collections::HashMap;
 use sea_orm::ConnectOptions;
-use sqlx::migrate::{Migrate, Migration, MigrationSource};
 use sqlx::Connection;
+use sqlx::migrate::{Migrate, Migration, MigrationSource};
 
 /// Runs the database migrations for the specified database.
 pub async fn run_database_migrations(

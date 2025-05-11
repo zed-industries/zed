@@ -1,6 +1,6 @@
 use crate::{
-    AssistantContext, AssistantEdit, AssistantEditKind, CacheStatus, ContextEvent, ContextId,
-    ContextOperation, InvokedSlashCommandId, MessageCacheMetadata, MessageId, MessageStatus,
+    AssistantContext, CacheStatus, ContextEvent, ContextId, ContextOperation,
+    InvokedSlashCommandId, MessageCacheMetadata, MessageId, MessageStatus,
 };
 use anyhow::Result;
 use assistant_slash_command::{
@@ -14,7 +14,7 @@ use futures::{
     channel::mpsc,
     stream::{self, StreamExt},
 };
-use gpui::{prelude::*, App, Entity, SharedString, Task, TestAppContext, WeakEntity};
+use gpui::{App, Entity, SharedString, Task, TestAppContext, WeakEntity, prelude::*};
 use language::{Buffer, BufferSnapshot, LanguageRegistry, LspAdapterDelegate};
 use language_model::{LanguageModelCacheConfiguration, LanguageModelRegistry, Role};
 use parking_lot::Mutex;
@@ -30,22 +30,18 @@ use std::{
     ops::Range,
     path::Path,
     rc::Rc,
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
 };
-use text::{network::Network, OffsetRangeExt as _, ReplicaId, ToOffset};
+use text::{ReplicaId, ToOffset, network::Network};
 use ui::{IconName, Window};
 use unindent::Unindent;
-use util::{
-    test::{generate_marked_text, marked_text_ranges},
-    RandomCharIter,
-};
+use util::RandomCharIter;
 use workspace::Workspace;
 
 #[gpui::test]
 fn test_inserting_and_removing_messages(cx: &mut App) {
-    let settings_store = SettingsStore::test(cx);
-    LanguageModelRegistry::test(cx);
-    cx.set_global(settings_store);
+    init_test(cx);
+
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context = cx.new(|cx| {
@@ -182,9 +178,8 @@ fn test_inserting_and_removing_messages(cx: &mut App) {
 
 #[gpui::test]
 fn test_message_splitting(cx: &mut App) {
-    let settings_store = SettingsStore::test(cx);
-    cx.set_global(settings_store);
-    LanguageModelRegistry::test(cx);
+    init_test(cx);
+
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
@@ -285,9 +280,8 @@ fn test_message_splitting(cx: &mut App) {
 
 #[gpui::test]
 fn test_messages_for_offsets(cx: &mut App) {
-    let settings_store = SettingsStore::test(cx);
-    LanguageModelRegistry::test(cx);
-    cx.set_global(settings_store);
+    init_test(cx);
+
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context = cx.new(|cx| {
@@ -378,10 +372,8 @@ fn test_messages_for_offsets(cx: &mut App) {
 
 #[gpui::test]
 async fn test_slash_commands(cx: &mut TestAppContext) {
-    let settings_store = cx.update(SettingsStore::test);
-    cx.set_global(settings_store);
-    cx.update(LanguageModelRegistry::test);
-    cx.update(Project::init_settings);
+    cx.update(init_test);
+
     let fs = FakeFs::new(cx.background_executor.clone());
 
     fs.insert_tree(
@@ -670,408 +662,9 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
-    cx.update(prompt_store::init);
-    let mut settings_store = cx.update(SettingsStore::test);
-    cx.update(|cx| {
-        settings_store
-            .set_user_settings(
-                r#"{ "assistant": { "enable_experimental_live_diffs": true } }"#,
-                cx,
-            )
-            .unwrap()
-    });
-    cx.set_global(settings_store);
-    cx.update(language::init);
-    cx.update(Project::init_settings);
-    let fs = FakeFs::new(cx.executor());
-    let project = Project::test(fs, [Path::new("/root")], cx).await;
-    cx.update(LanguageModelRegistry::test);
-
-    let registry = Arc::new(LanguageRegistry::test(cx.executor()));
-
-    // Create a new context
-    let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new(|cx| {
-        AssistantContext::local(
-            registry.clone(),
-            Some(project),
-            None,
-            prompt_builder.clone(),
-            Arc::new(SlashCommandWorkingSet::default()),
-            cx,
-        )
-    });
-
-    // Insert an assistant message to simulate a response.
-    let assistant_message_id = context.update(cx, |context, cx| {
-        let user_message_id = context.messages(cx).next().unwrap().id;
-        context
-            .insert_message_after(user_message_id, Role::Assistant, MessageStatus::Done, cx)
-            .unwrap()
-            .id
-    });
-
-    // No edit tags
-    edit(
-        &context,
-        "
-
-        «one
-        two
-        »",
-        cx,
-    );
-    expect_patches(
-        &context,
-        "
-
-        one
-        two
-        ",
-        &[],
-        cx,
-    );
-
-    // Partial edit step tag is added
-    edit(
-        &context,
-        "
-
-        one
-        two
-        «
-        <patch»",
-        cx,
-    );
-    expect_patches(
-        &context,
-        "
-
-        one
-        two
-
-        <patch",
-        &[],
-        cx,
-    );
-
-    // The rest of the step tag is added. The unclosed
-    // step is treated as incomplete.
-    edit(
-        &context,
-        "
-
-        one
-        two
-
-        <patch«>
-        <edit>»",
-        cx,
-    );
-    expect_patches(
-        &context,
-        "
-
-        one
-        two
-
-        «<patch>
-        <edit>»",
-        &[&[]],
-        cx,
-    );
-
-    // The full patch is added
-    edit(
-        &context,
-        "
-
-        one
-        two
-
-        <patch>
-        <edit>«
-        <description>add a `two` function</description>
-        <path>src/lib.rs</path>
-        <operation>insert_after</operation>
-        <old_text>fn one</old_text>
-        <new_text>
-        fn two() {}
-        </new_text>
-        </edit>
-        </patch>
-
-        also,»",
-        cx,
-    );
-    expect_patches(
-        &context,
-        "
-
-        one
-        two
-
-        «<patch>
-        <edit>
-        <description>add a `two` function</description>
-        <path>src/lib.rs</path>
-        <operation>insert_after</operation>
-        <old_text>fn one</old_text>
-        <new_text>
-        fn two() {}
-        </new_text>
-        </edit>
-        </patch>
-        »
-        also,",
-        &[&[AssistantEdit {
-            path: "src/lib.rs".into(),
-            kind: AssistantEditKind::InsertAfter {
-                old_text: "fn one".into(),
-                new_text: "fn two() {}".into(),
-                description: Some("add a `two` function".into()),
-            },
-        }]],
-        cx,
-    );
-
-    // The step is manually edited.
-    edit(
-        &context,
-        "
-
-        one
-        two
-
-        <patch>
-        <edit>
-        <description>add a `two` function</description>
-        <path>src/lib.rs</path>
-        <operation>insert_after</operation>
-        <old_text>«fn zero»</old_text>
-        <new_text>
-        fn two() {}
-        </new_text>
-        </edit>
-        </patch>
-
-        also,",
-        cx,
-    );
-    expect_patches(
-        &context,
-        "
-
-        one
-        two
-
-        «<patch>
-        <edit>
-        <description>add a `two` function</description>
-        <path>src/lib.rs</path>
-        <operation>insert_after</operation>
-        <old_text>fn zero</old_text>
-        <new_text>
-        fn two() {}
-        </new_text>
-        </edit>
-        </patch>
-        »
-        also,",
-        &[&[AssistantEdit {
-            path: "src/lib.rs".into(),
-            kind: AssistantEditKind::InsertAfter {
-                old_text: "fn zero".into(),
-                new_text: "fn two() {}".into(),
-                description: Some("add a `two` function".into()),
-            },
-        }]],
-        cx,
-    );
-
-    // When setting the message role to User, the steps are cleared.
-    context.update(cx, |context, cx| {
-        context.cycle_message_roles(HashSet::from_iter([assistant_message_id]), cx);
-        context.cycle_message_roles(HashSet::from_iter([assistant_message_id]), cx);
-    });
-    expect_patches(
-        &context,
-        "
-
-        one
-        two
-
-        <patch>
-        <edit>
-        <description>add a `two` function</description>
-        <path>src/lib.rs</path>
-        <operation>insert_after</operation>
-        <old_text>fn zero</old_text>
-        <new_text>
-        fn two() {}
-        </new_text>
-        </edit>
-        </patch>
-
-        also,",
-        &[],
-        cx,
-    );
-
-    // When setting the message role back to Assistant, the steps are reparsed.
-    context.update(cx, |context, cx| {
-        context.cycle_message_roles(HashSet::from_iter([assistant_message_id]), cx);
-    });
-    expect_patches(
-        &context,
-        "
-
-        one
-        two
-
-        «<patch>
-        <edit>
-        <description>add a `two` function</description>
-        <path>src/lib.rs</path>
-        <operation>insert_after</operation>
-        <old_text>fn zero</old_text>
-        <new_text>
-        fn two() {}
-        </new_text>
-        </edit>
-        </patch>
-        »
-        also,",
-        &[&[AssistantEdit {
-            path: "src/lib.rs".into(),
-            kind: AssistantEditKind::InsertAfter {
-                old_text: "fn zero".into(),
-                new_text: "fn two() {}".into(),
-                description: Some("add a `two` function".into()),
-            },
-        }]],
-        cx,
-    );
-
-    // Ensure steps are re-parsed when deserializing.
-    let serialized_context = context.read_with(cx, |context, cx| context.serialize(cx));
-    let deserialized_context = cx.new(|cx| {
-        AssistantContext::deserialize(
-            serialized_context,
-            Default::default(),
-            registry.clone(),
-            prompt_builder.clone(),
-            Arc::new(SlashCommandWorkingSet::default()),
-            None,
-            None,
-            cx,
-        )
-    });
-    expect_patches(
-        &deserialized_context,
-        "
-
-        one
-        two
-
-        «<patch>
-        <edit>
-        <description>add a `two` function</description>
-        <path>src/lib.rs</path>
-        <operation>insert_after</operation>
-        <old_text>fn zero</old_text>
-        <new_text>
-        fn two() {}
-        </new_text>
-        </edit>
-        </patch>
-        »
-        also,",
-        &[&[AssistantEdit {
-            path: "src/lib.rs".into(),
-            kind: AssistantEditKind::InsertAfter {
-                old_text: "fn zero".into(),
-                new_text: "fn two() {}".into(),
-                description: Some("add a `two` function".into()),
-            },
-        }]],
-        cx,
-    );
-
-    fn edit(
-        context: &Entity<AssistantContext>,
-        new_text_marked_with_edits: &str,
-        cx: &mut TestAppContext,
-    ) {
-        context.update(cx, |context, cx| {
-            context.buffer.update(cx, |buffer, cx| {
-                buffer.edit_via_marked_text(&new_text_marked_with_edits.unindent(), None, cx);
-            });
-        });
-        cx.executor().run_until_parked();
-    }
-
-    #[track_caller]
-    fn expect_patches(
-        context: &Entity<AssistantContext>,
-        expected_marked_text: &str,
-        expected_suggestions: &[&[AssistantEdit]],
-        cx: &mut TestAppContext,
-    ) {
-        let expected_marked_text = expected_marked_text.unindent();
-        let (expected_text, _) = marked_text_ranges(&expected_marked_text, false);
-
-        let (buffer_text, ranges, patches) = context.update(cx, |context, cx| {
-            context.buffer.read_with(cx, |buffer, _| {
-                let ranges = context
-                    .patches
-                    .iter()
-                    .map(|entry| entry.range.to_offset(buffer))
-                    .collect::<Vec<_>>();
-                (
-                    buffer.text(),
-                    ranges,
-                    context
-                        .patches
-                        .iter()
-                        .map(|step| step.edits.clone())
-                        .collect::<Vec<_>>(),
-                )
-            })
-        });
-
-        assert_eq!(buffer_text, expected_text);
-
-        let actual_marked_text = generate_marked_text(&expected_text, &ranges, false);
-        assert_eq!(actual_marked_text, expected_marked_text);
-
-        assert_eq!(
-            patches
-                .iter()
-                .map(|patch| {
-                    patch
-                        .iter()
-                        .map(|edit| {
-                            let edit = edit.as_ref().unwrap();
-                            AssistantEdit {
-                                path: edit.path.clone(),
-                                kind: edit.kind.clone(),
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .collect::<Vec<_>>(),
-            expected_suggestions
-        );
-    }
-}
-
-#[gpui::test]
 async fn test_serialization(cx: &mut TestAppContext) {
-    let settings_store = cx.update(SettingsStore::test);
-    cx.set_global(settings_store);
-    cx.update(LanguageModelRegistry::test);
+    cx.update(init_test);
+
     let registry = Arc::new(LanguageRegistry::test(cx.executor()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context = cx.new(|cx| {
@@ -1120,7 +713,7 @@ async fn test_serialization(cx: &mut TestAppContext) {
     let deserialized_context = cx.new(|cx| {
         AssistantContext::deserialize(
             serialized_context,
-            Default::default(),
+            Path::new("").into(),
             registry.clone(),
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
@@ -1147,6 +740,8 @@ async fn test_serialization(cx: &mut TestAppContext) {
 
 #[gpui::test(iterations = 100)]
 async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: StdRng) {
+    cx.update(init_test);
+
     let min_peers = env::var("MIN_PEERS")
         .map(|i| i.parse().expect("invalid `MIN_PEERS` variable"))
         .unwrap_or(2);
@@ -1156,10 +751,6 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
     let operations = env::var("OPERATIONS")
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
         .unwrap_or(50);
-
-    let settings_store = cx.update(SettingsStore::test);
-    cx.set_global(settings_store);
-    cx.update(LanguageModelRegistry::test);
 
     let slash_commands = cx.update(SlashCommandRegistry::default_global);
     slash_commands.register_command(FakeSlashCommand("cmd-1".into()), false);
@@ -1429,9 +1020,8 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
 
 #[gpui::test]
 fn test_mark_cache_anchors(cx: &mut App) {
-    let settings_store = SettingsStore::test(cx);
-    LanguageModelRegistry::test(cx);
-    cx.set_global(settings_store);
+    init_test(cx);
+
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context = cx.new(|cx| {
@@ -1604,6 +1194,16 @@ fn messages_cache(
         .messages(cx)
         .map(|message| (message.id, message.cache.clone()))
         .collect()
+}
+
+fn init_test(cx: &mut App) {
+    let settings_store = SettingsStore::test(cx);
+    prompt_store::init(cx);
+    LanguageModelRegistry::test(cx);
+    cx.set_global(settings_store);
+    language::init(cx);
+    assistant_settings::init(cx);
+    Project::init_settings(cx);
 }
 
 #[derive(Clone)]

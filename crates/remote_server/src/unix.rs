@@ -1,22 +1,23 @@
-use crate::headless_project::HeadlessAppState;
 use crate::HeadlessProject;
-use anyhow::{anyhow, Context as _, Result};
+use crate::headless_project::HeadlessAppState;
+use anyhow::{Context as _, Result, anyhow};
 use chrono::Utc;
-use client::{telemetry, ProxySettings};
+use client::{ProxySettings, telemetry};
+
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
 use futures::channel::mpsc;
-use futures::{select, select_biased, AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt};
+use futures::{AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt, select, select_biased};
 use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext as _, Context, Entity, SemanticVersion, UpdateGlobal as _};
 use gpui_tokio::Tokio;
-use http_client::{read_proxy_from_env, Uri};
+use http_client::{Url, read_proxy_from_env};
 use language::LanguageRegistry;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
 use project::project_settings::ProjectSettings;
 
-use release_channel::{AppVersion, ReleaseChannel, RELEASE_CHANNEL};
+use release_channel::{AppVersion, RELEASE_CHANNEL, ReleaseChannel};
 use remote::proxy::ProxyLaunchError;
 use remote::ssh_session::ChannelClient;
 use remote::{
@@ -26,7 +27,7 @@ use remote::{
 use reqwest_client::ReqwestClient;
 use rpc::proto::{self, Envelope, SSH_PROJECT_ID};
 use rpc::{AnyProtoClient, TypedEnvelope};
-use settings::{watch_config_file, Settings, SettingsStore};
+use settings::{Settings, SettingsStore, watch_config_file};
 use smol::channel::{Receiver, Sender};
 use smol::io::AsyncReadExt;
 
@@ -427,7 +428,7 @@ pub fn execute_run(
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     gpui::Application::headless().run(move |cx| {
         settings::init(cx);
-        let app_version = AppVersion::init(env!("ZED_PKG_VERSION"));
+        let app_version = AppVersion::load(env!("ZED_PKG_VERSION"));
         release_channel::init(app_version, cx);
         gpui_tokio::init(cx);
 
@@ -440,12 +441,13 @@ pub fn execute_run(
 
         GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
         git_hosting_providers::init(cx);
+        dap_adapters::init(cx);
 
         extension::init(cx);
         let extension_host_proxy = ExtensionHostProxy::global(cx);
 
         let project = cx.new(|cx| {
-            let fs = Arc::new(RealFs::new(None));
+            let fs = Arc::new(RealFs::new(None, cx.background_executor().clone()));
             let node_settings_rx = initialize_settings(session.clone(), fs.clone(), cx);
 
             let proxy_url = read_proxy_settings(cx);
@@ -466,7 +468,7 @@ pub fn execute_run(
                 )
             };
 
-            let node_runtime = NodeRuntime::new(http_client.clone(), node_settings_rx);
+            let node_runtime = NodeRuntime::new(http_client.clone(), None, node_settings_rx);
 
             let mut languages = LanguageRegistry::new(cx.background_executor().clone());
             languages.set_language_server_download_dir(paths::languages_dir().clone());
@@ -544,7 +546,10 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
         }
     } else {
         if let Some(pid) = server_pid {
-            log::info!("proxy found server already running with PID {}. Killing process and cleaning up files...", pid);
+            log::info!(
+                "proxy found server already running with PID {}. Killing process and cleaning up files...",
+                pid
+            );
             kill_running_server(pid, &server_paths)?;
         }
 
@@ -689,7 +694,10 @@ fn check_pid_file(path: &Path) -> Result<Option<u32>> {
         .output()
     {
         Ok(output) if output.status.success() => {
-            log::debug!("Process with PID {} exists. NOT spawning new server, but attaching to existing one.", pid);
+            log::debug!(
+                "Process with PID {} exists. NOT spawning new server, but attaching to existing one.",
+                pid
+            );
             Ok(Some(pid))
         }
         _ => {
@@ -788,7 +796,7 @@ fn initialize_settings(
         let settings = &ProjectSettings::get_global(cx).node;
         log::info!("Got new node settings: {:?}", settings);
         let options = NodeBinaryOptions {
-            allow_path_lookup: !settings.ignore_system_version.unwrap_or_default(),
+            allow_path_lookup: !settings.ignore_system_version,
             // TODO: Implement this setting
             allow_binary_download: true,
             use_paths: settings.path.as_ref().map(|node_path| {
@@ -845,13 +853,13 @@ pub fn handle_settings_file_changes(
     .detach();
 }
 
-fn read_proxy_settings(cx: &mut Context<'_, HeadlessProject>) -> Option<Uri> {
+fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Url> {
     let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
     let proxy_url = proxy_str
         .as_ref()
         .and_then(|input: &String| {
             input
-                .parse::<Uri>()
+                .parse::<Url>()
                 .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
                 .ok()
         })
@@ -875,11 +883,11 @@ fn daemonize() -> Result<ControlFlow<()>> {
 }
 
 unsafe fn redirect_standard_streams() -> Result<()> {
-    let devnull_fd = libc::open(b"/dev/null\0" as *const [u8; 10] as _, libc::O_RDWR);
+    let devnull_fd = unsafe { libc::open(b"/dev/null\0" as *const [u8; 10] as _, libc::O_RDWR) };
     anyhow::ensure!(devnull_fd != -1, "failed to open /dev/null");
 
     let process_stdio = |name, fd| {
-        let reopened_fd = libc::dup2(devnull_fd, fd);
+        let reopened_fd = unsafe { libc::dup2(devnull_fd, fd) };
         anyhow::ensure!(
             reopened_fd != -1,
             format!("failed to redirect {} to /dev/null", name)
@@ -892,7 +900,7 @@ unsafe fn redirect_standard_streams() -> Result<()> {
     process_stdio("stderr", libc::STDERR_FILENO)?;
 
     anyhow::ensure!(
-        libc::close(devnull_fd) != -1,
+        unsafe { libc::close(devnull_fd) != -1 },
         "failed to close /dev/null fd after redirecting"
     );
 

@@ -2,19 +2,19 @@ use crate::stdout_is_a_pty;
 use anyhow::{Context as _, Result};
 use backtrace::{self, Backtrace};
 use chrono::Utc;
-use client::{telemetry, TelemetrySettings};
+use client::{TelemetrySettings, telemetry};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{App, AppContext as _, SemanticVersion};
 use http_client::{self, HttpClient, HttpClientWithUrl, HttpRequestExt, Method};
 use paths::{crashes_dir, crashes_retired_dir};
 use project::Project;
-use release_channel::{AppCommitSha, ReleaseChannel, RELEASE_CHANNEL};
+use release_channel::{AppCommitSha, RELEASE_CHANNEL, ReleaseChannel};
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::{
     env,
-    ffi::{c_void, OsStr},
-    sync::{atomic::Ordering, Arc},
+    ffi::{OsStr, c_void},
+    sync::{Arc, atomic::Ordering},
 };
 use std::{io::Write, panic, sync::atomic::AtomicU32, thread};
 use telemetry_events::{LocationData, Panic, PanicRequest};
@@ -130,6 +130,7 @@ pub fn init_panic_hook(
         if let Some(panic_data_json) = serde_json::to_string_pretty(&panic_data).log_err() {
             log::error!("{}", panic_data_json);
         }
+        zlog::flush();
 
         if !is_pty {
             if let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
@@ -255,8 +256,9 @@ pub fn monitor_main_thread_hangs(
     }
 
     use nix::sys::signal::{
-        sigaction, SaFlags, SigAction, SigHandler, SigSet,
+        SaFlags, SigAction, SigHandler, SigSet,
         Signal::{self, SIGUSR2},
+        sigaction,
     };
 
     use parking_lot::Mutex;
@@ -264,7 +266,7 @@ pub fn monitor_main_thread_hangs(
     use http_client::Method;
     use std::{
         ffi::c_int,
-        sync::{mpsc, OnceLock},
+        sync::{OnceLock, mpsc},
         time::Duration,
     };
     use telemetry_events::{BacktraceFrame, HangReport};
@@ -289,7 +291,7 @@ pub fn monitor_main_thread_hangs(
                     // ASYNC SIGNAL SAFETY: This lock is only accessed one other time,
                     // which can only be triggered by This signal handler. In addition,
                     // this signal handler is immediately removed by SA_RESETHAND, and this
-                    // signal handler cannot be re-entrant due to to the SIGUSR2 mask defined
+                    // signal handler cannot be re-entrant due to the SIGUSR2 mask defined
                     // below
                     let mut bt = BACKTRACE.lock();
                     bt.clear();

@@ -5,35 +5,35 @@ use std::{
     collections::BTreeMap,
     hash::Hash,
     ops::Range,
-    path::{Path, PathBuf, MAIN_SEPARATOR_STR},
+    path::{MAIN_SEPARATOR_STR, Path, PathBuf},
     sync::{
-        atomic::{self, AtomicBool},
         Arc, OnceLock,
+        atomic::{self, AtomicBool},
     },
     time::Duration,
     u32,
 };
 
 use anyhow::Context as _;
-use collections::{hash_map, BTreeSet, HashMap, HashSet};
+use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
+    AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, EditorSettings, ExcerptId,
+    ExcerptRange, MultiBufferSnapshot, RangeToAnchorExt, ShowScrollbar,
     display_map::ToDisplayPoint,
     items::{entry_git_aware_label_color, entry_label_color},
     scroll::{Autoscroll, AutoscrollStrategy, ScrollAnchor, ScrollbarAutoHide},
-    AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, EditorMode, EditorSettings, ExcerptId,
-    ExcerptRange, MultiBufferSnapshot, RangeToAnchorExt, ShowScrollbar,
 };
 use file_icons::FileIcons;
-use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
+use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    actions, anchored, deferred, div, point, px, size, uniform_list, Action, AnyElement, App,
-    AppContext as _, AsyncWindowContext, Bounds, ClipboardItem, Context, DismissEvent, Div,
-    ElementId, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle, InteractiveElement,
-    IntoElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton,
-    MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy, SharedString, Stateful,
-    StatefulInteractiveElement as _, Styled, Subscription, Task, UniformListScrollHandle,
-    WeakEntity, Window,
+    Action, AnyElement, App, AppContext as _, AsyncWindowContext, Bounds, ClipboardItem, Context,
+    DismissEvent, Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
+    InteractiveElement, IntoElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
+    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy,
+    SharedString, Stateful, StatefulInteractiveElement as _, Styled, Subscription, Task,
+    UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, point, px, size,
+    uniform_list,
 };
 use itertools::Itertools;
 use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
@@ -47,18 +47,18 @@ use settings::{Settings, SettingsStore};
 use smol::channel;
 use theme::{SyntaxTheme, ThemeSettings};
 use ui::{DynamicSpacing, IndentGuideColors, IndentGuideLayout};
-use util::{debug_panic, RangeExt, ResultExt, TryFutureExt};
+use util::{RangeExt, ResultExt, TryFutureExt, debug_panic};
 use workspace::{
+    OpenInTerminal, WeakItemHandle, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     item::ItemHandle,
     searchable::{SearchEvent, SearchableItem},
     ui::{
-        h_flex, v_flex, ActiveTheme, ButtonCommon, Clickable, Color, ContextMenu, FluentBuilder,
-        HighlightedLabel, Icon, IconButton, IconButtonShape, IconName, IconSize, Label,
-        LabelCommon, ListItem, Scrollbar, ScrollbarState, StyledExt, StyledTypography, Toggleable,
-        Tooltip,
+        ActiveTheme, ButtonCommon, Clickable, Color, ContextMenu, FluentBuilder, HighlightedLabel,
+        Icon, IconButton, IconButtonShape, IconName, IconSize, Label, LabelCommon, ListItem,
+        Scrollbar, ScrollbarState, StyledExt, StyledTypography, Toggleable, Tooltip, h_flex,
+        v_flex,
     },
-    OpenInTerminal, WeakItemHandle, Workspace,
 };
 use worktree::{Entry, ProjectEntryId, WorktreeId};
 
@@ -70,7 +70,7 @@ actions!(
         ExpandAllEntries,
         ExpandSelectedEntry,
         FoldDirectory,
-        Open,
+        OpenSelectedEntry,
         RevealInFileManager,
         SelectParent,
         ToggleActiveEditorPin,
@@ -646,7 +646,7 @@ struct ActiveItem {
     item_handle: Box<dyn WeakItemHandle>,
     active_editor: WeakEntity<Editor>,
     _buffer_search_subscription: Subscription,
-    _editor_subscrpiption: Subscription,
+    _editor_subscription: Subscription,
 }
 
 #[derive(Debug)]
@@ -922,7 +922,12 @@ impl OutlinePanel {
         self.update_cached_entries(None, window, cx);
     }
 
-    fn open(&mut self, _: &Open, window: &mut Window, cx: &mut Context<Self>) {
+    fn open_selected_entry(
+        &mut self,
+        _: &OpenSelectedEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.filter_editor.focus_handle(cx).is_focused(window) {
             cx.propagate()
         } else if let Some(selected_entry) = self.selected_entry().cloned() {
@@ -1767,11 +1772,7 @@ impl OutlinePanel {
         active_editor.update(cx, |editor, cx| {
             buffers_to_toggle.retain(|buffer_id| {
                 let folded = editor.is_buffer_folded(*buffer_id, cx);
-                if fold {
-                    !folded
-                } else {
-                    folded
-                }
+                if fold { !folded } else { folded }
             });
         });
 
@@ -2555,6 +2556,9 @@ impl OutlinePanel {
         let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
         let active_multi_buffer = active_editor.read(cx).buffer().clone();
         let new_entries = self.new_entries_for_fs_update.clone();
+        let repo_snapshots = self.project.update(cx, |project, cx| {
+            project.git_store().read(cx).repo_snapshots(cx)
+        });
         self.updating_fs_entries = true;
         self.fs_entries_update_task = cx.spawn_in(window, async move |outline_panel, cx| {
             if let Some(debounce) = debounce {
@@ -2679,13 +2683,15 @@ impl OutlinePanel {
                                             .unwrap_or_default(),
                                         entry,
                                     };
-                                    let mut traversal =
-                                        GitTraversal::new(worktree.traverse_from_path(
+                                    let mut traversal = GitTraversal::new(
+                                        &repo_snapshots,
+                                        worktree.traverse_from_path(
                                             true,
                                             true,
                                             true,
                                             entry.path.as_ref(),
-                                        ));
+                                        ),
+                                    );
 
                                     let mut entries_to_add = HashMap::default();
                                     worktree_excerpts
@@ -2956,7 +2962,7 @@ impl OutlinePanel {
         );
         self.active_item = Some(ActiveItem {
             _buffer_search_subscription: buffer_search_subscription,
-            _editor_subscrpiption: subscribe_for_editor_events(&new_active_editor, window, cx),
+            _editor_subscription: subscribe_for_editor_events(&new_active_editor, window, cx),
             item_handle: new_active_item.downgrade_item(),
             active_editor: new_active_editor.downgrade(),
         });
@@ -4724,7 +4730,7 @@ fn workspace_active_editor(
     let active_item = workspace.active_item(cx)?;
     let active_editor = active_item
         .act_as::<Editor>(cx)
-        .filter(|editor| editor.read(cx).mode() == EditorMode::Full)?;
+        .filter(|editor| editor.read(cx).mode().is_full())?;
     Some((active_item, active_editor))
 }
 
@@ -4905,7 +4911,7 @@ impl Render for OutlinePanel {
                 }
             }))
             .key_context(self.dispatch_context(window, cx))
-            .on_action(cx.listener(Self::open))
+            .on_action(cx.listener(Self::open_selected_entry))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
@@ -4956,7 +4962,7 @@ impl Render for OutlinePanel {
                         .border_color(cx.theme().colors().border)
                         .gap_0p5()
                         .child(Label::new("Searching:").color(Color::Muted))
-                        .child(Label::new(format!("'{}'", search_state.query))),
+                        .child(Label::new(search_state.query.to_string())),
                 )
             })
             .child(self.render_main_contents(query, show_indent_guides, indent_size, window, cx))
@@ -5022,7 +5028,7 @@ fn subscribe_for_editor_events(
                         .extend(excerpts.iter().map(|&(excerpt_id, _)| excerpt_id));
                     outline_panel.update_fs_entries(editor.clone(), debounce, window, cx);
                 }
-                EditorEvent::ExcerptsRemoved { ids } => {
+                EditorEvent::ExcerptsRemoved { ids, .. } => {
                     let mut ids = ids.iter().collect::<HashSet<_>>();
                     for excerpts in outline_panel.excerpts.values_mut() {
                         excerpts.retain(|excerpt_id, _| !ids.remove(excerpt_id));
@@ -5160,7 +5166,7 @@ impl GenerationState {
 mod tests {
     use db::indoc;
     use gpui::{TestAppContext, VisualTestContext, WindowHandle};
-    use language::{tree_sitter_rust, Language, LanguageConfig, LanguageMatcher};
+    use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use search::project_search::{self, perform_project_search};
@@ -5676,7 +5682,7 @@ mod tests {
         });
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.open(&Open, window, cx);
+            outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
         });
         outline_panel.update(cx, |_outline_panel, cx| {
             assert_eq!(
@@ -5689,8 +5695,7 @@ mod tests {
         outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.select_next(&SelectNext, window, cx);
         });
-        let next_navigated_outline_selection =
-            "search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },";
+        let next_navigated_outline_selection = "search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },";
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
@@ -5852,7 +5857,7 @@ mod tests {
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.select_previous(&SelectPrevious, window, cx);
-            outline_panel.open(&Open, window, cx);
+            outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
@@ -5876,7 +5881,7 @@ mod tests {
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.select_next(&SelectNext, window, cx);
-            outline_panel.open(&Open, window, cx);
+            outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
@@ -5897,7 +5902,7 @@ mod tests {
         });
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.open(&Open, window, cx);
+            outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));

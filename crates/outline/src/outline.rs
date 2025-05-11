@@ -4,19 +4,20 @@ use std::{
     sync::Arc,
 };
 
-use editor::{scroll::Autoscroll, Anchor, AnchorRangeExt, Editor, EditorMode};
+use editor::RowHighlightOptions;
+use editor::{Anchor, AnchorRangeExt, Editor, scroll::Autoscroll};
 use fuzzy::StringMatch;
 use gpui::{
-    div, rems, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    HighlightStyle, ParentElement, Point, Render, Styled, StyledText, Task, TextStyle, WeakEntity,
-    Window,
+    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
+    ParentElement, Point, Render, Styled, StyledText, Task, TextStyle, WeakEntity, Window, div,
+    rems,
 };
 use language::{Outline, OutlineItem};
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
 use theme::{ActiveTheme, ThemeSettings};
-use ui::{prelude::*, ListItem, ListItemSpacing};
+use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{DismissDecision, ModalView};
 
@@ -87,7 +88,7 @@ impl Render for OutlineView {
 
 impl OutlineView {
     fn register(editor: &mut Editor, _: Option<&mut Window>, cx: &mut Context<Editor>) {
-        if editor.mode() == EditorMode::Full {
+        if editor.mode().is_full() {
             let handle = cx.entity().downgrade();
             editor
                 .register_action(move |action, window, cx| {
@@ -171,7 +172,10 @@ impl OutlineViewDelegate {
                 active_editor.highlight_rows::<OutlineRowHighlights>(
                     outline_item.range.start..outline_item.range.end,
                     cx.theme().colors().editor_highlighted_line_background,
-                    true,
+                    RowHighlightOptions {
+                        autoscroll: true,
+                        ..Default::default()
+                    },
                     cx,
                 );
                 active_editor.request_autoscroll(Autoscroll::center(), cx);

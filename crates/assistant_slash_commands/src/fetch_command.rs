@@ -1,16 +1,16 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
 use futures::AsyncReadExt;
 use gpui::{Task, WeakEntity};
-use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
+use html_to_markdown::{TagHandler, convert_html_to_markdown, markdown};
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use ui::prelude::*;
@@ -55,11 +55,14 @@ impl FetchSlashCommand {
         let content_type = content_type
             .to_str()
             .context("invalid Content-Type header")?;
-        let content_type = match content_type {
-            "text/html" => ContentType::Html,
-            "text/plain" => ContentType::Plaintext,
-            "application/json" => ContentType::Json,
-            _ => ContentType::Html,
+        let content_type = if content_type.starts_with("text/html") {
+            ContentType::Html
+        } else if content_type.starts_with("text/plain") {
+            ContentType::Plaintext
+        } else if content_type.starts_with("application/json") {
+            ContentType::Json
+        } else {
+            ContentType::Html
         };
 
         match content_type {

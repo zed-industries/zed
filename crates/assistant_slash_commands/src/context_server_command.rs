@@ -1,17 +1,15 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_slash_command::{
     AfterCompletion, ArgumentCompletion, SlashCommand, SlashCommandOutput,
     SlashCommandOutputSection, SlashCommandResult,
 };
 use collections::HashMap;
-use context_server::{
-    manager::{ContextServer, ContextServerManager},
-    types::Prompt,
-};
+use context_server::{ContextServerId, types::Prompt};
 use gpui::{App, Entity, Task, WeakEntity, Window};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
-use std::sync::atomic::AtomicBool;
+use project::context_server_store::ContextServerStore;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use text::LineEnding;
 use ui::{IconName, SharedString};
 use workspace::Workspace;
@@ -19,21 +17,17 @@ use workspace::Workspace;
 use crate::create_label_for_command;
 
 pub struct ContextServerSlashCommand {
-    server_manager: Entity<ContextServerManager>,
-    server_id: Arc<str>,
+    store: Entity<ContextServerStore>,
+    server_id: ContextServerId,
     prompt: Prompt,
 }
 
 impl ContextServerSlashCommand {
-    pub fn new(
-        server_manager: Entity<ContextServerManager>,
-        server: &Arc<ContextServer>,
-        prompt: Prompt,
-    ) -> Self {
+    pub fn new(store: Entity<ContextServerStore>, id: ContextServerId, prompt: Prompt) -> Self {
         Self {
-            server_id: server.id(),
+            server_id: id,
             prompt,
-            server_manager,
+            store,
         }
     }
 }
@@ -88,7 +82,7 @@ impl SlashCommand for ContextServerSlashCommand {
         let server_id = self.server_id.clone();
         let prompt_name = self.prompt.name.clone();
 
-        if let Some(server) = self.server_manager.read(cx).get_server(&server_id) {
+        if let Some(server) = self.store.read(cx).get_running_server(&server_id) {
             cx.foreground_executor().spawn(async move {
                 let Some(protocol) = server.client() else {
                     return Err(anyhow!("Context server not initialized"));
@@ -142,8 +136,8 @@ impl SlashCommand for ContextServerSlashCommand {
             Err(e) => return Task::ready(Err(e)),
         };
 
-        let manager = self.server_manager.read(cx);
-        if let Some(server) = manager.get_server(&server_id) {
+        let store = self.store.read(cx);
+        if let Some(server) = store.get_running_server(&server_id) {
             cx.foreground_executor().spawn(async move {
                 let Some(protocol) = server.client() else {
                     return Err(anyhow!("Context server not initialized"));

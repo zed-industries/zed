@@ -1,0 +1,43 @@
+# This file contains settings for `cargo hakari`.
+# See https://docs.rs/cargo-hakari/latest/cargo_hakari/config for a full list of options.
+
+hakari-package = "workspace-hack"
+
+resolver = "2"
+dep-format-version = "4"
+workspace-hack-line-style = "workspace-dotted"
+
+# this should be the same list as "targets" in ../rust-toolchain.toml
+platforms = [
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-musl", # remote server
+]
+
+[traversal-excludes]
+workspace-members = [
+    "remote_server",
+]
+third-party = [
+    { name = "reqwest", version = "0.11.27" },
+]
+
+[final-excludes]
+workspace-members = [
+    "zed_extension_api",
+
+    # exclude all extensions
+    "zed_emmet",
+    "zed_glsl",
+    "zed_html",
+    "perplexity",
+    "zed_proto",
+    "zed_ruff",
+    "slash_commands_example",
+    "zed_snippets",
+    "zed_test_extension",
+    "zed_toml",
+]

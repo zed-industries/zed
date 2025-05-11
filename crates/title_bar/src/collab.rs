@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use call::{ActiveCall, ParticipantLocation, Room};
-use client::{proto::PeerId, User};
-use gpui::{actions, App, Task, Window};
-use gpui::{canvas, point, AnyElement, Hsla, IntoElement, MouseButton, Path, Styled};
+use client::{User, proto::PeerId};
+use gpui::{AnyElement, Hsla, IntoElement, MouseButton, Path, Styled, canvas, point};
+use gpui::{App, Task, Window, actions};
 use rpc::proto::{self};
 use theme::ActiveTheme;
-use ui::{prelude::*, Avatar, AvatarAudioStatusIndicator, Facepile, TintColor, Tooltip};
+use ui::{Avatar, AvatarAudioStatusIndicator, Facepile, TintColor, Tooltip, prelude::*};
 use workspace::notifications::DetachAndPromptErr;
 
 use crate::TitleBar;
@@ -299,10 +299,7 @@ impl TitleBar {
         let is_screen_sharing = room.is_screen_sharing();
         let can_use_microphone = room.can_use_microphone();
         let can_share_projects = room.can_share_projects();
-        let screen_sharing_supported = match self.platform_style {
-            PlatformStyle::Mac => true,
-            PlatformStyle::Linux | PlatformStyle::Windows => false,
-        };
+        let screen_sharing_supported = cx.is_screen_capture_supported();
 
         let mut children = Vec::new();
 
@@ -323,9 +320,9 @@ impl TitleBar {
                 .label_size(LabelSize::Small)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     if is_shared {
-                        this.unshare_project(&Default::default(), window, cx);
+                        this.unshare_project(window, cx);
                     } else {
-                        this.share_project(&Default::default(), cx);
+                        this.share_project(cx);
                     }
                 }))
                 .into_any_element(),

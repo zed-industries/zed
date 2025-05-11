@@ -1,12 +1,14 @@
+use std::{path::Path, sync::Arc};
+
 use editor::Editor;
 use gpui::{
-    div, AsyncWindowContext, Context, Entity, IntoElement, ParentElement, Render, Subscription,
-    Task, WeakEntity, Window,
+    AsyncWindowContext, Context, Entity, IntoElement, ParentElement, Render, Subscription, Task,
+    WeakEntity, Window, div,
 };
 use language::{Buffer, BufferEvent, LanguageName, Toolchain};
-use project::{Project, WorktreeId};
+use project::{Project, ProjectPath, WorktreeId, toolchain_store::ToolchainStoreEvent};
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, SharedString, Tooltip};
-use workspace::{item::ItemHandle, StatusItemView, Workspace};
+use workspace::{StatusItemView, Workspace, item::ItemHandle};
 
 use crate::ToolchainSelector;
 
@@ -20,6 +22,28 @@ pub struct ActiveToolchain {
 
 impl ActiveToolchain {
     pub fn new(workspace: &Workspace, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        if let Some(store) = workspace.project().read(cx).toolchain_store() {
+            cx.subscribe_in(
+                &store,
+                window,
+                |this, _, _: &ToolchainStoreEvent, window, cx| {
+                    let editor = this
+                        .workspace
+                        .update(cx, |workspace, cx| {
+                            workspace
+                                .active_item(cx)
+                                .and_then(|item| item.downcast::<Editor>())
+                        })
+                        .ok()
+                        .flatten();
+                    if let Some(editor) = editor {
+                        this.active_toolchain.take();
+                        this.update_lister(editor, window, cx);
+                    }
+                },
+            )
+            .detach();
+        }
         Self {
             active_toolchain: None,
             active_buffer: None,
@@ -55,12 +79,19 @@ impl ActiveToolchain {
                 this.term = term;
                 cx.notify();
             });
-            let worktree_id = active_file
-                .update(cx, |this, cx| Some(this.file()?.worktree_id(cx)))
+            let (worktree_id, path) = active_file
+                .update(cx, |this, cx| {
+                    this.file().and_then(|file| {
+                        Some((
+                            file.worktree_id(cx),
+                            Arc::<Path>::from(file.path().parent()?),
+                        ))
+                    })
+                })
                 .ok()
                 .flatten()?;
             let toolchain =
-                Self::active_toolchain(workspace, worktree_id, language_name, cx).await?;
+                Self::active_toolchain(workspace, worktree_id, path, language_name, cx).await?;
             let _ = this.update(cx, |this, cx| {
                 this.active_toolchain = Some(toolchain);
 
@@ -99,6 +130,7 @@ impl ActiveToolchain {
     fn active_toolchain(
         workspace: WeakEntity<Workspace>,
         worktree_id: WorktreeId,
+        relative_path: Arc<Path>,
         language_name: LanguageName,
         cx: &mut AsyncWindowContext,
     ) -> Task<Option<Toolchain>> {
@@ -109,9 +141,14 @@ impl ActiveToolchain {
                 .flatten()?;
             let selected_toolchain = workspace
                 .update(cx, |this, cx| {
-                    this.project()
-                        .read(cx)
-                        .active_toolchain(worktree_id, language_name.clone(), cx)
+                    this.project().read(cx).active_toolchain(
+                        ProjectPath {
+                            worktree_id,
+                            path: relative_path.clone(),
+                        },
+                        language_name.clone(),
+                        cx,
+                    )
                 })
                 .ok()?
                 .await;
@@ -123,21 +160,38 @@ impl ActiveToolchain {
                     .ok()?;
                 let toolchains = cx
                     .update(|_, cx| {
-                        project
-                            .read(cx)
-                            .available_toolchains(worktree_id, language_name, cx)
+                        project.read(cx).available_toolchains(
+                            ProjectPath {
+                                worktree_id,
+                                path: relative_path.clone(),
+                            },
+                            language_name,
+                            cx,
+                        )
                     })
                     .ok()?
                     .await?;
                 if let Some(toolchain) = toolchains.toolchains.first() {
                     // Since we don't have a selected toolchain, pick one for user here.
                     workspace::WORKSPACE_DB
-                        .set_toolchain(workspace_id, worktree_id, toolchain.clone())
+                        .set_toolchain(
+                            workspace_id,
+                            worktree_id,
+                            relative_path.to_string_lossy().into_owned(),
+                            toolchain.clone(),
+                        )
                         .await
                         .ok()?;
                     project
                         .update(cx, |this, cx| {
-                            this.activate_toolchain(worktree_id, toolchain.clone(), cx)
+                            this.activate_toolchain(
+                                ProjectPath {
+                                    worktree_id,
+                                    path: relative_path,
+                                },
+                                toolchain.clone(),
+                                cx,
+                            )
                         })
                         .ok()?
                         .await;

@@ -1,36 +1,17 @@
-#![cfg_attr(windows, allow(unused))]
-// TODO: For some reason mac build complains about import of postage::stream::Stream, but removal of
-// it causes compile errors.
-#![cfg_attr(target_os = "macos", allow(unused_imports))]
+use std::sync::Arc;
 
+use futures::StreamExt;
 use gpui::{
-    actions, bounds, div, point,
-    prelude::{FluentBuilder as _, IntoElement},
-    px, rgb, size, AppContext as _, AsyncApp, Bounds, Context, Entity, InteractiveElement,
-    KeyBinding, Menu, MenuItem, ParentElement, Pixels, Render, ScreenCaptureStream, SharedString,
+    AppContext as _, AsyncApp, Bounds, Context, Entity, InteractiveElement, KeyBinding, Menu,
+    MenuItem, ParentElement, Pixels, Render, ScreenCaptureStream, SharedString,
     StatefulInteractiveElement as _, Styled, Task, Window, WindowBounds, WindowHandle,
-    WindowOptions,
+    WindowOptions, actions, bounds, div, point,
+    prelude::{FluentBuilder as _, IntoElement},
+    px, rgb, size,
 };
-#[cfg(not(target_os = "windows"))]
 use livekit_client::{
-    capture_local_audio_track, capture_local_video_track,
-    id::ParticipantIdentity,
-    options::{TrackPublishOptions, VideoCodec},
-    participant::{Participant, RemoteParticipant},
-    play_remote_audio_track,
-    publication::{LocalTrackPublication, RemoteTrackPublication},
-    track::{LocalTrack, RemoteTrack, RemoteVideoTrack, TrackSource},
-    AudioStream, RemoteVideoTrackView, Room, RoomEvent, RoomOptions,
-};
-#[cfg(not(target_os = "windows"))]
-use postage::stream::Stream;
-
-#[cfg(target_os = "windows")]
-use livekit_client::{
-    participant::{Participant, RemoteParticipant},
-    publication::{LocalTrackPublication, RemoteTrackPublication},
-    track::{LocalTrack, RemoteTrack, RemoteVideoTrack},
-    AudioStream, RemoteVideoTrackView, Room, RoomEvent,
+    AudioStream, LocalTrackPublication, Participant, ParticipantIdentity, RemoteParticipant,
+    RemoteTrackPublication, RemoteVideoTrack, RemoteVideoTrackView, Room, RoomEvent,
 };
 
 use livekit_api::token::{self, VideoGrant};
@@ -39,24 +20,17 @@ use simplelog::SimpleLogger;
 
 actions!(livekit_client, [Quit]);
 
-#[cfg(windows)]
-fn main() {}
-
-#[cfg(not(windows))]
 fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
     gpui::Application::new().run(|cx| {
-        livekit_client::init(
-            cx.background_executor().dispatcher.clone(),
-            cx.http_client(),
-        );
-
         #[cfg(any(test, feature = "test-support"))]
         println!("USING TEST LIVEKIT");
 
         #[cfg(not(any(test, feature = "test-support")))]
         println!("USING REAL LIVEKIT");
+
+        gpui_tokio::init(cx);
 
         cx.activate(true);
         cx.on_action(quit);
@@ -83,14 +57,12 @@ fn main() {
                     &livekit_key,
                     &livekit_secret,
                     Some(&format!("test-participant-{i}")),
-                    VideoGrant::to_join("test-room"),
+                    VideoGrant::to_join("wtej-trty"),
                 )
                 .unwrap();
 
                 let bounds = bounds(point(width * i, px(0.0)), size(width, height));
-                let window =
-                    LivekitWindow::new(livekit_url.as_str(), token.as_str(), bounds, cx.clone())
-                        .await;
+                let window = LivekitWindow::new(livekit_url.clone(), token, bounds, cx).await;
                 windows.push(window);
             }
         })
@@ -103,12 +75,11 @@ fn quit(_: &Quit, cx: &mut gpui::App) {
 }
 
 struct LivekitWindow {
-    room: Room,
+    room: Arc<livekit_client::Room>,
     microphone_track: Option<LocalTrackPublication>,
     screen_share_track: Option<LocalTrackPublication>,
-    microphone_stream: Option<AudioStream>,
+    microphone_stream: Option<livekit_client::AudioStream>,
     screen_share_stream: Option<Box<dyn ScreenCaptureStream>>,
-    #[cfg(not(target_os = "windows"))]
     remote_participants: Vec<(ParticipantIdentity, ParticipantState)>,
     _events_task: Task<()>,
 }
@@ -121,17 +92,23 @@ struct ParticipantState {
     speaking: bool,
 }
 
-#[cfg(not(windows))]
 impl LivekitWindow {
     async fn new(
-        url: &str,
-        token: &str,
+        url: String,
+        token: String,
         bounds: Bounds<Pixels>,
-        cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> WindowHandle<Self> {
-        let (room, mut events) = Room::connect(url, token, RoomOptions::default())
-            .await
-            .unwrap();
+        let (room, mut events) =
+            Room::connect(url.clone(), token, cx)
+                .await
+                .unwrap_or_else(|err| {
+                    eprintln!(
+                        "Failed to connect to {url}: {err}.\nTry `foreman start` to run the livekit server"
+                    );
+
+                    std::process::exit(1)
+                });
 
         cx.update(|cx| {
             cx.open_window(
@@ -142,7 +119,7 @@ impl LivekitWindow {
                 |window, cx| {
                     cx.new(|cx| {
                         let _events_task = cx.spawn_in(window, async move |this, cx| {
-                            while let Some(event) = events.recv().await {
+                            while let Some(event) = events.next().await {
                                 cx.update(|window, cx| {
                                     this.update(cx, |this: &mut LivekitWindow, cx| {
                                         this.handle_room_event(event, window, cx)
@@ -153,7 +130,7 @@ impl LivekitWindow {
                         });
 
                         Self {
-                            room,
+                            room: Arc::new(room),
                             microphone_track: None,
                             microphone_stream: None,
                             screen_share_track: None,
@@ -201,15 +178,16 @@ impl LivekitWindow {
                 participant,
                 track,
             } => {
+                let room = self.room.clone();
                 let output = self.remote_participant(participant);
                 match track {
-                    RemoteTrack::Audio(track) => {
+                    livekit_client::RemoteTrack::Audio(track) => {
                         output.audio_output_stream = Some((
                             publication.clone(),
-                            play_remote_audio_track(&track, cx.background_executor()).unwrap(),
+                            room.play_remote_audio_track(&track, cx).unwrap(),
                         ));
                     }
-                    RemoteTrack::Video(track) => {
+                    livekit_client::RemoteTrack::Video(track) => {
                         output.screen_share_output_view = Some((
                             track.clone(),
                             cx.new(|cx| RemoteVideoTrackView::new(track, window, cx)),
@@ -269,25 +247,15 @@ impl LivekitWindow {
     fn toggle_mute(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(track) = &self.microphone_track {
             if track.is_muted() {
-                track.unmute();
+                track.unmute(cx);
             } else {
-                track.mute();
+                track.mute(cx);
             }
             cx.notify();
         } else {
-            let participant = self.room.local_participant();
+            let room = self.room.clone();
             cx.spawn_in(window, async move |this, cx| {
-                let (track, stream) = capture_local_audio_track(cx.background_executor())?.await;
-                let publication = participant
-                    .publish_track(
-                        LocalTrack::Audio(track),
-                        TrackPublishOptions {
-                            source: TrackSource::Microphone,
-                            ..Default::default()
-                        },
-                    )
-                    .await
-                    .unwrap();
+                let (publication, stream) = room.publish_local_microphone_track(cx).await.unwrap();
                 this.update(cx, |this, cx| {
                     this.microphone_track = Some(publication);
                     this.microphone_stream = Some(stream);
@@ -302,8 +270,8 @@ impl LivekitWindow {
         if let Some(track) = self.screen_share_track.take() {
             self.screen_share_stream.take();
             let participant = self.room.local_participant();
-            cx.background_spawn(async move {
-                participant.unpublish_track(&track.sid()).await.unwrap();
+            cx.spawn(async move |_, cx| {
+                participant.unpublish_track(track.sid(), cx).await.unwrap();
             })
             .detach();
             cx.notify();
@@ -313,16 +281,9 @@ impl LivekitWindow {
             cx.spawn_in(window, async move |this, cx| {
                 let sources = sources.await.unwrap()?;
                 let source = sources.into_iter().next().unwrap();
-                let (track, stream) = capture_local_video_track(&*source).await?;
-                let publication = participant
-                    .publish_track(
-                        LocalTrack::Video(track),
-                        TrackPublishOptions {
-                            source: TrackSource::Screenshare,
-                            video_codec: VideoCodec::H264,
-                            ..Default::default()
-                        },
-                    )
+
+                let (publication, stream) = participant
+                    .publish_screenshare_track(&*source, cx)
                     .await
                     .unwrap();
                 this.update(cx, |this, cx| {
@@ -338,24 +299,18 @@ impl LivekitWindow {
     fn toggle_remote_audio_for_participant(
         &mut self,
         identity: &ParticipantIdentity,
-
         cx: &mut Context<Self>,
     ) -> Option<()> {
         let participant = self.remote_participants.iter().find_map(|(id, state)| {
-            if id == identity {
-                Some(state)
-            } else {
-                None
-            }
+            if id == identity { Some(state) } else { None }
         })?;
         let publication = &participant.audio_output_stream.as_ref()?.0;
-        publication.set_enabled(!publication.is_enabled());
+        publication.set_enabled(!publication.is_enabled(), cx);
         cx.notify();
         Some(())
     }
 }
 
-#[cfg(not(windows))]
 impl Render for LivekitWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         fn button() -> gpui::Div {
@@ -377,11 +332,7 @@ impl Render for LivekitWindow {
                     button()
                         .id("toggle-mute")
                         .child(if let Some(track) = &self.microphone_track {
-                            if track.is_muted() {
-                                "Unmute"
-                            } else {
-                                "Mute"
-                            }
+                            if track.is_muted() { "Unmute" } else { "Mute" }
                         } else {
                             "Publish mic"
                         })
@@ -407,7 +358,7 @@ impl Render for LivekitWindow {
                     .flex_grow()
                     .children(self.remote_participants.iter().map(|(identity, state)| {
                         div()
-                            .h(px(300.0))
+                            .h(px(1080.0))
                             .flex()
                             .flex_col()
                             .m_2()

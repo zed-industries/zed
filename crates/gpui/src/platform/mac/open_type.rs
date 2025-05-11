@@ -4,13 +4,12 @@ use crate::{FontFallbacks, FontFeatures};
 use cocoa::appkit::CGFloat;
 use core_foundation::{
     array::{
-        kCFTypeArrayCallBacks, CFArray, CFArrayAppendArray, CFArrayAppendValue,
-        CFArrayCreateMutable, CFArrayGetCount, CFArrayGetValueAtIndex, CFArrayRef,
-        CFMutableArrayRef,
+        CFArray, CFArrayAppendArray, CFArrayAppendValue, CFArrayCreateMutable, CFArrayGetCount,
+        CFArrayGetValueAtIndex, CFArrayRef, CFMutableArrayRef, kCFTypeArrayCallBacks,
     },
-    base::{kCFAllocatorDefault, CFRelease, TCFType},
+    base::{CFRelease, TCFType, kCFAllocatorDefault},
     dictionary::{
-        kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks, CFDictionaryCreate,
+        CFDictionaryCreate, kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks,
     },
     number::CFNumber,
     string::{CFString, CFStringRef},
@@ -18,12 +17,11 @@ use core_foundation::{
 use core_foundation_sys::locale::CFLocaleCopyPreferredLanguages;
 use core_graphics::{display::CFDictionary, geometry::CGAffineTransform};
 use core_text::{
-    font::{cascade_list_for_languages, CTFont, CTFontRef},
+    font::{CTFont, CTFontRef, cascade_list_for_languages},
     font_descriptor::{
-        kCTFontCascadeListAttribute, kCTFontFeatureSettingsAttribute, CTFontDescriptor,
-        CTFontDescriptorCopyAttributes, CTFontDescriptorCreateCopyWithFeature,
+        CTFontDescriptor, CTFontDescriptorCopyAttributes, CTFontDescriptorCreateCopyWithFeature,
         CTFontDescriptorCreateWithAttributes, CTFontDescriptorCreateWithNameAndSize,
-        CTFontDescriptorRef,
+        CTFontDescriptorRef, kCTFontCascadeListAttribute, kCTFontFeatureSettingsAttribute,
     },
 };
 use font_kit::font::Font as FontKitFont;
@@ -132,7 +130,7 @@ fn append_system_fallbacks(fallback_array: CFMutableArrayRef, font_ref: CTFontRe
 }
 
 #[link(name = "CoreText", kind = "framework")]
-extern "C" {
+unsafe extern "C" {
     static kCTFontOpenTypeFeatureTag: CFStringRef;
     static kCTFontOpenTypeFeatureValue: CFStringRef;
 

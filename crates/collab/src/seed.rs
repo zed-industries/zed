@@ -3,7 +3,7 @@ use crate::db::{self, ChannelRole, NewUserParams};
 use anyhow::Context as _;
 use chrono::{DateTime, Utc};
 use db::Database;
-use serde::{de::DeserializeOwned, Deserialize};
+use serde::{Deserialize, de::DeserializeOwned};
 use std::{fs, path::Path};
 
 use crate::Config;
@@ -46,7 +46,7 @@ pub async fn seed(config: &Config, db: &Database, force: bool) -> anyhow::Result
     let mut first_user = None;
     let mut others = vec![];
 
-    let flag_names = ["remoting", "language-models"];
+    let flag_names = ["language-models"];
     let mut flags = Vec::new();
 
     let existing_feature_flags = db.list_feature_flags().await?;

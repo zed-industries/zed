@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use cargo_toml::{Dependency, Manifest};
 use clap::Parser;
 
@@ -36,7 +36,12 @@ pub fn run_package_conformity(_args: PackageConformityArgs) -> Result<()> {
         }
 
         // Extensions should not use workspace dependencies.
-        if is_extension {
+        if is_extension || package.name == "zed_extension_api" {
+            continue;
+        }
+
+        // Ignore `workspace-hack`, as it produces a lot of false positives.
+        if package.name == "workspace-hack" {
             continue;
         }
 

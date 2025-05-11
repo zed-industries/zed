@@ -71,7 +71,7 @@ jobs:
       ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
     steps:
       - name: Install Node
-        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "18"
 
@@ -169,57 +169,6 @@ jobs:
 
       - name: Upload Zed Nightly
         run: script/upload-nightly linux-targz
-
-  bundle-nix:
-    timeout-minutes: 60
-    name: (${{ matrix.system.os }}) Nix Build
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix:
-        system:
-          - os: x86 Linux
-            runner: buildjet-16vcpu-ubuntu-2204
-            install_nix: true
-          - os: arm Mac
-            runner: [macOS, ARM64, test]
-            install_nix: false
-          - os: arm Linux
-            runner: buildjet-16vcpu-ubuntu-2204-arm
-            install_nix: true
-    if: github.repository_owner == 'zed-industries'
-    runs-on: ${{ matrix.system.runner }}
-    needs: tests
-    env:
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
-      GIT_LFS_SKIP_SMUDGE: 1 # breaks the livekit rust sdk examples which we don't actually depend on
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-        with:
-          clean: false
-
-      # on our macs we manually install nix. for some reason the cachix action is running
-      # under a non-login /bin/bash shell which doesn't source the proper script to add the
-      # nix profile to PATH, so we manually add them here
-      - name: Set path
-        if: ${{ ! matrix.system.install_nix }}
-        run: |
-          echo "/nix/var/nix/profiles/default/bin" >> $GITHUB_PATH
-          echo "/Users/administrator/.nix-profile/bin" >> $GITHUB_PATH
-
-      - uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f # v31
-        if: ${{ matrix.system.install_nix }}
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad # v16
-        with:
-          name: zed-industries
-          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
-      - run: nix build
-      - run: nix-collect-garbage -d
 
   update-nightly-tag:
     name: Update nightly tag

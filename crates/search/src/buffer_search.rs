@@ -1,22 +1,22 @@
 mod registrar;
 
 use crate::{
-    search_bar::render_nav_button, FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll,
-    ReplaceNext, SearchOptions, SelectAllMatches, SelectNextMatch, SelectPreviousMatch,
-    ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleSelection, ToggleWholeWord,
+    FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions,
+    SelectAllMatches, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive, ToggleRegex,
+    ToggleReplace, ToggleSelection, ToggleWholeWord, search_bar::render_nav_button,
 };
 use any_vec::AnyVec;
 use anyhow::Context as _;
 use collections::HashMap;
 use editor::{
-    actions::{Backtab, Tab},
     DisplayPoint, Editor, EditorElement, EditorSettings, EditorStyle,
+    actions::{Backtab, Tab},
 };
 use futures::channel::oneshot;
 use gpui::{
-    actions, div, impl_actions, Action, App, ClickEvent, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyContext, ParentElement as _,
-    Render, ScrollHandle, Styled, Subscription, Task, TextStyle, Window,
+    Action, App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle,
+    Styled, Subscription, Task, TextStyle, Window, actions, div, impl_actions,
 };
 use language::{Language, LanguageRegistry};
 use project::{
@@ -31,14 +31,14 @@ use theme::ThemeSettings;
 use zed_actions::outline::ToggleOutline;
 
 use ui::{
-    h_flex, prelude::*, utils::SearchInputWidth, IconButton, IconButtonShape, IconName, Tooltip,
-    BASE_REM_SIZE_IN_PX,
+    BASE_REM_SIZE_IN_PX, IconButton, IconButtonShape, IconName, Tooltip, h_flex, prelude::*,
+    utils::SearchInputWidth,
 };
 use util::ResultExt;
 use workspace::{
+    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     item::ItemHandle,
     searchable::{Direction, SearchEvent, SearchableItemHandle, WeakSearchableItemHandle},
-    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
 pub use registrar::DivRegistrar;
@@ -143,7 +143,7 @@ impl BufferSearchBar {
         };
 
         let mut editor_style = EditorStyle {
-            background: cx.theme().colors().editor_background,
+            background: cx.theme().colors().toolbar_background,
             local_player: cx.theme().players().local(),
             text: text_style,
             ..EditorStyle::default()
@@ -657,6 +657,16 @@ impl BufferSearchBar {
         registrar.register_handler(ForDeployed(|this, deploy, window, cx| {
             this.deploy(deploy, window, cx);
         }));
+        registrar.register_handler(ForDismissed(|this, deploy, window, cx| {
+            this.deploy(deploy, window, cx);
+        }));
+        registrar.register_handler(ForDeployed(|this, _: &DeployReplace, window, cx| {
+            if this.supported_options(cx).find_in_results {
+                cx.propagate();
+            } else {
+                this.deploy(&Deploy::replace(), window, cx);
+            }
+        }));
         registrar.register_handler(ForDismissed(|this, _: &DeployReplace, window, cx| {
             if this.supported_options(cx).find_in_results {
                 cx.propagate();
@@ -664,9 +674,6 @@ impl BufferSearchBar {
                 this.deploy(&Deploy::replace(), window, cx);
             }
         }));
-        registrar.register_handler(ForDismissed(|this, deploy, window, cx| {
-            this.deploy(deploy, window, cx);
-        }))
     }
 
     pub fn new(
@@ -936,12 +943,12 @@ impl BufferSearchBar {
         self.update_matches(!updated, window, cx)
     }
 
-    fn render_search_option_button(
+    fn render_search_option_button<Action: Fn(&ClickEvent, &mut Window, &mut App) + 'static>(
         &self,
         option: SearchOptions,
         focus_handle: FocusHandle,
-        action: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> impl IntoElement {
+        action: Action,
+    ) -> impl IntoElement + use<Action> {
         let is_active = self.search_options.contains(option);
         option.as_button(is_active, focus_handle, action)
     }
@@ -982,6 +989,16 @@ impl BufferSearchBar {
     }
 
     pub fn set_search_options(&mut self, search_options: SearchOptions, cx: &mut Context<Self>) {
+        self.search_options = search_options;
+        self.adjust_query_regex_language(cx);
+        cx.notify();
+    }
+
+    pub fn clear_search_within_ranges(
+        &mut self,
+        search_options: SearchOptions,
+        cx: &mut Context<Self>,
+    ) {
         self.search_options = search_options;
         self.adjust_query_regex_language(cx);
         cx.notify();
@@ -1231,8 +1248,11 @@ impl BufferSearchBar {
                             self.search_options.contains(SearchOptions::WHOLE_WORD),
                             self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                             false,
+                            self.search_options
+                                .contains(SearchOptions::ONE_MATCH_PER_LINE),
                             Default::default(),
                             Default::default(),
+                            false,
                             None,
                         ) {
                             Ok(query) => query.with_replacement(self.replacement(cx)),
@@ -1251,6 +1271,7 @@ impl BufferSearchBar {
                             false,
                             Default::default(),
                             Default::default(),
+                            false,
                             None,
                         ) {
                             Ok(query) => query.with_replacement(self.replacement(cx)),
@@ -1521,7 +1542,7 @@ mod tests {
     use std::ops::Range;
 
     use super::*;
-    use editor::{display_map::DisplayRow, DisplayPoint, Editor, MultiBuffer, SearchSettings};
+    use editor::{DisplayPoint, Editor, MultiBuffer, SearchSettings, display_map::DisplayRow};
     use gpui::{Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
     use language::{Buffer, Point};
     use project::Project;

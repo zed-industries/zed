@@ -1,18 +1,18 @@
 mod icon_theme_selector;
 
 use fs::Fs;
-use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
+use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    actions, App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, UpdateGlobal,
-    WeakEntity, Window,
+    App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, UpdateGlobal, WeakEntity,
+    Window, actions,
 };
 use picker::{Picker, PickerDelegate};
-use settings::{update_settings_file, SettingsStore};
+use settings::{SettingsStore, update_settings_file};
 use std::sync::Arc;
 use theme::{Appearance, Theme, ThemeMeta, ThemeRegistry, ThemeSettings};
-use ui::{prelude::*, v_flex, ListItem, ListItemSpacing};
+use ui::{ListItem, ListItemSpacing, prelude::*, v_flex};
 use util::ResultExt;
-use workspace::{ui::HighlightedLabel, ModalView, Workspace};
+use workspace::{ModalView, Workspace, ui::HighlightedLabel};
 use zed_actions::{ExtensionCategoryFilter, Extensions};
 
 use crate::icon_theme_selector::{IconThemeSelector, IconThemeSelectorDelegate};
@@ -103,6 +103,7 @@ struct ThemeSelectorDelegate {
     matches: Vec<StringMatch>,
     original_theme: Arc<Theme>,
     selection_completed: bool,
+    selected_theme: Option<Arc<Theme>>,
     selected_index: usize,
     selector: WeakEntity<ThemeSelector>,
 }
@@ -151,6 +152,7 @@ impl ThemeSelectorDelegate {
             original_theme: original_theme.clone(),
             selected_index: 0,
             selection_completed: false,
+            selected_theme: None,
             selector,
         };
 
@@ -158,17 +160,24 @@ impl ThemeSelectorDelegate {
         this
     }
 
-    fn show_selected_theme(&mut self, cx: &mut Context<Picker<ThemeSelectorDelegate>>) {
+    fn show_selected_theme(
+        &mut self,
+        cx: &mut Context<Picker<ThemeSelectorDelegate>>,
+    ) -> Option<Arc<Theme>> {
         if let Some(mat) = self.matches.get(self.selected_index) {
             let registry = ThemeRegistry::global(cx);
             match registry.get(&mat.string) {
                 Ok(theme) => {
-                    Self::set_theme(theme, cx);
+                    Self::set_theme(theme.clone(), cx);
+                    Some(theme)
                 }
                 Err(error) => {
-                    log::error!("error loading theme {}: {}", mat.string, error)
+                    log::error!("error loading theme {}: {}", mat.string, error);
+                    None
                 }
             }
+        } else {
+            None
         }
     }
 
@@ -249,7 +258,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
         cx: &mut Context<Picker<ThemeSelectorDelegate>>,
     ) {
         self.selected_index = ix;
-        self.show_selected_theme(cx);
+        self.selected_theme = self.show_selected_theme(cx);
     }
 
     fn update_matches(
@@ -292,11 +301,24 @@ impl PickerDelegate for ThemeSelectorDelegate {
 
             this.update(cx, |this, cx| {
                 this.delegate.matches = matches;
-                this.delegate.selected_index = this
-                    .delegate
-                    .selected_index
-                    .min(this.delegate.matches.len().saturating_sub(1));
-                this.delegate.show_selected_theme(cx);
+                if query.is_empty() && this.delegate.selected_theme.is_none() {
+                    this.delegate.selected_index = this
+                        .delegate
+                        .selected_index
+                        .min(this.delegate.matches.len().saturating_sub(1));
+                } else if let Some(selected) = this.delegate.selected_theme.as_ref() {
+                    this.delegate.selected_index = this
+                        .delegate
+                        .matches
+                        .iter()
+                        .enumerate()
+                        .find(|(_, mtch)| mtch.string == selected.name)
+                        .map(|(ix, _)| ix)
+                        .unwrap_or_default();
+                } else {
+                    this.delegate.selected_index = 0;
+                }
+                this.delegate.selected_theme = this.delegate.show_selected_theme(cx);
             })
             .log_err();
         })

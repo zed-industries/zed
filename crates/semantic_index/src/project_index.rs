@@ -3,7 +3,7 @@ use crate::{
     summary_index::FileSummary,
     worktree_index::{WorktreeIndex, WorktreeIndexHandle},
 };
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
 use fs::Fs;
 use futures::FutureExt;

@@ -6,7 +6,7 @@
 
 use std::ffi::CString;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use indoc::{formatdoc, indoc};
 use libsqlite3_sys::sqlite3_exec;
 

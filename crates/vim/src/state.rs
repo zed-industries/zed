@@ -1,8 +1,9 @@
 use crate::command::command_interceptor;
+use crate::motion::MotionKind;
 use crate::normal::repeat::Replayer;
 use crate::surrounds::SurroundsType;
-use crate::{motion::Motion, object::Object};
 use crate::{ToggleMarksView, ToggleRegistersView, UseSystemClipboard, Vim, VimAddon, VimSettings};
+use crate::{motion::Motion, object::Object};
 use anyhow::Result;
 use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
@@ -27,8 +28,8 @@ use std::{fmt::Display, ops::Range, sync::Arc};
 use text::{Bias, ToPoint};
 use theme::ThemeSettings;
 use ui::{
-    h_flex, rems, ActiveTheme, Context, Div, FluentBuilder, KeyBinding, ParentElement,
-    SharedString, Styled, StyledTypography, Window,
+    ActiveTheme, Context, Div, FluentBuilder, KeyBinding, ParentElement, SharedString, Styled,
+    StyledTypography, Window, h_flex, rems,
 };
 use util::ResultExt;
 use workspace::searchable::Direction;
@@ -115,6 +116,8 @@ pub enum Operator {
     Lowercase,
     Uppercase,
     OppositeCase,
+    Rot13,
+    Rot47,
     Digraph {
         first_char: Option<char>,
     },
@@ -199,7 +202,7 @@ pub struct VimGlobals {
     pub pre_count: Option<usize>,
     /// post_count is the number after an operator is specified (2 in 3d2d)
     pub post_count: Option<usize>,
-
+    pub forced_motion: bool,
     pub stop_recording_after_next_action: bool,
     pub ignore_current_insertion: bool,
     pub recorded_count: Option<usize>,
@@ -695,7 +698,7 @@ impl VimGlobals {
         content: Register,
         register: Option<char>,
         is_yank: bool,
-        linewise: bool,
+        kind: MotionKind,
         cx: &mut Context<Editor>,
     ) {
         if let Some(register) = register {
@@ -752,9 +755,9 @@ impl VimGlobals {
                 if !contains_newline {
                     self.registers.insert('-', content.clone());
                 }
-                if linewise || contains_newline {
+                if kind.linewise() || contains_newline {
                     let mut content = content;
-                    for i in '1'..'8' {
+                    for i in '1'..='9' {
                         if let Some(moved) = self.registers.insert(i, content) {
                             content = moved;
                         } else {
@@ -951,12 +954,14 @@ impl Operator {
             Operator::AutoIndent => "eq",
             Operator::ShellCommand => "sh",
             Operator::Rewrap => "gq",
-            Operator::ReplaceWithRegister => "gr",
+            Operator::ReplaceWithRegister => "gR",
             Operator::Exchange => "cx",
             Operator::Outdent => "<",
             Operator::Uppercase => "gU",
             Operator::Lowercase => "gu",
             Operator::OppositeCase => "g~",
+            Operator::Rot13 => "g?",
+            Operator::Rot47 => "g?",
             Operator::Register => "\"",
             Operator::RecordRegister => "q",
             Operator::ReplayRegister => "@",
@@ -1005,6 +1010,8 @@ impl Operator {
             | Operator::ShellCommand
             | Operator::Lowercase
             | Operator::Uppercase
+            | Operator::Rot13
+            | Operator::Rot47
             | Operator::ReplaceWithRegister
             | Operator::Exchange
             | Operator::Object { .. }
@@ -1025,6 +1032,8 @@ impl Operator {
             | Operator::Lowercase
             | Operator::Uppercase
             | Operator::OppositeCase
+            | Operator::Rot13
+            | Operator::Rot47
             | Operator::ToggleComments
             | Operator::ReplaceWithRegister
             | Operator::Rewrap
@@ -1635,6 +1644,7 @@ impl VimDb {
         path: Arc<Path>,
         marks: HashMap<String, Vec<Point>>,
     ) -> Result<()> {
+        log::debug!("Setting path {path:?} for {} marks", marks.len());
         let result = self
             .write(move |conn| {
                 let mut query = conn.exec_bound(sql!(
@@ -1685,6 +1695,7 @@ impl VimDb {
         mark_name: String,
         path: Arc<Path>,
     ) -> Result<()> {
+        log::debug!("Setting global mark path {path:?} for {mark_name}");
         self.write(move |conn| {
             conn.exec_bound(sql!(
                 INSERT OR REPLACE INTO vim_global_marks_paths

@@ -12,10 +12,10 @@ use language::{Bias, Point, Selection, SelectionGoal, TextDimension};
 use util::post_inc;
 
 use crate::{
-    display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
-    movement::TextLayoutDetails,
     Anchor, DisplayPoint, DisplayRow, ExcerptId, MultiBuffer, MultiBufferSnapshot, SelectMode,
     ToOffset, ToPoint,
+    display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
+    movement::TextLayoutDetails,
 };
 
 #[derive(Debug, Clone)]
@@ -654,6 +654,25 @@ impl<'a> MutableSelectionsCollection<'a> {
             })
             .collect();
         self.select(selections);
+    }
+    pub fn reverse_selections(&mut self) {
+        let map = &self.display_map();
+        let mut new_selections: Vec<Selection<Point>> = Vec::new();
+        let disjoint = self.disjoint.clone();
+        for selection in disjoint
+            .iter()
+            .sorted_by(|first, second| Ord::cmp(&second.id, &first.id))
+            .collect::<Vec<&Selection<Anchor>>>()
+        {
+            new_selections.push(Selection {
+                id: self.new_selection_id(),
+                start: selection.start.to_display_point(map).to_point(map),
+                end: selection.end.to_display_point(map).to_point(map),
+                reversed: selection.reversed,
+                goal: selection.goal,
+            });
+        }
+        self.select(new_selections);
     }
 
     pub fn move_with(

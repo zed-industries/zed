@@ -4,7 +4,7 @@ use super::*;
 use editor::Editor;
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use menu::{Confirm, SelectNext, SelectPrevious};
-use project::{RemoveOptions, FS_WATCH_LATENCY};
+use project::{FS_WATCH_LATENCY, RemoveOptions};
 use serde_json::json;
 use util::path;
 use workspace::{AppState, OpenOptions, ToggleFileFinder, Workspace};
@@ -240,6 +240,38 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
             );
         });
     }
+}
+
+#[gpui::test]
+async fn test_unicode_paths(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a": {
+                    "İg": " ",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+
+    let (picker, workspace, cx) = build_find_picker(project, cx);
+
+    cx.simulate_input("g");
+    picker.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.matches.len(), 1);
+    });
+    cx.dispatch_action(SelectNext);
+    cx.dispatch_action(Confirm);
+    cx.read(|cx| {
+        let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+        assert_eq!(active_editor.read(cx).title(cx), "İg");
+    });
 }
 
 #[gpui::test]
@@ -839,64 +871,64 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
     let history_after_third =
         open_close_queried_buffer("sec", 1, "second.rs", &workspace, cx).await;
     assert_eq!(
-                history_after_third,
-                vec![
-                    FoundPath::new(
-                        ProjectPath {
-                            worktree_id,
-                            path: Arc::from(Path::new("test/third.rs")),
-                        },
-                        Some(PathBuf::from(path!("/src/test/third.rs")))
-                    ),
-                    FoundPath::new(
-                        ProjectPath {
-                            worktree_id,
-                            path: Arc::from(Path::new("test/second.rs")),
-                        },
-                        Some(PathBuf::from(path!("/src/test/second.rs")))
-                    ),
-                    FoundPath::new(
-                        ProjectPath {
-                            worktree_id,
-                            path: Arc::from(Path::new("test/first.rs")),
-                        },
-                        Some(PathBuf::from(path!("/src/test/first.rs")))
-                    ),
-                ],
-                "Should show 1st, 2nd and 3rd opened items in the history when opening the 2nd item again. \
+        history_after_third,
+        vec![
+            FoundPath::new(
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/third.rs")),
+                },
+                Some(PathBuf::from(path!("/src/test/third.rs")))
+            ),
+            FoundPath::new(
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/second.rs")),
+                },
+                Some(PathBuf::from(path!("/src/test/second.rs")))
+            ),
+            FoundPath::new(
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/first.rs")),
+                },
+                Some(PathBuf::from(path!("/src/test/first.rs")))
+            ),
+        ],
+        "Should show 1st, 2nd and 3rd opened items in the history when opening the 2nd item again. \
     3rd item should be the first in the history, as the last opened."
-            );
+    );
 
     let history_after_second_again =
         open_close_queried_buffer("thi", 1, "third.rs", &workspace, cx).await;
     assert_eq!(
-                history_after_second_again,
-                vec![
-                    FoundPath::new(
-                        ProjectPath {
-                            worktree_id,
-                            path: Arc::from(Path::new("test/second.rs")),
-                        },
-                        Some(PathBuf::from(path!("/src/test/second.rs")))
-                    ),
-                    FoundPath::new(
-                        ProjectPath {
-                            worktree_id,
-                            path: Arc::from(Path::new("test/third.rs")),
-                        },
-                        Some(PathBuf::from(path!("/src/test/third.rs")))
-                    ),
-                    FoundPath::new(
-                        ProjectPath {
-                            worktree_id,
-                            path: Arc::from(Path::new("test/first.rs")),
-                        },
-                        Some(PathBuf::from(path!("/src/test/first.rs")))
-                    ),
-                ],
-                "Should show 1st, 2nd and 3rd opened items in the history when opening the 3rd item again. \
+        history_after_second_again,
+        vec![
+            FoundPath::new(
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/second.rs")),
+                },
+                Some(PathBuf::from(path!("/src/test/second.rs")))
+            ),
+            FoundPath::new(
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/third.rs")),
+                },
+                Some(PathBuf::from(path!("/src/test/third.rs")))
+            ),
+            FoundPath::new(
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new("test/first.rs")),
+                },
+                Some(PathBuf::from(path!("/src/test/first.rs")))
+            ),
+        ],
+        "Should show 1st, 2nd and 3rd opened items in the history when opening the 3rd item again. \
     2nd item, as the last opened, 3rd item should go next as it was opened right before."
-            );
+    );
 }
 
 #[gpui::test]
@@ -1360,6 +1392,73 @@ async fn test_keep_opened_file_on_top_of_search_results_and_select_next_one(
 }
 
 #[gpui::test]
+async fn test_setting_auto_select_first_and_select_active_file(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+
+    cx.update(|cx| {
+        let settings = *FileFinderSettings::get_global(cx);
+
+        FileFinderSettings::override_global(
+            FileFinderSettings {
+                skip_focus_for_active_in_search: false,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/src"),
+            json!({
+                "test": {
+                    "bar.rs": "// Bar file",
+                    "lib.rs": "// Lib file",
+                    "maaa.rs": "// Maaaaaaa",
+                    "main.rs": "// Main file",
+                    "moo.rs": "// Moooooo",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+    open_close_queried_buffer("bar", 1, "bar.rs", &workspace, cx).await;
+    open_close_queried_buffer("lib", 1, "lib.rs", &workspace, cx).await;
+    open_queried_buffer("main", 1, "main.rs", &workspace, cx).await;
+
+    // main.rs is on top, previously used is selected
+    let picker = open_file_picker(&workspace, cx);
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 3);
+        assert_match_selection(finder, 0, "main.rs");
+        assert_match_at_position(finder, 1, "lib.rs");
+        assert_match_at_position(finder, 2, "bar.rs");
+    });
+
+    // all files match, main.rs is on top, and is selected
+    picker
+        .update_in(cx, |finder, window, cx| {
+            finder
+                .delegate
+                .update_matches(".rs".to_string(), window, cx)
+        })
+        .await;
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 5);
+        assert_match_selection(finder, 0, "main.rs");
+        assert_match_at_position(finder, 1, "bar.rs");
+        assert_match_at_position(finder, 2, "lib.rs");
+        assert_match_at_position(finder, 3, "moo.rs");
+        assert_match_at_position(finder, 4, "maaa.rs");
+    });
+}
+
+#[gpui::test]
 async fn test_non_separate_history_items(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
 
@@ -1656,15 +1755,15 @@ async fn test_nonexistent_history_items_not_shown(cx: &mut gpui::TestAppContext)
     cx.simulate_input("rs");
 
     picker.update(cx, |picker, _| {
-            assert_eq!(
-                collect_search_matches(picker).history,
-                vec![
-                    PathBuf::from("test/first.rs"),
-                    PathBuf::from("test/third.rs"),
-                ],
-                "Should have all opened files in the history, except the ones that do not exist on disk"
-            );
-        });
+        assert_eq!(
+            collect_search_matches(picker).history,
+            vec![
+                PathBuf::from("test/first.rs"),
+                PathBuf::from("test/third.rs"),
+            ],
+            "Should have all opened files in the history, except the ones that do not exist on disk"
+        );
+    });
 }
 
 #[gpui::test]
@@ -2133,18 +2232,28 @@ async fn test_repeat_toggle_action(cx: &mut gpui::TestAppContext) {
 
     cx.dispatch_action(ToggleFileFinder::default());
     let picker = active_file_picker(&workspace, cx);
+
+    picker.update_in(cx, |picker, window, cx| {
+        picker.update_matches(".txt".to_string(), window, cx)
+    });
+
+    cx.run_until_parked();
+
     picker.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.matches.len(), 6);
         assert_eq!(picker.delegate.selected_index, 0);
-        assert_eq!(picker.logical_scroll_top_index(), 0);
     });
 
     // When toggling repeatedly, the picker scrolls to reveal the selected item.
     cx.dispatch_action(ToggleFileFinder::default());
     cx.dispatch_action(ToggleFileFinder::default());
     cx.dispatch_action(ToggleFileFinder::default());
+
+    cx.run_until_parked();
+
     picker.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.matches.len(), 6);
         assert_eq!(picker.delegate.selected_index, 3);
-        assert_eq!(picker.logical_scroll_top_index(), 3);
     });
 }
 
@@ -2371,4 +2480,49 @@ fn assert_match_at_position(
     .unwrap()
     .to_string_lossy();
     assert_eq!(match_file_name, expected_file_name);
+}
+
+#[gpui::test]
+async fn test_filename_precedence(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/src"),
+            json!({
+                "layout": {
+                    "app.css": "",
+                    "app.d.ts": "",
+                    "app.html": "",
+                    "+page.svelte": "",
+                },
+                "routes": {
+                    "+layout.svelte": "",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
+    let (picker, _, cx) = build_find_picker(project, cx);
+
+    cx.simulate_input("layout");
+
+    picker.update(cx, |finder, _| {
+        let search_matches = collect_search_matches(finder).search_paths_only();
+
+        assert_eq!(
+            search_matches,
+            vec![
+                PathBuf::from("routes/+layout.svelte"),
+                PathBuf::from("layout/app.css"),
+                PathBuf::from("layout/app.d.ts"),
+                PathBuf::from("layout/app.html"),
+                PathBuf::from("layout/+page.svelte"),
+            ],
+            "File with 'layout' in filename should be prioritized over files in 'layout' directory"
+        );
+    });
 }

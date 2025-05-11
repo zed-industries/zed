@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod context_tests;
 
-use crate::patch::{AssistantEdit, AssistantPatch, AssistantPatchStatus};
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
+use assistant_settings::AssistantSettings;
 use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandLine, SlashCommandOutputSection,
     SlashCommandResult, SlashCommandWorkingSet,
@@ -12,17 +12,17 @@ use client::{self, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use fs::{Fs, RemoveOptions};
-use futures::{future::Shared, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, future::Shared};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, RenderImage, SharedString, Subscription,
     Task,
 };
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use language_model::{
-    report_assistant_event, LanguageModel, LanguageModelCacheConfiguration,
-    LanguageModelCompletionEvent, LanguageModelImage, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelToolUseId, MaxMonthlySpendReachedError,
-    MessageContent, PaymentRequiredError, Role, StopReason,
+    LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
+    LanguageModelImage, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
+    Role, StopReason, report_assistant_event,
 };
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
@@ -31,22 +31,21 @@ use prompt_store::PromptBuilder;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
-    cmp::{max, Ordering},
-    fmt::Debug,
+    cmp::{Ordering, max},
+    fmt::{Debug, Write as _},
     iter, mem,
     ops::Range,
-    path::{Path, PathBuf},
-    str::FromStr as _,
+    path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
-use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
+use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
 use text::{BufferSnapshot, ToPoint};
 use ui::IconName;
-use util::{post_inc, ResultExt, TryFutureExt};
+use util::{ResultExt, TryFutureExt, post_inc};
 use uuid::Uuid;
 
-#[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ContextId(String);
 
 impl ContextId {
@@ -119,14 +118,6 @@ impl MessageStatus {
             },
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RequestType {
-    /// Request a normal chat response from the model.
-    Chat,
-    /// Add a preamble to the message, which tells the model to return a structured response that suggests edits.
-    SuggestEdits,
 }
 
 #[derive(Clone, Debug)]
@@ -459,13 +450,10 @@ pub enum ContextEvent {
     ShowMaxMonthlySpendReachedError,
     MessagesEdited,
     SummaryChanged,
+    SummaryGenerated,
     StreamedCompletion,
     StartedThoughtProcess(Range<language::Anchor>),
     EndedThoughtProcess(language::Anchor),
-    PatchesUpdated {
-        removed: Vec<Range<language::Anchor>>,
-        updated: Vec<Range<language::Anchor>>,
-    },
     InvokedSlashCommandChanged {
         command_id: InvokedSlashCommandId,
     },
@@ -482,7 +470,7 @@ pub enum ContextEvent {
 #[derive(Clone, Default, Debug)]
 pub struct ContextSummary {
     pub text: String,
-    done: bool,
+    pub done: bool,
     timestamp: clock::Lamport,
 }
 
@@ -603,26 +591,6 @@ struct PendingCompletion {
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub struct InvokedSlashCommandId(clock::Lamport);
 
-#[derive(Clone, Debug)]
-pub struct XmlTag {
-    pub kind: XmlTagKind,
-    pub range: Range<text::Anchor>,
-    pub is_open_tag: bool,
-}
-
-#[derive(Copy, Clone, Debug, strum::EnumString, PartialEq, Eq, strum::AsRefStr)]
-#[strum(serialize_all = "snake_case")]
-pub enum XmlTagKind {
-    Patch,
-    Title,
-    Edit,
-    Path,
-    Description,
-    OldText,
-    NewText,
-    Operation,
-}
-
 pub struct AssistantContext {
     id: ContextId,
     timestamp: clock::Lamport,
@@ -640,19 +608,17 @@ pub struct AssistantContext {
     contents: Vec<Content>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
     summary: Option<ContextSummary>,
-    pending_summary: Task<Option<()>>,
+    summary_task: Task<Option<()>>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
     token_count: Option<usize>,
     pending_token_count: Task<Option<()>>,
     pending_save: Task<Result<()>>,
     pending_cache_warming_task: Task<Option<()>>,
-    path: Option<PathBuf>,
+    path: Option<Arc<Path>>,
     _subscriptions: Vec<Subscription>,
     telemetry: Option<Arc<Telemetry>>,
     language_registry: Arc<LanguageRegistry>,
-    patches: Vec<AssistantPatch>,
-    xml_tags: Vec<XmlTag>,
     project: Option<Entity<Project>>,
     prompt_builder: Arc<PromptBuilder>,
 }
@@ -664,18 +630,6 @@ trait ContextAnnotation {
 impl ContextAnnotation for ParsedSlashCommand {
     fn range(&self) -> &Range<language::Anchor> {
         &self.source_range
-    }
-}
-
-impl ContextAnnotation for AssistantPatch {
-    fn range(&self) -> &Range<language::Anchor> {
-        &self.range
-    }
-}
-
-impl ContextAnnotation for XmlTag {
-    fn range(&self) -> &Range<language::Anchor> {
-        &self.range
     }
 }
 
@@ -741,7 +695,7 @@ impl AssistantContext {
             thought_process_output_sections: Vec::new(),
             edits_since_last_parse: edits_since_last_slash_command_parse,
             summary: None,
-            pending_summary: Task::ready(None),
+            summary_task: Task::ready(None),
             completion_count: Default::default(),
             pending_completions: Default::default(),
             token_count: None,
@@ -755,8 +709,6 @@ impl AssistantContext {
             project,
             language_registry,
             slash_commands,
-            patches: Vec::new(),
-            xml_tags: Vec::new(),
             prompt_builder,
         };
 
@@ -838,7 +790,7 @@ impl AssistantContext {
 
     pub fn deserialize(
         saved_context: SavedContext,
-        path: PathBuf,
+        path: Arc<Path>,
         language_registry: Arc<LanguageRegistry>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
@@ -951,7 +903,7 @@ impl AssistantContext {
 
     fn flush_ops(&mut self, cx: &mut Context<AssistantContext>) {
         let mut changed_messages = HashSet::default();
-        let mut summary_changed = false;
+        let mut summary_generated = false;
 
         self.pending_ops.sort_unstable_by_key(|op| op.timestamp());
         for op in mem::take(&mut self.pending_ops) {
@@ -993,7 +945,7 @@ impl AssistantContext {
                         .map_or(true, |summary| new_summary.timestamp > summary.timestamp)
                     {
                         self.summary = Some(new_summary);
-                        summary_changed = true;
+                        summary_generated = true;
                     }
                 }
                 ContextOperation::SlashCommandStarted {
@@ -1072,8 +1024,9 @@ impl AssistantContext {
             cx.notify();
         }
 
-        if summary_changed {
+        if summary_generated {
             cx.emit(ContextEvent::SummaryChanged);
+            cx.emit(ContextEvent::SummaryGenerated);
             cx.notify();
         }
     }
@@ -1145,54 +1098,12 @@ impl AssistantContext {
         self.prompt_builder.clone()
     }
 
-    pub fn path(&self) -> Option<&Path> {
-        self.path.as_deref()
+    pub fn path(&self) -> Option<&Arc<Path>> {
+        self.path.as_ref()
     }
 
     pub fn summary(&self) -> Option<&ContextSummary> {
         self.summary.as_ref()
-    }
-
-    pub fn patch_containing(&self, position: Point, cx: &App) -> Option<&AssistantPatch> {
-        let buffer = self.buffer.read(cx);
-        let index = self.patches.binary_search_by(|patch| {
-            let patch_range = patch.range.to_point(&buffer);
-            if position < patch_range.start {
-                Ordering::Greater
-            } else if position > patch_range.end {
-                Ordering::Less
-            } else {
-                Ordering::Equal
-            }
-        });
-        if let Ok(ix) = index {
-            Some(&self.patches[ix])
-        } else {
-            None
-        }
-    }
-
-    pub fn patch_ranges(&self) -> impl Iterator<Item = Range<language::Anchor>> + '_ {
-        self.patches.iter().map(|patch| patch.range.clone())
-    }
-
-    pub fn patch_for_range(
-        &self,
-        range: &Range<language::Anchor>,
-        cx: &App,
-    ) -> Option<&AssistantPatch> {
-        let buffer = self.buffer.read(cx);
-        let index = self.patch_index_for_range(range, buffer).ok()?;
-        Some(&self.patches[index])
-    }
-
-    fn patch_index_for_range(
-        &self,
-        tagged_range: &Range<text::Anchor>,
-        buffer: &text::BufferSnapshot,
-    ) -> Result<usize, usize> {
-        self.patches
-            .binary_search_by(|probe| probe.range.cmp(&tagged_range, buffer))
     }
 
     pub fn parsed_slash_commands(&self) -> &[ParsedSlashCommand] {
@@ -1271,10 +1182,10 @@ impl AssistantContext {
     pub(crate) fn count_remaining_tokens(&mut self, cx: &mut Context<Self>) {
         // Assume it will be a Chat request, even though that takes fewer tokens (and risks going over the limit),
         // because otherwise you see in the UI that your empty message has a bunch of tokens already used.
-        let request = self.to_completion_request(RequestType::Chat, cx);
-        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+        let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
             return;
         };
+        let request = self.to_completion_request(Some(&model.model), cx);
         let debounce = self.token_count.is_some();
         self.pending_token_count = cx.spawn(async move |this, cx| {
             async move {
@@ -1284,10 +1195,12 @@ impl AssistantContext {
                         .await;
                 }
 
-                let token_count = cx.update(|cx| model.count_tokens(request, cx))?.await?;
+                let token_count = cx
+                    .update(|cx| model.model.count_tokens(request, cx))?
+                    .await?;
                 this.update(cx, |this, cx| {
                     this.token_count = Some(token_count);
-                    this.start_cache_warming(&model, cx);
+                    this.start_cache_warming(&model.model, cx);
                     cx.notify()
                 })
             }
@@ -1418,7 +1331,7 @@ impl AssistantContext {
         }
 
         let request = {
-            let mut req = self.to_completion_request(RequestType::Chat, cx);
+            let mut req = self.to_completion_request(Some(&model), cx);
             // Skip the last message because it's likely to change and
             // therefore would be a waste to cache.
             req.messages.pop();
@@ -1493,8 +1406,6 @@ impl AssistantContext {
 
         let mut removed_parsed_slash_command_ranges = Vec::new();
         let mut updated_parsed_slash_commands = Vec::new();
-        let mut removed_patches = Vec::new();
-        let mut updated_patches = Vec::new();
         while let Some(mut row_range) = row_ranges.next() {
             while let Some(next_row_range) = row_ranges.peek() {
                 if row_range.end >= next_row_range.start {
@@ -1519,13 +1430,6 @@ impl AssistantContext {
                 cx,
             );
             self.invalidate_pending_slash_commands(&buffer, cx);
-            self.reparse_patches_in_range(
-                start..end,
-                &buffer,
-                &mut updated_patches,
-                &mut removed_patches,
-                cx,
-            );
         }
 
         if !updated_parsed_slash_commands.is_empty()
@@ -1534,13 +1438,6 @@ impl AssistantContext {
             cx.emit(ContextEvent::ParsedSlashCommandsUpdated {
                 removed: removed_parsed_slash_command_ranges,
                 updated: updated_parsed_slash_commands,
-            });
-        }
-
-        if !updated_patches.is_empty() || !removed_patches.is_empty() {
-            cx.emit(ContextEvent::PatchesUpdated {
-                removed: removed_patches,
-                updated: updated_patches,
             });
         }
     }
@@ -1631,267 +1528,6 @@ impl AssistantContext {
                 cx,
             );
         }
-    }
-
-    fn reparse_patches_in_range(
-        &mut self,
-        range: Range<text::Anchor>,
-        buffer: &BufferSnapshot,
-        updated: &mut Vec<Range<text::Anchor>>,
-        removed: &mut Vec<Range<text::Anchor>>,
-        cx: &mut Context<Self>,
-    ) {
-        // Rebuild the XML tags in the edited range.
-        let intersecting_tags_range =
-            self.indices_intersecting_buffer_range(&self.xml_tags, range.clone(), cx);
-        let new_tags = self.parse_xml_tags_in_range(buffer, range.clone(), cx);
-        self.xml_tags
-            .splice(intersecting_tags_range.clone(), new_tags);
-
-        // Find which patches intersect the changed range.
-        let intersecting_patches_range =
-            self.indices_intersecting_buffer_range(&self.patches, range.clone(), cx);
-
-        // Reparse all tags after the last unchanged patch before the change.
-        let mut tags_start_ix = 0;
-        if let Some(preceding_unchanged_patch) =
-            self.patches[..intersecting_patches_range.start].last()
-        {
-            tags_start_ix = match self.xml_tags.binary_search_by(|tag| {
-                tag.range
-                    .start
-                    .cmp(&preceding_unchanged_patch.range.end, buffer)
-                    .then(Ordering::Less)
-            }) {
-                Ok(ix) | Err(ix) => ix,
-            };
-        }
-
-        // Rebuild the patches in the range.
-        let new_patches = self.parse_patches(tags_start_ix, range.end, buffer, cx);
-        updated.extend(new_patches.iter().map(|patch| patch.range.clone()));
-        let removed_patches = self.patches.splice(intersecting_patches_range, new_patches);
-        removed.extend(
-            removed_patches
-                .map(|patch| patch.range)
-                .filter(|range| !updated.contains(&range)),
-        );
-    }
-
-    fn parse_xml_tags_in_range(
-        &self,
-        buffer: &BufferSnapshot,
-        range: Range<text::Anchor>,
-        cx: &App,
-    ) -> Vec<XmlTag> {
-        let mut messages = self.messages(cx).peekable();
-
-        let mut tags = Vec::new();
-        let mut lines = buffer.text_for_range(range).lines();
-        let mut offset = lines.offset();
-
-        while let Some(line) = lines.next() {
-            while let Some(message) = messages.peek() {
-                if offset < message.offset_range.end {
-                    break;
-                } else {
-                    messages.next();
-                }
-            }
-
-            let is_assistant_message = messages
-                .peek()
-                .map_or(false, |message| message.role == Role::Assistant);
-            if is_assistant_message {
-                for (start_ix, _) in line.match_indices('<') {
-                    let mut name_start_ix = start_ix + 1;
-                    let closing_bracket_ix = line[start_ix..].find('>').map(|i| start_ix + i);
-                    if let Some(closing_bracket_ix) = closing_bracket_ix {
-                        let end_ix = closing_bracket_ix + 1;
-                        let mut is_open_tag = true;
-                        if line[name_start_ix..closing_bracket_ix].starts_with('/') {
-                            name_start_ix += 1;
-                            is_open_tag = false;
-                        }
-                        let tag_inner = &line[name_start_ix..closing_bracket_ix];
-                        let tag_name_len = tag_inner
-                            .find(|c: char| c.is_whitespace())
-                            .unwrap_or(tag_inner.len());
-                        if let Ok(kind) = XmlTagKind::from_str(&tag_inner[..tag_name_len]) {
-                            tags.push(XmlTag {
-                                range: buffer.anchor_after(offset + start_ix)
-                                    ..buffer.anchor_before(offset + end_ix),
-                                is_open_tag,
-                                kind,
-                            });
-                        };
-                    }
-                }
-            }
-
-            offset = lines.offset();
-        }
-        tags
-    }
-
-    fn parse_patches(
-        &mut self,
-        tags_start_ix: usize,
-        buffer_end: text::Anchor,
-        buffer: &BufferSnapshot,
-        cx: &App,
-    ) -> Vec<AssistantPatch> {
-        let mut new_patches = Vec::new();
-        let mut pending_patch = None;
-        let mut patch_tag_depth = 0;
-        let mut tags = self.xml_tags[tags_start_ix..].iter().peekable();
-        'tags: while let Some(tag) = tags.next() {
-            if tag.range.start.cmp(&buffer_end, buffer).is_gt() && patch_tag_depth == 0 {
-                break;
-            }
-
-            if tag.kind == XmlTagKind::Patch && tag.is_open_tag {
-                patch_tag_depth += 1;
-                let patch_start = tag.range.start;
-                let mut edits = Vec::<Result<AssistantEdit>>::new();
-                let mut patch = AssistantPatch {
-                    range: patch_start..patch_start,
-                    title: String::new().into(),
-                    edits: Default::default(),
-                    status: crate::AssistantPatchStatus::Pending,
-                };
-
-                while let Some(tag) = tags.next() {
-                    if tag.kind == XmlTagKind::Patch && !tag.is_open_tag {
-                        patch_tag_depth -= 1;
-                        if patch_tag_depth == 0 {
-                            patch.range.end = tag.range.end;
-
-                            // Include the line immediately after this <patch> tag if it's empty.
-                            let patch_end_offset = patch.range.end.to_offset(buffer);
-                            let mut patch_end_chars = buffer.chars_at(patch_end_offset);
-                            if patch_end_chars.next() == Some('\n')
-                                && patch_end_chars.next().map_or(true, |ch| ch == '\n')
-                            {
-                                let messages = self.messages_for_offsets(
-                                    [patch_end_offset, patch_end_offset + 1],
-                                    cx,
-                                );
-                                if messages.len() == 1 {
-                                    patch.range.end = buffer.anchor_before(patch_end_offset + 1);
-                                }
-                            }
-
-                            edits.sort_unstable_by(|a, b| {
-                                if let (Ok(a), Ok(b)) = (a, b) {
-                                    a.path.cmp(&b.path)
-                                } else {
-                                    Ordering::Equal
-                                }
-                            });
-                            patch.edits = edits.into();
-                            patch.status = AssistantPatchStatus::Ready;
-                            new_patches.push(patch);
-                            continue 'tags;
-                        }
-                    }
-
-                    if tag.kind == XmlTagKind::Title && tag.is_open_tag {
-                        let content_start = tag.range.end;
-                        while let Some(tag) = tags.next() {
-                            if tag.kind == XmlTagKind::Title && !tag.is_open_tag {
-                                let content_end = tag.range.start;
-                                patch.title =
-                                    trimmed_text_in_range(buffer, content_start..content_end)
-                                        .into();
-                                break;
-                            }
-                        }
-                    }
-
-                    if tag.kind == XmlTagKind::Edit && tag.is_open_tag {
-                        let mut path = None;
-                        let mut old_text = None;
-                        let mut new_text = None;
-                        let mut operation = None;
-                        let mut description = None;
-
-                        while let Some(tag) = tags.next() {
-                            if tag.kind == XmlTagKind::Edit && !tag.is_open_tag {
-                                edits.push(AssistantEdit::new(
-                                    path,
-                                    operation,
-                                    old_text,
-                                    new_text,
-                                    description,
-                                ));
-                                break;
-                            }
-
-                            if tag.is_open_tag
-                                && [
-                                    XmlTagKind::Path,
-                                    XmlTagKind::OldText,
-                                    XmlTagKind::NewText,
-                                    XmlTagKind::Operation,
-                                    XmlTagKind::Description,
-                                ]
-                                .contains(&tag.kind)
-                            {
-                                let kind = tag.kind;
-                                let content_start = tag.range.end;
-                                if let Some(tag) = tags.peek() {
-                                    if tag.kind == kind && !tag.is_open_tag {
-                                        let tag = tags.next().unwrap();
-                                        let content_end = tag.range.start;
-                                        let content = trimmed_text_in_range(
-                                            buffer,
-                                            content_start..content_end,
-                                        );
-                                        match kind {
-                                            XmlTagKind::Path => path = Some(content),
-                                            XmlTagKind::Operation => operation = Some(content),
-                                            XmlTagKind::OldText => {
-                                                old_text = Some(content).filter(|s| !s.is_empty())
-                                            }
-                                            XmlTagKind::NewText => {
-                                                new_text = Some(content).filter(|s| !s.is_empty())
-                                            }
-                                            XmlTagKind::Description => {
-                                                description =
-                                                    Some(content).filter(|s| !s.is_empty())
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                patch.edits = edits.into();
-                pending_patch = Some(patch);
-            }
-        }
-
-        if let Some(mut pending_patch) = pending_patch {
-            let patch_start = pending_patch.range.start.to_offset(buffer);
-            if let Some(message) = self.message_for_offset(patch_start, cx) {
-                if message.anchor_range.end == text::Anchor::MAX {
-                    pending_patch.range.end = text::Anchor::MAX;
-                } else {
-                    let message_end = buffer.anchor_after(message.offset_range.end - 1);
-                    pending_patch.range.end = message_end;
-                }
-            } else {
-                pending_patch.range.end = text::Anchor::MAX;
-            }
-
-            new_patches.push(pending_patch);
-        }
-
-        new_patches
     }
 
     pub fn pending_command_for_position(
@@ -2298,24 +1934,22 @@ impl AssistantContext {
         })
     }
 
-    pub fn assist(
-        &mut self,
-        request_type: RequestType,
-        cx: &mut Context<Self>,
-    ) -> Option<MessageAnchor> {
+    pub fn assist(&mut self, cx: &mut Context<Self>) -> Option<MessageAnchor> {
         let model_registry = LanguageModelRegistry::read_global(cx);
-        let provider = model_registry.active_provider()?;
-        let model = model_registry.active_model()?;
+        let model = model_registry.default_model()?;
         let last_message_id = self.get_last_valid_message_id(cx)?;
 
-        if !provider.is_authenticated(cx) {
+        if !model.provider.is_authenticated(cx) {
             log::info!("completion provider has no credentials");
             return None;
         }
+
+        let model = model.model;
+
         // Compute which messages to cache, including the last one.
         self.mark_cache_anchors(&model.cache_configuration(), false, cx);
 
-        let request = self.to_completion_request(request_type, cx);
+        let request = self.to_completion_request(Some(&model), cx);
 
         let assistant_message = self
             .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
@@ -2365,11 +1999,12 @@ impl AssistantContext {
                                     });
 
                                 match event {
+                                    LanguageModelCompletionEvent::StatusUpdate { .. } => {}
                                     LanguageModelCompletionEvent::StartMessage { .. } => {}
                                     LanguageModelCompletionEvent::Stop(reason) => {
                                         stop_reason = reason;
                                     }
-                                    LanguageModelCompletionEvent::Thinking(chunk) => {
+                                    LanguageModelCompletionEvent::Thinking { text: chunk, .. } => {
                                         if thought_process_stack.is_empty() {
                                             let start =
                                                 buffer.anchor_before(message_old_end_offset);
@@ -2422,8 +2057,8 @@ impl AssistantContext {
                                             cx,
                                         );
                                     }
-                                    LanguageModelCompletionEvent::ToolUse(_) => {}
-                                    LanguageModelCompletionEvent::UsageUpdate(_) => {}
+                                    LanguageModelCompletionEvent::ToolUse(_) |
+                                    LanguageModelCompletionEvent::UsageUpdate(_)  => {}
                                 }
                             });
 
@@ -2494,7 +2129,7 @@ impl AssistantContext {
                         .language()
                         .map(|language| language.name());
                     report_assistant_event(
-                        AssistantEvent {
+                        AssistantEventData {
                             conversation_id: Some(this.id.0.clone()),
                             kind: AssistantKind::Panel,
                             phase: AssistantPhase::Response,
@@ -2532,9 +2167,29 @@ impl AssistantContext {
         Some(user_message)
     }
 
+    pub fn to_xml(&self, cx: &App) -> String {
+        let mut output = String::new();
+        let buffer = self.buffer.read(cx);
+        for message in self.messages(cx) {
+            if message.status != MessageStatus::Done {
+                continue;
+            }
+
+            writeln!(&mut output, "<{}>", message.role).unwrap();
+            for chunk in buffer.text_for_range(message.offset_range) {
+                output.push_str(chunk);
+            }
+            if !output.ends_with('\n') {
+                output.push('\n');
+            }
+            writeln!(&mut output, "</{}>", message.role).unwrap();
+        }
+        output
+    }
+
     pub fn to_completion_request(
         &self,
-        request_type: RequestType,
+        model: Option<&Arc<dyn LanguageModel>>,
         cx: &App,
     ) -> LanguageModelRequest {
         let buffer = self.buffer.read(cx);
@@ -2551,10 +2206,15 @@ impl AssistantContext {
         }
 
         let mut completion_request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            mode: None,
             messages: Vec::new(),
             tools: Vec::new(),
+            tool_choice: None,
             stop: Vec::new(),
-            temperature: None,
+            temperature: model
+                .and_then(|model| AssistantSettings::temperature_for_model(model, cx)),
         };
         for message in self.messages(cx) {
             if message.status != MessageStatus::Done {
@@ -2605,25 +2265,8 @@ impl AssistantContext {
                     .map(MessageContent::Text),
             );
 
-            completion_request.messages.push(request_message);
-        }
-
-        if let RequestType::SuggestEdits = request_type {
-            if let Ok(preamble) = self.prompt_builder.generate_suggest_edits_prompt() {
-                let last_elem_index = completion_request.messages.len();
-
-                completion_request
-                    .messages
-                    .push(LanguageModelRequestMessage {
-                        role: Role::User,
-                        content: vec![MessageContent::Text(preamble)],
-                        cache: false,
-                    });
-
-                // The preamble message should be sent right before the last actual user message.
-                completion_request
-                    .messages
-                    .swap(last_elem_index, last_elem_index.saturating_sub(1));
+            if !request_message.contents_empty() {
+                completion_request.messages.push(request_message);
             }
         }
 
@@ -2660,17 +2303,6 @@ impl AssistantContext {
             if ids.contains(&message.id) {
                 ranges.push(message.anchor_range.clone());
             }
-        }
-
-        let buffer = self.buffer.read(cx).text_snapshot();
-        let mut updated = Vec::new();
-        let mut removed = Vec::new();
-        for range in ranges {
-            self.reparse_patches_in_range(range, &buffer, &mut updated, &mut removed, cx);
-        }
-
-        if !updated.is_empty() || !removed.is_empty() {
-            cx.emit(ContextEvent::PatchesUpdated { removed, updated })
         }
     }
 
@@ -2939,20 +2571,17 @@ impl AssistantContext {
         self.message_anchors.insert(insertion_ix, new_anchor);
     }
 
-    pub fn summarize(&mut self, replace_old: bool, cx: &mut Context<Self>) {
-        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
-            return;
-        };
-        let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
+    pub fn summarize(&mut self, mut replace_old: bool, cx: &mut Context<Self>) {
+        let Some(model) = LanguageModelRegistry::read_global(cx).default_model() else {
             return;
         };
 
         if replace_old || (self.message_anchors.len() >= 2 && self.summary.is_none()) {
-            if !provider.is_authenticated(cx) {
+            if !model.provider.is_authenticated(cx) {
                 return;
             }
 
-            let mut request = self.to_completion_request(RequestType::Chat, cx);
+            let mut request = self.to_completion_request(Some(&model.model), cx);
             request.messages.push(LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![
@@ -2962,9 +2591,20 @@ impl AssistantContext {
                 cache: false,
             });
 
-            self.pending_summary = cx.spawn(async move |this, cx| {
+            // If there is no summary, it is set with `done: false` so that "Loading Summary…" can
+            // be displayed.
+            if self.summary.is_none() {
+                self.summary = Some(ContextSummary {
+                    text: "".to_string(),
+                    done: false,
+                    timestamp: clock::Lamport::default(),
+                });
+                replace_old = true;
+            }
+
+            self.summary_task = cx.spawn(async move |this, cx| {
                 async move {
-                    let stream = model.stream_completion_text(request, &cx);
+                    let stream = model.model.stream_completion_text(request, &cx);
                     let mut messages = stream.await?;
 
                     let mut replaced = !replace_old;
@@ -2987,6 +2627,7 @@ impl AssistantContext {
                             };
                             this.push_op(operation, cx);
                             cx.emit(ContextEvent::SummaryChanged);
+                            cx.emit(ContextEvent::SummaryGenerated);
                         })?;
 
                         // Stop if the LLM generated multiple lines.
@@ -3007,6 +2648,7 @@ impl AssistantContext {
                             };
                             this.push_op(operation, cx);
                             cx.emit(ContextEvent::SummaryChanged);
+                            cx.emit(ContextEvent::SummaryGenerated);
                         }
                     })?;
 
@@ -3160,7 +2802,7 @@ impl AssistantContext {
                 fs.atomic_write(new_path.clone(), serde_json::to_string(&context).unwrap())
                     .await?;
                 if let Some(old_path) = old_path {
-                    if new_path != old_path {
+                    if new_path.as_path() != old_path.as_ref() {
                         fs.remove_file(
                             &old_path,
                             RemoveOptions {
@@ -3172,14 +2814,14 @@ impl AssistantContext {
                     }
                 }
 
-                this.update(cx, |this, _| this.path = Some(new_path))?;
+                this.update(cx, |this, _| this.path = Some(new_path.into()))?;
             }
 
             Ok(())
         });
     }
 
-    pub fn custom_summary(&mut self, custom_summary: String, cx: &mut Context<Self>) {
+    pub fn set_custom_summary(&mut self, custom_summary: String, cx: &mut Context<Self>) {
         let timestamp = self.next_timestamp();
         let summary = self.summary.get_or_insert(ContextSummary::default());
         summary.timestamp = timestamp;
@@ -3187,24 +2829,15 @@ impl AssistantContext {
         summary.text = custom_summary;
         cx.emit(ContextEvent::SummaryChanged);
     }
-}
 
-fn trimmed_text_in_range(buffer: &BufferSnapshot, range: Range<text::Anchor>) -> String {
-    let mut is_start = true;
-    let mut content = buffer
-        .text_for_range(range)
-        .map(|mut chunk| {
-            if is_start {
-                chunk = chunk.trim_start_matches('\n');
-                if !chunk.is_empty() {
-                    is_start = false;
-                }
-            }
-            chunk
-        })
-        .collect::<String>();
-    content.truncate(content.trim_end().len());
-    content
+    pub const DEFAULT_SUMMARY: SharedString = SharedString::new_static("New Text Thread");
+
+    pub fn summary_or_default(&self) -> SharedString {
+        self.summary
+            .as_ref()
+            .map(|summary| summary.text.clone().into())
+            .unwrap_or(Self::DEFAULT_SUMMARY)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -3559,6 +3192,6 @@ impl SavedContextV0_1_0 {
 #[derive(Debug, Clone)]
 pub struct SavedContextMetadata {
     pub title: String,
-    pub path: PathBuf,
+    pub path: Arc<Path>,
     pub mtime: chrono::DateTime<chrono::Local>,
 }

@@ -1,7 +1,7 @@
 //! Handles conversions of `language` items to and from the [`rpc`] protocol.
 
-use crate::{diagnostic_set::DiagnosticEntry, CursorShape, Diagnostic};
-use anyhow::{anyhow, Context as _, Result};
+use crate::{CursorShape, Diagnostic, diagnostic_set::DiagnosticEntry};
+use anyhow::{Context as _, Result, anyhow};
 use clock::ReplicaId;
 use lsp::{DiagnosticSeverity, LanguageServerId};
 use rpc::proto;
@@ -9,7 +9,7 @@ use serde_json::Value;
 use std::{ops::Range, str::FromStr, sync::Arc};
 use text::*;
 
-pub use proto::{BufferState, Operation};
+pub use proto::{BufferState, File, Operation};
 
 /// Deserializes a `[text::LineEnding]` from the RPC representation.
 pub fn deserialize_line_ending(message: proto::LineEnding) -> text::LineEnding {
@@ -203,6 +203,7 @@ pub fn serialize_diagnostics<'a>(
             start: Some(serialize_anchor(&entry.range.start)),
             end: Some(serialize_anchor(&entry.range.end)),
             message: entry.diagnostic.message.clone(),
+            markdown: entry.diagnostic.markdown.clone(),
             severity: match entry.diagnostic.severity {
                 DiagnosticSeverity::ERROR => proto::diagnostic::Severity::Error,
                 DiagnosticSeverity::WARNING => proto::diagnostic::Severity::Warning,
@@ -213,6 +214,11 @@ pub fn serialize_diagnostics<'a>(
             group_id: entry.diagnostic.group_id as u64,
             is_primary: entry.diagnostic.is_primary,
             code: entry.diagnostic.code.as_ref().map(|s| s.to_string()),
+            code_description: entry
+                .diagnostic
+                .code_description
+                .as_ref()
+                .map(|s| s.to_string()),
             is_disk_based: entry.diagnostic.is_disk_based,
             is_unnecessary: entry.diagnostic.is_unnecessary,
             data: entry.diagnostic.data.as_ref().map(|data| data.to_string()),
@@ -417,8 +423,12 @@ pub fn deserialize_diagnostics(
                         proto::diagnostic::Severity::None => return None,
                     },
                     message: diagnostic.message,
+                    markdown: diagnostic.markdown,
                     group_id: diagnostic.group_id as usize,
                     code: diagnostic.code.map(lsp::NumberOrString::from_string),
+                    code_description: diagnostic
+                        .code_description
+                        .and_then(|s| lsp::Url::parse(&s).ok()),
                     is_primary: diagnostic.is_primary,
                     is_disk_based: diagnostic.is_disk_based,
                     is_unnecessary: diagnostic.is_unnecessary,

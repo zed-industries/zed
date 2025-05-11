@@ -17,20 +17,25 @@ test-support = []
 [dependencies]
 anyhow.workspace = true
 client.workspace = true
+component.workspace = true
 db.workspace = true
+documented.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 install_cli.workspace = true
 language.workspace = true
+linkme.workspace = true
 picker.workspace = true
 project.workspace = true
 schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 telemetry.workspace = true
+theme.workspace = true
 ui.workspace = true
 util.workspace = true
 vim_mode_setting.workspace = true
+workspace-hack.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 

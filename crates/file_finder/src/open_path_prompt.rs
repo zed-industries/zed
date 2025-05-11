@@ -1,16 +1,16 @@
 use futures::channel::oneshot;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use picker::{Picker, PickerDelegate};
-use project::DirectoryLister;
+use project::{DirectoryItem, DirectoryLister};
 use std::{
-    path::{Path, PathBuf, MAIN_SEPARATOR_STR},
+    path::{MAIN_SEPARATOR_STR, Path, PathBuf},
     sync::{
-        atomic::{self, AtomicBool},
         Arc,
+        atomic::{self, AtomicBool},
     },
 };
-use ui::{prelude::*, HighlightedLabel, ListItemSpacing};
 use ui::{Context, ListItem, Window};
+use ui::{HighlightedLabel, ListItemSpacing, prelude::*};
 use util::{maybe, paths::compare_paths};
 use workspace::Workspace;
 
@@ -137,6 +137,7 @@ impl PickerDelegate for OpenPathDelegate {
         } else {
             (query, String::new())
         };
+
         if dir == "" {
             #[cfg(not(target_os = "windows"))]
             {
@@ -171,6 +172,13 @@ impl PickerDelegate for OpenPathDelegate {
                 this.update(cx, |this, _| {
                     this.delegate.directory_state = Some(match paths {
                         Ok(mut paths) => {
+                            if dir == "/" {
+                                paths.push(DirectoryItem {
+                                    is_dir: true,
+                                    path: Default::default(),
+                                });
+                            }
+
                             paths.sort_by(|a, b| compare_paths((&a.path, true), (&b.path, true)));
                             let match_candidates = paths
                                 .iter()
@@ -309,12 +317,16 @@ impl PickerDelegate for OpenPathDelegate {
         let Some(candidate) = directory_state.match_candidates.get(*m) else {
             return;
         };
-        let result = Path::new(
-            self.lister
-                .resolve_tilde(&directory_state.path, cx)
-                .as_ref(),
-        )
-        .join(&candidate.path.string);
+        let result = if directory_state.path == "/" && candidate.path.string.is_empty() {
+            PathBuf::from("/")
+        } else {
+            Path::new(
+                self.lister
+                    .resolve_tilde(&directory_state.path, cx)
+                    .as_ref(),
+            )
+            .join(&candidate.path.string)
+        };
         if let Some(tx) = self.tx.take() {
             tx.send(Some(vec![result])).ok();
         }
@@ -355,7 +367,11 @@ impl PickerDelegate for OpenPathDelegate {
                 .inset(true)
                 .toggle_state(selected)
                 .child(HighlightedLabel::new(
-                    candidate.path.string.clone(),
+                    if directory_state.path == "/" {
+                        format!("/{}", candidate.path.string)
+                    } else {
+                        candidate.path.string.clone()
+                    },
                     highlight_positions,
                 )),
         )

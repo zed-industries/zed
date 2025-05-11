@@ -7,7 +7,7 @@ use util::ResultExt;
 
 use std::sync::Arc;
 
-use gpui::{Entity, EventEmitter, Global};
+use gpui::{Entity, EventEmitter, Global, Task};
 use ui::prelude::*;
 use workspace::item::ItemHandle;
 use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace};
@@ -20,6 +20,7 @@ pub enum MigrationType {
 
 pub struct MigrationBanner {
     migration_type: Option<MigrationType>,
+    should_migrate_task: Option<Task<()>>,
 }
 
 pub enum MigrationEvent {
@@ -49,7 +50,7 @@ struct GlobalMigrationNotification(Entity<MigrationNotification>);
 impl Global for GlobalMigrationNotification {}
 
 impl MigrationBanner {
-    pub fn new(_: &Workspace, cx: &mut Context<'_, Self>) -> Self {
+    pub fn new(_: &Workspace, cx: &mut Context<Self>) -> Self {
         if let Some(notifier) = MigrationNotification::try_global(cx) {
             cx.subscribe(
                 &notifier,
@@ -61,6 +62,7 @@ impl MigrationBanner {
         }
         Self {
             migration_type: None,
+            should_migrate_task: None,
         }
     }
 
@@ -80,7 +82,7 @@ impl MigrationBanner {
         }
     }
 
-    fn handle_notification(&mut self, event: &MigrationEvent, cx: &mut Context<'_, Self>) {
+    fn handle_notification(&mut self, event: &MigrationEvent, cx: &mut Context<Self>) {
         match event {
             MigrationEvent::ContentChanged {
                 migration_type,
@@ -110,6 +112,7 @@ impl ToolbarItemView for MigrationBanner {
         cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
         cx.notify();
+        self.should_migrate_task.take();
         let Some(target) = active_pane_item
             .and_then(|item| item.act_as::<Editor>(cx))
             .and_then(|editor| editor.update(cx, |editor, cx| editor.target_file_abs_path(cx)))
@@ -121,7 +124,7 @@ impl ToolbarItemView for MigrationBanner {
             self.migration_type = Some(MigrationType::Keymap);
             let fs = <dyn Fs>::global(cx);
             let should_migrate = should_migrate_keymap(fs);
-            cx.spawn_in(window, async move |this, cx| {
+            self.should_migrate_task = Some(cx.spawn_in(window, async move |this, cx| {
                 if let Ok(true) = should_migrate.await {
                     this.update(cx, |_, cx| {
                         cx.emit(ToolbarItemEvent::ChangeLocation(
@@ -131,13 +134,12 @@ impl ToolbarItemView for MigrationBanner {
                     })
                     .log_err();
                 }
-            })
-            .detach();
+            }));
         } else if &target == paths::settings_file() {
             self.migration_type = Some(MigrationType::Settings);
             let fs = <dyn Fs>::global(cx);
             let should_migrate = should_migrate_settings(fs);
-            cx.spawn_in(window, async move |this, cx| {
+            self.should_migrate_task = Some(cx.spawn_in(window, async move |this, cx| {
                 if let Ok(true) = should_migrate.await {
                     this.update(cx, |_, cx| {
                         cx.emit(ToolbarItemEvent::ChangeLocation(
@@ -147,8 +149,7 @@ impl ToolbarItemView for MigrationBanner {
                     })
                     .log_err();
                 }
-            })
-            .detach();
+            }));
         }
 
         return ToolbarItemLocation::Hidden;

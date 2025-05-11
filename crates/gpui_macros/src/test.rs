@@ -3,8 +3,8 @@ use proc_macro2::Ident;
 use quote::{format_ident, quote};
 use std::mem;
 use syn::{
-    parse_quote, spanned::Spanned, AttributeArgs, FnArg, ItemFn, Lit, Meta, MetaList, NestedMeta,
-    PathSegment, Type,
+    AttributeArgs, FnArg, ItemFn, Lit, Meta, MetaList, NestedMeta, PathSegment, Type, parse_quote,
+    spanned::Spanned,
 };
 
 pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
@@ -104,7 +104,7 @@ fn try_test(args: Vec<NestedMeta>, function: TokenStream) -> Result<TokenStream,
                         {
                             let cx_varname = format_ident!("cx_{}", ix);
                             cx_vars.extend(quote!(
-                                let mut #cx_varname = gpui::TestAppContext::new(
+                                let mut #cx_varname = gpui::TestAppContext::build(
                                     dispatcher.clone(),
                                     Some(stringify!(#outer_fn_name)),
                                 );
@@ -166,7 +166,7 @@ fn try_test(args: Vec<NestedMeta>, function: TokenStream) -> Result<TokenStream,
                                 let cx_varname = format_ident!("cx_{}", ix);
                                 let cx_varname_lock = format_ident!("cx_{}_lock", ix);
                                 cx_vars.extend(quote!(
-                                    let mut #cx_varname = gpui::TestAppContext::new(
+                                    let mut #cx_varname = gpui::TestAppContext::build(
                                        dispatcher.clone(),
                                        Some(stringify!(#outer_fn_name))
                                     );
@@ -184,7 +184,7 @@ fn try_test(args: Vec<NestedMeta>, function: TokenStream) -> Result<TokenStream,
                             Some("TestAppContext") => {
                                 let cx_varname = format_ident!("cx_{}", ix);
                                 cx_vars.extend(quote!(
-                                    let mut #cx_varname = gpui::TestAppContext::new(
+                                    let mut #cx_varname = gpui::TestAppContext::build(
                                         dispatcher.clone(),
                                         Some(stringify!(#outer_fn_name))
                                     );
