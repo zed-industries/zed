@@ -1418,7 +1418,8 @@
     },
     "Git Commit": {
       "allow_rewrap": "anywhere",
-      "preferred_line_length": 72
+      "preferred_line_length": 72,
+      "soft_wrap": "bounded"
     },
     "Go": {
       "code_actions_on_format": {

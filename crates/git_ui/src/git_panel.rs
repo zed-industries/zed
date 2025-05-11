@@ -384,7 +384,6 @@ pub(crate) fn commit_message_editor(
     commit_editor.set_show_gutter(false, cx);
     commit_editor.set_show_wrap_guides(false, cx);
     commit_editor.set_show_indent_guides(false, cx);
-    commit_editor.set_soft_wrap_mode(SoftWrap::Bounded, cx);
     let placeholder = placeholder.unwrap_or("Enter commit message".into());
     commit_editor.set_placeholder_text(placeholder, cx);
     commit_editor
@@ -1499,7 +1498,7 @@ impl GitPanel {
                 String::new(),
                 message,
                 width,
-                NonZeroU32::new(8).unwrap(), // tab size doesn't matter when no prefix
+                NonZeroU32::new(8).unwrap(), // tab size doesn't matter when prefix is empty
                 false,
             );
             return Some(message);

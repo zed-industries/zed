@@ -7188,10 +7188,7 @@ impl Element for EditorElement {
                         editor.gutter_dimensions = gutter_dimensions;
                         editor.set_visible_line_count(bounds.size.height / line_height, window, cx);
 
-                        if matches!(
-                            editor.mode,
-                            EditorMode::AutoHeight { .. } | EditorMode::Minimap { .. }
-                        ) {
+                        if matches!(editor.mode, EditorMode::Minimap { .. }) {
                             snapshot
                         } else {
                             let wrap_width_for = |column: u32| (column as f32 * em_advance).ceil();
@@ -9175,6 +9172,7 @@ fn compute_auto_height_layout(
     let font_size = style.text.font_size.to_pixels(window.rem_size());
     let line_height = style.text.line_height_in_pixels(window.rem_size());
     let em_width = window.text_system().em_width(font_id, font_size).unwrap();
+    let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
 
     let mut snapshot = editor.snapshot(window, cx);
     let gutter_dimensions = snapshot
@@ -9186,10 +9184,18 @@ fn compute_auto_height_layout(
     let overscroll = size(em_width, px(0.));
 
     let editor_width = text_width - gutter_dimensions.margin - overscroll.width - em_width;
-    if !matches!(editor.soft_wrap_mode(cx), SoftWrap::None) {
-        if editor.set_wrap_width(Some(editor_width), cx) {
-            snapshot = editor.snapshot(window, cx);
-        }
+    let content_offset = point(gutter_dimensions.margin, Pixels::ZERO);
+    let editor_content_width = editor_width - content_offset.x;
+    let wrap_width_for = |column: u32| (column as f32 * em_advance).ceil();
+    let wrap_width = match editor.soft_wrap_mode(cx) {
+        SoftWrap::GitDiff => None,
+        SoftWrap::None => Some(wrap_width_for(MAX_LINE_LEN as u32 / 2)),
+        SoftWrap::EditorWidth => Some(editor_content_width),
+        SoftWrap::Column(column) => Some(wrap_width_for(column)),
+        SoftWrap::Bounded(column) => Some(editor_content_width.min(wrap_width_for(column))),
+    };
+    if editor.set_wrap_width(wrap_width, cx) {
+        snapshot = editor.snapshot(window, cx);
     }
 
     let scroll_height = (snapshot.max_point().row().next_row().0 as f32) * line_height;
