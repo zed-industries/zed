@@ -4044,8 +4044,8 @@ async fn get_llm_api_token(
 fn to_axum_message(message: TungsteniteMessage) -> anyhow::Result<AxumMessage> {
     let message = match message {
         TungsteniteMessage::Text(payload) => AxumMessage::Text(payload.to_string().into()),
-        TungsteniteMessage::Binary(payload) => AxumMessage::Binary(payload.into()),
-        TungsteniteMessage::Ping(payload) => AxumMessage::Ping(payload.into()),
+        TungsteniteMessage::Binary(payload) => AxumMessage::Binary(payload),
+        TungsteniteMessage::Ping(payload) => AxumMessage::Ping(payload),
         TungsteniteMessage::Pong(payload) => AxumMessage::Pong(payload),
         TungsteniteMessage::Close(frame) => AxumMessage::Close(frame.map(|frame| AxumCloseFrame {
             code: frame.code.into(),
@@ -4070,9 +4070,9 @@ fn to_axum_message(message: TungsteniteMessage) -> anyhow::Result<AxumMessage> {
 fn to_tungstenite_message(message: AxumMessage) -> TungsteniteMessage {
     match message {
         AxumMessage::Text(payload) => TungsteniteMessage::Text(payload.to_string().into()),
-        AxumMessage::Binary(payload) => TungsteniteMessage::Binary(payload.into()),
-        AxumMessage::Ping(payload) => TungsteniteMessage::Ping(payload.into()),
-        AxumMessage::Pong(payload) => TungsteniteMessage::Pong(payload.into()),
+        AxumMessage::Binary(payload) => TungsteniteMessage::Binary(payload),
+        AxumMessage::Ping(payload) => TungsteniteMessage::Ping(payload),
+        AxumMessage::Pong(payload) => TungsteniteMessage::Pong(payload),
         AxumMessage::Close(frame) => {
             TungsteniteMessage::Close(frame.map(|frame| TungsteniteCloseFrame {
                 code: frame.code.into(),
