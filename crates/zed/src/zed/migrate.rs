@@ -23,7 +23,7 @@ pub enum MigrationType {
 pub struct MigrationBanner {
     migration_type: Option<MigrationType>,
     should_migrate_task: Option<Task<()>>,
-    markdown_entity: Option<Entity<Markdown>>,
+    markdown: Option<Entity<Markdown>>,
 }
 
 pub enum MigrationEvent {
@@ -66,23 +66,7 @@ impl MigrationBanner {
         Self {
             migration_type: None,
             should_migrate_task: None,
-            markdown_entity: None,
-        }
-    }
-
-    fn backup_file_name(&self) -> String {
-        match self.migration_type {
-            Some(MigrationType::Keymap) => paths::keymap_backup_file()
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned(),
-            Some(MigrationType::Settings) => paths::settings_backup_file()
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned(),
-            None => String::new(),
+            markdown: None,
         }
     }
 
@@ -105,23 +89,45 @@ impl MigrationBanner {
         }
     }
 
-    fn update_banner_text(&mut self, cx: &mut Context<Self>) {
-        let file_type = match self.migration_type {
-            Some(MigrationType::Keymap) => "keymap",
-            Some(MigrationType::Settings) => "settings",
+    fn show(&mut self, cx: &mut Context<Self>) {
+        let (file_type, backup_file_name) = match self.migration_type {
+            Some(MigrationType::Keymap) => (
+                "keymap",
+                paths::keymap_backup_file()
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            Some(MigrationType::Settings) => (
+                "settings",
+                paths::settings_backup_file()
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
             None => return,
         };
 
-        let backup_file_name = self.backup_file_name();
         let migration_text = format!(
             "Your {} file uses deprecated settings which can be \
             automatically updated. A backup will be saved to `{}`",
             file_type, backup_file_name
         );
 
-        self.markdown_entity =
-            Some(cx.new(|cx| Markdown::new(migration_text.into(), None, None, cx)));
+        self.markdown = Some(cx.new(|cx| Markdown::new(migration_text.into(), None, None, cx)));
 
+        cx.emit(ToolbarItemEvent::ChangeLocation(
+            ToolbarItemLocation::Secondary,
+        ));
+        cx.notify();
+    }
+
+    fn reset(&mut self, cx: &mut Context<Self>) {
+        self.should_migrate_task.take();
+        self.migration_type.take();
+        self.markdown.take();
         cx.notify();
     }
 }
@@ -135,8 +141,8 @@ impl ToolbarItemView for MigrationBanner {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
-        cx.notify();
-        self.should_migrate_task.take();
+        self.reset(cx);
+
         let Some(target) = active_pane_item
             .and_then(|item| item.act_as::<Editor>(cx))
             .and_then(|editor| editor.update(cx, |editor, cx| editor.target_file_abs_path(cx)))
@@ -151,27 +157,19 @@ impl ToolbarItemView for MigrationBanner {
             self.should_migrate_task = Some(cx.spawn_in(window, async move |this, cx| {
                 if let Ok(true) = should_migrate.await {
                     this.update(cx, |this, cx| {
-                        this.update_banner_text(cx);
-                        cx.emit(ToolbarItemEvent::ChangeLocation(
-                            ToolbarItemLocation::Secondary,
-                        ));
-                        cx.notify();
+                        this.show(cx);
                     })
                     .log_err();
                 }
             }));
         } else if &target == paths::settings_file() {
             self.migration_type = Some(MigrationType::Settings);
-            self.update_banner_text(cx);
             let fs = <dyn Fs>::global(cx);
             let should_migrate = should_migrate_settings(fs);
             self.should_migrate_task = Some(cx.spawn_in(window, async move |this, cx| {
                 if let Ok(true) = should_migrate.await {
-                    this.update(cx, |_, cx| {
-                        cx.emit(ToolbarItemEvent::ChangeLocation(
-                            ToolbarItemLocation::Secondary,
-                        ));
-                        cx.notify();
+                    this.update(cx, |this, cx| {
+                        this.show(cx);
                     })
                     .log_err();
                 }
@@ -197,6 +195,7 @@ impl Render for MigrationBanner {
             .border_1()
             .border_color(cx.theme().colors().border_variant)
             .rounded_sm()
+            .max_h_16()
             .child(
                 h_flex()
                     .gap_2()
@@ -210,10 +209,10 @@ impl Render for MigrationBanner {
                         div()
                             .overflow_hidden()
                             .text_size(TextSize::Default.rems(cx))
-                            .when_some(self.markdown_entity.as_ref(), |parent, markdown_entity| {
-                                parent.child(
+                            .when_some(self.markdown.as_ref(), |this, markdown| {
+                                this.child(
                                     MarkdownElement::new(
-                                        markdown_entity.clone(),
+                                        markdown.clone(),
                                         MarkdownStyle {
                                             base_text_style: TextStyle {
                                                 color: cx.theme().colors().text,
