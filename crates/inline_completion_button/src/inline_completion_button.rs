@@ -237,11 +237,17 @@ impl Render for InlineCompletionButton {
 
                 let current_user_terms_accepted =
                     self.user_store.read(cx).current_user_has_accepted_terms();
+                let has_subscription = self.user_store.read(cx).current_plan().is_some()
+                    && self.user_store.read(cx).subscription_period().is_some();
 
-                if !current_user_terms_accepted.unwrap_or(false) {
+                if !has_subscription || !current_user_terms_accepted.unwrap_or(false) {
                     let signed_in = current_user_terms_accepted.is_some();
                     let tooltip_meta = if signed_in {
-                        "Read Terms of Service"
+                        if has_subscription {
+                            "Read Terms of Service"
+                        } else {
+                            "Choose a Plan"
+                        }
                     } else {
                         "Sign in to use"
                     };

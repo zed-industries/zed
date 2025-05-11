@@ -57,8 +57,8 @@ impl LlmTokenClaims {
             subscription
                 .as_ref()
                 .and_then(|subscription| subscription.kind)
-                .map_or(Plan::Free, |kind| match kind {
-                    SubscriptionKind::ZedFree => Plan::Free,
+                .map_or(Plan::ZedFree, |kind| match kind {
+                    SubscriptionKind::ZedFree => Plan::ZedFree,
                     SubscriptionKind::ZedPro => Plan::ZedPro,
                     SubscriptionKind::ZedProTrial => Plan::ZedProTrial,
                 })
@@ -66,7 +66,7 @@ impl LlmTokenClaims {
         let subscription_period =
             billing_subscription::Model::current_period(subscription, is_staff)
                 .map(|(start, end)| (start.naive_utc(), end.naive_utc()))
-                .ok_or_else(|| anyhow!("missing subscription period"))?;
+                .ok_or_else(|| anyhow!("A plan is required to use Zed's hosted models or edit predictions. Visit https://zed.dev/account to get started."))?;
 
         let now = Utc::now();
         let claims = Self {

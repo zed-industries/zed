@@ -3068,6 +3068,7 @@ dependencies = [
  "gpui",
  "http_client",
  "language",
+ "log",
  "menu",
  "notifications",
  "picker",
@@ -3180,33 +3181,6 @@ dependencies = [
  "parking_lot",
  "strum 0.27.1",
  "theme",
- "workspace-hack",
-]
-
-[[package]]
-name = "component_preview"
-version = "0.1.0"
-dependencies = [
- "agent",
- "anyhow",
- "assistant_tool",
- "client",
- "collections",
- "component",
- "db",
- "futures 0.3.31",
- "gpui",
- "indoc",
- "languages",
- "log",
- "notifications",
- "project",
- "prompt_store",
- "serde",
- "ui",
- "ui_input",
- "util",
- "workspace",
  "workspace-hack",
 ]
 
@@ -3534,9 +3508,9 @@ dependencies = [
 
 [[package]]
 name = "cosmic-text"
-version = "0.13.2"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e418dd4f5128c3e93eab12246391c54a20c496811131f85754dc8152ee207892"
+checksum = "3e1ecbb5db9a4c2ee642df67bcfa8f044dd867dbbaa21bfab139cbc204ffbf67"
 dependencies = [
  "bitflags 2.9.0",
  "fontdb 0.16.2",
@@ -18563,6 +18537,7 @@ dependencies = [
  "assets",
  "assistant_context_editor",
  "assistant_settings",
+ "assistant_tool",
  "assistant_tools",
  "async-watch",
  "audio",
@@ -18579,7 +18554,7 @@ dependencies = [
  "collab_ui",
  "collections",
  "command_palette",
- "component_preview",
+ "component",
  "copilot",
  "dap",
  "dap_adapters",
@@ -18605,6 +18580,7 @@ dependencies = [
  "gpui_tokio",
  "http_client",
  "image_viewer",
+ "indoc",
  "inline_completion_button",
  "install_cli",
  "journal",
@@ -18668,6 +18644,7 @@ dependencies = [
  "tree-sitter-md",
  "tree-sitter-rust",
  "ui",
+ "ui_input",
  "ui_prompt",
  "url",
  "urlencoding",
@@ -18742,9 +18719,9 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.8.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a23b2fd00776b0c55072f389654910ceb501eb0083d7f78905ab0e5cc86949ec"
+checksum = "16d993fc42f9ec43ab76fa46c6eb579a66e116bb08cd2bc9a67f3afcaa05d39d"
 dependencies = [
  "anyhow",
  "serde",
@@ -18952,6 +18929,7 @@ dependencies = [
  "paths",
  "postage",
  "project",
+ "proto",
  "regex",
  "release_channel",
  "reqwest_client",
