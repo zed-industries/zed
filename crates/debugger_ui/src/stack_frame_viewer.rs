@@ -3,7 +3,7 @@ use std::any::{Any, TypeId};
 use collections::HashMap;
 use dap::StackFrameId;
 use editor::{
-    Bias, DebugStackFrameLine, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer,
+    Anchor, Bias, DebugStackFrameLine, Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer,
     RowHighlightOptions, ToPoint,
 };
 use gpui::{
@@ -33,6 +33,7 @@ pub(crate) struct StackFrameViewer {
     project: Entity<Project>,
     active_session: Option<Entity<DebugSession>>,
     selected_stack_frame_id: Option<StackFrameId>,
+    highlights: Vec<(StackFrameId, Anchor)>,
     excerpt_for_frames: collections::HashMap<ExcerptId, StackFrameId>,
     refresh_task: Option<Task<Result<()>>>,
     _subscription: Option<Subscription>,
@@ -88,6 +89,7 @@ impl StackFrameViewer {
             workspace,
             project,
             excerpt_for_frames: HashMap::default(),
+            highlights: Vec::default(),
             active_session: None,
             selected_stack_frame_id: None,
             refresh_task: None,
@@ -120,6 +122,7 @@ impl StackFrameViewer {
                 }
                 StackFrameListEvent::SelectedStackFrameChanged(frame_id) => {
                     this.selected_stack_frame_id = Some(*frame_id);
+                    this.update_highlights(window, cx);
                 }
             },
         );
@@ -128,6 +131,7 @@ impl StackFrameViewer {
         self.active_session = Some(session);
         self.selected_stack_frame_id = stack_frame_id;
         self.excerpt_for_frames.clear();
+        self.highlights.clear();
         self.update_excerpts(window, cx);
     }
 
@@ -159,15 +163,6 @@ impl StackFrameViewer {
                     .update(cx, |session, cx| session.stack_frames(thread_id, cx))
             })
         });
-
-        let active_idx = self
-            .selected_stack_frame_id
-            .and_then(|id| {
-                stack_frames.iter().enumerate().find_map(|(idx, frame)| {
-                    if frame.dap.id == id { Some(idx) } else { None }
-                })
-            })
-            .unwrap_or(0);
 
         let frames_to_open: Vec<_> = stack_frames
             .into_iter()
@@ -212,9 +207,10 @@ impl StackFrameViewer {
                         this.multibuffer.update(cx, |multi_buffer, cx| {
                             let line_point = Point::new(line, 0);
 
+                            // Users will want to see what happened before an active debug line in most cases
                             let range = ExcerptRange {
-                                context: Point::new(line.saturating_sub(4), 0)
-                                    ..Point::new(line.saturating_add(4), 0),
+                                context: Point::new(line.saturating_sub(8), 0)
+                                    ..Point::new(line.saturating_add(1), 0),
                                 primary: line_point..line_point,
                             };
                             multi_buffer.push_excerpts(buffer.clone(), vec![range], cx);
@@ -225,7 +221,7 @@ impl StackFrameViewer {
                             if let Some(line_anchor) = line_anchor {
                                 this.excerpt_for_frames
                                     .insert(line_anchor.excerpt_id, stack_frame_id);
-                                to_highlights.push(line_anchor);
+                                to_highlights.push((stack_frame_id, line_anchor));
                             }
                         });
                     })
@@ -234,31 +230,8 @@ impl StackFrameViewer {
             }
 
             this.update_in(cx, |this, window, cx| {
-                this.editor.update(cx, |editor, cx| {
-                    let snapshot = editor.snapshot(window, cx).display_snapshot;
-                    let color = cx
-                        .theme()
-                        .colors()
-                        .editor_debugger_active_line_background
-                        .opacity(0.5);
-
-                    for highlight in to_highlights.iter().skip(active_idx + 1) {
-                        let position = highlight.to_point(&snapshot.buffer_snapshot);
-
-                        let start = snapshot
-                            .buffer_snapshot
-                            .clip_point(Point::new(position.row, 0), Bias::Left);
-                        let end = start + Point::new(1, 0);
-                        let start = snapshot.buffer_snapshot.anchor_before(start);
-                        let end = snapshot.buffer_snapshot.anchor_before(end);
-                        editor.highlight_rows::<DebugStackFrameLine>(
-                            start..end,
-                            color,
-                            RowHighlightOptions::default(),
-                            cx,
-                        );
-                    }
-                })
+                this.highlights = to_highlights;
+                this.update_highlights(window, cx);
             })
             .ok();
 
@@ -266,6 +239,69 @@ impl StackFrameViewer {
         });
 
         self.refresh_task = Some(task);
+    }
+
+    fn update_highlights(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.editor.update(cx, |editor, _| {
+            editor.clear_row_highlights::<DebugStackFrameLine>()
+        });
+        let Some(session) = self.active_session.clone() else {
+            self.multibuffer.update(cx, |buffer, cx| buffer.clear(cx));
+            return;
+        };
+
+        let Some(thread_id) = session
+            .read(cx)
+            .running_state()
+            .read(cx)
+            .selected_thread_id()
+        else {
+            self.multibuffer.update(cx, |buffer, cx| buffer.clear(cx));
+            return;
+        };
+
+        let stack_frames = session.update(cx, |session, cx| {
+            session.running_state().update(cx, |state, cx| {
+                state
+                    .session()
+                    .update(cx, |session, cx| session.stack_frames(thread_id, cx))
+            })
+        });
+
+        let active_idx = self
+            .selected_stack_frame_id
+            .and_then(|id| {
+                stack_frames.iter().enumerate().find_map(|(idx, frame)| {
+                    if frame.dap.id == id { Some(idx) } else { None }
+                })
+            })
+            .unwrap_or(0);
+
+        self.editor.update(cx, |editor, cx| {
+            let snapshot = editor.snapshot(window, cx).display_snapshot;
+            let color = cx
+                .theme()
+                .colors()
+                .editor_debugger_active_line_background
+                .opacity(0.5);
+
+            for (_, highlight) in self.highlights.iter().skip(active_idx + 1) {
+                let position = highlight.to_point(&snapshot.buffer_snapshot);
+
+                let start = snapshot
+                    .buffer_snapshot
+                    .clip_point(Point::new(position.row, 0), Bias::Left);
+                let end = start + Point::new(1, 0);
+                let start = snapshot.buffer_snapshot.anchor_before(start);
+                let end = snapshot.buffer_snapshot.anchor_before(end);
+                editor.highlight_rows::<DebugStackFrameLine>(
+                    start..end,
+                    color,
+                    RowHighlightOptions::default(),
+                    cx,
+                );
+            }
+        })
     }
 }
 

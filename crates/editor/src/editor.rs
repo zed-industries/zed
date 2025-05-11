@@ -13861,7 +13861,10 @@ impl Editor {
             Default::default(),
             cx,
         );
-        self.request_autoscroll(Autoscroll::center().for_anchor(start), cx);
+
+        if self.buffer.read(cx).is_singleton() {
+            self.request_autoscroll(Autoscroll::center().for_anchor(start), cx);
+        }
     }
 
     pub fn go_to_definition(
@@ -16867,6 +16870,7 @@ impl Editor {
 
                 handled = true;
                 self.clear_row_highlights::<ActiveDebugLine>();
+
                 self.go_to_line::<ActiveDebugLine>(
                     multibuffer_anchor,
                     Some(cx.theme().colors().editor_debugger_active_line_background),
