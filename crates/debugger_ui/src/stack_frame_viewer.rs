@@ -10,7 +10,7 @@ use gpui::{
     AnyView, App, AppContext, Entity, EventEmitter, Focusable, IntoElement, Render, SharedString,
     Subscription, Task, WeakEntity, Window,
 };
-use language::{Capability, Point, Selection, SelectionGoal};
+use language::{BufferSnapshot, Capability, Point, Selection, SelectionGoal, TreeSitterOptions};
 use project::{Project, ProjectPath};
 use ui::{ActiveTheme as _, Context, ParentElement as _, Styled as _, div};
 use util::ResultExt as _;
@@ -236,11 +236,14 @@ impl StackFrameViewer {
                     this.update(cx, |this, cx| {
                         this.multibuffer.update(cx, |multi_buffer, cx| {
                             let line_point = Point::new(line, 0);
+                            let start_context = Self::heuristic_syntactic_expand(
+                                &buffer.read(cx).snapshot(),
+                                line_point,
+                            );
 
                             // Users will want to see what happened before an active debug line in most cases
                             let range = ExcerptRange {
-                                context: Point::new(line.saturating_sub(8), 0)
-                                    ..Point::new(line.saturating_add(1), 0),
+                                context: start_context..Point::new(line.saturating_add(1), 0),
                                 primary: line_point..line_point,
                             };
                             multi_buffer.push_excerpts(buffer.clone(), vec![range], cx);
@@ -332,6 +335,25 @@ impl StackFrameViewer {
                 );
             }
         })
+    }
+
+    fn heuristic_syntactic_expand(snapshot: &BufferSnapshot, selected_point: Point) -> Point {
+        let mut text_objects = snapshot.text_object_ranges(
+            selected_point..selected_point,
+            TreeSitterOptions::max_start_depth(4),
+        );
+
+        let mut start_position = text_objects
+            .find(|(_, obj)| matches!(obj, language::TextObject::AroundFunction))
+            .map(|(range, _)| snapshot.offset_to_point(range.start))
+            .map(|point| Point::new(point.row.max(selected_point.row.saturating_sub(8)), 0))
+            .unwrap_or(selected_point);
+
+        if start_position.row == selected_point.row {
+            start_position.row = start_position.row.saturating_sub(1);
+        }
+
+        start_position
     }
 }
 
