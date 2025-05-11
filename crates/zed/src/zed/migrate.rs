@@ -185,7 +185,7 @@ impl Render for MigrationBanner {
         let migration_type = self.migration_type;
         let settings = ThemeSettings::get_global(cx);
         let ui_font_family = settings.ui_font.family.clone();
-
+        let line_height = settings.ui_font_size(cx) * 1.3;
         h_flex()
             .py_1()
             .pl_2()
@@ -208,7 +208,7 @@ impl Render for MigrationBanner {
                         div()
                             .overflow_hidden()
                             .text_size(TextSize::Default.rems(cx))
-                            .max_h_16()
+                            .max_h(2 * line_height)
                             .when_some(self.markdown.as_ref(), |this, markdown| {
                                 this.child(
                                     MarkdownElement::new(
