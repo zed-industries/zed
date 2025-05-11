@@ -25,6 +25,7 @@ enable = false
 "/assistant.html" = "/docs/assistant/assistant.html"
 "/developing-zed.html" = "/docs/development.html"
 "/conversations.html" = "/community-links"
+"/ai.html" = "/docs/ai/overview.html"
 "/assistant/assistant.html" = "/docs/ai/overview.html"
 "/assistant/configuration.html" = "/docs/ai/custom-api-keys.html"
 "/assistant/assistant-panel.html" = "/docs/ai/agent-panel.html"

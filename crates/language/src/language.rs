@@ -828,6 +828,8 @@ pub struct LanguageConfigOverride {
     pub completion_query_characters: Override<HashSet<char>>,
     #[serde(default)]
     pub opt_into_language_servers: Vec<LanguageServerName>,
+    #[serde(default)]
+    pub prefer_label_for_snippet: Option<bool>,
 }
 
 #[derive(Clone, Deserialize, Debug, Serialize, JsonSchema)]
@@ -1786,6 +1788,18 @@ impl LanguageScope {
                 .map(|o| &o.completion_query_characters),
             Some(&self.language.config.completion_query_characters),
         )
+    }
+
+    /// Returns whether to prefer snippet `label` over `new_text` to replace text when
+    /// completion is accepted.
+    ///
+    /// In cases like when cursor is in string or renaming existing function,
+    /// you don't want to expand function signature instead just want function name
+    /// to replace existing one.
+    pub fn prefers_label_for_snippet_in_completion(&self) -> bool {
+        self.config_override()
+            .and_then(|o| o.prefer_label_for_snippet)
+            .unwrap_or(false)
     }
 
     /// Returns a list of bracket pairs for a given language with an additional

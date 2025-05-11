@@ -1346,6 +1346,10 @@ impl ProjectPanel {
     }
 
     fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        if cx.stop_active_drag(window) {
+            return;
+        }
+
         let previous_edit_state = self.edit_state.take();
         self.update_visible_entries(None, cx);
         self.marked_entries.clear();

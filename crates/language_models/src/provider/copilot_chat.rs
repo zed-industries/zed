@@ -219,32 +219,24 @@ impl LanguageModel for CopilotChatLanguageModel {
         cx: &App,
     ) -> BoxFuture<'static, Result<usize>> {
         match self.model {
-            CopilotChatModel::Claude3_5Sonnet => count_anthropic_tokens(request, cx),
-            CopilotChatModel::Claude3_7Sonnet => count_anthropic_tokens(request, cx),
-            CopilotChatModel::Claude3_7SonnetThinking => count_anthropic_tokens(request, cx),
+            CopilotChatModel::Claude3_5Sonnet
+            | CopilotChatModel::Claude3_7Sonnet
+            | CopilotChatModel::Claude3_7SonnetThinking => count_anthropic_tokens(request, cx),
             CopilotChatModel::Gemini20Flash | CopilotChatModel::Gemini25Pro => {
                 count_google_tokens(request, cx)
             }
-            _ => {
-                let model = match self.model {
-                    CopilotChatModel::Gpt4o => open_ai::Model::FourOmni,
-                    CopilotChatModel::Gpt4 => open_ai::Model::Four,
-                    CopilotChatModel::Gpt4_1 => open_ai::Model::FourPointOne,
-                    CopilotChatModel::Gpt3_5Turbo => open_ai::Model::ThreePointFiveTurbo,
-                    CopilotChatModel::O1 => open_ai::Model::O1,
-                    CopilotChatModel::O3Mini => open_ai::Model::O3Mini,
-                    CopilotChatModel::O3 => open_ai::Model::O3,
-                    CopilotChatModel::O4Mini => open_ai::Model::O4Mini,
-                    CopilotChatModel::Claude3_5Sonnet
-                    | CopilotChatModel::Claude3_7Sonnet
-                    | CopilotChatModel::Claude3_7SonnetThinking
-                    | CopilotChatModel::Gemini20Flash
-                    | CopilotChatModel::Gemini25Pro => {
-                        unreachable!()
-                    }
-                };
-                count_open_ai_tokens(request, model, cx)
+            CopilotChatModel::Gpt4o => count_open_ai_tokens(request, open_ai::Model::FourOmni, cx),
+            CopilotChatModel::Gpt4 => count_open_ai_tokens(request, open_ai::Model::Four, cx),
+            CopilotChatModel::Gpt4_1 => {
+                count_open_ai_tokens(request, open_ai::Model::FourPointOne, cx)
             }
+            CopilotChatModel::Gpt3_5Turbo => {
+                count_open_ai_tokens(request, open_ai::Model::ThreePointFiveTurbo, cx)
+            }
+            CopilotChatModel::O1 => count_open_ai_tokens(request, open_ai::Model::O1, cx),
+            CopilotChatModel::O3Mini => count_open_ai_tokens(request, open_ai::Model::O3Mini, cx),
+            CopilotChatModel::O3 => count_open_ai_tokens(request, open_ai::Model::O3, cx),
+            CopilotChatModel::O4Mini => count_open_ai_tokens(request, open_ai::Model::O4Mini, cx),
         }
     }
 
@@ -376,25 +368,34 @@ pub fn map_to_language_model_completion_events(
                             }
                             Some("tool_calls") => {
                                 events.extend(state.tool_calls_by_index.drain().map(
-                                    |(_, tool_call)| match serde_json::Value::from_str(
-                                        &tool_call.arguments,
-                                    ) {
-                                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
-                                            LanguageModelToolUse {
-                                                id: tool_call.id.clone().into(),
-                                                name: tool_call.name.as_str().into(),
-                                                is_input_complete: true,
-                                                input,
-                                                raw_input: tool_call.arguments.clone(),
-                                            },
-                                        )),
-                                        Err(error) => {
-                                            Err(LanguageModelCompletionError::BadInputJson {
-                                                id: tool_call.id.into(),
-                                                tool_name: tool_call.name.as_str().into(),
-                                                raw_input: tool_call.arguments.into(),
-                                                json_parse_error: error.to_string(),
-                                            })
+                                    |(_, tool_call)| {
+                                        // The model can output an empty string
+                                        // to indicate the absence of arguments.
+                                        // When that happens, create an empty
+                                        // object instead.
+                                        let arguments = if tool_call.arguments.is_empty() {
+                                            Ok(serde_json::Value::Object(Default::default()))
+                                        } else {
+                                            serde_json::Value::from_str(&tool_call.arguments)
+                                        };
+                                        match arguments {
+                                            Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
+                                                LanguageModelToolUse {
+                                                    id: tool_call.id.clone().into(),
+                                                    name: tool_call.name.as_str().into(),
+                                                    is_input_complete: true,
+                                                    input,
+                                                    raw_input: tool_call.arguments.clone(),
+                                                },
+                                            )),
+                                            Err(error) => {
+                                                Err(LanguageModelCompletionError::BadInputJson {
+                                                    id: tool_call.id.into(),
+                                                    tool_name: tool_call.name.as_str().into(),
+                                                    raw_input: tool_call.arguments.into(),
+                                                    json_parse_error: error.to_string(),
+                                                })
+                                            }
                                         }
                                     },
                                 ));

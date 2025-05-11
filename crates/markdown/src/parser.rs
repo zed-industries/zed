@@ -79,6 +79,7 @@ pub fn parse_markdown(
                         let content_range =
                             content_range.start + range.start..content_range.end + range.start;
 
+                        // Valid to use bytes since multi-byte UTF-8 doesn't use ASCII chars.
                         let line_count = text[content_range.clone()]
                             .bytes()
                             .filter(|c| *c == b'\n')
@@ -509,6 +510,9 @@ pub(crate) fn extract_code_block_content_range(text: &str) -> Range<usize> {
     if !range.is_empty() && text.ends_with("```") {
         range.end -= 3;
     }
+    if range.start > range.end {
+        range.end = range.start;
+    }
     range
 }
 
@@ -685,6 +689,10 @@ mod tests {
 
         let input = "```python\nprint('hello')\nprint('world')\n```";
         assert_eq!(extract_code_block_content_range(input), 10..40);
+
+        // Malformed input
+        let input = "`````";
+        assert_eq!(extract_code_block_content_range(input), 3..3);
     }
 
     #[test]

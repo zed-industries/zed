@@ -34,3 +34,7 @@ opt_into_language_servers = ["emmet-language-server"]
 [overrides.string]
 completion_query_characters = ["-", "."]
 opt_into_language_servers = ["tailwindcss-language-server"]
+prefer_label_for_snippet = true
+
+[overrides.call_expression]
+prefer_label_for_snippet = true
