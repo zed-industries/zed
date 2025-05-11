@@ -106,14 +106,8 @@ impl Render for InlineCompletionButton {
                                             )
                                             .on_click(
                                                 "Reinstall Copilot",
-                                                |_, cx| {
-                                                    if let Some(copilot) = Copilot::global(cx) {
-                                                        copilot
-                                                            .update(cx, |copilot, cx| {
-                                                                copilot.reinstall(cx)
-                                                            })
-                                                            .detach();
-                                                    }
+                                                |window, cx| {
+                                                    copilot::reinstall_and_sign_in(window, cx)
                                                 },
                                             ),
                                             cx,
@@ -243,11 +237,17 @@ impl Render for InlineCompletionButton {
 
                 let current_user_terms_accepted =
                     self.user_store.read(cx).current_user_has_accepted_terms();
+                let has_subscription = self.user_store.read(cx).current_plan().is_some()
+                    && self.user_store.read(cx).subscription_period().is_some();
 
-                if !current_user_terms_accepted.unwrap_or(false) {
+                if !has_subscription || !current_user_terms_accepted.unwrap_or(false) {
                     let signed_in = current_user_terms_accepted.is_some();
                     let tooltip_meta = if signed_in {
-                        "Read Terms of Service"
+                        if has_subscription {
+                            "Read Terms of Service"
+                        } else {
+                            "Choose a Plan"
+                        }
                     } else {
                         "Sign in to use"
                     };
@@ -429,36 +429,39 @@ impl InlineCompletionButton {
 
             if let Some(usage) = usage {
                 menu = menu.header("Usage");
-                menu = menu.custom_entry(
-                    move |_window, cx| {
-                        let used_percentage = match usage.limit {
-                            UsageLimit::Limited(limit) => {
-                                Some((usage.amount as f32 / limit as f32) * 100.)
-                            }
-                            UsageLimit::Unlimited => None,
-                        };
+                menu = menu
+                    .custom_entry(
+                        move |_window, cx| {
+                            let used_percentage = match usage.limit {
+                                UsageLimit::Limited(limit) => {
+                                    Some((usage.amount as f32 / limit as f32) * 100.)
+                                }
+                                UsageLimit::Unlimited => None,
+                            };
 
-                        h_flex()
-                            .flex_1()
-                            .gap_1p5()
-                            .children(
-                                used_percentage
-                                    .map(|percent| ProgressBar::new("usage", percent, 100., cx)),
-                            )
-                            .child(
-                                Label::new(match usage.limit {
-                                    UsageLimit::Limited(limit) => {
-                                        format!("{} / {limit}", usage.amount)
-                                    }
-                                    UsageLimit::Unlimited => format!("{} / ∞", usage.amount),
-                                })
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                            )
-                            .into_any_element()
-                    },
-                    move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
-                );
+                            h_flex()
+                                .flex_1()
+                                .gap_1p5()
+                                .children(
+                                    used_percentage.map(|percent| {
+                                        ProgressBar::new("usage", percent, 100., cx)
+                                    }),
+                                )
+                                .child(
+                                    Label::new(match usage.limit {
+                                        UsageLimit::Limited(limit) => {
+                                            format!("{} / {limit}", usage.amount)
+                                        }
+                                        UsageLimit::Unlimited => format!("{} / ∞", usage.amount),
+                                    })
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                                )
+                                .into_any_element()
+                        },
+                        move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
+                    )
+                    .separator();
             }
         }
 

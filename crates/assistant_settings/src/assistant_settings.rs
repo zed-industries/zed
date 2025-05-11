@@ -85,7 +85,6 @@ pub struct AssistantSettings {
     pub thread_summary_model: Option<LanguageModelSelection>,
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub using_outdated_settings_version: bool,
-    pub enable_experimental_live_diffs: bool,
     pub default_profile: AgentProfileId,
     pub profiles: IndexMap<AgentProfileId, AgentProfile>,
     pub always_allow_tool_actions: bool,
@@ -104,15 +103,6 @@ impl AssistantSettings {
             .iter()
             .rfind(|setting| setting.matches(model))
             .and_then(|m| m.temperature)
-    }
-
-    pub fn stream_edits(&self, _cx: &App) -> bool {
-        // TODO: Remove the `stream_edits` setting.
-        true
-    }
-
-    pub fn are_live_diffs_enabled(&self, _cx: &App) -> bool {
-        false
     }
 
     pub fn set_inline_assistant_model(&mut self, provider: String, model: String) {
@@ -262,7 +252,6 @@ impl AssistantSettingsContent {
                     commit_message_model: None,
                     thread_summary_model: None,
                     inline_alternatives: None,
-                    enable_experimental_live_diffs: None,
                     default_profile: None,
                     profiles: None,
                     always_allow_tool_actions: None,
@@ -293,7 +282,6 @@ impl AssistantSettingsContent {
                 commit_message_model: None,
                 thread_summary_model: None,
                 inline_alternatives: None,
-                enable_experimental_live_diffs: None,
                 default_profile: None,
                 profiles: None,
                 always_allow_tool_actions: None,
@@ -366,7 +354,7 @@ impl AssistantSettingsContent {
                                     &model,
                                     None,
                                     None,
-                                    language_model.supports_tools(),
+                                    Some(language_model.supports_tools()),
                                 )),
                                 api_url,
                             });
@@ -575,7 +563,6 @@ impl Default for VersionedAssistantSettingsContent {
             commit_message_model: None,
             thread_summary_model: None,
             inline_alternatives: None,
-            enable_experimental_live_diffs: None,
             default_profile: None,
             profiles: None,
             always_allow_tool_actions: None,
@@ -620,10 +607,6 @@ pub struct AssistantSettingsContentV2 {
     thread_summary_model: Option<LanguageModelSelection>,
     /// Additional models with which to generate alternatives when performing inline assists.
     inline_alternatives: Option<Vec<LanguageModelSelection>>,
-    /// Enable experimental live diffs in the assistant panel.
-    ///
-    /// Default: false
-    enable_experimental_live_diffs: Option<bool>,
     /// The default profile to use in the Agent.
     ///
     /// Default: write
@@ -851,10 +834,6 @@ impl Settings for AssistantSettings {
                 .or(settings.thread_summary_model.take());
             merge(&mut settings.inline_alternatives, value.inline_alternatives);
             merge(
-                &mut settings.enable_experimental_live_diffs,
-                value.enable_experimental_live_diffs,
-            );
-            merge(
                 &mut settings.always_allow_tool_actions,
                 value.always_allow_tool_actions,
             );
@@ -999,7 +978,6 @@ mod tests {
                                 dock: None,
                                 default_width: None,
                                 default_height: None,
-                                enable_experimental_live_diffs: None,
                                 default_profile: None,
                                 profiles: None,
                                 always_allow_tool_actions: None,

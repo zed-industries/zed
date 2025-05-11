@@ -452,7 +452,12 @@ impl Prettier {
                     })?
                     .context("prettier params calculation")?;
 
-                let response = local.server.request::<Format>(params).await?;
+                let response = local
+                    .server
+                    .request::<Format>(params)
+                    .await
+                    .into_response()
+                    .context("prettier format")?;
                 let diff_task = buffer.update(cx, |buffer, cx| buffer.diff(response.text, cx))?;
                 Ok(diff_task.await)
             }
@@ -482,6 +487,7 @@ impl Prettier {
                 .server
                 .request::<ClearCache>(())
                 .await
+                .into_response()
                 .context("prettier clear cache"),
             #[cfg(any(test, feature = "test-support"))]
             Self::Test(_) => Ok(()),

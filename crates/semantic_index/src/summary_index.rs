@@ -566,6 +566,7 @@ impl SummaryIndex {
                 cache: use_cache,
             }],
             tools: Vec::new(),
+            tool_choice: None,
             stop: Vec::new(),
             temperature: None,
         };

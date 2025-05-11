@@ -1,4 +1,6 @@
 use derive_more::{Add, AddAssign};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{cmp, mem, ops::Range};
 
@@ -13,7 +15,9 @@ pub enum EditParserEvent {
     NewTextChunk { chunk: String, done: bool },
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Add, AddAssign)]
+#[derive(
+    Clone, Debug, Default, PartialEq, Eq, Add, AddAssign, Serialize, Deserialize, JsonSchema,
+)]
 pub struct EditParserMetrics {
     pub tags: usize,
     pub mismatched_tags: usize,

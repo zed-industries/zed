@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use anyhow::{Result, anyhow};
 use assistant_context_editor::{
-    AssistantContext, AssistantPanelDelegate, ConfigurationError, ContextEditor, ContextEvent,
+    AgentPanelDelegate, AssistantContext, ConfigurationError, ContextEditor, ContextEvent,
     SlashCommandCompletionProvider, humanize_token_count, make_lsp_adapter_delegate,
     render_remaining_tokens,
 };
@@ -53,12 +53,12 @@ use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFon
 use zed_llm_client::UsageLimit;
 
 use crate::active_thread::{self, ActiveThread, ActiveThreadEvent};
+use crate::agent_configuration::{AgentConfiguration, AssistantConfigurationEvent};
 use crate::agent_diff::AgentDiff;
-use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
-use crate::history_store::{HistoryEntry, HistoryStore, RecentEntry};
+use crate::history_store::{HistoryStore, RecentEntry};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
-use crate::thread_history::{EntryTimeFormat, PastContext, PastThread, ThreadHistory};
+use crate::thread_history::{HistoryEntryElement, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::ui::AgentOnboardingModal;
 use crate::{
@@ -71,7 +71,7 @@ use crate::{
 const AGENT_PANEL_KEY: &str = "agent_panel";
 
 #[derive(Serialize, Deserialize)]
-struct SerializedAssistantPanel {
+struct SerializedAgentPanel {
     width: Option<Pixels>,
 }
 
@@ -80,40 +80,40 @@ pub fn init(cx: &mut App) {
         |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
             workspace
                 .register_action(|workspace, action: &NewThread, window, cx| {
-                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |panel, cx| panel.new_thread(action, window, cx));
-                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                        workspace.focus_panel::<AgentPanel>(window, cx);
                     }
                 })
                 .register_action(|workspace, _: &OpenHistory, window, cx| {
-                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| panel.open_history(window, cx));
                     }
                 })
                 .register_action(|workspace, _: &OpenConfiguration, window, cx| {
-                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| panel.open_configuration(window, cx));
                     }
                 })
                 .register_action(|workspace, _: &NewTextThread, window, cx| {
-                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| panel.new_prompt_editor(window, cx));
                     }
                 })
                 .register_action(|workspace, action: &OpenRulesLibrary, window, cx| {
-                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
                             panel.deploy_rules_library(action, window, cx)
                         });
                     }
                 })
                 .register_action(|workspace, _: &OpenAgentDiff, window, cx| {
-                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
                         let thread = panel.read(cx).thread.read(cx).thread().clone();
                         AgentDiffPane::deploy_in_workspace(thread, workspace, window, cx);
                     }
@@ -122,8 +122,8 @@ pub fn init(cx: &mut App) {
                     workspace.follow(CollaboratorId::Agent, window, cx);
                 })
                 .register_action(|workspace, _: &ExpandMessageEditor, window, cx| {
-                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
                             panel.message_editor.update(cx, |editor, cx| {
                                 editor.expand_message_editor(&ExpandMessageEditor, window, cx);
@@ -132,16 +132,16 @@ pub fn init(cx: &mut App) {
                     }
                 })
                 .register_action(|workspace, _: &ToggleNavigationMenu, window, cx| {
-                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
                             panel.toggle_navigation_menu(&ToggleNavigationMenu, window, cx);
                         });
                     }
                 })
                 .register_action(|workspace, _: &ToggleOptionsMenu, window, cx| {
-                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
-                        workspace.focus_panel::<AssistantPanel>(window, cx);
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
                             panel.toggle_options_menu(&ToggleOptionsMenu, window, cx);
                         });
@@ -335,7 +335,7 @@ impl ActiveView {
     }
 }
 
-pub struct AssistantPanel {
+pub struct AgentPanel {
     workspace: WeakEntity<Workspace>,
     user_store: Entity<UserStore>,
     project: Entity<Project>,
@@ -349,13 +349,14 @@ pub struct AssistantPanel {
     context_store: Entity<TextThreadStore>,
     prompt_store: Option<Entity<PromptStore>>,
     inline_assist_context_store: Entity<crate::context_store::ContextStore>,
-    configuration: Option<Entity<AssistantConfiguration>>,
+    configuration: Option<Entity<AgentConfiguration>>,
     configuration_subscription: Option<Subscription>,
     local_timezone: UtcOffset,
     active_view: ActiveView,
     previous_view: Option<ActiveView>,
     history_store: Entity<HistoryStore>,
     history: Entity<ThreadHistory>,
+    hovered_recent_history_item: Option<usize>,
     assistant_dropdown_menu_handle: PopoverMenuHandle<ContextMenu>,
     assistant_navigation_menu_handle: PopoverMenuHandle<ContextMenu>,
     assistant_navigation_menu: Option<Entity<ContextMenu>>,
@@ -366,14 +367,14 @@ pub struct AssistantPanel {
     _trial_markdown: Entity<Markdown>,
 }
 
-impl AssistantPanel {
+impl AgentPanel {
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
         self.pending_serialization = Some(cx.background_spawn(async move {
             KEY_VALUE_STORE
                 .write_kvp(
                     AGENT_PANEL_KEY.into(),
-                    serde_json::to_string(&SerializedAssistantPanel { width })?,
+                    serde_json::to_string(&SerializedAgentPanel { width })?,
                 )
                 .await?;
             anyhow::Ok(())
@@ -423,7 +424,7 @@ impl AssistantPanel {
                 .log_err()
                 .flatten()
             {
-                Some(serde_json::from_str::<SerializedAssistantPanel>(&panel)?)
+                Some(serde_json::from_str::<SerializedAgentPanel>(&panel)?)
             } else {
                 None
             };
@@ -491,7 +492,6 @@ impl AssistantPanel {
                 thread_store.downgrade(),
                 context_store.downgrade(),
                 thread.clone(),
-                agent_panel_dock_position(cx),
                 window,
                 cx,
             )
@@ -697,6 +697,7 @@ impl AssistantPanel {
             previous_view: None,
             history_store: history_store.clone(),
             history: cx.new(|cx| ThreadHistory::new(weak_self, history_store, window, cx)),
+            hovered_recent_history_item: None,
             assistant_dropdown_menu_handle: PopoverMenuHandle::default(),
             assistant_navigation_menu_handle: PopoverMenuHandle::default(),
             assistant_navigation_menu: None,
@@ -822,7 +823,6 @@ impl AssistantPanel {
                 self.thread_store.downgrade(),
                 self.context_store.downgrade(),
                 thread,
-                agent_panel_dock_position(cx),
                 window,
                 cx,
             )
@@ -1031,7 +1031,6 @@ impl AssistantPanel {
                 self.thread_store.downgrade(),
                 self.context_store.downgrade(),
                 thread,
-                agent_panel_dock_position(cx),
                 window,
                 cx,
             )
@@ -1166,15 +1165,13 @@ impl AssistantPanel {
 
         self.set_active_view(ActiveView::Configuration, window, cx);
         self.configuration =
-            Some(cx.new(|cx| {
-                AssistantConfiguration::new(fs, context_server_store, tools, window, cx)
-            }));
+            Some(cx.new(|cx| AgentConfiguration::new(fs, context_server_store, tools, window, cx)));
 
         if let Some(configuration) = self.configuration.as_ref() {
             self.configuration_subscription = Some(cx.subscribe_in(
                 configuration,
                 window,
-                Self::handle_assistant_configuration_event,
+                Self::handle_agent_configuration_event,
             ));
 
             configuration.focus_handle(cx).focus(window);
@@ -1204,9 +1201,9 @@ impl AssistantPanel {
             .detach_and_log_err(cx);
     }
 
-    fn handle_assistant_configuration_event(
+    fn handle_agent_configuration_event(
         &mut self,
-        _entity: &Entity<AssistantConfiguration>,
+        _entity: &Entity<AgentConfiguration>,
         event: &AssistantConfigurationEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1319,7 +1316,7 @@ impl AssistantPanel {
     }
 }
 
-impl Focusable for AssistantPanel {
+impl Focusable for AgentPanel {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match &self.active_view {
             ActiveView::Thread { .. } => self.message_editor.focus_handle(cx),
@@ -1344,9 +1341,9 @@ fn agent_panel_dock_position(cx: &App) -> DockPosition {
     }
 }
 
-impl EventEmitter<PanelEvent> for AssistantPanel {}
+impl EventEmitter<PanelEvent> for AgentPanel {}
 
-impl Panel for AssistantPanel {
+impl Panel for AgentPanel {
     fn persistent_name() -> &'static str {
         "AgentPanel"
     }
@@ -1360,10 +1357,6 @@ impl Panel for AssistantPanel {
     }
 
     fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {
-        self.message_editor.update(cx, |message_editor, cx| {
-            message_editor.set_dock_position(position, cx);
-        });
-
         settings::update_settings_file::<AssistantSettings>(
             self.fs.clone(),
             cx,
@@ -1425,7 +1418,7 @@ impl Panel for AssistantPanel {
     }
 }
 
-impl AssistantPanel {
+impl AgentPanel {
     fn render_title_view(&self, _window: &mut Window, cx: &Context<Self>) -> AnyElement {
         const LOADING_SUMMARY_PLACEHOLDER: &str = "Loading Summary…";
 
@@ -1984,9 +1977,9 @@ impl AssistantPanel {
                                                     .style(ButtonStyle::Transparent)
                                                     .color(Color::Muted)
                                                     .on_click({
-                                                        let assistant_panel = cx.entity();
+                                                        let agent_panel = cx.entity();
                                                         move |_, _, cx| {
-                                                            assistant_panel.update(
+                                                            agent_panel.update(
                                                                 cx,
                                                                 |this, cx| {
                                                                     let hidden =
@@ -2221,7 +2214,7 @@ impl AssistantPanel {
                             .border_b_1()
                             .border_color(cx.theme().colors().border_variant)
                             .child(
-                                Label::new("Past Interactions")
+                                Label::new("Recent")
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
                             )
@@ -2246,18 +2239,20 @@ impl AssistantPanel {
                         v_flex()
                             .gap_1()
                             .children(
-                                recent_history.into_iter().map(|entry| {
+                                recent_history.into_iter().enumerate().map(|(index, entry)| {
                                     // TODO: Add keyboard navigation.
-                                    match entry {
-                                        HistoryEntry::Thread(thread) => {
-                                            PastThread::new(thread, cx.entity().downgrade(), false, vec![], EntryTimeFormat::DateAndTime)
-                                                .into_any_element()
-                                        }
-                                        HistoryEntry::Context(context) => {
-                                            PastContext::new(context, cx.entity().downgrade(), false, vec![], EntryTimeFormat::DateAndTime)
-                                                .into_any_element()
-                                        }
-                                    }
+                                    let is_hovered = self.hovered_recent_history_item == Some(index);
+                                    HistoryEntryElement::new(entry.clone(), cx.entity().downgrade())
+                                        .hovered(is_hovered)
+                                        .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
+                                            if *is_hovered {
+                                                this.hovered_recent_history_item = Some(index);
+                                            } else if this.hovered_recent_history_item == Some(index) {
+                                                this.hovered_recent_history_item = None;
+                                            }
+                                            cx.notify();
+                                        }))
+                                        .into_any_element()
                                 }),
                             )
                     )
@@ -2345,14 +2340,13 @@ impl AssistantPanel {
             ""
         };
 
-        Some(
-            Banner::new()
-                .severity(ui::Severity::Info)
-                .child(h_flex().child(Label::new(format!(
-                    "Consecutive tool use limit reached.{max_mode_upsell}"
-                ))))
-                .into_any_element(),
-        )
+        let banner = Banner::new()
+            .severity(ui::Severity::Info)
+            .child(h_flex().child(Label::new(format!(
+                "Consecutive tool use limit reached.{max_mode_upsell}"
+            ))));
+
+        Some(div().px_2().pb_2().child(banner).into_any_element())
     }
 
     fn render_last_error(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -2752,44 +2746,18 @@ impl AssistantPanel {
     }
 }
 
-impl Render for AssistantPanel {
+impl Render for AgentPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let content = match &self.active_view {
-            ActiveView::Thread { .. } => v_flex()
-                .relative()
-                .justify_between()
-                .size_full()
-                .child(self.render_active_thread_or_empty_state(window, cx))
-                .children(self.render_tool_use_limit_reached(cx))
-                .child(h_flex().child(self.message_editor.clone()))
-                .children(self.render_last_error(cx))
-                .child(self.render_drag_target(cx))
-                .into_any(),
-            ActiveView::History => self.history.clone().into_any_element(),
-            ActiveView::PromptEditor {
-                context_editor,
-                buffer_search_bar,
-                ..
-            } => self
-                .render_prompt_editor(context_editor, buffer_search_bar, window, cx)
-                .into_any(),
-            ActiveView::Configuration => v_flex()
-                .size_full()
-                .children(self.configuration.clone())
-                .into_any(),
-        };
-
-        let content = match self.active_view.which_font_size_used() {
-            WhichFontSize::AgentFont => {
-                WithRemSize::new(ThemeSettings::get_global(cx).agent_font_size(cx))
-                    .size_full()
-                    .child(content)
-                    .into_any()
-            }
-            _ => content,
-        };
-
-        v_flex()
+        // WARNING: Changes to this element hierarchy can have
+        // non-obvious implications to the layout of children.
+        //
+        // If you need to change it, please confirm:
+        // - The message editor expands (⌘esc) correctly
+        // - When expanded, the buttons at the bottom of the panel are displayed correctly
+        // - Font size works as expected and can be changed with ⌘+/⌘-
+        // - Scrolling in all views works as expected
+        // - Files can be dropped into the panel
+        let content = v_flex()
             .key_context(self.key_context())
             .justify_between()
             .size_full()
@@ -2814,7 +2782,37 @@ impl Render for AssistantPanel {
             .on_action(cx.listener(Self::reset_font_size))
             .child(self.render_toolbar(window, cx))
             .children(self.render_trial_upsell(window, cx))
-            .child(content)
+            .map(|parent| match &self.active_view {
+                ActiveView::Thread { .. } => parent
+                    .relative()
+                    .child(self.render_active_thread_or_empty_state(window, cx))
+                    .children(self.render_tool_use_limit_reached(cx))
+                    .child(h_flex().child(self.message_editor.clone()))
+                    .children(self.render_last_error(cx))
+                    .child(self.render_drag_target(cx)),
+                ActiveView::History => parent.child(self.history.clone()),
+                ActiveView::PromptEditor {
+                    context_editor,
+                    buffer_search_bar,
+                    ..
+                } => parent.child(self.render_prompt_editor(
+                    context_editor,
+                    buffer_search_bar,
+                    window,
+                    cx,
+                )),
+                ActiveView::Configuration => parent.children(self.configuration.clone()),
+            });
+
+        match self.active_view.which_font_size_used() {
+            WhichFontSize::AgentFont => {
+                WithRemSize::new(ThemeSettings::get_global(cx).agent_font_size(cx))
+                    .size_full()
+                    .child(content)
+                    .into_any()
+            }
+            _ => content.into_any(),
+        }
     }
 }
 
@@ -2863,28 +2861,26 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
         })
     }
 
-    fn focus_assistant_panel(
+    fn focus_agent_panel(
         &self,
         workspace: &mut Workspace,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> bool {
-        workspace
-            .focus_panel::<AssistantPanel>(window, cx)
-            .is_some()
+        workspace.focus_panel::<AgentPanel>(window, cx).is_some()
     }
 }
 
 pub struct ConcreteAssistantPanelDelegate;
 
-impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
+impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
     fn active_context_editor(
         &self,
         workspace: &mut Workspace,
         _window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Option<Entity<ContextEditor>> {
-        let panel = workspace.panel::<AssistantPanel>(cx)?;
+        let panel = workspace.panel::<AgentPanel>(cx)?;
         panel.read(cx).active_context_editor()
     }
 
@@ -2895,7 +2891,7 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<()>> {
-        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+        let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
             return Task::ready(Err(anyhow!("Agent panel not found")));
         };
 
@@ -2922,12 +2918,12 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+        let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
             return;
         };
 
         if !panel.focus_handle(cx).contains_focused(window, cx) {
-            workspace.toggle_panel_focus::<AssistantPanel>(window, cx);
+            workspace.toggle_panel_focus::<AgentPanel>(window, cx);
         }
 
         panel.update(cx, |_, cx| {

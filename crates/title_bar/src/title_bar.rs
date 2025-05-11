@@ -664,6 +664,7 @@ impl TitleBar {
                         client
                             .authenticate_and_connect(true, &cx)
                             .await
+                            .into_response()
                             .notify_async_err(cx);
                     })
                     .detach();
@@ -673,19 +674,23 @@ impl TitleBar {
     pub fn render_user_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
         let user_store = self.user_store.read(cx);
         if let Some(user) = user_store.current_user() {
-            let plan = user_store.current_plan();
+            let has_subscription_period = self.user_store.read(cx).subscription_period().is_some();
+            let plan = self.user_store.read(cx).current_plan().filter(|_| {
+                // Since the user might be on the legacy free plan we filter based on whether we have a subscription period.
+                has_subscription_period
+            });
             PopoverMenu::new("user-menu")
                 .anchor(Corner::TopRight)
                 .menu(move |window, cx| {
                     ContextMenu::build(window, cx, |menu, _, _cx| {
-                        menu.action(
+                        menu.link(
                             format!(
                                 "Current Plan: {}",
                                 match plan {
-                                    None => "",
-                                    Some(proto::Plan::Free) => "Free",
-                                    Some(proto::Plan::ZedPro) => "Pro",
-                                    Some(proto::Plan::ZedProTrial) => "Pro (Trial)",
+                                    None => "None",
+                                    Some(proto::Plan::Free) => "Zed Free",
+                                    Some(proto::Plan::ZedPro) => "Zed Pro",
+                                    Some(proto::Plan::ZedProTrial) => "Zed Pro (Trial)",
                                 }
                             ),
                             zed_actions::OpenAccountSettings.boxed_clone(),

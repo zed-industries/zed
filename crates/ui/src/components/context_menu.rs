@@ -673,7 +673,7 @@ impl ContextMenu {
         self.selected_index = None;
     }
 
-    fn select_first(&mut self, _: &SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn select_first(&mut self, _: &SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(ix) = self.items.iter().position(|item| item.is_selectable()) {
             self.select_index(ix, window, cx);
         }
