@@ -18593,6 +18593,7 @@ dependencies = [
  "languages",
  "libc",
  "log",
+ "markdown",
  "markdown_preview",
  "menu",
  "migrator",
