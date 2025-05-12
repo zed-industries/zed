@@ -224,11 +224,6 @@ impl TransportDelegate {
         pending_requests.insert(sequence_id, request);
     }
 
-    pub(crate) async fn cancel_pending_request(&self, sequence_id: &u64) {
-        let mut pending_requests = self.pending_requests.lock().await;
-        pending_requests.remove(sequence_id);
-    }
-
     pub(crate) async fn send_message(&self, message: Message) -> Result<()> {
         if let Some(server_tx) = self.server_tx.lock().await.as_ref() {
             server_tx
