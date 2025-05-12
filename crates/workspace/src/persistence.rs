@@ -1403,8 +1403,8 @@ impl WorkspaceDb {
                     INSERT INTO toolchains(workspace_id, worktree_id, relative_worktree_path, language_name, name, path) VALUES (?, ?, ?, ?, ?,  ?)
                     ON CONFLICT DO
                     UPDATE SET
-                        name = ?4,
-                        path = ?5
+                        name = ?5,
+                        path = ?6
 
                 ))
                 .context("Preparing insertion")?;
