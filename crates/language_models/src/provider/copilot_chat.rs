@@ -455,18 +455,14 @@ fn into_copilot_chat(
                 for content in &message.content {
                     if let MessageContent::ToolResult(tool_result) = content {
                         let content = match &tool_result.content {
-                            LanguageModelToolResultContent::Text(text) => {
-                                text.to_string().into()
-                            }
+                            LanguageModelToolResultContent::Text(text) => text.to_string().into(),
                             LanguageModelToolResultContent::Image(image) => {
                                 if model.supports_vision() {
-                                    ChatMessageContent::Multipart(vec![
-                                        ChatMessagePart::Image {
-                                            image_url: ImageUrl {
-                                                url: image.to_base64_url(),
-                                            },
+                                    ChatMessageContent::Multipart(vec![ChatMessagePart::Image {
+                                        image_url: ImageUrl {
+                                            url: image.to_base64_url(),
                                         },
-                                    ])
+                                    }])
                                 } else {
                                     debug_panic!(
                                         "This should be caught at {} level",
