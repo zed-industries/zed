@@ -142,7 +142,6 @@ impl AgentConfiguration {
             .expanded_provider_configurations
             .get(&provider.id())
             .copied()
-            .unwrap_or(false); // Default to collapsed
             .unwrap_or(true);
 
         v_flex()
@@ -163,20 +162,12 @@ impl AgentConfiguration {
                             )
                             .child(Label::new(provider_name.clone()).size(LabelSize::Large))
                             .when(provider.is_authenticated(cx) && !is_expanded, |parent| {
-                                parent.child(
-                                    h_flex()
-                                        .child(
-                                            Icon::new(IconName::Check)
-                                                .size(IconSize::Medium)
-                                                .color(Color::Success)
-                                        )
-                                )
+                                parent.child(Icon::new(IconName::Check).color(Color::Success))
                             }),
                     )
                     .child(
                         h_flex()
-                            .gap_2()
-                            .items_center()
+                            .gap_1()
                             .when(provider.is_authenticated(cx), |parent| {
                                 parent.child(
                                     Button::new(
@@ -200,8 +191,10 @@ impl AgentConfiguration {
                             })
                             .child(
                                 Disclosure::new(
-                                    SharedString::from(format!("provider-disclosure-{provider_id}")),
-                                    is_expanded
+                                    SharedString::from(format!(
+                                        "provider-disclosure-{provider_id}"
+                                    )),
+                                    is_expanded,
                                 )
                                 .opened_icon(IconName::ChevronUp)
                                 .closed_icon(IconName::ChevronDown)
@@ -219,13 +212,11 @@ impl AgentConfiguration {
                             ),
                     ),
             )
-            .when(is_expanded, |parent| {
-                match configuration_view {
-                    Some(configuration_view) => parent.child(configuration_view),
-                    _ => parent.child(div().child(Label::new(format!(
-                        "No configuration view for {provider_name}",
-                    )))),
-                }
+            .when(is_expanded, |parent| match configuration_view {
+                Some(configuration_view) => parent.child(configuration_view),
+                None => parent.child(div().child(Label::new(format!(
+                    "No configuration view for {provider_name}",
+                )))),
             })
     }
 
