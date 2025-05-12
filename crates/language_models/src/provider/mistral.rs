@@ -15,13 +15,11 @@ use language_model::{
 };
 
 use futures::stream::BoxStream;
-use mistral::Model as MistralModel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::str::FromStr;
 use std::sync::Arc;
-use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
 use util::ResultExt;
@@ -34,7 +32,6 @@ use std::pin::Pin;
 const PROVIDER_ID: &str = "mistral";
 const PROVIDER_NAME: &str = "Mistral";
 
-// Add constants for finish reasons
 const FINISH_REASON_STOP: &str = "stop";
 const FINISH_REASON_TOOL_CALLS: &str = "tool_calls";
 
@@ -54,6 +51,7 @@ pub struct AvailableModel {
     pub max_completion_tokens: Option<u32>,
 }
 
+#[derive(Clone)]
 pub struct MistralLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
     state: gpui::Entity<State>,
@@ -62,6 +60,9 @@ pub struct MistralLanguageModelProvider {
 pub struct State {
     api_key: Option<String>,
     api_key_from_env: bool,
+    http_client: Arc<dyn HttpClient>,
+    models: Option<Vec<mistral::Model>>,
+    fetch_models_task: Option<Task<Result<()>>>,
     _subscription: Subscription,
 }
 
@@ -140,6 +141,33 @@ impl State {
             Ok(())
         })
     }
+
+    fn fetch_models(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let settings = &AllLanguageModelSettings::get_global(cx).mistral;
+        let http_client = self.http_client.clone();
+        let api_url = settings.api_url.clone();
+        let api_key_result = self
+            .api_key
+            .clone()
+            .ok_or_else(|| anyhow!("API key not set. Please authenticate before fetching models."));
+
+        // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
+        cx.spawn(async move |this, cx| {
+            let api_key = api_key_result?;
+            // This now uses the optimized get_models function that performs parallel API requests
+            let models = mistral::fetch_models(http_client.as_ref(), &api_url, &api_key).await?;
+
+            this.update(cx, |this, cx| {
+                this.models = Some(models);
+                cx.notify();
+            })
+        })
+    }
+
+    fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
+        let task = self.fetch_models(cx);
+        self.fetch_models_task.replace(task);
+    }
 }
 
 impl MistralLanguageModelProvider {
@@ -147,10 +175,23 @@ impl MistralLanguageModelProvider {
         let state = cx.new(|cx| State {
             api_key: None,
             api_key_from_env: false,
-            _subscription: cx.observe_global::<SettingsStore>(|_this: &mut State, cx| {
+            http_client: http_client.clone(),
+            models: None,
+            fetch_models_task: None,
+            _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
+                // Restart the fetch_models task when settings change
+                this.restart_fetch_models_task(cx);
                 cx.notify();
             }),
         });
+
+        if let Ok(env_api_key) = std::env::var(MISTRAL_API_KEY_VAR) {
+            state.update(cx, |state, cx| {
+                state.api_key = Some(env_api_key);
+                state.api_key_from_env = true;
+                cx.notify();
+            });
+        }
 
         Self { http_client, state }
     }
@@ -197,27 +238,34 @@ impl LanguageModelProvider for MistralLanguageModelProvider {
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = BTreeMap::default();
+        let state = self.state.read(cx);
 
-        // Add base models from mistral::Model::iter()
-        for model in mistral::Model::iter() {
-            if !matches!(model, mistral::Model::Custom { .. }) {
-                models.insert(model.id().to_string(), model);
+        if let Some(fetched_models) = &state.models {
+            for model in fetched_models {
+                models.insert(model.name.clone(), model.clone());
             }
+        } else {
+            models.insert("codestral-latest".into(), mistral::Model::default());
+            models.insert(
+                "mistral-small-latest".into(),
+                mistral::Model::default_fast(),
+            );
         }
 
-        // Override with available models from settings
-        for model in &AllLanguageModelSettings::get_global(cx)
+        // Add custom models defined in settings
+        for model_info in &AllLanguageModelSettings::get_global(cx)
             .mistral
             .available_models
         {
             models.insert(
-                model.name.clone(),
-                mistral::Model::Custom {
-                    name: model.name.clone(),
-                    display_name: model.display_name.clone(),
-                    max_tokens: model.max_tokens,
-                    max_output_tokens: model.max_output_tokens,
-                    max_completion_tokens: model.max_completion_tokens,
+                model_info.name.clone(),
+                mistral::Model {
+                    name: model_info.name.clone(),
+                    display_name: model_info.display_name.clone(),
+                    max_tokens: model_info.max_tokens,
+                    max_output_tokens: None,
+                    max_completion_tokens: None,
+                    supports_tools: Some(false),
                 },
             );
         }
@@ -307,19 +355,17 @@ impl LanguageModel for MistralLanguageModel {
     fn provider_name(&self) -> LanguageModelProviderName {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
+
     fn supports_tools(&self) -> bool {
-        match self.model {
-            MistralModel::CodestralLatest
-            | MistralModel::MistralLargeLatest
-            | MistralModel::MistralSmallLatest
-            | MistralModel::OpenCodestralMamba
-            | MistralModel::OpenMistralNemo => true,
-            _ => false,
-        }
+        self.model.supports_tools()
     }
 
-    fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
-        false
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        match choice {
+            LanguageModelToolChoice::Auto => true,
+            LanguageModelToolChoice::Any => false,
+            LanguageModelToolChoice::None => false,
+        }
     }
 
     fn telemetry_id(&self) -> String {
@@ -448,16 +494,23 @@ pub fn into_mistral(
         max_tokens: max_output_tokens,
         temperature: request.temperature,
         response_format: None,
-        tool_choice: if request.tools.is_empty() {
-            None
-        } else {
-            Some(mistral::ToolChoice::Auto)
+        tool_choice: match request.tool_choice {
+            Some(LanguageModelToolChoice::Auto) if !request.tools.is_empty() => {
+                Some(mistral::ToolChoice::Auto)
+            }
+            Some(LanguageModelToolChoice::Any) if !request.tools.is_empty() => {
+                Some(mistral::ToolChoice::Any)
+            }
+            Some(LanguageModelToolChoice::None) => Some(mistral::ToolChoice::None),
+            _ if !request.tools.is_empty() => Some(mistral::ToolChoice::Auto),
+            _ => None,
         },
         parallel_tool_calls: if !request.tools.is_empty() {
-            Some(false) // Disable parallel tool calls like in OpenAI implementation
+            Some(false)
         } else {
             None
         },
+        // Convert tools to Mistral format
         tools: request
             .tools
             .into_iter()
@@ -531,7 +584,6 @@ impl MistralEventMapper {
             }
         }
 
-        // Process finish reason if present
         if let Some(finish_reason) = choice.finish_reason.as_deref() {
             match finish_reason {
                 FINISH_REASON_STOP => {
@@ -552,7 +604,6 @@ impl MistralEventMapper {
         events
     }
 
-    /// Process collected tool calls and convert them to LanguageModelCompletionEvents
     fn process_tool_calls(
         &mut self,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
@@ -568,7 +619,6 @@ impl MistralEventMapper {
                 continue;
             }
 
-            // Parse the arguments JSON
             match serde_json::Value::from_str(&tool_call.arguments) {
                 Ok(input) => results.push(Ok(LanguageModelCompletionEvent::ToolUse(
                     LanguageModelToolUse {

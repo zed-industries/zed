@@ -1,10 +1,10 @@
 use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use log;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::convert::TryFrom;
-use strum::EnumIter;
 
 pub const MISTRAL_API_URL: &str = "https://api.mistral.ai/v1";
 
@@ -42,100 +42,134 @@ impl From<Role> for String {
     }
 }
 
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
-pub enum Model {
-    #[serde(rename = "codestral-latest", alias = "codestral-latest")]
-    #[default]
-    CodestralLatest,
-    #[serde(rename = "mistral-large-latest", alias = "mistral-large-latest")]
-    MistralLargeLatest,
-    #[serde(rename = "mistral-medium-latest", alias = "mistral-medium-latest")]
-    MistralMediumLatest,
-    #[serde(rename = "mistral-small-latest", alias = "mistral-small-latest")]
-    MistralSmallLatest,
-    #[serde(rename = "open-mistral-nemo", alias = "open-mistral-nemo")]
-    OpenMistralNemo,
-    #[serde(rename = "open-codestral-mamba", alias = "open-codestral-mamba")]
-    OpenCodestralMamba,
+#[derive(Deserialize)]
+struct ModelResponse {
+    #[serde(deserialize_with = "deserialize_models_skip_errors")]
+    data: Vec<ModelData>,
+}
 
-    #[serde(rename = "custom")]
-    Custom {
-        name: String,
-        /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
-        display_name: Option<String>,
-        max_tokens: usize,
-        max_output_tokens: Option<u32>,
-        max_completion_tokens: Option<u32>,
-    },
+fn deserialize_models_skip_errors<'de, D>(deserializer: D) -> Result<Vec<ModelData>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw_values = Vec::<serde_json::Value>::deserialize(deserializer)?;
+    let models = raw_values
+        .into_iter()
+        .filter_map(|value| match serde_json::from_value::<ModelData>(value) {
+            Ok(model) => Some(model),
+            Err(err) => {
+                log::warn!("Mistral model failed to deserialize: {:?}", err);
+                None
+            }
+        })
+        .collect();
+
+    Ok(models)
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Model {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub max_tokens: usize,
+    pub max_output_tokens: Option<u32>,
+    pub max_completion_tokens: Option<u32>,
+    pub supports_tools: Option<bool>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ModelData {
+    pub id: String,
+    pub name: String,
+    pub capabilities: ModelCapabilities,
+    pub max_context_length: usize,
+    pub description: Option<String>,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ModelCapabilities {
+    pub completion_chat: bool,
+    pub completion_fim: bool,
+    pub function_calling: bool,
+    pub fine_tuning: bool,
+    pub vision: bool,
+    #[serde(default)]
+    pub classification: bool,
 }
 
 impl Model {
-    pub fn default_fast() -> Self {
-        Model::MistralSmallLatest
+    pub fn new(
+        name: &str,
+        display_name: Option<&str>,
+        max_tokens: Option<usize>,
+        supports_tool_calls: bool,
+    ) -> Self {
+        Self {
+            name: name.to_string(),
+            display_name: display_name.map(|s| s.to_string()),
+            max_tokens: max_tokens.unwrap_or(4096),
+            max_output_tokens: None,
+            max_completion_tokens: None,
+            supports_tools: Some(supports_tool_calls),
+        }
     }
 
-    pub fn from_id(id: &str) -> Result<Self> {
-        match id {
-            "codestral-latest" => Ok(Self::CodestralLatest),
-            "mistral-large-latest" => Ok(Self::MistralLargeLatest),
-            "mistral-medium-latest" => Ok(Self::MistralMediumLatest),
-            "mistral-small-latest" => Ok(Self::MistralSmallLatest),
-            "open-mistral-nemo" => Ok(Self::OpenMistralNemo),
-            "open-codestral-mamba" => Ok(Self::OpenCodestralMamba),
-            _ => Err(anyhow!("invalid model id")),
+    pub fn default_fast() -> Self {
+        Self {
+            display_name: Some("mistral-small-latest".to_string()),
+            name: "mistral-small-latest".to_string(),
+            max_tokens: 4096,
+            max_output_tokens: None,
+            max_completion_tokens: None,
+            supports_tools: Some(false),
+        }
+    }
+
+    pub fn default() -> Self {
+        Self {
+            display_name: Some("codestral-latest".to_string()),
+            name: "codestral-latest".to_string(),
+            max_tokens: 32768,
+            max_output_tokens: None,
+            max_completion_tokens: None,
+            supports_tools: Some(true),
         }
     }
 
     pub fn id(&self) -> &str {
-        match self {
-            Self::CodestralLatest => "codestral-latest",
-            Self::MistralLargeLatest => "mistral-large-latest",
-            Self::MistralMediumLatest => "mistral-medium-latest",
-            Self::MistralSmallLatest => "mistral-small-latest",
-            Self::OpenMistralNemo => "open-mistral-nemo",
-            Self::OpenCodestralMamba => "open-codestral-mamba",
-            Self::Custom { name, .. } => name,
-        }
+        &self.name
     }
 
     pub fn display_name(&self) -> &str {
-        match self {
-            Self::CodestralLatest => "codestral-latest",
-            Self::MistralLargeLatest => "mistral-large-latest",
-            Self::MistralMediumLatest => "mistral-medium-latest",
-            Self::MistralSmallLatest => "mistral-small-latest",
-            Self::OpenMistralNemo => "open-mistral-nemo",
-            Self::OpenCodestralMamba => "open-codestral-mamba",
-            Self::Custom {
-                name, display_name, ..
-            } => display_name.as_ref().unwrap_or(name),
-        }
+        &self.display_name.as_deref().unwrap_or(&self.name)
     }
 
     pub fn max_token_count(&self) -> usize {
-        match self {
-            Self::CodestralLatest => 256000,
-            Self::MistralLargeLatest => 131000,
-            Self::MistralMediumLatest => 128000,
-            Self::MistralSmallLatest => 32000,
-            Self::OpenMistralNemo => 131000,
-            Self::OpenCodestralMamba => 256000,
-            Self::Custom { max_tokens, .. } => *max_tokens,
-        }
+        self.max_tokens
     }
 
     pub fn max_output_tokens(&self) -> Option<u32> {
-        match self {
-            Self::Custom {
-                max_output_tokens, ..
-            } => *max_output_tokens,
-            _ => None,
-        }
+        None
+    }
+
+    pub fn supports_tools(&self) -> bool {
+        self.supports_tools.unwrap_or(false)
     }
 
     pub fn supports_parallel_tool_calls(&self) -> bool {
-        return true;
+        false
+    }
+
+    pub fn from_id(id: &str) -> Result<Self> {
+        // This is a fallback for when we can't fetch models
+        match id {
+            "codestral-latest" => Ok(Self::default()),
+            "mistral-small-latest" => Ok(Self::default_fast()),
+            _ => Err(anyhow!("Invalid model ID: {}", id)),
+        }
     }
 }
 
@@ -362,6 +396,55 @@ pub async fn stream_completion(
             "Failed to connect to Mistral API: {} {}",
             response.status(),
             body,
+        ))
+    }
+}
+
+pub async fn fetch_models(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+) -> Result<Vec<Model>> {
+    let uri = format!("{}/v1/models", api_url);
+    let request_builder = HttpRequest::builder()
+        .method(Method::GET)
+        .uri(uri)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key));
+
+    let request = request_builder.body(AsyncBody::empty())?;
+    let mut response = client.send(request).await?;
+
+    if response.status().is_success() {
+        let mut body = Vec::new();
+        response.body_mut().read_to_end(&mut body).await?;
+
+        let body_str = std::str::from_utf8(&body)?;
+        let model_response: ModelResponse = serde_json::from_str(body_str)?;
+
+        // Filter models that support chat completion and convert ModelData to Model
+        let models = model_response
+            .data
+            .into_iter()
+            .filter(|model| model.capabilities.completion_chat)
+            .map(|model| Model {
+                name: model.id,
+                display_name: Some(model.name),
+                max_tokens: model.max_context_length,
+                max_output_tokens: None,
+                max_completion_tokens: None,
+                supports_tools: Some(model.capabilities.function_calling),
+            })
+            .collect::<Vec<_>>();
+
+        Ok(models)
+    } else {
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+        Err(anyhow!(
+            "Failed to fetch models: {} {}",
+            response.status(),
+            body
         ))
     }
 }
