@@ -450,29 +450,7 @@ impl CompletionsMenu {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> AnyElement {
-        let completions = self.completions.borrow_mut();
         let show_completion_documentation = self.show_completion_documentation;
-        let widest_completion_ix = self
-            .entries
-            .borrow()
-            .iter()
-            .enumerate()
-            .max_by_key(|(_, mat)| {
-                let completion = &completions[mat.candidate_id];
-                let documentation = &completion.documentation;
-
-                let mut len = completion.label.text.chars().count();
-                if let Some(CompletionDocumentation::SingleLine(text)) = documentation {
-                    if show_completion_documentation {
-                        len += text.chars().count();
-                    }
-                }
-
-                len
-            })
-            .map(|(ix, _)| ix);
-        drop(completions);
-
         let selected_item = self.selected_item;
         let completions = self.completions.clone();
         let entries = self.entries.clone();
@@ -596,8 +574,8 @@ impl CompletionsMenu {
         .occlude()
         .max_h(max_height_in_lines as f32 * window.line_height())
         .track_scroll(self.scroll_handle.clone())
-        .with_width_from_item(widest_completion_ix)
-        .with_sizing_behavior(ListSizingBehavior::Infer);
+        .with_sizing_behavior(ListSizingBehavior::Infer)
+        .w(rems(34.));
 
         Popover::new().child(list).into_any_element()
     }
