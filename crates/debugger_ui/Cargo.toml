@@ -31,15 +31,19 @@ anyhow.workspace = true
 client.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
+component.workspace = true
 dap.workspace = true
 dap_adapters = { workspace = true, optional = true }
 db.workspace = true
+debugger_tools = { workspace = true, optional = true }
 editor.workspace = true
+env_logger = { workspace = true, optional = true }
 feature_flags.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 language.workspace = true
+linkme.workspace = true
 log.workspace = true
 menu.workspace = true
 parking_lot.workspace = true
@@ -57,12 +61,10 @@ tasks_ui.workspace = true
 terminal_view.workspace = true
 theme.workspace = true
 ui.workspace = true
-util.workspace = true
-workspace.workspace = true
-workspace-hack.workspace = true
-env_logger = { workspace = true, optional = true }
-debugger_tools = { workspace = true, optional = true }
 unindent = { workspace = true, optional = true }
+util.workspace = true
+workspace-hack.workspace = true
+workspace.workspace = true
 
 [dev-dependencies]
 dap = { workspace = true, features = ["test-support"] }
