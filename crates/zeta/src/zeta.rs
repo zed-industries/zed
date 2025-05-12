@@ -193,6 +193,7 @@ pub struct Zeta {
     tos_accepted: bool,
     /// Whether an update to a newer version of Zed is required to continue using Zeta.
     update_required: bool,
+    user_store: Entity<UserStore>,
     _user_store_subscription: Subscription,
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
 }
@@ -230,6 +231,28 @@ impl Zeta {
 
     pub fn clear_history(&mut self) {
         self.events.clear();
+    }
+
+    pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
+        self.last_usage.clone().or_else(|| {
+            let user_store = self.user_store.read(cx);
+            maybe!({
+                let amount = user_store.edit_predictions_usage_amount()?;
+                let limit = user_store.edit_predictions_usage_limit()?.variant?;
+
+                Some(EditPredictionUsage {
+                    amount: amount as i32,
+                    limit: match limit {
+                        proto::usage_limit::Variant::Limited(limited) => {
+                            zed_llm_client::UsageLimit::Limited(limited.limit as i32)
+                        }
+                        proto::usage_limit::Variant::Unlimited(_) => {
+                            zed_llm_client::UsageLimit::Unlimited
+                        }
+                    },
+                })
+            })
+        })
     }
 
     fn new(
@@ -282,6 +305,7 @@ impl Zeta {
                 }
             }),
             license_detection_watchers: HashMap::default(),
+            user_store,
         }
     }
 
@@ -1364,17 +1388,12 @@ pub struct ZetaInlineCompletionProvider {
     /// None if this is entirely disabled for this provider
     provider_data_collection: ProviderDataCollection,
     last_request_timestamp: Instant,
-    user_store: Entity<UserStore>,
 }
 
 impl ZetaInlineCompletionProvider {
     pub const THROTTLE_TIMEOUT: Duration = Duration::from_millis(300);
 
-    pub fn new(
-        zeta: Entity<Zeta>,
-        user_store: Entity<UserStore>,
-        provider_data_collection: ProviderDataCollection,
-    ) -> Self {
+    pub fn new(zeta: Entity<Zeta>, provider_data_collection: ProviderDataCollection) -> Self {
         Self {
             zeta,
             pending_completions: ArrayVec::new(),
@@ -1382,7 +1401,6 @@ impl ZetaInlineCompletionProvider {
             current_completion: None,
             provider_data_collection,
             last_request_timestamp: Instant::now(),
-            user_store,
         }
     }
 }
@@ -1423,26 +1441,7 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
     }
 
     fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
-        self.zeta.read(cx).last_usage.clone().or_else(|| {
-            let user_store = self.user_store.read(cx);
-
-            maybe!({
-                let amount = user_store.edit_predictions_usage_amount()?;
-                let limit = user_store.edit_predictions_usage_limit()?.variant?;
-
-                Some(EditPredictionUsage {
-                    amount: amount as i32,
-                    limit: match limit {
-                        proto::usage_limit::Variant::Limited(limited) => {
-                            zed_llm_client::UsageLimit::Limited(limited.limit as i32)
-                        }
-                        proto::usage_limit::Variant::Unlimited(_) => {
-                            zed_llm_client::UsageLimit::Unlimited
-                        }
-                    },
-                })
-            })
-        })
+        self.zeta.read(cx).usage(cx)
     }
 
     fn is_enabled(
