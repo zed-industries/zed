@@ -344,8 +344,8 @@ impl InlineAssistant {
             (editor.snapshot(window, cx), selections, newest_selection)
         });
 
-        // Check if there is already an inline assistant on the same line as the
-        // cursor, if there is, focus it
+        // Check if there is already an inline assistant that contains the
+        // newest selection, if there is, focus it
         if let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) {
             for assist_id in &editor_assists.assist_ids {
                 let assist = &self.assists[assist_id];
