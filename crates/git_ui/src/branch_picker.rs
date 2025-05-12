@@ -2,7 +2,7 @@ use anyhow::{Context as _, anyhow};
 use fuzzy::StringMatchCandidate;
 
 use collections::HashSet;
-use git::repository::{Branch, Upstream};
+use git::repository::Branch;
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
     IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render, SharedString, Styled,
