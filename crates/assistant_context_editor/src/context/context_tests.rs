@@ -1,7 +1,6 @@
 use crate::{
-    AssistantContext, AssistantEdit, AssistantEditKind, CacheStatus, ContextEvent, ContextId,
-    ContextOperation, ContextSummary, InvokedSlashCommandId, MessageCacheMetadata, MessageId,
-    MessageStatus, RequestType,
+    AssistantContext, CacheStatus, ContextEvent, ContextId, ContextOperation, ContextSummary,
+    InvokedSlashCommandId, MessageCacheMetadata, MessageId, MessageStatus,
 };
 use anyhow::Result;
 use assistant_slash_command::{
@@ -1200,7 +1199,7 @@ async fn test_summarization(cx: &mut TestAppContext) {
 
     // Send a message
     context.update(cx, |context, cx| {
-        context.assist(RequestType::Chat, cx);
+        context.assist(cx);
     });
 
     simulate_successful_response(&fake_model, cx);
@@ -1255,7 +1254,7 @@ async fn test_thread_summary_error_retry(cx: &mut TestAppContext) {
 
     // Sending another message should not trigger another summarize request
     context.update(cx, |context, cx| {
-        context.assist(RequestType::Chat, cx);
+        context.assist(cx);
     });
 
     simulate_successful_response(&fake_model, cx);
@@ -1298,7 +1297,7 @@ fn test_summarize_error(
 
     // Send a message
     context.update(cx, |context, cx| {
-        context.assist(RequestType::Chat, cx);
+        context.assist(cx);
     });
 
     simulate_successful_response(&model, cx);

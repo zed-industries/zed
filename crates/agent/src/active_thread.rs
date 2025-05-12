@@ -3,9 +3,10 @@ use crate::context::{AgentContextHandle, RULES_ICON};
 use crate::context_picker::{ContextPicker, MentionLink};
 use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
+use crate::message_editor::insert_message_creases;
 use crate::thread::{
-    LastRestoreCheckpoint, MessageId, MessageSegment, Thread, ThreadError, ThreadEvent,
-    ThreadFeedback, ThreadSummary,
+    LastRestoreCheckpoint, MessageCrease, MessageId, MessageSegment, Thread, ThreadError,
+    ThreadEvent, ThreadFeedback, ThreadSummary,
 };
 use crate::thread_store::{RulesLoadingError, TextThreadStore, ThreadStore};
 use crate::tool_use::{PendingToolUseStatus, ToolUse};
@@ -1263,6 +1264,7 @@ impl ActiveThread {
         &mut self,
         message_id: MessageId,
         message_segments: &[MessageSegment],
+        message_creases: &[MessageCrease],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1282,6 +1284,7 @@ impl ActiveThread {
         );
         editor.update(cx, |editor, cx| {
             editor.set_text(message_text.clone(), window, cx);
+            insert_message_creases(editor, message_creases, &self.context_store, window, cx);
             editor.focus_handle(cx).focus(window);
             editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
         });
@@ -1736,6 +1739,7 @@ impl ActiveThread {
         let Some(message) = self.thread.read(cx).message(message_id) else {
             return Empty.into_any();
         };
+        let message_creases = message.creases.clone();
 
         let Some(rendered_message) = self.rendered_messages_by_id.get(&message_id) else {
             return Empty.into_any();
@@ -2027,6 +2031,7 @@ impl ActiveThread {
                                 this.start_editing_message(
                                     message_id,
                                     &message_segments,
+                                    &message_creases,
                                     window,
                                     cx,
                                 );
@@ -2231,7 +2236,7 @@ impl ActiveThread {
                 // Backdrop to dim out the whole thread below the editing user message
                 parent.relative().child(
                     div()
-                        .occlude()
+                        .stop_mouse_events_except_scroll()
                         .absolute()
                         .inset_0()
                         .size_full()
@@ -2391,6 +2396,7 @@ impl ActiveThread {
                                 markdown_element.code_block_renderer(
                                     markdown::CodeBlockRenderer::Default {
                                         copy_button: false,
+                                        copy_button_on_hover: false,
                                         border: true,
                                     },
                                 )
@@ -2710,6 +2716,7 @@ impl ActiveThread {
                                 )
                                 .code_block_renderer(markdown::CodeBlockRenderer::Default {
                                     copy_button: false,
+                                    copy_button_on_hover: false,
                                     border: false,
                                 })
                                 .on_url_click({
@@ -2740,6 +2747,7 @@ impl ActiveThread {
                                 )
                                 .code_block_renderer(markdown::CodeBlockRenderer::Default {
                                     copy_button: false,
+                                    copy_button_on_hover: false,
                                     border: false,
                                 })
                                 .on_url_click({

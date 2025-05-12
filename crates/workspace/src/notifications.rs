@@ -693,7 +693,7 @@ pub mod simple_message_notification {
                                                 )
                                             } else {
                                                 Tooltip::for_action(
-                                                    "Close.",
+                                                    "Close",
                                                     &menu::Cancel,
                                                     window,
                                                     cx,

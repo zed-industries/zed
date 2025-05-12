@@ -1089,6 +1089,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
             }],
         })
         .await
+        .into_response()
         .unwrap();
     fake_server.handle_notification::<lsp::notification::DidChangeWatchedFiles, _>({
         let file_changes = file_changes.clone();
@@ -3431,6 +3432,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
                             },
                         )
                         .await
+                        .into_response()
                         .unwrap();
                     Ok(Some(json!(null)))
                 }
