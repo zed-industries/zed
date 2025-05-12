@@ -71,12 +71,6 @@ impl DebugAdapter for RubyDebugAdapter {
             format!("--port={}", port),
             format!("--host={}", host),
         ];
-        if launch.args.is_empty() {
-            let program = launch.program.clone();
-            let mut split = program.split(" ");
-            launch.program = split.next().unwrap().to_string();
-            launch.args = split.map(|s| s.to_string()).collect();
-        }
         if delegate.which(launch.program.as_ref()).is_some() {
             arguments.push("--command".to_string())
         }
