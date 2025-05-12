@@ -322,47 +322,49 @@ impl CopilotChat {
         let config_paths: HashSet<PathBuf> = copilot_chat_config_paths().into_iter().collect();
         let dir_path = copilot_chat_config_dir();
 
-        let client_async = client.clone();
-        cx.spawn(async move |cx| {
-            let mut parent_watch_rx = watch_config_dir(
-                cx.background_executor(),
-                fs.clone(),
-                dir_path.clone(),
-                config_paths,
-            );
-            while let Some(contents) = parent_watch_rx.next().await {
-                let oauth_token = extract_oauth_token(contents);
-                cx.update(|cx| {
-                    if let Some(this) = Self::global(cx).as_ref() {
-                        this.update(cx, |this, cx| {
-                            this.oauth_token = oauth_token.clone();
-                            cx.notify();
-                        });
-                    }
-                })?;
+        cx.spawn({
+            let client = client.clone();
+            async move |cx| {
+                let mut parent_watch_rx = watch_config_dir(
+                    cx.background_executor(),
+                    fs.clone(),
+                    dir_path.clone(),
+                    config_paths,
+                );
+                while let Some(contents) = parent_watch_rx.next().await {
+                    let oauth_token = extract_oauth_token(contents);
+                    cx.update(|cx| {
+                        if let Some(this) = Self::global(cx).as_ref() {
+                            this.update(cx, |this, cx| {
+                                this.oauth_token = oauth_token.clone();
+                                cx.notify();
+                            });
+                        }
+                    })?;
 
-                if let Some(ref oauth_token) = oauth_token {
-                    let api_token = request_api_token(oauth_token, client_async.clone()).await?;
-                    cx.update(|cx| {
-                        if let Some(this) = Self::global(cx).as_ref() {
-                            this.update(cx, |this, cx| {
-                                this.api_token = Some(api_token.clone());
-                                cx.notify();
-                            });
-                        }
-                    })?;
-                    let models = get_models(api_token.api_key, client_async.clone()).await?;
-                    cx.update(|cx| {
-                        if let Some(this) = Self::global(cx).as_ref() {
-                            this.update(cx, |this, cx| {
-                                this.models = Some(models);
-                                cx.notify();
-                            });
-                        }
-                    })?;
+                    if let Some(ref oauth_token) = oauth_token {
+                        let api_token = request_api_token(oauth_token, client.clone()).await?;
+                        cx.update(|cx| {
+                            if let Some(this) = Self::global(cx).as_ref() {
+                                this.update(cx, |this, cx| {
+                                    this.api_token = Some(api_token.clone());
+                                    cx.notify();
+                                });
+                            }
+                        })?;
+                        let models = get_models(api_token.api_key, client.clone()).await?;
+                        cx.update(|cx| {
+                            if let Some(this) = Self::global(cx).as_ref() {
+                                this.update(cx, |this, cx| {
+                                    this.models = Some(models);
+                                    cx.notify();
+                                });
+                            }
+                        })?;
+                    }
                 }
+                anyhow::Ok(())
             }
-            anyhow::Ok(())
         })
         .detach_and_log_err(cx);
 
