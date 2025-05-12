@@ -422,6 +422,7 @@ impl AgentConfiguration {
             .unwrap_or(ContextServerStatus::Stopped);
 
         let is_running = matches!(server_status, ContextServerStatus::Running);
+        let item_id = SharedString::from(context_server_id.0.clone());
 
         let error = if let ContextServerStatus::Error(error) = server_status.clone() {
             Some(error)
@@ -443,9 +444,38 @@ impl AgentConfiguration {
         let tool_count = tools.len();
 
         let border_color = cx.theme().colors().border.opacity(0.6);
+        let success_color = Color::Success.color(cx);
+
+        let (status_indicator, tooltip_text) = match server_status {
+            ContextServerStatus::Starting => (
+                Indicator::dot()
+                    .color(Color::Success)
+                    .with_animation(
+                        SharedString::from(format!("{}-starting", context_server_id.0.clone(),)),
+                        Animation::new(Duration::from_secs(2))
+                            .repeat()
+                            .with_easing(pulsating_between(0.4, 1.)),
+                        move |this, delta| this.color(success_color.alpha(delta).into()),
+                    )
+                    .into_any_element(),
+                "Server is starting.",
+            ),
+            ContextServerStatus::Running => (
+                Indicator::dot().color(Color::Success).into_any_element(),
+                "Server is running.",
+            ),
+            ContextServerStatus::Error(_) => (
+                Indicator::dot().color(Color::Error).into_any_element(),
+                "Server has an error.",
+            ),
+            ContextServerStatus::Stopped => (
+                Indicator::dot().color(Color::Muted).into_any_element(),
+                "Server is stopped.",
+            ),
+        };
 
         v_flex()
-            .id(SharedString::from(context_server_id.0.clone()))
+            .id(item_id.clone())
             .border_1()
             .rounded_md()
             .border_color(border_color)
@@ -480,35 +510,12 @@ impl AgentConfiguration {
                                     }
                                 })),
                             )
-                            .child(match server_status {
-                                ContextServerStatus::Starting => {
-                                    let color = Color::Success.color(cx);
-                                    Indicator::dot()
-                                        .color(Color::Success)
-                                        .with_animation(
-                                            SharedString::from(format!(
-                                                "{}-starting",
-                                                context_server_id.0.clone(),
-                                            )),
-                                            Animation::new(Duration::from_secs(2))
-                                                .repeat()
-                                                .with_easing(pulsating_between(0.4, 1.)),
-                                            move |this, delta| {
-                                                this.color(color.alpha(delta).into())
-                                            },
-                                        )
-                                        .into_any_element()
-                                }
-                                ContextServerStatus::Running => {
-                                    Indicator::dot().color(Color::Success).into_any_element()
-                                }
-                                ContextServerStatus::Error(_) => {
-                                    Indicator::dot().color(Color::Error).into_any_element()
-                                }
-                                ContextServerStatus::Stopped => {
-                                    Indicator::dot().color(Color::Muted).into_any_element()
-                                }
-                            })
+                            .child(
+                                div()
+                                    .id(item_id.clone())
+                                    .tooltip(Tooltip::text(tooltip_text))
+                                    .child(status_indicator),
+                            )
                             .child(Label::new(context_server_id.0.clone()).ml_0p5())
                             .when(is_running, |this| {
                                 this.child(

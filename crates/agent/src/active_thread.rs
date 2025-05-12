@@ -487,15 +487,10 @@ fn render_markdown_code_block(
         .copied_code_block_ids
         .contains(&(message_id, ix));
 
-    let can_expand = metadata.line_count > MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK;
+    let can_expand = metadata.line_count >= MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK;
 
     let is_expanded = if can_expand {
-        active_thread
-            .read(cx)
-            .expanded_code_blocks
-            .get(&(message_id, ix))
-            .copied()
-            .unwrap_or(false)
+        active_thread.read(cx).is_codeblock_expanded(message_id, ix)
     } else {
         false
     };
@@ -582,11 +577,7 @@ fn render_markdown_code_block(
                             let active_thread = active_thread.clone();
                             move |_event, _window, cx| {
                                 active_thread.update(cx, |this, cx| {
-                                    let is_expanded = this
-                                        .expanded_code_blocks
-                                        .entry((message_id, ix))
-                                        .or_insert(true);
-                                    *is_expanded = !*is_expanded;
+                                    this.toggle_codeblock_expanded(message_id, ix);
                                     cx.notify();
                                 });
                             }
@@ -2356,17 +2347,14 @@ impl ActiveThread {
 
                                             move |el, range, metadata, _, cx| {
                                                 let can_expand = metadata.line_count
-                                                    > MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK;
+                                                    >= MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK;
                                                 if !can_expand {
                                                     return el;
                                                 }
 
                                                 let is_expanded = active_thread
                                                     .read(cx)
-                                                    .expanded_code_blocks
-                                                    .get(&(message_id, range.start))
-                                                    .copied()
-                                                    .unwrap_or(false);
+                                                    .is_codeblock_expanded(message_id, range.start);
                                                 if is_expanded {
                                                     return el;
                                                 }
@@ -3383,6 +3371,21 @@ impl ActiveThread {
                 })
                 .log_err();
         }))
+    }
+
+    pub fn is_codeblock_expanded(&self, message_id: MessageId, ix: usize) -> bool {
+        self.expanded_code_blocks
+            .get(&(message_id, ix))
+            .copied()
+            .unwrap_or(false)
+    }
+
+    pub fn toggle_codeblock_expanded(&mut self, message_id: MessageId, ix: usize) {
+        let is_expanded = self
+            .expanded_code_blocks
+            .entry((message_id, ix))
+            .or_insert(false);
+        *is_expanded = !*is_expanded;
     }
 }
 

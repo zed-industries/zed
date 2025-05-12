@@ -309,6 +309,8 @@ fn main() {
                 shell_env_loaded_tx.send(()).ok();
             })
             .detach()
+    } else {
+        drop(shell_env_loaded_tx)
     }
 
     app.on_open_urls({

@@ -306,8 +306,7 @@ impl PickerDelegate for BranchListDelegate {
                     cx.background_executor().clone(),
                 )
                 .await
-                .iter()
-                .cloned()
+                .into_iter()
                 .map(|candidate| BranchEntry {
                     branch: all_branches[candidate.candidate_id].clone(),
                     positions: candidate.positions,

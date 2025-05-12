@@ -29,6 +29,7 @@ impl PhpDebugAdapter {
                     "program": launch_config.program,
                     "cwd": launch_config.cwd,
                     "args": launch_config.args,
+                    "env": launch_config.env_json(),
                     "stopOnEntry": config.stop_on_entry.unwrap_or_default(),
                 }),
                 request: config.request.to_dap(),
