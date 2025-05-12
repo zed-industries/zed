@@ -534,7 +534,7 @@ pub enum RequestContent {
     ToolResult {
         tool_use_id: String,
         is_error: bool,
-        content: MaybeTaggedToolResultContent,
+        content: ToolResultContent,
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
     },
@@ -542,14 +542,14 @@ pub enum RequestContent {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum MaybeTaggedToolResultContent {
-    Untagged(String),
-    Tagged(Vec<ToolResultContent>),
+pub enum ToolResultContent {
+    JustText(String),
+    Multipart(Vec<ToolResultPart>),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub enum ToolResultContent {
+pub enum ToolResultPart {
     Text { text: String },
     Image { source: ImageSource },
 }

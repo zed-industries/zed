@@ -1,8 +1,8 @@
 use crate::AllLanguageModelSettings;
 use crate::ui::InstructionListItem;
 use anthropic::{
-    AnthropicError, AnthropicModelMode, ContentDelta, Event, MaybeTaggedToolResultContent,
-    ResponseContent, ToolResultContent, Usage,
+    AnthropicError, AnthropicModelMode, ContentDelta, Event, ResponseContent, ToolResultContent,
+    ToolResultPart, Usage,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{BTreeMap, HashMap};
@@ -589,18 +589,16 @@ pub fn into_anthropic(
                                 is_error: tool_result.is_error,
                                 content: match tool_result.content {
                                     LanguageModelToolResultContent::Text(text) => {
-                                        MaybeTaggedToolResultContent::Untagged(text.to_string())
+                                        ToolResultContent::JustText(text.to_string())
                                     }
                                     LanguageModelToolResultContent::Image(image) => {
-                                        MaybeTaggedToolResultContent::Tagged(vec![
-                                            ToolResultContent::Image {
-                                                source: anthropic::ImageSource {
-                                                    source_type: "base64".to_string(),
-                                                    media_type: "image/png".to_string(),
-                                                    data: image.source.to_string(),
-                                                },
+                                        ToolResultContent::Multipart(vec![ToolResultPart::Image {
+                                            source: anthropic::ImageSource {
+                                                source_type: "base64".to_string(),
+                                                media_type: "image/png".to_string(),
+                                                data: image.source.to_string(),
                                             },
-                                        ])
+                                        }])
                                     }
                                 },
                                 cache_control,
