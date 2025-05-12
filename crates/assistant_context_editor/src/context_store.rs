@@ -648,7 +648,10 @@ impl ContextStore {
                 if context.replica_id() == ReplicaId::default() {
                     Some(proto::ContextMetadata {
                         context_id: context.id().to_proto(),
-                        summary: context.summary().map(|summary| summary.text.clone()),
+                        summary: context
+                            .summary()
+                            .content()
+                            .map(|summary| summary.text.clone()),
                     })
                 } else {
                     None
