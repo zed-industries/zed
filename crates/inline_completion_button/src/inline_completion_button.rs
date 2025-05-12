@@ -240,7 +240,9 @@ impl Render for InlineCompletionButton {
                 let has_subscription = self.user_store.read(cx).current_plan().is_some()
                     && self.user_store.read(cx).subscription_period().is_some();
 
-                if !has_subscription || !current_user_terms_accepted.unwrap_or(false) {
+                if std::env::var("ZED_PREDICT_EDITS_URL").is_err()
+                    && (!has_subscription || !current_user_terms_accepted.unwrap_or(false))
+                {
                     let signed_in = current_user_terms_accepted.is_some();
                     let tooltip_meta = if signed_in {
                         if has_subscription {

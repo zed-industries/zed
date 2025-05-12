@@ -242,7 +242,9 @@ fn assign_edit_prediction_provider(
             }
         }
         EditPredictionProvider::Zed => {
-            if client.status().borrow().is_connected() {
+            if client.status().borrow().is_connected()
+                || std::env::var("ZED_PREDICT_EDITS_URL").is_ok()
+            {
                 let mut worktree = None;
 
                 if let Some(buffer) = &singleton_buffer {

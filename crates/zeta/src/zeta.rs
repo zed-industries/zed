@@ -736,7 +736,7 @@ and then another
             } = params;
 
             let http_client = client.http_client();
-            let mut token = llm_token.acquire(&client).await?;
+            let mut token = llm_token.acquire(&client).await;
             let mut did_retry = false;
 
             loop {
@@ -745,15 +745,16 @@ and then another
                     if let Ok(predict_edits_url) = std::env::var("ZED_PREDICT_EDITS_URL") {
                         request_builder.uri(predict_edits_url)
                     } else {
-                        request_builder.uri(
-                            http_client
-                                .build_zed_llm_url("/predict_edits/v2", &[])?
-                                .as_ref(),
-                        )
+                        request_builder
+                            .uri(
+                                http_client
+                                    .build_zed_llm_url("/predict_edits/v2", &[])?
+                                    .as_ref(),
+                            )
+                            .header("Authorization", format!("Bearer {}", token?))
                     };
                 let request = request_builder
                     .header("Content-Type", "application/json")
-                    .header("Authorization", format!("Bearer {}", token))
                     .header(ZED_VERSION_HEADER_NAME, app_version.to_string())
                     .body(serde_json::to_string(&body)?.into())?;
 
@@ -784,7 +785,7 @@ and then another
                         .is_some()
                 {
                     did_retry = true;
-                    token = llm_token.refresh(&client).await?;
+                    token = llm_token.refresh(&client).await;
                 } else {
                     let mut body = String::new();
                     response.body_mut().read_to_string(&mut body).await?;
@@ -1294,7 +1295,10 @@ impl ProviderDataCollection {
         let choice_and_watcher = buffer.and_then(|buffer| {
             let file = buffer.read(cx).file()?;
 
-            if !file.is_local() || file.is_private() {
+            if !file.is_local()
+                || file.is_private()
+                || std::env::var("ZED_PREDICT_EDITS_URL").is_ok()
+            {
                 return None;
             }
 
@@ -1445,7 +1449,7 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
         _debounce: bool,
         cx: &mut Context<Self>,
     ) {
-        if !self.zeta.read(cx).tos_accepted {
+        if !self.zeta.read(cx).tos_accepted && std::env::var("ZED_PREDICT_EDITS_URL").is_err() {
             return;
         }
 
