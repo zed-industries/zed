@@ -4183,6 +4183,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "shlex",
  "sysinfo",
  "task",
  "tasks_ui",
