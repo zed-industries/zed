@@ -22,7 +22,7 @@ use gpui::{
 
 use language::Buffer;
 use project::debugger::session::{Session, SessionStateEvent};
-use project::{Fs, WorktreeId};
+use project::{Fs, ProjectPath, WorktreeId};
 use project::{Project, debugger::session::ThreadStatus};
 use rpc::proto::{self};
 use settings::Settings;
@@ -291,7 +291,7 @@ impl DebugPanel {
 
         let (debug_session, workspace) = this.update_in(cx, |this, window, cx| {
             this.sessions.retain(|session| {
-                session
+                !session
                     .read(cx)
                     .running_state()
                     .read(cx)
@@ -997,7 +997,7 @@ impl DebugPanel {
         worktree_id: WorktreeId,
         window: &mut Window,
         cx: &mut App,
-    ) -> Task<Result<()>> {
+    ) -> Task<Result<ProjectPath>> {
         self.workspace
             .update(cx, |workspace, cx| {
                 let Some(mut path) = workspace.absolute_path_of_worktree(worktree_id, cx) else {
@@ -1006,13 +1006,19 @@ impl DebugPanel {
 
                 let serialized_scenario = serde_json::to_value(scenario);
 
-                path.push(paths::local_debug_file_relative_path());
-
                 cx.spawn_in(window, async move |workspace, cx| {
                     let serialized_scenario = serialized_scenario?;
-                    let path = path.as_path();
                     let fs =
                         workspace.update(cx, |workspace, _| workspace.app_state().fs.clone())?;
+
+                    path.push(paths::local_settings_folder_relative_path());
+                    if !fs.is_dir(path.as_path()).await {
+                        fs.create_dir(path.as_path()).await?;
+                    }
+                    path.pop();
+
+                    path.push(paths::local_debug_file_relative_path());
+                    let path = path.as_path();
 
                     if !fs.is_file(path).await {
                         let content =
@@ -1034,21 +1040,19 @@ impl DebugPanel {
                         .await?;
                     }
 
-                    workspace.update_in(cx, |workspace, window, cx| {
+                    workspace.update(cx, |workspace, cx| {
                         if let Some(project_path) = workspace
                             .project()
                             .read(cx)
                             .project_path_for_absolute_path(&path, cx)
                         {
-                            workspace.open_path(project_path, None, true, window, cx)
+                            Ok(project_path)
                         } else {
-                            Task::ready(Err(anyhow!(
+                            Err(anyhow!(
                                 "Couldn't get project path for .zed/debug.json in active worktree"
-                            )))
+                            ))
                         }
-                    })?.await?;
-
-                    anyhow::Ok(())
+                    })?
                 })
             })
             .unwrap_or_else(|err| Task::ready(Err(err)))

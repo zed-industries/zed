@@ -1860,7 +1860,12 @@ impl ContextEditor {
     }
 
     pub fn title(&self, cx: &App) -> SharedString {
-        self.context.read(cx).summary_or_default()
+        self.context.read(cx).summary().or_default()
+    }
+
+    pub fn regenerate_summary(&mut self, cx: &mut Context<Self>) {
+        self.context
+            .update(cx, |context, cx| context.summarize(true, cx));
     }
 
     fn render_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -1894,11 +1899,24 @@ impl ContextEditor {
                                     .log_err();
 
                                 if let Some(client) = client {
-                                    cx.spawn(async move |this, cx| {
-                                        client.authenticate_and_connect(true, cx).await?;
-                                        this.update(cx, |_, cx| cx.notify())
+                                    cx.spawn(async move |context_editor, cx| {
+                                        match client.authenticate_and_connect(true, cx).await {
+                                            util::ConnectionResult::Timeout => {
+                                                log::error!("Authentication timeout")
+                                            }
+                                            util::ConnectionResult::ConnectionReset => {
+                                                log::error!("Connection reset")
+                                            }
+                                            util::ConnectionResult::Result(r) => {
+                                                if r.log_err().is_some() {
+                                                    context_editor
+                                                        .update(cx, |_, cx| cx.notify())
+                                                        .ok();
+                                                }
+                                            }
+                                        }
                                     })
-                                    .detach_and_log_err(cx)
+                                    .detach()
                                 }
                             })),
                     )

@@ -6,7 +6,7 @@ use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::message_editor::insert_message_creases;
 use crate::thread::{
     LastRestoreCheckpoint, MessageCrease, MessageId, MessageSegment, Thread, ThreadError,
-    ThreadEvent, ThreadFeedback,
+    ThreadEvent, ThreadFeedback, ThreadSummary,
 };
 use crate::thread_store::{RulesLoadingError, TextThreadStore, ThreadStore};
 use crate::tool_use::{PendingToolUseStatus, ToolUse};
@@ -487,15 +487,10 @@ fn render_markdown_code_block(
         .copied_code_block_ids
         .contains(&(message_id, ix));
 
-    let can_expand = metadata.line_count > MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK;
+    let can_expand = metadata.line_count >= MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK;
 
     let is_expanded = if can_expand {
-        active_thread
-            .read(cx)
-            .expanded_code_blocks
-            .get(&(message_id, ix))
-            .copied()
-            .unwrap_or(false)
+        active_thread.read(cx).is_codeblock_expanded(message_id, ix)
     } else {
         false
     };
@@ -582,11 +577,7 @@ fn render_markdown_code_block(
                             let active_thread = active_thread.clone();
                             move |_event, _window, cx| {
                                 active_thread.update(cx, |this, cx| {
-                                    let is_expanded = this
-                                        .expanded_code_blocks
-                                        .entry((message_id, ix))
-                                        .or_insert(true);
-                                    *is_expanded = !*is_expanded;
+                                    this.toggle_codeblock_expanded(message_id, ix);
                                     cx.notify();
                                 });
                             }
@@ -823,12 +814,12 @@ impl ActiveThread {
         self.messages.is_empty()
     }
 
-    pub fn summary(&self, cx: &App) -> Option<SharedString> {
+    pub fn summary<'a>(&'a self, cx: &'a App) -> &'a ThreadSummary {
         self.thread.read(cx).summary()
     }
 
-    pub fn summary_or_default(&self, cx: &App) -> SharedString {
-        self.thread.read(cx).summary_or_default()
+    pub fn regenerate_summary(&self, cx: &mut App) {
+        self.thread.update(cx, |thread, cx| thread.summarize(cx))
     }
 
     pub fn cancel_last_completion(&mut self, window: &mut Window, cx: &mut App) -> bool {
@@ -1134,11 +1125,7 @@ impl ActiveThread {
             return;
         }
 
-        let title = self
-            .thread
-            .read(cx)
-            .summary()
-            .unwrap_or("Agent Panel".into());
+        let title = self.thread.read(cx).summary().unwrap_or("Agent Panel");
 
         match AssistantSettings::get_global(cx).notify_when_agent_waiting {
             NotifyWhenAgentWaiting::PrimaryScreen => {
@@ -2360,17 +2347,14 @@ impl ActiveThread {
 
                                             move |el, range, metadata, _, cx| {
                                                 let can_expand = metadata.line_count
-                                                    > MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK;
+                                                    >= MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK;
                                                 if !can_expand {
                                                     return el;
                                                 }
 
                                                 let is_expanded = active_thread
                                                     .read(cx)
-                                                    .expanded_code_blocks
-                                                    .get(&(message_id, range.start))
-                                                    .copied()
-                                                    .unwrap_or(false);
+                                                    .is_codeblock_expanded(message_id, range.start);
                                                 if is_expanded {
                                                     return el;
                                                 }
@@ -2400,6 +2384,7 @@ impl ActiveThread {
                                 markdown_element.code_block_renderer(
                                     markdown::CodeBlockRenderer::Default {
                                         copy_button: false,
+                                        copy_button_on_hover: false,
                                         border: true,
                                     },
                                 )
@@ -2719,6 +2704,7 @@ impl ActiveThread {
                                 )
                                 .code_block_renderer(markdown::CodeBlockRenderer::Default {
                                     copy_button: false,
+                                    copy_button_on_hover: false,
                                     border: false,
                                 })
                                 .on_url_click({
@@ -2749,6 +2735,7 @@ impl ActiveThread {
                                 )
                                 .code_block_renderer(markdown::CodeBlockRenderer::Default {
                                     copy_button: false,
+                                    copy_button_on_hover: false,
                                     border: false,
                                 })
                                 .on_url_click({
@@ -3385,6 +3372,21 @@ impl ActiveThread {
                 .log_err();
         }))
     }
+
+    pub fn is_codeblock_expanded(&self, message_id: MessageId, ix: usize) -> bool {
+        self.expanded_code_blocks
+            .get(&(message_id, ix))
+            .copied()
+            .unwrap_or(false)
+    }
+
+    pub fn toggle_codeblock_expanded(&mut self, message_id: MessageId, ix: usize) {
+        let is_expanded = self
+            .expanded_code_blocks
+            .entry((message_id, ix))
+            .or_insert(false);
+        *is_expanded = !*is_expanded;
+    }
 }
 
 pub enum ActiveThreadEvent {
@@ -3439,10 +3441,7 @@ pub(crate) fn open_active_thread_as_markdown(
         workspace.update_in(cx, |workspace, window, cx| {
             let thread = thread.read(cx);
             let markdown = thread.to_markdown(cx)?;
-            let thread_summary = thread
-                .summary()
-                .map(|summary| summary.to_string())
-                .unwrap_or_else(|| "Thread".to_string());
+            let thread_summary = thread.summary().or_default().to_string();
 
             let project = workspace.project().clone();
 

@@ -278,8 +278,8 @@ impl CompletionProvider for SlashCommandCompletionProvider {
                         buffer.anchor_after(Point::new(position.row, first_arg_start.start as u32));
                     let arguments = call
                         .arguments
-                        .iter()
-                        .filter_map(|argument| Some(line.get(argument.clone())?.to_string()))
+                        .into_iter()
+                        .filter_map(|argument| Some(line.get(argument)?.to_string()))
                         .collect::<Vec<_>>();
                     let argument_range = first_arg_start..buffer_position;
                     (
