@@ -8779,15 +8779,13 @@ impl Editor {
                 continue;
             }
 
-            // If the selection is empty and the cursor is in the leading whitespace before the
-            // suggested indentation, then auto-indent the line.
             let cursor = selection.head();
             let current_indent = snapshot.indent_size_for_line(MultiBufferRow(cursor.row));
             if let Some(suggested_indent) =
                 suggested_indents.get(&MultiBufferRow(cursor.row)).copied()
             {
-                // If there exist any empty selection in the leading whitespace, then skip
-                // indent for selections at the boundary.
+                // Don't do anything if already at suggested indent
+                // and there is any other cursor which is not
                 if has_some_cursor_in_whitespace
                     && cursor.column == current_indent.len
                     && current_indent.len == suggested_indent.len
@@ -8795,6 +8793,8 @@ impl Editor {
                     continue;
                 }
 
+                // Adjust line and move cursor to suggested indent
+                // if cursor is not at suggested indent
                 if cursor.column < suggested_indent.len
                     && cursor.column <= current_indent.len
                     && current_indent.len <= suggested_indent.len
@@ -8809,6 +8809,14 @@ impl Editor {
                         ));
                         row_delta = suggested_indent.len - current_indent.len;
                     }
+                    continue;
+                }
+
+                // If current indent is more than suggested indent
+                // only move cursor to current indent and skip indent
+                if cursor.column < current_indent.len && current_indent.len > suggested_indent.len {
+                    selection.start = Point::new(cursor.row, current_indent.len);
+                    selection.end = selection.start;
                     continue;
                 }
             }

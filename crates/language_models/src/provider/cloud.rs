@@ -180,9 +180,12 @@ impl State {
 
     fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let client = self.client.clone();
-        cx.spawn(async move |this, cx| {
-            client.authenticate_and_connect(true, &cx).await?;
-            this.update(cx, |_, cx| cx.notify())
+        cx.spawn(async move |state, cx| {
+            client
+                .authenticate_and_connect(true, &cx)
+                .await
+                .into_response()?;
+            state.update(cx, |_, cx| cx.notify())
         })
     }
 
@@ -611,7 +614,7 @@ impl CloudLanguageModel {
                         .and_then(|plan| zed_llm_client::Plan::from_str(plan).ok())
                     {
                         let plan = match plan {
-                            zed_llm_client::Plan::Free => Plan::Free,
+                            zed_llm_client::Plan::ZedFree => Plan::Free,
                             zed_llm_client::Plan::ZedPro => Plan::ZedPro,
                             zed_llm_client::Plan::ZedProTrial => Plan::ZedProTrial,
                         };

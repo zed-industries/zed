@@ -538,6 +538,7 @@
       "ctrl-alt-b": "workspace::ToggleRightDock",
       "ctrl-b": "workspace::ToggleLeftDock",
       "ctrl-j": "workspace::ToggleBottomDock",
+      "ctrl-w": "workspace::CloseActiveDock",
       "ctrl-alt-y": "workspace::CloseAllDocks",
       "shift-find": "pane::DeploySearch",
       "ctrl-shift-f": "pane::DeploySearch",

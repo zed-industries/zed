@@ -99,7 +99,7 @@ impl From<SubscriptionKind> for zed_llm_client::Plan {
         match value {
             SubscriptionKind::ZedPro => Self::ZedPro,
             SubscriptionKind::ZedProTrial => Self::ZedProTrial,
-            SubscriptionKind::ZedFree => Self::Free,
+            SubscriptionKind::ZedFree => Self::ZedFree,
         }
     }
 }
