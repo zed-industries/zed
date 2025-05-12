@@ -19860,9 +19860,15 @@ fn snippet_completions(
                             filter_range: 0..matching_prefix.len(),
                         },
                         icon_path: None,
-                        documentation: snippet.description.clone().map(|description| {
-                            CompletionDocumentation::SingleLine(description.into())
-                        }),
+                        documentation: Some(
+                            CompletionDocumentation::SingleLineAndMultiLinePlainText {
+                                single_line: snippet.name.clone().into(),
+                                plain_text: snippet
+                                    .description
+                                    .clone()
+                                    .map(|description| description.into()),
+                            },
+                        ),
                         insert_text_mode: None,
                         confirm: None,
                     })
