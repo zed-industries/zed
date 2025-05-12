@@ -545,6 +545,7 @@ pub trait PlatformDispatcher: Send + Sync {
     fn now(&self) -> Instant {
         Instant::now()
     }
+    fn tick(&self, _: bool) -> bool;
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&self) -> Option<&TestDispatcher> {

@@ -7,6 +7,7 @@ use std::{
     path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::{Arc, atomic::Ordering::SeqCst},
+    task::{Poll, Waker},
     time::Duration,
 };
 
@@ -90,6 +91,36 @@ impl AppCell {
             eprintln!("borrowed {thread_id:?}");
         }
         Ok(AppRefMut(self.app.try_borrow_mut()?))
+    }
+
+    pub fn shutdown(self: &Rc<AppCell>) {
+        let mut futures = Vec::new();
+
+        let mut cx = self.borrow_mut();
+
+        for observer in cx.quit_observers.remove(&()) {
+            futures.push(observer(&mut cx));
+        }
+
+        cx.windows.clear();
+        cx.window_handles.clear();
+        cx.flush_effects();
+        let executor = cx.background_executor.clone();
+        drop(cx);
+
+        let waker = Waker::noop();
+        let mut future_cx = std::task::Context::from_waker(waker);
+        let futures = futures::future::join_all(futures);
+        futures::pin_mut!(futures);
+        let mut start = std::time::Instant::now();
+        while dbg!(start.elapsed() < SHUTDOWN_TIMEOUT) {
+            match futures.as_mut().poll(&mut future_cx) {
+                Poll::Pending => {
+                    executor.tick();
+                }
+                Poll::Ready(_) => break,
+            }
+        }
     }
 }
 
@@ -382,7 +413,7 @@ impl App {
         platform.on_quit(Box::new({
             let cx = app.clone();
             move || {
-                cx.borrow_mut().shutdown();
+                cx.shutdown();
             }
         }));
 
@@ -391,7 +422,7 @@ impl App {
 
     /// Quit the application gracefully. Handlers registered with [`Context::on_app_quit`]
     /// will be given 100ms to complete before exiting.
-    pub fn shutdown(&mut self) {
+    pub fn shutdown_old(&mut self) {
         let mut futures = Vec::new();
 
         for observer in self.quit_observers.remove(&()) {
