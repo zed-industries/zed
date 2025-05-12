@@ -226,7 +226,7 @@ impl Editor {
                             signature: signature_help
                                 .signatures
                                 .into_iter()
-                                .map(|s| SignatureHelpData {
+                                .map(|s| SignatureHelp {
                                     label: s.label.into(),
                                     documentation: s.documentation.map(|documentation| {
                                         cx.new(|cx| {
@@ -327,7 +327,7 @@ impl SignatureHelpState {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct SignatureHelpData {
+pub struct SignatureHelp {
     pub(crate) label: SharedString,
     documentation: Option<Entity<Markdown>>,
     highlights: Vec<(Range<usize>, HighlightStyle)>,
@@ -336,7 +336,7 @@ pub struct SignatureHelpData {
 #[derive(Clone, Debug)]
 pub struct SignatureHelpPopover {
     pub style: TextStyle,
-    pub signature: Vec<SignatureHelpData>,
+    pub signature: Vec<SignatureHelp>,
     pub current_signature: Rc<RefCell<usize>>,
     pub(crate) scroll_handle: ScrollHandle,
     pub(crate) scrollbar_state: ScrollbarState,
