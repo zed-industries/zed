@@ -293,9 +293,10 @@ impl Tool for EditFileTool {
                 }
             } else {
                 Ok(ToolResultOutput {
-                    content: ToolResultContent::Text(
-                        format!("Edited {}:\n\n```diff\n{}\n```", input_path, diff),
-                    ),
+                    content: ToolResultContent::Text(format!(
+                        "Edited {}:\n\n```diff\n{}\n```",
+                        input_path, diff
+                    )),
                     output: serde_json::to_value(output).ok(),
                 })
             }

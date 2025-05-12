@@ -967,10 +967,10 @@ impl RequestMarkdown {
 
                         match &tool_result.content {
                             LanguageModelToolResultContent::Text(str) => {
-                                writeln!(messages, "{}\n", str)?;
+                                writeln!(messages, "{}\n", str).ok();
                             }
                             LanguageModelToolResultContent::Image(image) => {
-                                writeln!(messages, "![Image](data:base64,{})\n", image.source)?;
+                                writeln!(messages, "![Image](data:base64,{})\n", image.source).ok();
                             }
                         }
 
