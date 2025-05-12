@@ -1,4 +1,4 @@
-use crate::wasm_host::wit::since_v0_5_0::slash_command::SlashCommandOutputSection;
+use crate::wasm_host::wit::since_v0_6_0::slash_command::SlashCommandOutputSection;
 use crate::wasm_host::wit::{CompletionKind, CompletionLabelDetails, InsertTextFormat, SymbolKind};
 use crate::wasm_host::{WasmState, wit::ToWasmtimeResult};
 use ::http_client::{AsyncBody, HttpRequestExt};
@@ -23,8 +23,8 @@ use std::{
 use util::maybe;
 use wasmtime::component::{Linker, Resource};
 
-pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 5, 0);
-pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 5, 0);
+pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 6, 0);
+pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 6, 0);
 
 wasmtime::component::bindgen!({
     async: true,
@@ -626,6 +626,9 @@ impl slash_command::Host for WasmState {}
 
 #[async_trait]
 impl context_server::Host for WasmState {}
+
+#[async_trait]
+impl dap::Host for WasmState {}
 
 impl ExtensionImports for WasmState {
     async fn get_settings(

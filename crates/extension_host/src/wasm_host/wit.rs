@@ -1,4 +1,3 @@
-
 mod since_v0_0_1;
 mod since_v0_0_4;
 mod since_v0_0_6;
@@ -13,10 +12,10 @@ use language::LanguageName;
 use lsp::LanguageServerName;
 use release_channel::ReleaseChannel;
 
-use since_v0_5_0 as latest;
 use super::{WasmState, wasm_engine};
 use anyhow::{Context as _, Result, anyhow};
 use semantic_version::SemanticVersion;
+use since_v0_6_0 as latest;
 use std::{ops::RangeInclusive, sync::Arc};
 use wasmtime::{
     Store,
@@ -820,8 +819,9 @@ impl Extension {
                     .await
             }
             Extension::V0_5_0(ext) => {
-                ext.call_context_server_configuration(store, &context_server_id, project)
-                    .await
+                let x = ext
+                    .call_context_server_configuration(store, &context_server_id, project)
+                    .await?;
             }
             Extension::V0_0_1(_)
             | Extension::V0_0_4(_)
