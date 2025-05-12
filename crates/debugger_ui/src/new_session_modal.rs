@@ -727,13 +727,14 @@ impl AttachMode {
 
 pub(super) struct DebugScenarioDelegate {
     task_store: Entity<TaskStore>,
-    candidates: Vec<(TaskSourceKind, DebugScenario)>,
+    candidates: Vec<(Option<TaskSourceKind>, DebugScenario)>,
     selected_index: usize,
     matches: Vec<StringMatch>,
     prompt: String,
     debug_panel: WeakEntity<DebugPanel>,
-    workspace: WeakEntity<Workspace>,
     task_contexts: Option<TaskContexts>,
+    divider_index: Option<usize>,
+    last_used_candidate_index: Option<usize>,
 }
 
 impl DebugScenarioDelegate {
@@ -744,22 +745,19 @@ impl DebugScenarioDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Self {
-        cx.spawn_in(window, {
-            let workspace = workspace.clone();
-            async move |this, cx| {
-                let task_contexts = workspace
-                    .update_in(cx, |workspace, window, cx| {
-                        tasks_ui::task_contexts(workspace, window, cx)
-                    })?
-                    .await;
+        cx.spawn_in(window, async move |this, cx| {
+            let task_contexts = workspace
+                .update_in(cx, |workspace, window, cx| {
+                    tasks_ui::task_contexts(workspace, window, cx)
+                })?
+                .await;
 
-                this.update_in(cx, |this, window, cx| {
-                    this.delegate
-                        .task_contexts_loaded(task_contexts, window, cx);
-                    this.refresh(window, cx);
-                    cx.notify();
-                })
-            }
+            this.update_in(cx, |this, window, cx| {
+                this.delegate
+                    .task_contexts_loaded(task_contexts, window, cx);
+                this.refresh(window, cx);
+                cx.notify();
+            })
         })
         .detach();
 
@@ -770,20 +768,21 @@ impl DebugScenarioDelegate {
             matches: Vec::new(),
             prompt: String::new(),
             debug_panel,
-            workspace,
             task_contexts: None,
+            divider_index: None,
+            last_used_candidate_index: None,
         }
     }
 
     pub fn task_contexts_loaded(
         &mut self,
         task_contexts: TaskContexts,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) {
         self.task_contexts = Some(task_contexts);
 
-        let scenarios: Vec<_> = self
+        let (recent, scenarios) = self
             .task_store
             .update(cx, |task_store, cx| {
                 task_store.task_inventory().map(|inventory| {
@@ -794,7 +793,19 @@ impl DebugScenarioDelegate {
             })
             .unwrap_or_default();
 
-        self.candidates = scenarios.clone();
+        if !recent.is_empty() {
+            self.last_used_candidate_index = Some(recent.len() - 1);
+        }
+
+        self.candidates = recent
+            .into_iter()
+            .map(|scenario| (None, scenario))
+            .chain(
+                scenarios
+                    .into_iter()
+                    .map(|(kind, scenario)| (Some(kind), scenario)),
+            )
+            .collect();
     }
 }
 
@@ -856,6 +867,13 @@ impl PickerDelegate for DebugScenarioDelegate {
                     delegate.matches = matches;
                     delegate.prompt = query;
 
+                    delegate.divider_index = delegate.last_used_candidate_index.and_then(|index| {
+                        let index = delegate
+                            .matches
+                            .partition_point(|matching_task| matching_task.candidate_id <= index);
+                        Some(index).and_then(|index| (index != 0).then(|| index - 1))
+                    });
+
                     if delegate.matches.is_empty() {
                         delegate.selected_index = 0;
                     } else {
@@ -867,16 +885,23 @@ impl PickerDelegate for DebugScenarioDelegate {
         })
     }
 
+    fn separators_after_indices(&self) -> Vec<usize> {
+        if let Some(i) = self.divider_index {
+            vec![i]
+        } else {
+            Vec::new()
+        }
+    }
+
     fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<picker::Picker<Self>>) {
         let debug_scenario = self
             .matches
             .get(self.selected_index())
             .and_then(|match_candidate| self.candidates.get(match_candidate.candidate_id).cloned());
 
-        let Some((task_source_kind, debug_scenario)) = debug_scenario else {
+        let Some((_, debug_scenario)) = debug_scenario else {
             return;
         };
-        dbg!(&task_source_kind);
 
         let (task_context, worktree_id) = self
             .task_contexts
@@ -917,10 +942,19 @@ impl PickerDelegate for DebugScenarioDelegate {
             char_count: hit.string.chars().count(),
             color: Color::Default,
         };
+        let task_kind = &self.candidates[hit.candidate_id].0;
 
-        let icon = Icon::new(IconName::FileTree)
-            .color(Color::Muted)
-            .size(ui::IconSize::Small);
+        let icon = match task_kind {
+            Some(TaskSourceKind::Lsp(..)) => Some(Icon::new(IconName::Bolt)),
+            Some(TaskSourceKind::UserInput) => Some(Icon::new(IconName::Terminal)),
+            Some(TaskSourceKind::AbsPath { .. }) => Some(Icon::new(IconName::Settings)),
+            Some(TaskSourceKind::Worktree { .. }) => Some(Icon::new(IconName::FileTree)),
+            Some(TaskSourceKind::Language { name }) => file_icons::FileIcons::get(cx)
+                .get_icon_for_type(&name.to_lowercase(), cx)
+                .map(Icon::from_path),
+            None => Some(Icon::new(IconName::HistoryRerun)),
+        }
+        .map(|icon| icon.color(Color::Muted).size(ui::IconSize::Small));
 
         Some(
             ListItem::new(SharedString::from(format!("debug-scenario-selection-{ix}")))

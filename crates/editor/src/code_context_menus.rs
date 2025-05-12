@@ -1113,6 +1113,7 @@ impl CodeActionsMenu {
                                     this.child(
                                         h_flex()
                                             .overflow_hidden()
+                                            .child("debug: ")
                                             .child(scenario.label.clone())
                                             .when(selected, |this| {
                                                 this.text_color(colors.text_accent)
@@ -1148,7 +1149,9 @@ impl CodeActionsMenu {
                     CodeActionsItem::CodeAction { action, .. } => {
                         action.lsp_action.title().chars().count()
                     }
-                    CodeActionsItem::DebugScenario(scenario) => scenario.label.chars().count(),
+                    CodeActionsItem::DebugScenario(scenario) => {
+                        format!("debug: {}", scenario.label).chars().count()
+                    }
                 })
                 .map(|(ix, _)| ix),
         )

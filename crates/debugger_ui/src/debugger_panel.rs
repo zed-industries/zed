@@ -218,6 +218,18 @@ impl DebugPanel {
                 cx,
             )
         });
+        if let Some(inventory) = self
+            .project
+            .read(cx)
+            .task_store()
+            .read(cx)
+            .task_inventory()
+            .cloned()
+        {
+            inventory.update(cx, |inventory, _| {
+                inventory.scenario_scheduled(scenario.clone());
+            })
+        }
         let task = cx.spawn_in(window, {
             let session = session.clone();
             async move |this, cx| {

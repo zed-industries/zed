@@ -34,6 +34,7 @@ use crate::{task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
 #[derive(Debug, Default)]
 pub struct Inventory {
     last_scheduled_tasks: VecDeque<(TaskSourceKind, ResolvedTask)>,
+    last_scheduled_scenarios: VecDeque<DebugScenario>,
     templates_from_settings: InventoryFor<TaskTemplate>,
     scenarios_from_settings: InventoryFor<DebugScenario>,
 }
@@ -220,11 +221,20 @@ impl Inventory {
         cx.new(|_| Self::default())
     }
 
+    pub fn scenario_scheduled(&mut self, scenario: DebugScenario) {
+        self.last_scheduled_scenarios
+            .retain(|s| s.label != scenario.label);
+        self.last_scheduled_scenarios.push_back(scenario);
+        if self.last_scheduled_scenarios.len() > 5_000 {
+            self.last_scheduled_scenarios.pop_front();
+        }
+    }
+
     pub fn list_debug_scenarios<'a>(
         &self,
         task_contexts: &'a TaskContexts,
         cx: &mut App,
-    ) -> Vec<(TaskSourceKind, DebugScenario)> {
+    ) -> (Vec<DebugScenario>, Vec<(TaskSourceKind, DebugScenario)>) {
         let mut scenarios = Vec::new();
 
         if let Some(worktree_id) = task_contexts
@@ -270,7 +280,10 @@ impl Inventory {
             }
         }
 
-        scenarios
+        (
+            self.last_scheduled_scenarios.iter().cloned().collect(),
+            scenarios,
+        )
     }
 
     pub fn task_template_by_label(

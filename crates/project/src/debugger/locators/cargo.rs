@@ -52,7 +52,7 @@ impl DapLocator for CargoLocator {
         }
         let mut task_template = build_config.clone();
         let cargo_action = task_template.args.first_mut()?;
-        if cargo_action == "check" {
+        if cargo_action == "check" || cargo_action == "clean" {
             return None;
         }
 
@@ -75,10 +75,9 @@ impl DapLocator for CargoLocator {
             }
             _ => {}
         }
-        let label = format!("Debug `{resolved_label}`");
         Some(DebugScenario {
             adapter: adapter.0,
-            label: SharedString::from(label),
+            label: resolved_label.to_string().into(),
             build: Some(BuildTaskDefinition::Template {
                 task_template,
                 locator_name: Some(self.name()),
