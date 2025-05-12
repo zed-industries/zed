@@ -736,6 +736,14 @@ impl CustomMode {
 
     pub(super) fn debug_request(&self, cx: &App) -> task::LaunchRequest {
         let path = self.cwd.read(cx).text(cx);
+        if cfg!(windows) {
+            return task::LaunchRequest {
+                program: self.program.read(cx).text(cx),
+                cwd: path.is_empty().not().then(|| PathBuf::from(path)),
+                args: Default::default(),
+                env: Default::default(),
+            };
+        }
         let command = self.program.read(cx).text(cx);
         let mut args = shlex::split(&command).into_iter().flatten().peekable();
         let mut env = FxHashMap::default();
