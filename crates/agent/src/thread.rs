@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::io::Write;
 use std::ops::Range;
@@ -1379,8 +1380,93 @@ impl Thread {
     ) {
         const STALE_FILES_HEADER: &str = "These files changed since last read:";
 
+        // First, ensure all files attached as context are tracked
+        let mut file_buffers_to_track = HashSet::new();
+
+        // Scan all messages for file contexts
+        for message in &self.messages {
+            message
+                .loaded_context // TODO
+
+
+            // Check attached contexts for file buffers
+            for ctx in &message.contexts {
+                if let AgentContext::File(file_context) = ctx {
+                    file_buffers_to_track.insert(file_context.handle.buffer.clone());
+                }
+            }
+        }
+
+        // Register all found file buffers with action_log if they aren't already tracked
+        if !file_buffers_to_track.is_empty() {
+            let action_log_clone = self.action_log.clone();
+            action_log_clone.update(cx, |log, cx| {
+                for buffer in file_buffers_to_track {
+                    log.buffer_read(buffer, cx);
+                }
+            });
+        }
+
+        let mut stale_message = String::new();
+        if !file_buffers_to_track.is_empty() {
+            let action_log_clone = self.action_log.clone();
+            action_log_clone.update(cx, |log, cx| {
+                for buffer in file_buffers_to_track {
+                    log.buffer_read(buffer, cx);
+                }
+            });
+        }
+
         let mut stale_message = String::new();
 
+        let action_log = self.action_log.read(cx);
+        // Scan all messages for file contexts
+        for message in &self.messages {
+            // Check attached contexts for file buffers
+            for ctx in &message.contexts {
+                if let AgentContext::File(file_context) = ctx {
+                    file_buffers_to_track.insert(file_context.handle.buffer.clone());
+                }
+            }
+        }
+
+        // Register all found file buffers with action_log
+        if !file_buffers_to_track.is_empty() {
+            let action_log_clone = self.action_log.clone();
+            cx.update(|cx| {
+                action_log_clone.update(cx, |log, cx| {
+                    for buffer in file_buffers_to_track {
+                        log.buffer_read(buffer, cx);
+                    }
+                });
+            });
+        }
+
+        // Now continue with identifying stale buffers
+        let mut stale_message = String::new();
+
+        let action_log = self.action_log.read(cx);
+        // Scan all messages for file contexts
+        for message in &self.messages {
+            // Check attached contexts for file buffers
+            for ctx in &message.contexts {
+                if let AgentContext::File(file_context) = ctx {
+                    file_buffers_to_track.insert(file_context.handle.buffer.clone());
+                }
+            }
+        }
+
+        // Register all found file buffers with action_log
+        if !file_buffers_to_track.is_empty() {
+            self.action_log.update(cx, |log, cx| {
+                for buffer in file_buffers_to_track {
+                    log.buffer_read(buffer, cx);
+                }
+            });
+        }
+
+        // Now continue with identifying stale buffers
+        let mut stale_message = String::new();
         let action_log = self.action_log.read(cx);
 
         for stale_file in action_log.stale_buffers(cx) {

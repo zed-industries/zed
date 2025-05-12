@@ -844,7 +844,6 @@ pub fn load_context(
         let load_results = future::join_all(load_tasks).await;
 
         let mut contexts = Vec::new();
-        let mut text = String::new();
         let mut referenced_buffers = HashSet::default();
         for context in load_results {
             let Some((context, buffers)) = context else {
@@ -863,10 +862,18 @@ pub fn load_context(
         let mut text_thread_context = Vec::new();
         let mut rules_context = Vec::new();
         let mut images = Vec::new();
+        let mut loaded_files = Vec::new();
+        let mut loaded_dirs = Vec::new();
         for context in &contexts {
             match context {
-                AgentContext::File(context) => file_context.push(context),
-                AgentContext::Directory(context) => directory_context.push(context),
+                AgentContext::File(context) => {
+                    file_context.push(context);
+                    loaded_files.push(context.full_path);
+                }
+                AgentContext::Directory(context) => {
+                    directory_context.push(context);
+                    loaded_dirs.push(context.full_path);
+                }
                 AgentContext::Symbol(context) => symbol_context.push(context),
                 AgentContext::Selection(context) => selection_context.push(context),
                 AgentContext::FetchedUrl(context) => fetched_url_context.push(context),
@@ -891,18 +898,17 @@ pub fn load_context(
             return ContextLoadResult {
                 loaded_context: LoadedContext {
                     contexts,
-                    text,
+                    text: String::new(),
                     images,
                 },
                 referenced_buffers,
             };
         }
 
-        text.push_str(
-            "\n<context>\n\
+        let mut text = "\n<context>\n\
             The following items were attached by the user. \
-            They are up-to-date and don't need to be re-read.\n\n",
-        );
+            They are up-to-date and don't need to be re-read.\n\n"
+            .to_string();
 
         if !file_context.is_empty() {
             text.push_str("<files>");
