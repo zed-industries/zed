@@ -1,6 +1,6 @@
 use crate::{schema::json_schema_for, ui::ToolCallCardHeader};
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
+use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolResultOutput, ToolUseStatus};
 use editor::Editor;
 use futures::channel::oneshot::{self, Receiver};
 use gpui::{
@@ -36,6 +36,12 @@ pub struct FindPathToolInput {
     /// When not provided, starts from the beginning.
     #[serde(default)]
     pub offset: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct FindPathToolOutput {
+    glob: String,
+    paths: Vec<PathBuf>,
 }
 
 const RESULTS_PER_PAGE: usize = 50;
@@ -111,10 +117,18 @@ impl Tool for FindPathTool {
                     )
                     .unwrap();
                 }
+                let output = FindPathToolOutput {
+                    glob,
+                    paths: matches.clone(),
+                };
+
                 for mat in matches.into_iter().skip(offset).take(RESULTS_PER_PAGE) {
                     write!(&mut message, "\n{}", mat.display()).unwrap();
                 }
-                Ok(message.into())
+                Ok(ToolResultOutput {
+                    content: message,
+                    output: Some(serde_json::to_value(output)?),
+                })
             }
         });
 
@@ -122,6 +136,18 @@ impl Tool for FindPathTool {
             output: task,
             card: Some(card.into()),
         }
+    }
+
+    fn deserialize_card(
+        self: Arc<Self>,
+        output: serde_json::Value,
+        _project: Entity<Project>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Option<assistant_tool::AnyToolCard> {
+        let output = serde_json::from_value::<FindPathToolOutput>(output).ok()?;
+        let card = cx.new(|_| FindPathToolCard::from_ouput(output));
+        Some(card.into())
     }
 }
 
@@ -178,6 +204,15 @@ impl FindPathToolCard {
             expanded: false,
             glob,
             _receiver_task: Some(_receiver_task),
+        }
+    }
+
+    fn from_ouput(output: FindPathToolOutput) -> Self {
+        Self {
+            glob: output.glob,
+            paths: output.paths,
+            expanded: false,
+            _receiver_task: None,
         }
     }
 }
