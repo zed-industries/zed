@@ -137,11 +137,13 @@ impl AgentConfiguration {
             .configuration_views_by_provider
             .get(&provider.id())
             .cloned();
+
         let is_expanded = self
             .expanded_provider_configurations
             .get(&provider.id())
             .copied()
             .unwrap_or(false); // Default to collapsed
+            .unwrap_or(true);
 
         v_flex()
             .pt_3()
