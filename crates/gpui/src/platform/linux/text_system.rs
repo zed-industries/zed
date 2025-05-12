@@ -299,6 +299,9 @@ impl CosmicTextSystemState {
 
     fn raster_bounds(&mut self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let font = &self.loaded_fonts_store[params.font_id.0];
+        let subpixel_shift = params
+            .subpixel_variant
+            .map(|v| v as f32 / (SUBPIXEL_VARIANTS as f32 * params.scale_factor));
         let image = self
             .swash_cache
             .get_image(
@@ -307,7 +310,7 @@ impl CosmicTextSystemState {
                     font.id(),
                     params.glyph_id.0 as u16,
                     (params.font_size * params.scale_factor).into(),
-                    (0.0, 0.0),
+                    (subpixel_shift.x, subpixel_shift.y.trunc()),
                     cosmic_text::CacheKeyFlags::empty(),
                 )
                 .0,
