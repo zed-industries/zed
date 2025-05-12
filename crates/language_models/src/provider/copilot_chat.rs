@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use copilot::copilot_chat::{
-    ChatMessage, CopilotChat, Model as CopilotChatModel, ModelVendor,
+    ChatMessage, ChatMessageContent, CopilotChat, ImageUrl, Model as CopilotChatModel, ModelVendor,
     Request as CopilotChatRequest, ResponseEvent, Tool, ToolCall,
 };
 use copilot::{Copilot, Status};
@@ -444,23 +444,6 @@ impl CopilotChatLanguageModel {
         let mut tool_called = false;
         let mut messages: Vec<ChatMessage> = Vec::new();
         for message in request_messages {
-            let text_content = {
-                let mut buffer = String::new();
-                for string in message.content.iter().filter_map(|content| match content {
-                    MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
-                        Some(text.as_str())
-                    }
-                    MessageContent::ToolUse(_)
-                    | MessageContent::RedactedThinking(_)
-                    | MessageContent::ToolResult(_)
-                    | MessageContent::Image(_) => None,
-                }) {
-                    buffer.push_str(string);
-                }
-
-                buffer
-            };
-
             match message.role {
                 Role::User => {
                     for content in &message.content {
@@ -472,9 +455,36 @@ impl CopilotChatLanguageModel {
                         }
                     }
 
-                    if !text_content.is_empty() {
+                    let mut content_parts = Vec::new();
+                    for content in &message.content {
+                        match content {
+                            MessageContent::Text(text) | MessageContent::Thinking { text, .. }
+                                if !text.is_empty() =>
+                            {
+                                if let Some(ChatMessageContent::Text { text: text_content }) =
+                                    content_parts.last_mut()
+                                {
+                                    text_content.push_str(text);
+                                } else {
+                                    content_parts.push(ChatMessageContent::Text {
+                                        text: text.to_string(),
+                                    });
+                                }
+                            }
+                            MessageContent::Image(image) if self.model.supports_vision() => {
+                                content_parts.push(ChatMessageContent::Image {
+                                    image_url: ImageUrl {
+                                        url: image.to_base64_url(),
+                                    },
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    if !content_parts.is_empty() {
                         messages.push(ChatMessage::User {
-                            content: text_content,
+                            content: content_parts,
                         });
                     }
                 }
@@ -494,6 +504,23 @@ impl CopilotChatLanguageModel {
                             });
                         }
                     }
+
+                    let text_content = {
+                        let mut buffer = String::new();
+                        for string in message.content.iter().filter_map(|content| match content {
+                            MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
+                                Some(text.as_str())
+                            }
+                            MessageContent::ToolUse(_)
+                            | MessageContent::RedactedThinking(_)
+                            | MessageContent::ToolResult(_)
+                            | MessageContent::Image(_) => None,
+                        }) {
+                            buffer.push_str(string);
+                        }
+
+                        buffer
+                    };
 
                     messages.push(ChatMessage::Assistant {
                         content: if text_content.is_empty() {
