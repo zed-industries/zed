@@ -296,6 +296,10 @@ impl LanguageModel for OpenAiLanguageModel {
         true
     }
 
+    fn supports_images(&self) -> bool {
+        false
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto => true,

@@ -806,6 +806,6 @@ trait ToWasmtimeResult<T> {
 
 impl<T> ToWasmtimeResult<T> for Result<T> {
     fn to_wasmtime_result(self) -> wasmtime::Result<Result<T, String>> {
-        Ok(self.map_err(|error| error.to_string()))
+        Ok(self.map_err(|error| format!("{error:?}")))
     }
 }

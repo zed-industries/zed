@@ -105,14 +105,10 @@ impl Tool for ReadFileTool {
 
         let file_path = input.path.clone();
 
-        if let Some(image_ext) = image_store::image_extension(&project, &project_path, cx) {
-            let is_image_supported = model
-                .image_extensions_accepted()
-                .contains(&image_ext.as_str());
-
-            if !is_image_supported {
+        if image_store::is_image_file(&project, &project_path, cx) {
+            if !model.supports_images() {
                 return Task::ready(Err(anyhow!(
-                    "Tried to read a `.{image_ext}` image, but Zed doesn't currently support sending images of that type to {}.",
+                    "Attempted to read an image, but Zed doesn't currently sending images to {}.",
                     model.name().0
                 )))
                 .into();

@@ -425,11 +425,11 @@ impl LanguageModel for AnthropicModel {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
-    fn image_extensions_accepted(&self) -> &'static [&'static str] {
-        &["png"]
+    fn supports_tools(&self) -> bool {
+        true
     }
 
-    fn supports_tools(&self) -> bool {
+    fn supports_images(&self) -> bool {
         true
     }
 

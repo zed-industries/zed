@@ -491,6 +491,10 @@ impl LanguageModel for BedrockModel {
         self.model.supports_tool_use()
     }
 
+    fn supports_images(&self) -> bool {
+        false
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto | LanguageModelToolChoice::Any => {

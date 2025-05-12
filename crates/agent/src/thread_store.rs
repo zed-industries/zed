@@ -486,8 +486,8 @@ impl ThreadStore {
                 ToolSource::Native,
                 &profile
                     .tools
-                    .iter()
-                    .filter_map(|(tool, enabled)| enabled.then(|| tool.clone()))
+                    .into_iter()
+                    .filter_map(|(tool, enabled)| enabled.then(|| tool))
                     .collect::<Vec<_>>(),
                 cx,
             );
@@ -511,32 +511,32 @@ impl ThreadStore {
                 });
             }
             // Enable all the tools from all context servers, but disable the ones that are explicitly disabled
-            for (context_server_id, preset) in &profile.context_servers {
+            for (context_server_id, preset) in profile.context_servers {
                 self.tools.update(cx, |tools, cx| {
                     tools.disable(
                         ToolSource::ContextServer {
-                            id: context_server_id.clone().into(),
+                            id: context_server_id.into(),
                         },
                         &preset
                             .tools
-                            .iter()
-                            .filter_map(|(tool, enabled)| (!enabled).then(|| tool.clone()))
+                            .into_iter()
+                            .filter_map(|(tool, enabled)| (!enabled).then(|| tool))
                             .collect::<Vec<_>>(),
                         cx,
                     )
                 })
             }
         } else {
-            for (context_server_id, preset) in &profile.context_servers {
+            for (context_server_id, preset) in profile.context_servers {
                 self.tools.update(cx, |tools, cx| {
                     tools.enable(
                         ToolSource::ContextServer {
-                            id: context_server_id.clone().into(),
+                            id: context_server_id.into(),
                         },
                         &preset
                             .tools
-                            .iter()
-                            .filter_map(|(tool, enabled)| enabled.then(|| tool.clone()))
+                            .into_iter()
+                            .filter_map(|(tool, enabled)| enabled.then(|| tool))
                             .collect::<Vec<_>>(),
                         cx,
                     )

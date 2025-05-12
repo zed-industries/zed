@@ -1051,8 +1051,8 @@ impl GitPanel {
                     repo.checkout_files(
                         "HEAD",
                         entries
-                            .iter()
-                            .map(|entries| entries.repo_path.clone())
+                            .into_iter()
+                            .map(|entries| entries.repo_path)
                             .collect(),
                         cx,
                     )
