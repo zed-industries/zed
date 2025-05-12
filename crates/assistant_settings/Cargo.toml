@@ -19,7 +19,6 @@ gpui.workspace = true
 indexmap.workspace = true
 language_model.workspace = true
 lmstudio = { workspace = true, features = ["schemars"] }
-log.workspace = true
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
 deepseek = { workspace = true, features = ["schemars"] }

@@ -27,7 +27,6 @@ copilot.workspace = true
 deepseek = { workspace = true, features = ["schemars"] }
 editor.workspace = true
 feature_flags.workspace = true
-fs.workspace = true
 futures.workspace = true
 google_ai = { workspace = true, features = ["schemars"] }
 gpui.workspace = true
@@ -41,7 +40,6 @@ mistral = { workspace = true, features = ["schemars"] }
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
 partial-json-fixer.workspace = true
-project.workspace = true
 proto.workspace = true
 release_channel.workspace = true
 schemars.workspace = true
