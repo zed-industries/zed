@@ -1915,6 +1915,7 @@ mod tests {
             zeta.request_completion(None, &buffer, cursor, false, cx)
         });
 
+        server.receive::<proto::GetUsers>().await.unwrap();
         let token_request = server.receive::<proto::GetLlmToken>().await.unwrap();
         server.respond(
             token_request.receipt(),
