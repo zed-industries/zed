@@ -474,7 +474,7 @@ impl CopilotChatLanguageModel {
                             MessageContent::Image(image) if self.model.supports_vision() => {
                                 content_parts.push(ChatMessageContent::Image {
                                     image_url: ImageUrl {
-                                        url: format!("data:image/png;base64,{}", image.source),
+                                        url: image.to_base64_url(),
                                     },
                                 });
                             }
