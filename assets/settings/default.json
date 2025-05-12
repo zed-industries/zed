@@ -218,6 +218,23 @@
   // 1. Do nothing: `none`
   // 2. Find references for the same symbol: `find_all_references` (default)
   "go_to_definition_fallback": "find_all_references",
+  // Which level to use to filter out diagnostics displayed in the editor.
+  //
+  // Affects the editor rendering only, and does not interrupt
+  // the functionality of diagnostics fetching and project diagnostics editor.
+  // Which files containing diagnostic errors/warnings to mark in the tabs.
+  // Diagnostics are only shown when file icons are also active.
+  // This setting only works when can take the following three values:
+  //
+  // Which diagnostic indicators to show in the scrollbar, their level should be more or equal to the specified severity level.
+  // Possible values:
+  //  - "off" — no diagnostics are allowed
+  //  - "error"
+  //  - "warning" (default)
+  //  - "info"
+  //  - "hint"
+  //  - null — allow all diagnostics
+  "diagnostics_max_severity": "warning",
   // Whether to show wrap guides (vertical rulers) in the editor.
   // Setting this to true will show a guide at the 'preferred_line_length' value
   // if 'soft_wrap' is set to 'preferred_line_length', and will show any
@@ -309,8 +326,16 @@
   },
   // Titlebar related settings
   "title_bar": {
-    // Whether to show the branch icon beside branch switcher in the title bar.
-    "show_branch_icon": false
+    // Whether to show the branch icon beside branch switcher in the titlebar.
+    "show_branch_icon": false,
+    // Whether to show the branch name button in the titlebar.
+    "show_branch_name": true,
+    // Whether to show the project host and name in the titlebar.
+    "show_project_items": true,
+    // Whether to show onboarding banners in the titlebar.
+    "show_onboarding_banner": true,
+    // Whether to show user picture in the titlebar.
+    "show_user_picture": true
   },
   // Scrollbar related settings
   "scrollbar": {
@@ -352,6 +377,45 @@
       "vertical": true
     }
   },
+  // Minimap related settings
+  "minimap": {
+    // When to show the minimap in the editor.
+    // This setting can take three values:
+    // 1. Show the minimap if the editor's scrollbar is visible:
+    //    "auto"
+    // 2. Always show the minimap:
+    //    "always"
+    // 3. Never show the minimap:
+    //    "never" (default)
+    "show": "never",
+    // When to show the minimap thumb.
+    // This setting can take two values:
+    // 1. Show the minimap thumb if the mouse is over the minimap:
+    //    "hover"
+    // 2. Always show the minimap thumb:
+    //    "always" (default)
+    "thumb": "always",
+    // How the minimap thumb border should look.
+    // This setting can take five values:
+    // 1. Display a border on all sides of the thumb:
+    //    "thumb_border": "full"
+    // 2. Display a border on all sides except the left side of the thumb:
+    //    "thumb_border": "left_open" (default)
+    // 3. Display a border on all sides except the right side of the thumb:
+    //    "thumb_border": "right_open"
+    // 4. Display a border only on the left side of the thumb:
+    //    "thumb_border": "left_only"
+    // 5. Display the thumb without any border:
+    //    "thumb_border": "none"
+    "thumb_border": "left_open",
+    // How to highlight the current line in the minimap.
+    // This setting can take the following values:
+    //
+    // 1. `null` to inherit the editor `current_line_highlight` setting (default)
+    // 2. "line" or "all" to highlight the current line in the minimap.
+    // 3. "gutter" or "none" to not highlight the current line in the minimap.
+    "current_line_highlight": null
+  },
   // Enable middle-click paste on Linux.
   "middle_click_paste": true,
   // What to do when multibuffer is double clicked in some of its excerpts
@@ -366,8 +430,6 @@
   "gutter": {
     // Whether to show line numbers in the gutter.
     "line_numbers": true,
-    // Whether to show code action buttons in the gutter.
-    "code_actions": true,
     // Whether to show runnables buttons in the gutter.
     "runnables": true,
     // Whether to show breakpoints in the gutter.
@@ -412,6 +474,8 @@
   "search_wrap": true,
   // Search options to enable by default when opening new project and buffer searches.
   "search": {
+    // Whether to show the project search button in the status bar.
+    "button": true,
     "whole_word": false,
     "case_sensitive": false,
     "include_ignored": false,
@@ -610,13 +674,11 @@
     //
     // Default: main
     "fallback_branch_name": "main",
-
     // Whether to sort entries in the panel by path
     // or by status (the default).
     //
     // Default: false
     "sort_by_path": false,
-
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
@@ -642,6 +704,8 @@
     "version": "2",
     // Whether the agent is enabled.
     "enabled": true,
+    /// What completion mode to start new threads in, if available. Can be 'normal' or 'max'.
+    "preferred_completion_mode": "normal",
     // Whether to show the agent panel button in the status bar.
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
@@ -664,6 +728,28 @@
       // The model to use.
       "model": "claude-3-7-sonnet-latest"
     },
+    // Additional parameters for language model requests. When making a request to a model, parameters will be taken
+    // from the last entry in this list that matches the model's provider and name. In each entry, both provider
+    // and model are optional, so that you can specify parameters for either one.
+    "model_parameters": [
+      // To set parameters for all requests to OpenAI models:
+      // {
+      //   "provider": "openai",
+      //   "temperature": 0.5
+      // }
+      //
+      // To set parameters for all requests in general:
+      // {
+      //   "temperature": 0
+      // }
+      //
+      // To set parameters for a specific provider and model:
+      // {
+      //   "provider": "zed.dev",
+      //   "model": "claude-3-7-sonnet-latest",
+      //   "temperature": 1.0
+      // }
+    ],
     // When enabled, the agent can run potentially destructive actions without asking for your confirmation.
     "always_allow_tool_actions": false,
     // When enabled, the agent will stream edits.
@@ -908,6 +994,8 @@
   "hard_tabs": false,
   // How many columns a tab should occupy.
   "tab_size": 4,
+  // What debuggers are preferred by default for all languages.
+  "debuggers": [],
   // Control what info is collected by Zed.
   "telemetry": {
     // Send debug info like crash reports.
@@ -920,6 +1008,8 @@
   "auto_update": true,
   // Diagnostics configuration.
   "diagnostics": {
+    // Whether to show the project diagnostics button in the status bar.
+    "button": true,
     // Whether to show warnings or not by default.
     "include_warnings": true,
     // Settings for inline diagnostics
@@ -937,7 +1027,7 @@
       // longer than this value will still push diagnostics further to the right.
       "min_column": 0,
       // The minimum severity of the diagnostics to show inline.
-      // Shows all diagnostics when not specified.
+      // Inherits editor's diagnostics' max severity settings when `null`.
       "max_severity": null
     },
     "cargo": {
@@ -1215,21 +1305,22 @@
     "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json"],
     "Shell Script": [".env.*"]
   },
-  // By default use a recent system version of node, or install our own.
-  // You can override this to use a version of node that is not in $PATH with:
-  // {
-  //   "node": {
-  //     "path": "/path/to/node"
-  //     "npm_path": "/path/to/npm" (defaults to node_path/../npm)
-  //   }
-  // }
-  // or to ensure Zed always downloads and installs an isolated version of node:
-  // {
-  //   "node": {
-  //     "ignore_system_version": true,
-  //   }
-  // NOTE: changing this setting currently requires restarting Zed.
-  "node": {},
+  // Settings for which version of Node.js and NPM to use when installing
+  // language servers and Copilot.
+  //
+  // Note: changing this setting currently requires restarting Zed.
+  "node": {
+    // By default, Zed will look for `node` and `npm` on your `$PATH`, and use the
+    // existing executables if their version is recent enough. Set this to `true`
+    // to prevent this, and force Zed to always download and install its own
+    // version of Node.
+    "ignore_system_version": false,
+    // You can also specify alternative paths to Node and NPM. If you specify
+    // `path`, but not `npm_path`, Zed will assume that `npm` is located at
+    // `${path}/../npm`.
+    "path": null,
+    "npm_path": null
+  },
   // The extensions that Zed should automatically install on startup.
   //
   // If you don't want any of these extensions, add this field to your settings
@@ -1604,8 +1695,6 @@
   //   "W": "workspace::Save"
   // }
   "command_aliases": {},
-  // Whether to show user picture in titlebar.
-  "show_user_picture": true,
   // ssh_connections is an array of ssh connections.
   // You can configure these from `project: Open Remote` in the command palette.
   // Zed's ssh support will pull configuration from your ~/.ssh too.

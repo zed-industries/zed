@@ -161,6 +161,7 @@ impl AvailableLanguage {
     pub fn matcher(&self) -> &LanguageMatcher {
         &self.matcher
     }
+
     pub fn hidden(&self) -> bool {
         self.hidden
     }

@@ -530,8 +530,8 @@ pub async fn derive_paths_with_position(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
+    use super::*;
+    use crate::zed::{open_listener::open_local_workspace, tests::init_test};
     use cli::{
         CliResponse,
         ipc::{self},
@@ -539,10 +539,33 @@ mod tests {
     use editor::Editor;
     use gpui::TestAppContext;
     use serde_json::json;
+    use std::sync::Arc;
     use util::path;
     use workspace::{AppState, Workspace};
 
-    use crate::zed::{open_listener::open_local_workspace, tests::init_test};
+    #[gpui::test]
+    fn test_parse_ssh_url(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+        cx.update(|cx| {
+            SshSettings::register(cx);
+        });
+        let request =
+            cx.update(|cx| OpenRequest::parse(vec!["ssh://me@localhost:/".into()], cx).unwrap());
+        assert_eq!(
+            request.ssh_connection.unwrap(),
+            SshConnectionOptions {
+                host: "localhost".into(),
+                username: Some("me".into()),
+                port: None,
+                password: None,
+                args: None,
+                port_forwards: None,
+                nickname: None,
+                upload_binary_over_ssh: false,
+            }
+        );
+        assert_eq!(request.open_paths, vec!["/"]);
+    }
 
     #[gpui::test]
     async fn test_open_workspace_with_directory(cx: &mut TestAppContext) {

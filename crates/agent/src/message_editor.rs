@@ -1,13 +1,14 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::assistant_model_selector::{AssistantModelSelector, ModelType};
+use crate::agent_model_selector::{AgentModelSelector, ModelType};
 use crate::context::{AgentContextKey, ContextCreasesAddon, ContextLoadResult, load_context};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use crate::ui::{
     AnimatedLabel, MaxModeTooltip,
     preview::{AgentPreview, UsageCallout},
 };
+use assistant_settings::{AssistantSettings, CompletionMode};
 use buffer_diff::BufferDiff;
 use client::UserStore;
 use collections::{HashMap, HashSet};
@@ -16,7 +17,6 @@ use editor::{
     AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorEvent,
     EditorMode, EditorStyle, MultiBuffer,
 };
-use feature_flags::{FeatureFlagAppExt, NewBillingFeatureFlag};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::future::Shared;
@@ -26,7 +26,10 @@ use gpui::{
     Task, TextStyle, WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
 };
 use language::{Buffer, Language};
-use language_model::{ConfiguredModel, LanguageModelRequestMessage, MessageContent, RequestUsage};
+use language_model::{
+    ConfiguredModel, LanguageModelRequestMessage, MessageContent, RequestUsage,
+    ZED_CLOUD_PROVIDER_ID,
+};
 use language_model_selector::ToggleModelSelector;
 use multi_buffer;
 use project::Project;
@@ -35,11 +38,9 @@ use proto::Plan;
 use settings::Settings;
 use std::time::Duration;
 use theme::ThemeSettings;
-use ui::{Disclosure, DocumentationSide, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{Disclosure, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use util::{ResultExt as _, maybe};
-use workspace::dock::DockPosition;
 use workspace::{CollaboratorId, Workspace};
-use zed_llm_client::CompletionMode;
 
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};
 use crate::context_store::ContextStore;
@@ -64,7 +65,7 @@ pub struct MessageEditor {
     prompt_store: Option<Entity<PromptStore>>,
     context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
-    model_selector: Entity<AssistantModelSelector>,
+    model_selector: Entity<AgentModelSelector>,
     last_loaded_context: Option<ContextLoadResult>,
     load_context_task: Option<Shared<Task<()>>>,
     profile_selector: Entity<ProfileSelector>,
@@ -131,14 +132,6 @@ pub(crate) fn create_editor(
     editor
 }
 
-fn documentation_side(position: DockPosition) -> DocumentationSide {
-    match position {
-        DockPosition::Left => DocumentationSide::Right,
-        DockPosition::Bottom => DocumentationSide::Left,
-        DockPosition::Right => DocumentationSide::Left,
-    }
-}
-
 impl MessageEditor {
     pub fn new(
         fs: Arc<dyn Fs>,
@@ -149,7 +142,6 @@ impl MessageEditor {
         thread_store: WeakEntity<ThreadStore>,
         text_thread_store: WeakEntity<TextThreadStore>,
         thread: Entity<Thread>,
-        dock_position: DockPosition,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -197,12 +189,22 @@ impl MessageEditor {
         ];
 
         let model_selector = cx.new(|cx| {
-            AssistantModelSelector::new(
+            AgentModelSelector::new(
                 fs.clone(),
                 model_selector_menu_handle,
                 editor.focus_handle(cx),
                 ModelType::Default(thread.clone()),
                 window,
+                cx,
+            )
+        });
+
+        let profile_selector = cx.new(|cx| {
+            ProfileSelector::new(
+                fs,
+                thread.clone(),
+                thread_store,
+                editor.focus_handle(cx),
                 cx,
             )
         });
@@ -223,15 +225,7 @@ impl MessageEditor {
             model_selector,
             edits_expanded: false,
             editor_is_expanded: false,
-            profile_selector: cx.new(|cx| {
-                ProfileSelector::new(
-                    fs,
-                    thread_store,
-                    editor.focus_handle(cx),
-                    documentation_side(dock_position),
-                    cx,
-                )
-            }),
+            profile_selector,
             last_estimated_token_count: None,
             update_token_count_task: None,
             _subscriptions: subscriptions,
@@ -310,6 +304,10 @@ impl MessageEditor {
 
     fn is_editor_empty(&self, cx: &App) -> bool {
         self.editor.read(cx).text(cx).trim().is_empty()
+    }
+
+    pub fn is_editor_fully_empty(&self, cx: &App) -> bool {
+        self.editor.read(cx).is_empty(cx)
     }
 
     fn send_to_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -457,10 +455,6 @@ impl MessageEditor {
     }
 
     fn render_max_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !cx.has_flag::<NewBillingFeatureFlag>() {
-            return None;
-        }
-
         let thread = self.thread.read(cx);
         let model = thread.configured_model();
         if !model?.model.supports_max_mode() {
@@ -635,7 +629,7 @@ impl MessageEditor {
                         this.h(vh(0.8, window)).justify_between()
                     })
                     .child(
-                        div()
+                        v_flex()
                             .min_h_16()
                             .when(is_editor_expanded, |this| this.h_full())
                             .child({
@@ -1067,7 +1061,14 @@ impl MessageEditor {
     }
 
     fn render_usage_callout(&self, line_height: Pixels, cx: &mut Context<Self>) -> Option<Div> {
-        if !cx.has_flag::<NewBillingFeatureFlag>() {
+        let is_using_zed_provider = self
+            .thread
+            .read(cx)
+            .configured_model()
+            .map_or(false, |model| {
+                model.provider.id().0 == ZED_CLOUD_PROVIDER_ID
+            });
+        if !is_using_zed_provider {
             return None;
         }
 
@@ -1084,11 +1085,11 @@ impl MessageEditor {
         let plan = user_store
             .current_plan()
             .map(|plan| match plan {
-                Plan::Free => zed_llm_client::Plan::Free,
+                Plan::Free => zed_llm_client::Plan::ZedFree,
                 Plan::ZedPro => zed_llm_client::Plan::ZedPro,
                 Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
             })
-            .unwrap_or(zed_llm_client::Plan::Free);
+            .unwrap_or(zed_llm_client::Plan::ZedFree);
         let usage = self.thread.read(cx).last_usage().or_else(|| {
             maybe!({
                 let amount = user_store.model_request_usage_amount()?;
@@ -1121,10 +1122,6 @@ impl MessageEditor {
         token_usage_ratio: TokenUsageRatio,
         cx: &mut Context<Self>,
     ) -> Option<Div> {
-        if !cx.has_flag::<NewBillingFeatureFlag>() {
-            return None;
-        }
-
         let title = if token_usage_ratio == TokenUsageRatio::Exceeded {
             "Thread reached the token limit"
         } else {
@@ -1254,8 +1251,9 @@ impl MessageEditor {
                         mode: None,
                         messages: vec![request_message],
                         tools: vec![],
+                        tool_choice: None,
                         stop: vec![],
-                        temperature: None,
+                        temperature: AssistantSettings::temperature_for_model(&model.model, cx),
                     };
 
                     Some(model.model.count_tokens(request, cx))
@@ -1277,12 +1275,6 @@ impl MessageEditor {
             })
             .ok();
         }));
-    }
-
-    pub fn set_dock_position(&mut self, position: DockPosition, cx: &mut Context<Self>) {
-        self.profile_selector.update(cx, |profile_selector, cx| {
-            profile_selector.set_documentation_side(documentation_side(position), cx)
-        });
     }
 }
 
@@ -1457,7 +1449,6 @@ impl AgentPreview for MessageEditor {
                     thread_store.downgrade(),
                     text_thread_store.downgrade(),
                     thread,
-                    DockPosition::Left,
                     window,
                     cx,
                 )

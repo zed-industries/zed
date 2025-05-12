@@ -11,7 +11,7 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason,
+    LanguageModelToolChoice, LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason,
 };
 
 use futures::stream::BoxStream;
@@ -316,6 +316,10 @@ impl LanguageModel for MistralLanguageModel {
             | MistralModel::OpenMistralNemo => true,
             _ => false,
         }
+    }
+
+    fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
+        false
     }
 
     fn telemetry_id(&self) -> String {

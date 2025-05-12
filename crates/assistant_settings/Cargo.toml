@@ -14,7 +14,7 @@ path = "src/assistant_settings.rs"
 [dependencies]
 anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
-feature_flags.workspace = true
+collections.workspace = true
 gpui.workspace = true
 indexmap.workspace = true
 language_model.workspace = true
@@ -28,6 +28,7 @@ schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 workspace-hack.workspace = true
+zed_llm_client.workspace = true
 
 [dev-dependencies]
 fs.workspace = true

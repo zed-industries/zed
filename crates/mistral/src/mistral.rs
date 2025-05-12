@@ -50,6 +50,8 @@ pub enum Model {
     CodestralLatest,
     #[serde(rename = "mistral-large-latest", alias = "mistral-large-latest")]
     MistralLargeLatest,
+    #[serde(rename = "mistral-medium-latest", alias = "mistral-medium-latest")]
+    MistralMediumLatest,
     #[serde(rename = "mistral-small-latest", alias = "mistral-small-latest")]
     MistralSmallLatest,
     #[serde(rename = "open-mistral-nemo", alias = "open-mistral-nemo")]
@@ -77,6 +79,7 @@ impl Model {
         match id {
             "codestral-latest" => Ok(Self::CodestralLatest),
             "mistral-large-latest" => Ok(Self::MistralLargeLatest),
+            "mistral-medium-latest" => Ok(Self::MistralMediumLatest),
             "mistral-small-latest" => Ok(Self::MistralSmallLatest),
             "open-mistral-nemo" => Ok(Self::OpenMistralNemo),
             "open-codestral-mamba" => Ok(Self::OpenCodestralMamba),
@@ -88,6 +91,7 @@ impl Model {
         match self {
             Self::CodestralLatest => "codestral-latest",
             Self::MistralLargeLatest => "mistral-large-latest",
+            Self::MistralMediumLatest => "mistral-medium-latest",
             Self::MistralSmallLatest => "mistral-small-latest",
             Self::OpenMistralNemo => "open-mistral-nemo",
             Self::OpenCodestralMamba => "open-codestral-mamba",
@@ -99,6 +103,7 @@ impl Model {
         match self {
             Self::CodestralLatest => "codestral-latest",
             Self::MistralLargeLatest => "mistral-large-latest",
+            Self::MistralMediumLatest => "mistral-medium-latest",
             Self::MistralSmallLatest => "mistral-small-latest",
             Self::OpenMistralNemo => "open-mistral-nemo",
             Self::OpenCodestralMamba => "open-codestral-mamba",
@@ -112,6 +117,7 @@ impl Model {
         match self {
             Self::CodestralLatest => 256000,
             Self::MistralLargeLatest => 131000,
+            Self::MistralMediumLatest => 128000,
             Self::MistralSmallLatest => 32000,
             Self::OpenMistralNemo => 131000,
             Self::OpenCodestralMamba => 256000,

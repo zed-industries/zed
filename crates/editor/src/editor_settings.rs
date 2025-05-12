@@ -1,8 +1,10 @@
 use gpui::App;
 use language::CursorShape;
+use project::project_settings::DiagnosticSeverity;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources, VsCodeSettings};
+use util::serde::default_true;
 
 #[derive(Deserialize, Clone)]
 pub struct EditorSettings {
@@ -15,6 +17,7 @@ pub struct EditorSettings {
     pub hover_popover_delay: u64,
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
+    pub minimap: Minimap,
     pub gutter: Gutter,
     pub scroll_beyond_last_line: ScrollBeyondLastLine,
     pub vertical_scroll_margin: f32,
@@ -40,6 +43,8 @@ pub struct EditorSettings {
     pub jupyter: Jupyter,
     pub hide_mouse: Option<HideMouseMode>,
     pub snippet_sort_order: SnippetSortOrder,
+    #[serde(default)]
+    pub diagnostics_max_severity: Option<DiagnosticSeverity>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -116,10 +121,30 @@ pub struct Scrollbar {
     pub axes: ScrollbarAxes,
 }
 
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct Minimap {
+    pub show: ShowMinimap,
+    pub thumb: MinimapThumb,
+    pub thumb_border: MinimapThumbBorder,
+    pub current_line_highlight: Option<CurrentLineHighlight>,
+}
+
+impl Minimap {
+    pub fn minimap_enabled(&self) -> bool {
+        self.show != ShowMinimap::Never
+    }
+
+    pub fn with_show_override(self) -> Self {
+        Self {
+            show: ShowMinimap::Always,
+            ..self
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct Gutter {
     pub line_numbers: bool,
-    pub code_actions: bool,
     pub runnables: bool,
     pub breakpoints: bool,
     pub folds: bool,
@@ -140,6 +165,53 @@ pub enum ShowScrollbar {
     Always,
     /// Never show the scrollbar.
     Never,
+}
+
+/// When to show the minimap in the editor.
+///
+/// Default: never
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShowMinimap {
+    /// Follow the visibility of the scrollbar.
+    Auto,
+    /// Always show the minimap.
+    Always,
+    /// Never show the minimap.
+    #[default]
+    Never,
+}
+
+/// When to show the minimap thumb.
+///
+/// Default: always
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MinimapThumb {
+    /// Show the minimap thumb only when the mouse is hovering over the minimap.
+    Hover,
+    /// Always show the minimap thumb.
+    #[default]
+    Always,
+}
+
+/// Defines the border style for the minimap's scrollbar thumb.
+///
+/// Default: left_open
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MinimapThumbBorder {
+    /// Displays a border on all sides of the thumb.
+    Full,
+    /// Displays a border on all sides except the left side of the thumb.
+    #[default]
+    LeftOpen,
+    /// Displays a border on all sides except the right side of the thumb.
+    RightOpen,
+    /// Displays a border only on the left side of the thumb.
+    LeftOnly,
+    /// Displays the thumb without any border.
+    None,
 }
 
 /// Forcefully enable or disable the scrollbar for each axis
@@ -205,6 +277,9 @@ pub enum ScrollBeyondLastLine {
 /// Default options for buffer and project search items.
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct SearchSettings {
+    /// Whether to show the project search button in the status bar.
+    #[serde(default = "default_true")]
+    pub button: bool,
     #[serde(default)]
     pub whole_word: bool,
     #[serde(default)]
@@ -301,6 +376,8 @@ pub struct EditorSettingsContent {
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar related settings
     pub scrollbar: Option<ScrollbarContent>,
+    /// Minimap related settings
+    pub minimap: Option<MinimapContent>,
     /// Gutter related settings
     pub gutter: Option<GutterContent>,
     /// Whether the editor will scroll beyond the last line.
@@ -388,6 +465,19 @@ pub struct EditorSettingsContent {
 
     /// Jupyter REPL settings.
     pub jupyter: Option<JupyterContent>,
+
+    /// Which level to use to filter out diagnostics displayed in the editor.
+    ///
+    /// Affects the editor rendering only, and does not interrupt
+    /// the functionality of diagnostics fetching and project diagnostics editor.
+    /// Which files containing diagnostic errors/warnings to mark in the tabs.
+    /// Diagnostics are only shown when file icons are also active.
+    ///
+    /// Shows all diagnostics if not specified.
+    ///
+    /// Default: warning
+    #[serde(default)]
+    pub diagnostics_max_severity: Option<DiagnosticSeverity>,
 }
 
 // Toolbar related settings
@@ -447,6 +537,30 @@ pub struct ScrollbarContent {
     pub axes: Option<ScrollbarAxesContent>,
 }
 
+/// Minimap related settings
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct MinimapContent {
+    /// When to show the minimap in the editor.
+    ///
+    /// Default: never
+    pub show: Option<ShowMinimap>,
+
+    /// When to show the minimap thumb.
+    ///
+    /// Default: always
+    pub thumb: Option<MinimapThumb>,
+
+    /// Defines the border style for the minimap's scrollbar thumb.
+    ///
+    /// Default: left_open
+    pub thumb_border: Option<MinimapThumbBorder>,
+
+    /// How to highlight the current line in the minimap.
+    ///
+    /// Default: inherits editor line highlights setting
+    pub current_line_highlight: Option<Option<CurrentLineHighlight>>,
+}
+
 /// Forcefully enable or disable the scrollbar for each axis
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
 pub struct ScrollbarAxesContent {
@@ -468,10 +582,6 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub line_numbers: Option<bool>,
-    /// Whether to show code action buttons in the gutter.
-    ///
-    /// Default: true
-    pub code_actions: Option<bool>,
     /// Whether to show runnable buttons in the gutter.
     ///
     /// Default: true

@@ -685,8 +685,8 @@ impl ContextProvider for RustContextProvider {
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
                     "--".into(),
-                    RUST_TEST_NAME_TASK_VARIABLE.template_value(),
                     "--nocapture".into(),
+                    RUST_TEST_NAME_TASK_VARIABLE.template_value(),
                 ],
                 tags: vec!["rust-test".to_owned()],
                 cwd: Some("$ZED_DIRNAME".to_owned()),
@@ -802,10 +802,6 @@ impl ContextProvider for RustContextProvider {
 
     fn lsp_task_source(&self) -> Option<LanguageServerName> {
         Some(SERVER_NAME)
-    }
-
-    fn debug_adapter(&self) -> Option<String> {
-        Some("CodeLLDB".to_owned())
     }
 }
 

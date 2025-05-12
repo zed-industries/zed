@@ -10,7 +10,7 @@ use git::{
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use git_panel_settings::GitPanelSettings;
-use gpui::{App, FocusHandle, actions};
+use gpui::{Action, App, FocusHandle, actions};
 use onboarding::GitOnboardingModal;
 use project_diff::ProjectDiff;
 use ui::prelude::*;
@@ -115,7 +115,7 @@ pub fn init(cx: &mut App) {
             },
         );
         workspace.register_action(move |_, _: &ResetOnboarding, window, cx| {
-            cx.dispatch_action(&workspace::RestoreBanner);
+            window.dispatch_action(workspace::RestoreBanner.boxed_clone(), cx);
             window.refresh();
         });
         workspace.register_action(|workspace, _action: &git::Init, window, cx| {
