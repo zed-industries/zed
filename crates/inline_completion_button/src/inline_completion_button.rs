@@ -405,64 +405,44 @@ impl InlineCompletionButton {
         let fs = self.fs.clone();
         let line_height = window.line_height();
 
-        if let Some(provider) = self.edit_prediction_provider.as_ref() {
-            let usage = provider.usage(cx).or_else(|| {
-                let user_store = self.user_store.read(cx);
-
-                maybe!({
-                    let amount = user_store.edit_predictions_usage_amount()?;
-                    let limit = user_store.edit_predictions_usage_limit()?.variant?;
-
-                    Some(EditPredictionUsage {
-                        amount: amount as i32,
-                        limit: match limit {
-                            proto::usage_limit::Variant::Limited(limited) => {
-                                zed_llm_client::UsageLimit::Limited(limited.limit as i32)
+        if let Some(usage) = self
+            .edit_prediction_provider
+            .as_ref()
+            .and_then(|provider| provider.usage(cx))
+        {
+            menu = menu.header("Usage");
+            menu = menu
+                .custom_entry(
+                    move |_window, cx| {
+                        let used_percentage = match usage.limit {
+                            UsageLimit::Limited(limit) => {
+                                Some((usage.amount as f32 / limit as f32) * 100.)
                             }
-                            proto::usage_limit::Variant::Unlimited(_) => {
-                                zed_llm_client::UsageLimit::Unlimited
-                            }
-                        },
-                    })
-                })
-            });
+                            UsageLimit::Unlimited => None,
+                        };
 
-            if let Some(usage) = usage {
-                menu = menu.header("Usage");
-                menu = menu
-                    .custom_entry(
-                        move |_window, cx| {
-                            let used_percentage = match usage.limit {
-                                UsageLimit::Limited(limit) => {
-                                    Some((usage.amount as f32 / limit as f32) * 100.)
-                                }
-                                UsageLimit::Unlimited => None,
-                            };
-
-                            h_flex()
-                                .flex_1()
-                                .gap_1p5()
-                                .children(
-                                    used_percentage.map(|percent| {
-                                        ProgressBar::new("usage", percent, 100., cx)
-                                    }),
-                                )
-                                .child(
-                                    Label::new(match usage.limit {
-                                        UsageLimit::Limited(limit) => {
-                                            format!("{} / {limit}", usage.amount)
-                                        }
-                                        UsageLimit::Unlimited => format!("{} / ∞", usage.amount),
-                                    })
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                                )
-                                .into_any_element()
-                        },
-                        move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
-                    )
-                    .separator();
-            }
+                        h_flex()
+                            .flex_1()
+                            .gap_1p5()
+                            .children(
+                                used_percentage
+                                    .map(|percent| ProgressBar::new("usage", percent, 100., cx)),
+                            )
+                            .child(
+                                Label::new(match usage.limit {
+                                    UsageLimit::Limited(limit) => {
+                                        format!("{} / {limit}", usage.amount)
+                                    }
+                                    UsageLimit::Unlimited => format!("{} / ∞", usage.amount),
+                                })
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                            )
+                            .into_any_element()
+                    },
+                    move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
+                )
+                .separator();
         }
 
         menu = menu.header("Show Edit Predictions For");

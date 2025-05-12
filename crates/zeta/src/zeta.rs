@@ -48,7 +48,7 @@ use std::{
 };
 use telemetry_events::InlineCompletionRating;
 use thiserror::Error;
-use util::ResultExt;
+use util::{ResultExt, maybe};
 use uuid::Uuid;
 use workspace::Workspace;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId};
@@ -1364,12 +1364,17 @@ pub struct ZetaInlineCompletionProvider {
     /// None if this is entirely disabled for this provider
     provider_data_collection: ProviderDataCollection,
     last_request_timestamp: Instant,
+    user_store: Entity<UserStore>,
 }
 
 impl ZetaInlineCompletionProvider {
     pub const THROTTLE_TIMEOUT: Duration = Duration::from_millis(300);
 
-    pub fn new(zeta: Entity<Zeta>, provider_data_collection: ProviderDataCollection) -> Self {
+    pub fn new(
+        zeta: Entity<Zeta>,
+        user_store: Entity<UserStore>,
+        provider_data_collection: ProviderDataCollection,
+    ) -> Self {
         Self {
             zeta,
             pending_completions: ArrayVec::new(),
@@ -1377,6 +1382,7 @@ impl ZetaInlineCompletionProvider {
             current_completion: None,
             provider_data_collection,
             last_request_timestamp: Instant::now(),
+            user_store,
         }
     }
 }
@@ -1417,7 +1423,26 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
     }
 
     fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
-        self.zeta.read(cx).last_usage
+        self.zeta.read(cx).last_usage.clone().or_else(|| {
+            let user_store = self.user_store.read(cx);
+
+            maybe!({
+                let amount = user_store.edit_predictions_usage_amount()?;
+                let limit = user_store.edit_predictions_usage_limit()?.variant?;
+
+                Some(EditPredictionUsage {
+                    amount: amount as i32,
+                    limit: match limit {
+                        proto::usage_limit::Variant::Limited(limited) => {
+                            zed_llm_client::UsageLimit::Limited(limited.limit as i32)
+                        }
+                        proto::usage_limit::Variant::Unlimited(_) => {
+                            zed_llm_client::UsageLimit::Unlimited
+                        }
+                    },
+                })
+            })
+        })
     }
 
     fn is_enabled(
