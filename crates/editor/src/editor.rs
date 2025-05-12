@@ -921,6 +921,7 @@ pub struct Editor {
     show_gutter: bool,
     show_scrollbars: bool,
     minimap_visibility: MinimapVisibility,
+    offset_content: bool,
     disable_expand_excerpt_buttons: bool,
     show_line_numbers: Option<bool>,
     use_relative_line_numbers: Option<bool>,
@@ -1759,6 +1760,7 @@ impl Editor {
             show_local_selections: true,
             show_scrollbars: full_mode,
             minimap_visibility: MinimapVisibility::for_mode(&mode, cx),
+            offset_content: true,
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: mode.is_full(),
             show_line_numbers: None,
@@ -14571,6 +14573,7 @@ impl Editor {
                     this.show_local_selections = false;
                     let rename_editor = cx.new(|cx| {
                         let mut editor = Editor::single_line(window, cx);
+                        editor.disable_content_offset(cx);
                         editor.buffer.update(cx, |buffer, cx| {
                             buffer.edit([(0..0, old_name.clone())], None, cx)
                         });
@@ -16697,6 +16700,17 @@ impl Editor {
     pub fn disable_scrollbars_and_minimap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.set_show_scrollbars(false, cx);
         self.set_minimap_visibility(MinimapVisibility::Disabled, window, cx);
+    }
+
+    /// Normally the text in editors is padded on the left side by roughly half a
+    /// character width for improved hit testing.
+    ///
+    /// For cases where this is not wanted (e.g. if you want to align the editor text
+    /// with some other text above or below), you can disable the behavior via
+    /// this method.
+    pub fn disable_content_offset(&mut self, cx: &mut Context<Self>) {
+        self.offset_content = false;
+        cx.notify();
     }
 
     pub fn set_show_line_numbers(&mut self, show_line_numbers: bool, cx: &mut Context<Self>) {

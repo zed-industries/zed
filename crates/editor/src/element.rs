@@ -7139,9 +7139,12 @@ impl Element for EditorElement {
                             self.max_line_number_width(&snapshot, window, cx),
                             cx,
                         )
-                        .unwrap_or_else(|| {
-                            GutterDimensions::default_with_margin(font_id, font_size, cx)
-                        });
+                        .or_else(|| {
+                            self.editor.read(cx).offset_content.then(|| {
+                                GutterDimensions::default_with_margin(font_id, font_size, cx)
+                            })
+                        })
+                        .unwrap_or_default();
                     let text_width = bounds.size.width - gutter_dimensions.width;
 
                     let settings = EditorSettings::get_global(cx);
@@ -9180,7 +9183,12 @@ fn compute_auto_height_layout(
     let mut snapshot = editor.snapshot(window, cx);
     let gutter_dimensions = snapshot
         .gutter_dimensions(font_id, font_size, max_line_number_width, cx)
-        .unwrap_or_else(|| GutterDimensions::default_with_margin(font_id, font_size, cx));
+        .or_else(|| {
+            editor
+                .offset_content
+                .then(|| GutterDimensions::default_with_margin(font_id, font_size, cx))
+        })
+        .unwrap_or_default();
 
     editor.gutter_dimensions = gutter_dimensions;
     let text_width = width - gutter_dimensions.width;
