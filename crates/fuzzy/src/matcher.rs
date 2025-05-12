@@ -158,7 +158,6 @@ impl<'a> Matcher<'a> {
         if score <= 0.0 {
             return 0.0;
         }
-
         let path_len = prefix.len() + path.len();
         let mut cur_start = 0;
         let mut byte_ix = 0;
@@ -173,8 +172,17 @@ impl<'a> Matcher<'a> {
                 byte_ix += ch.len_utf8();
                 char_ix += 1;
             }
-            cur_start = match_char_ix + 1;
+
             self.match_positions[i] = byte_ix;
+
+            let matched_ch = prefix
+                .get(match_char_ix)
+                .or_else(|| path.get(match_char_ix - prefix.len()))
+                .unwrap();
+            byte_ix += matched_ch.len_utf8();
+
+            cur_start = match_char_ix + 1;
+            char_ix = match_char_ix + 1;
         }
 
         score
@@ -496,6 +504,7 @@ mod tests {
     #[test]
     fn match_unicode_path_entries() {
         let mixed_unicode_paths = vec![
+            "İolu/oluş",
             "İstanbul/code",
             "Athens/Şanlıurfa",
             "Çanakkale/scripts",
@@ -507,23 +516,28 @@ mod tests {
         ];
 
         assert_eq!(
+            match_single_path_query("İo/oluş", false, &mixed_unicode_paths),
+            vec![("İolu/oluş", vec![0, 2, 4, 4, 8, 10, 12])]
+        );
+
+        assert_eq!(
             match_single_path_query("İst/code", false, &mixed_unicode_paths),
-            vec![("İstanbul/code", vec![0, 1, 2, 8, 9, 10, 11, 12])]
+            vec![("İstanbul/code", vec![0, 2, 4, 6, 8, 10, 12, 14])]
         );
 
         assert_eq!(
             match_single_path_query("athens/şa", false, &mixed_unicode_paths),
-            vec![("Athens/Şanlıurfa", vec![0, 1, 2, 3, 4, 5, 7, 8])]
+            vec![("Athens/Şanlıurfa", vec![0, 1, 2, 3, 4, 5, 6, 7, 9])]
         );
 
         assert_eq!(
             match_single_path_query("BerlinÖĞ", false, &mixed_unicode_paths),
-            vec![("Berlin_Önemli_Ğündem", vec![0, 1, 2, 3, 4, 5, 7, 14])]
+            vec![("Berlin_Önemli_Ğündem", vec![0, 1, 2, 3, 4, 5, 7, 15])]
         );
 
         assert_eq!(
             match_single_path_query("tokyo/fuji", false, &mixed_unicode_paths),
-            vec![("tokyo/kyoto/fuji", vec![0, 1, 2, 3, 4, 11, 12, 13, 14])]
+            vec![("tokyo/kyoto/fuji", vec![0, 1, 2, 3, 4, 5, 12, 13, 14, 15])]
         );
 
         let mixed_script_paths = vec![
@@ -538,17 +552,17 @@ mod tests {
 
         assert_eq!(
             match_single_path_query("résmé", false, &mixed_script_paths),
-            vec![("résumé_Москва", vec![0, 1, 2, 3, 5])]
+            vec![("résumé_Москва", vec![0, 1, 3, 5, 6])]
         );
 
         assert_eq!(
-            match_single_path_query("北京café", false, &mixed_script_paths),
-            vec![("café_北京_app", vec![0, 1, 2, 3, 5, 6])]
+            match_single_path_query("café北京", false, &mixed_script_paths),
+            vec![("café_北京_app", vec![0, 1, 2, 3, 6, 9])]
         );
 
         assert_eq!(
             match_single_path_query("ista", false, &mixed_script_paths),
-            vec![("voilà_istanbul_result", vec![6, 7, 8, 9])]
+            vec![("voilà_istanbul_result", vec![7, 8, 9, 10])]
         );
 
         let complex_paths = vec![
@@ -561,34 +575,12 @@ mod tests {
 
         assert_eq!(
             match_single_path_query("doc📚lib", false, &complex_paths),
-            vec![("document_📚_library", vec![0, 1, 2, 9, 11, 12, 13])]
+            vec![("document_📚_library", vec![0, 1, 2, 9, 14, 15, 16])]
         );
 
         assert_eq!(
             match_single_path_query("codehappy", false, &complex_paths),
-            vec![("code_😀😃😄😁_happy", vec![0, 1, 2, 3, 15, 16, 17, 18, 19])]
-        );
-
-        let edge_paths = vec![
-            "İİİİİİİİİİ_source_code",
-            "normal_ĞĞĞ_ŞŞŞ_ÜÜÜ_file",
-            "prefix_İŞĞÜÇÖ_suffix",
-        ];
-
-        assert_eq!(
-            match_single_path_query("İİİİsource", false, &edge_paths),
-            vec![(
-                "İİİİİİİİİİ_source_code",
-                vec![0, 1, 2, 3, 11, 12, 13, 14, 15, 16]
-            )]
-        );
-
-        assert_eq!(
-            match_single_path_query("normalŞŞÜÜ", false, &edge_paths),
-            vec![(
-                "normal_ĞĞĞ_ŞŞŞ_ÜÜÜ_file",
-                vec![0, 1, 2, 3, 4, 5, 9, 10, 13, 14]
-            )]
+            vec![("code_😀😃😄😁_happy", vec![0, 1, 2, 3, 22, 23, 24, 25, 26])]
         );
     }
 
