@@ -37,7 +37,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
-use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
+use menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 
 use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings, ShowIndentGuides};
 use project::{File, Fs, GitEntry, GitTraversal, Project, ProjectItem};
@@ -4721,6 +4721,16 @@ impl OutlinePanel {
             })
             .collect()
     }
+
+    fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        let _ = self.workspace.update(cx, |workspace, cx| {
+            workspace_active_editor(workspace, cx).map(|(_item, editor)| {
+                editor.update(cx, |editor, cx| {
+                    window.focus(&editor.focus_handle(cx));
+                })
+            })
+        });
+    }
 }
 
 fn workspace_active_editor(
@@ -4913,6 +4923,7 @@ impl Render for OutlinePanel {
             .key_context(self.dispatch_context(window, cx))
             .on_action(cx.listener(Self::open_selected_entry))
             .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_first))
