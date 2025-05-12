@@ -148,7 +148,8 @@ pub struct LanguageModelToolResult {
     pub output: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Hash)]
+#[serde(untagged)]
 pub enum LanguageModelToolResultContent {
     Text(Arc<str>),
     Image(LanguageModelImage),
