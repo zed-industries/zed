@@ -252,7 +252,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 path: Arc::from(Path::new(&action.filename)),
             };
 
-            if project.read(cx).entry_for_path(&project_path, cx).is_some() {
+            if project.read(cx).entry_for_path(&project_path, cx).is_some() && action.save_intent != Some(SaveIntent::Overwrite) {
                 let answer = window.prompt(
                     gpui::PromptLevel::Critical,
                     &format!("{} already exists. Do you want to replace it?", project_path.path.to_string_lossy()),
@@ -1896,6 +1896,7 @@ mod test {
         cx.shared_state().await.assert_eq("k\nk\nˇk\n4\n4\n3\n2\n1");
     }
 
+    #[track_caller]
     fn assert_active_item(
         workspace: &mut Workspace,
         expected_path: &str,
@@ -1975,6 +1976,39 @@ mod test {
         cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 3));
         cx.workspace(|workspace, _, cx| {
             assert_active_item(workspace, path!("/root/dir/file3.rs"), "go to file3", cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_w_command(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.workspace(|workspace, _, cx| {
+            assert_active_item(workspace, path!("/root/dir/file.rs"), "", cx);
+        });
+
+        cx.simulate_keystrokes(": w space other.rs");
+        cx.simulate_keystrokes("enter");
+
+        cx.workspace(|workspace, _, cx| {
+            assert_active_item(workspace, path!("/root/other.rs"), "", cx);
+        });
+
+        cx.simulate_keystrokes(": w space dir/file.rs");
+        cx.simulate_keystrokes("enter");
+
+        cx.simulate_prompt_answer("Replace");
+        cx.run_until_parked();
+
+        cx.workspace(|workspace, _, cx| {
+            assert_active_item(workspace, path!("/root/dir/file.rs"), "", cx);
+        });
+
+        cx.simulate_keystrokes(": w ! space other.rs");
+        cx.simulate_keystrokes("enter");
+
+        cx.workspace(|workspace, _, cx| {
+            assert_active_item(workspace, path!("/root/other.rs"), "", cx);
         });
     }
 
