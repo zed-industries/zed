@@ -1245,7 +1245,7 @@ impl EditAgentTest {
             Project::init_settings(cx);
             language::init(cx);
             language_model::init(client.clone(), cx);
-            language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
+            language_models::init(user_store.clone(), client.clone(), cx);
             crate::init(client.http_client(), cx);
         });
 

@@ -38,7 +38,6 @@ pub struct AnthropicSettings {
     pub api_url: String,
     /// Extend Zed's list of Anthropic models.
     pub available_models: Vec<AvailableModel>,
-    pub needs_setting_migration: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
