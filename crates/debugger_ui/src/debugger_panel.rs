@@ -1115,7 +1115,7 @@ impl Panel for DebugPanel {
     }
 
     fn set_size(&mut self, size: Option<Pixels>, _window: &mut Window, _cx: &mut Context<Self>) {
-        self.size = size.unwrap();
+        self.size = size.unwrap_or(px(300.));
     }
 
     fn remote_id() -> Option<proto::PanelId> {
