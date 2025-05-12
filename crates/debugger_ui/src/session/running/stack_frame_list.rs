@@ -33,6 +33,7 @@ pub struct StackFrameList {
     entries: Vec<StackFrameEntry>,
     workspace: WeakEntity<Workspace>,
     selected_stack_frame_id: Option<StackFrameId>,
+    selected_ix: Option<usize>,
     scrollbar_state: ScrollbarState,
     _refresh_task: Task<()>,
 }
@@ -90,6 +91,7 @@ impl StackFrameList {
             _subscription,
             entries: Default::default(),
             selected_stack_frame_id: None,
+            selected_ix: None,
             _refresh_task: Task::ready(()),
         };
         this.schedule_refresh(true, window, cx);
@@ -348,11 +350,13 @@ impl StackFrameList {
 
     fn render_normal_entry(
         &self,
+        ix: usize,
         stack_frame: &dap::StackFrame,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let source = stack_frame.source.clone();
         let is_selected_frame = Some(stack_frame.id) == self.selected_stack_frame_id;
+        let is_selected_ix = Some(ix) == self.selected_ix;
 
         let path = source.clone().and_then(|s| s.path.or(s.name));
         let formatted_path = path.map(|path| format!("{}:{}", path, stack_frame.line,));
@@ -387,6 +391,9 @@ impl StackFrameList {
             .p_1()
             .when(is_selected_frame, |this| {
                 this.bg(cx.theme().colors().element_hover)
+            })
+            .when(is_selected_ix, |this| {
+                this.border_1().border_color(gpui::red())
             })
             .on_click(cx.listener({
                 let stack_frame = stack_frame.clone();
@@ -506,7 +513,7 @@ impl StackFrameList {
 
     fn render_entry(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         match &self.entries[ix] {
-            StackFrameEntry::Normal(stack_frame) => self.render_normal_entry(stack_frame, cx),
+            StackFrameEntry::Normal(stack_frame) => self.render_normal_entry(ix, stack_frame, cx),
             StackFrameEntry::Collapsed(stack_frames) => {
                 self.render_collapsed_entry(ix, stack_frames, cx)
             }
@@ -545,6 +552,51 @@ impl StackFrameList {
             .cursor_default()
             .children(Scrollbar::vertical(self.scrollbar_state.clone()))
     }
+
+    fn select_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
+        self.selected_ix = match self.selected_ix {
+            _ if self.entries.len() == 0 => None,
+            None => Some(0),
+            Some(ix) => {
+                if ix == self.entries.len() - 1 {
+                    Some(0)
+                } else {
+                    Some(ix + 1)
+                }
+            }
+        };
+        cx.notify();
+    }
+
+    fn select_previous(
+        &mut self,
+        _: &menu::SelectPrevious,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.selected_ix = match self.selected_ix {
+            _ if self.entries.len() == 0 => None,
+            None => Some(self.entries.len() - 1),
+            Some(ix) => {
+                if ix == 0 {
+                    Some(self.entries.len() - 1)
+                } else {
+                    Some(ix - 1)
+                }
+            }
+        };
+        cx.notify();
+    }
+
+    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(StackFrameEntry::Normal(frame)) =
+            self.selected_ix.and_then(|ix| self.entries.get(ix))
+        {
+            let frame = frame.clone();
+            self.select_stack_frame(&frame, true, window, cx)
+                .detach_and_log_err(cx);
+        }
+    }
 }
 
 impl Render for StackFrameList {
@@ -553,6 +605,9 @@ impl Render for StackFrameList {
             .track_focus(&self.focus_handle)
             .size_full()
             .p_1()
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_previous))
+            .on_action(cx.listener(Self::confirm))
             .child(list(self.list.clone()).size_full())
             .child(self.render_vertical_scrollbar(cx))
     }
