@@ -1860,7 +1860,12 @@ impl ContextEditor {
     }
 
     pub fn title(&self, cx: &App) -> SharedString {
-        self.context.read(cx).summary_or_default()
+        self.context.read(cx).summary().or_default()
+    }
+
+    pub fn regenerate_summary(&mut self, cx: &mut Context<Self>) {
+        self.context
+            .update(cx, |context, cx| context.summarize(true, cx));
     }
 
     fn render_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
