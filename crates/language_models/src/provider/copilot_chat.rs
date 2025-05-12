@@ -456,37 +456,30 @@ impl CopilotChatLanguageModel {
                     }
 
                     let mut content_parts = Vec::new();
-                    let mut text_content = String::new();
-
                     for content in &message.content {
                         match content {
-                            MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
-                                if !text.is_empty() {
+                            MessageContent::Text(text) | MessageContent::Thinking { text, .. }
+                                if !text.is_empty() =>
+                            {
+                                if let Some(ChatMessageContent::Text { text: text_content }) =
+                                    content_parts.last_mut()
+                                {
                                     text_content.push_str(text);
-                                }
-                            }
-                            MessageContent::Image(image) => {
-                                if self.model.supports_vision() {
-                                    if !text_content.is_empty() {
-                                        content_parts.push(ChatMessageContent::Text {
-                                            text: std::mem::take(&mut text_content),
-                                        });
-                                    }
-
-                                    // Add the image as an image part
-                                    content_parts.push(ChatMessageContent::Image {
-                                        image_url: ImageUrl {
-                                            url: format!("data:image/png;base64,{}", image.source),
-                                        },
+                                } else {
+                                    content_parts.push(ChatMessageContent::Text {
+                                        text: text.to_string(),
                                     });
                                 }
                             }
+                            MessageContent::Image(image) if self.model.supports_vision() => {
+                                content_parts.push(ChatMessageContent::Image {
+                                    image_url: ImageUrl {
+                                        url: format!("data:image/png;base64,{}", image.source),
+                                    },
+                                });
+                            }
                             _ => {}
                         }
-                    }
-
-                    if !text_content.is_empty() {
-                        content_parts.push(ChatMessageContent::Text { text: text_content });
                     }
 
                     if !content_parts.is_empty() {
