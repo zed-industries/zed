@@ -699,7 +699,11 @@ mod tests {
                 cx,
             );
             cx.spawn(async move |_| {
-                let output = headless_result.output.await.log_err().unwrap().content;
+                let output = headless_result
+                    .output
+                    .await
+                    .expect("Terminal tool output task failed.")
+                    .content;
                 assert_eq!(output.as_str().map(|o| o.to_string()), expected);
             })
         };
