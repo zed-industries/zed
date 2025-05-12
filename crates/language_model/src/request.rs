@@ -104,6 +104,10 @@ impl LanguageModelImage {
         // so this method is more of a rough guess.
         (width * height) / 750
     }
+
+    pub fn to_base64_url(&self) -> String {
+        format!("data:image/png;base64,{}", self.source)
+    }
 }
 
 fn encode_as_base64(data: Arc<Image>, image: image::DynamicImage) -> Result<Vec<u8>> {
