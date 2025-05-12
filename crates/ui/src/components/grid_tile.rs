@@ -23,6 +23,13 @@ pub struct GridTile {
     description: Option<AnyElement>,
 }
 
+impl Toggleable for GridTile {
+    fn toggle_state(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+}
+
 impl GridTile {
     /// Creates a new grid tile
     pub fn new(label: impl Into<SharedString>) -> Self {

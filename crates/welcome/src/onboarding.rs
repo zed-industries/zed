@@ -2,7 +2,8 @@ use anyhow::anyhow;
 use editor::Editor;
 use gpui::{
     AnyElement, Bounds, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    SharedString, Task, UniformListScrollHandle, WeakEntity, canvas, div,
+    ListAlignment, ListState, ScrollHandle, SharedString, Task, UniformListScrollHandle,
+    WeakEntity, canvas, div,
 };
 use language::LanguageRegistry;
 use persistence::WALKTHROUGH_DB;
@@ -63,6 +64,8 @@ pub struct OnboardingWalkthrough {
     weak_handle: WeakEntity<Workspace>,
     nav_picker: Entity<Picker<OnboardingNavDelegate>>,
     nav_scroll_handle: UniformListScrollHandle,
+    page_scroll_handle: ScrollHandle,
+    page_list: ListState,
     last_bounds: Option<Bounds<Pixels>>,
 }
 
@@ -79,6 +82,21 @@ impl OnboardingWalkthrough {
             picker.focus(window, cx);
             picker
         });
+        let entity = cx.entity().downgrade();
+        let list_state = ListState::new(
+            0,
+            gpui::ListAlignment::Bottom,
+            px(1000.),
+            move |ix, _window, cx| {
+                if let Some(entity) = entity.upgrade() {
+                    entity.update(cx, |this: &mut Self, cx| {
+                        this.render_page(ix, cx).into_any_element()
+                    })
+                } else {
+                    div().into_any()
+                }
+            },
+        );
 
         let welcome = Self {
             active_page: WalkthroughPage::default(),
@@ -87,6 +105,8 @@ impl OnboardingWalkthrough {
             weak_handle,
             nav_picker,
             nav_scroll_handle: UniformListScrollHandle::new(),
+            page_scroll_handle: ScrollHandle::new(),
+            page_list: list_state,
             last_bounds: None,
         };
 
@@ -99,6 +119,11 @@ impl OnboardingWalkthrough {
             cx.emit(ItemEvent::UpdateTab);
             cx.notify();
         }
+    }
+
+    fn render_page(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+        // todo!("render page based on ix")
+        div().child(format!("Page {}", ix)).into_any_element()
     }
 
     fn render_theme_page(
@@ -171,6 +196,8 @@ impl Render for OnboardingWalkthrough {
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement {
         let this = cx.entity();
+        // this whole canvas bit is so we can get the bounds so we can
+        // react to smaller sizes
         canvas(
             move |bounds, window, cx| {
                 this.update(cx, |this, cx| {

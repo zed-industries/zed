@@ -756,7 +756,7 @@ impl ToolCard for EditFileToolCard {
 
 fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     let theme_settings = ThemeSettings::get_global(cx);
-    let ui_font_size = TextSize::Default.rems(cx);
+    let ui_font_size = TextSize::Default.rems();
     let mut text_style = window.text_style();
 
     text_style.refine(&TextStyleRefinement {
