@@ -1346,6 +1346,10 @@ impl ProjectPanel {
     }
 
     fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        if cx.stop_active_drag(window) {
+            return;
+        }
+
         let previous_edit_state = self.edit_state.take();
         self.update_visible_entries(None, cx);
         self.marked_entries.clear();
@@ -2855,13 +2859,7 @@ impl ProjectPanel {
                 }
                 let worktree_abs_path = worktree.read(cx).abs_path();
                 let (depth, path) = if Some(entry.entry) == worktree.read(cx).root_entry() {
-                    let Some(path_name) = worktree_abs_path
-                        .file_name()
-                        .with_context(|| {
-                            format!("Worktree abs path has no file name, root entry: {entry:?}")
-                        })
-                        .log_err()
-                    else {
+                    let Some(path_name) = worktree_abs_path.file_name() else {
                         continue;
                     };
                     let path = ArcCow::Borrowed(Path::new(path_name));

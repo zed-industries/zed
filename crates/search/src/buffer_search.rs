@@ -143,7 +143,7 @@ impl BufferSearchBar {
         };
 
         let mut editor_style = EditorStyle {
-            background: cx.theme().colors().editor_background,
+            background: cx.theme().colors().toolbar_background,
             local_player: cx.theme().players().local(),
             text: text_style,
             ..EditorStyle::default()

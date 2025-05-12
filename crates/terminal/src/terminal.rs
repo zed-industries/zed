@@ -605,7 +605,7 @@ pub struct TerminalContent {
     pub scrolled_to_bottom: bool,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct HoveredWord {
     pub word: String,
     pub word_match: RangeInclusive<AlacPoint>,

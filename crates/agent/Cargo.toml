@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/assistant.rs"
+path = "src/agent.rs"
 doctest = false
 
 [features]
@@ -23,13 +23,13 @@ anyhow.workspace = true
 assistant_context_editor.workspace = true
 assistant_settings.workspace = true
 assistant_slash_command.workspace = true
+assistant_slash_commands.workspace = true
 assistant_tool.workspace = true
 async-watch.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true
 client.workspace = true
 collections.workspace = true
-command_palette_hooks.workspace = true
 component.workspace = true
 context_server.workspace = true
 convert_case.workspace = true
@@ -46,6 +46,7 @@ gpui.workspace = true
 heed.workspace = true
 html_to_markdown.workspace = true
 http_client.workspace = true
+indexed_docs.workspace = true
 itertools.workspace = true
 jsonschema.workspace = true
 language.workspace = true

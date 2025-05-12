@@ -17,6 +17,7 @@ word_characters = ["#", "$"]
 scope_opt_in_language_servers = ["tailwindcss-language-server", "emmet-language-server"]
 prettier_parser_name = "typescript"
 tab_size = 2
+debuggers = ["JavaScript"]
 
 [jsx_tag_auto_close]
 open_tag_node_name = "jsx_opening_element"
@@ -33,3 +34,7 @@ opt_into_language_servers = ["emmet-language-server"]
 [overrides.string]
 completion_query_characters = ["-", "."]
 opt_into_language_servers = ["tailwindcss-language-server"]
+prefer_label_for_snippet = true
+
+[overrides.call_expression]
+prefer_label_for_snippet = true

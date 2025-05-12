@@ -10,7 +10,7 @@ use super::dap_command::{
     TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
 };
 use super::dap_store::DapStore;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use collections::{HashMap, HashSet, IndexMap, IndexSet};
 use dap::adapters::{DebugAdapterBinary, DebugAdapterName};
 use dap::messages::Response;
@@ -169,8 +169,7 @@ impl LocalMode {
                     .await?
             } else {
                 DebugAdapterClient::start(session_id, binary.clone(), message_handler, cx.clone())
-                    .await
-                    .with_context(|| "Failed to start communication with debug adapter")?
+                    .await?
             },
         );
 
@@ -815,6 +814,33 @@ impl Session {
         self.is_session_terminated
     }
 
+    pub fn console_output(&mut self, cx: &mut Context<Self>) -> mpsc::UnboundedSender<String> {
+        let (tx, mut rx) = mpsc::unbounded();
+
+        cx.spawn(async move |this, cx| {
+            while let Some(output) = rx.next().await {
+                this.update(cx, |this, _| {
+                    this.output_token.0 += 1;
+                    this.output.push_back(dap::OutputEvent {
+                        category: None,
+                        output,
+                        group: None,
+                        variables_reference: None,
+                        source: None,
+                        line: None,
+                        column: None,
+                        data: None,
+                        location_reference: None,
+                    });
+                })?;
+            }
+            anyhow::Ok(())
+        })
+        .detach();
+
+        return tx;
+    }
+
     pub fn is_local(&self) -> bool {
         matches!(self.mode, Mode::Running(_))
     }
@@ -1146,8 +1172,7 @@ impl Session {
                 self.clear_active_debug_line(cx);
             }
             Events::Terminated(_) => {
-                self.is_session_terminated = true;
-                self.clear_active_debug_line(cx);
+                self.shutdown(cx).detach();
             }
             Events::Thread(event) => {
                 let thread_id = ThreadId(event.thread_id);

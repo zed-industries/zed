@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
+use collections::IndexMap;
 use gpui::SharedString;
-use indexmap::IndexMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

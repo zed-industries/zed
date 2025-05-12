@@ -586,10 +586,7 @@ impl ThreadContextHandle {
     }
 
     pub fn title(&self, cx: &App) -> SharedString {
-        self.thread
-            .read(cx)
-            .summary()
-            .unwrap_or_else(|| "New thread".into())
+        self.thread.read(cx).summary().or_default()
     }
 
     fn load(self, cx: &App) -> Task<Option<(AgentContext, Vec<Entity<Buffer>>)>> {
@@ -597,9 +594,7 @@ impl ThreadContextHandle {
             let text = Thread::wait_for_detailed_summary_or_text(&self.thread, cx).await?;
             let title = self
                 .thread
-                .read_with(cx, |thread, _cx| {
-                    thread.summary().unwrap_or_else(|| "New thread".into())
-                })
+                .read_with(cx, |thread, _cx| thread.summary().or_default())
                 .ok()?;
             let context = AgentContext::Thread(ThreadContext {
                 title,
@@ -642,7 +637,7 @@ impl TextThreadContextHandle {
     }
 
     pub fn title(&self, cx: &App) -> SharedString {
-        self.context.read(cx).summary_or_default()
+        self.context.read(cx).summary().or_default()
     }
 
     fn load(self, cx: &App) -> Task<Option<(AgentContext, Vec<Entity<Buffer>>)>> {
@@ -754,11 +749,11 @@ pub enum ImageStatus {
 
 impl ImageContext {
     pub fn eq_for_key(&self, other: &Self) -> bool {
-        self.original_image.id == other.original_image.id
+        self.original_image.id() == other.original_image.id()
     }
 
     pub fn hash_for_key<H: Hasher>(&self, state: &mut H) {
-        self.original_image.id.hash(state);
+        self.original_image.id().hash(state);
     }
 
     pub fn image(&self) -> Option<LanguageModelImage> {
@@ -830,23 +825,20 @@ pub fn load_context(
     prompt_store: &Option<Entity<PromptStore>>,
     cx: &mut App,
 ) -> Task<ContextLoadResult> {
-    let mut load_tasks = Vec::new();
-
-    for context in contexts.iter().cloned() {
-        match context {
-            AgentContextHandle::File(context) => load_tasks.push(context.load(cx)),
-            AgentContextHandle::Directory(context) => {
-                load_tasks.push(context.load(project.clone(), cx))
-            }
-            AgentContextHandle::Symbol(context) => load_tasks.push(context.load(cx)),
-            AgentContextHandle::Selection(context) => load_tasks.push(context.load(cx)),
-            AgentContextHandle::FetchedUrl(context) => load_tasks.push(context.load()),
-            AgentContextHandle::Thread(context) => load_tasks.push(context.load(cx)),
-            AgentContextHandle::TextThread(context) => load_tasks.push(context.load(cx)),
-            AgentContextHandle::Rules(context) => load_tasks.push(context.load(prompt_store, cx)),
-            AgentContextHandle::Image(context) => load_tasks.push(context.load(cx)),
-        }
-    }
+    let load_tasks: Vec<_> = contexts
+        .into_iter()
+        .map(|context| match context {
+            AgentContextHandle::File(context) => context.load(cx),
+            AgentContextHandle::Directory(context) => context.load(project.clone(), cx),
+            AgentContextHandle::Symbol(context) => context.load(cx),
+            AgentContextHandle::Selection(context) => context.load(cx),
+            AgentContextHandle::FetchedUrl(context) => context.load(),
+            AgentContextHandle::Thread(context) => context.load(cx),
+            AgentContextHandle::TextThread(context) => context.load(cx),
+            AgentContextHandle::Rules(context) => context.load(prompt_store, cx),
+            AgentContextHandle::Image(context) => context.load(cx),
+        })
+        .collect();
 
     cx.background_spawn(async move {
         let load_results = future::join_all(load_tasks).await;
