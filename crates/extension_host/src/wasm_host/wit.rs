@@ -13,7 +13,7 @@ use language::LanguageName;
 use lsp::LanguageServerName;
 use release_channel::ReleaseChannel;
 
-pub use since_v0_6_0 as latest;
+use since_v0_5_0 as latest;
 use super::{WasmState, wasm_engine};
 use anyhow::{Context as _, Result, anyhow};
 use semantic_version::SemanticVersion;
