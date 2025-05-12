@@ -237,7 +237,6 @@ pub struct FunctionContent {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub struct ResponseEvent {
     pub choices: Vec<ResponseChoice>,
-    pub created: u64,
     pub id: String,
 }
 
