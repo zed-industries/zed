@@ -77,7 +77,7 @@ impl MigrationBanner {
                 migrated,
             } => {
                 if *migrated {
-                    self.migration_type = Some(migration_type.clone());
+                    self.migration_type = Some(*migration_type);
                     self.show(cx);
                 } else {
                     cx.emit(ToolbarItemEvent::ChangeLocation(
