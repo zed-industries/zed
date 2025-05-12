@@ -274,42 +274,35 @@ impl PickerDelegate for ToolPickerDelegate {
             let server_id = server_id.clone();
             let tool_name = tool_name.clone();
             move |settings: &mut AssistantSettingsContent, _cx| {
-                settings
-                    .v2_setting(|v2_settings| {
-                        let profiles = v2_settings.profiles.get_or_insert_default();
-                        let profile =
-                            profiles
-                                .entry(profile_id)
-                                .or_insert_with(|| AgentProfileContent {
-                                    name: default_profile.name.into(),
-                                    tools: default_profile.tools,
-                                    enable_all_context_servers: Some(
-                                        default_profile.enable_all_context_servers,
-                                    ),
-                                    context_servers: default_profile
-                                        .context_servers
-                                        .into_iter()
-                                        .map(|(server_id, preset)| {
-                                            (
-                                                server_id,
-                                                ContextServerPresetContent {
-                                                    tools: preset.tools,
-                                                },
-                                            )
-                                        })
-                                        .collect(),
-                                });
+                let profiles = settings.profiles.get_or_insert_default();
+                let profile = profiles
+                    .entry(profile_id)
+                    .or_insert_with(|| AgentProfileContent {
+                        name: default_profile.name.into(),
+                        tools: default_profile.tools,
+                        enable_all_context_servers: Some(
+                            default_profile.enable_all_context_servers,
+                        ),
+                        context_servers: default_profile
+                            .context_servers
+                            .into_iter()
+                            .map(|(server_id, preset)| {
+                                (
+                                    server_id,
+                                    ContextServerPresetContent {
+                                        tools: preset.tools,
+                                    },
+                                )
+                            })
+                            .collect(),
+                    });
 
-                        if let Some(server_id) = server_id {
-                            let preset = profile.context_servers.entry(server_id).or_default();
-                            *preset.tools.entry(tool_name).or_default() = !is_currently_enabled;
-                        } else {
-                            *profile.tools.entry(tool_name).or_default() = !is_currently_enabled;
-                        }
-
-                        Ok(())
-                    })
-                    .ok();
+                if let Some(server_id) = server_id {
+                    let preset = profile.context_servers.entry(server_id).or_default();
+                    *preset.tools.entry(tool_name).or_default() = !is_currently_enabled;
+                } else {
+                    *profile.tools.entry(tool_name).or_default() = !is_currently_enabled;
+                }
             }
         });
     }
