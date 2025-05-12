@@ -321,6 +321,7 @@ impl Model {
 
             // Models available only in US
             (Model::Claude3Opus, "us")
+            | (Model::Claude3_5Sonnet, "us")
             | (Model::Claude3_7Sonnet, "us")
             | (Model::Claude3_7SonnetThinking, "us")
             | (Model::AmazonNovaPremier, "us") => Ok(format!("{}.{}", region_group, model_id)),
