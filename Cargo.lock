@@ -8837,7 +8837,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "strum 0.27.1",
  "workspace-hack",
 ]
 
