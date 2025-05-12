@@ -327,6 +327,7 @@ impl Model {
             | (Model::Claude3_5Sonnet, "us")
             | (Model::Claude3_7Sonnet, "us")
             | (Model::Claude3_7SonnetThinking, "us")
+            | (Model::AmazonNovaPremier, "us")
             | (Model::MistralPixtralLarge2502V1, "us") => {
                 Ok(format!("{}.{}", region_group, model_id))
             }
