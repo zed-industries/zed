@@ -5752,6 +5752,13 @@ impl Editor {
             return None;
         }
 
+        if self.has_non_empty_selection(cx) {
+            self.document_highlights_task.take();
+            self.clear_background_highlights::<DocumentHighlightRead>(cx);
+            self.clear_background_highlights::<DocumentHighlightWrite>(cx);
+            return None;
+        }
+
         let provider = self.semantics_provider.clone()?;
         let buffer = self.buffer.read(cx);
         let newest_selection = self.selections.newest_anchor().clone();
