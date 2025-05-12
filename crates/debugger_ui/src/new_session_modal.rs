@@ -1,3 +1,4 @@
+use collections::FxHashMap;
 use std::{
     borrow::Cow,
     ops::Not,
@@ -595,7 +596,7 @@ impl CustomMode {
 
         let program = cx.new(|cx| Editor::single_line(window, cx));
         program.update(cx, |this, cx| {
-            this.set_placeholder_text("Program path", cx);
+            this.set_placeholder_text("Run", cx);
 
             if let Some(past_program) = past_program {
                 this.set_text(past_program, window, cx);
@@ -617,11 +618,29 @@ impl CustomMode {
 
     pub(super) fn debug_request(&self, cx: &App) -> task::LaunchRequest {
         let path = self.cwd.read(cx).text(cx);
+        let command = self.program.read(cx).text(cx);
+        let mut args = shlex::split(&command).into_iter().flatten().peekable();
+        let mut env = FxHashMap::default();
+        while args.peek().is_some_and(|arg| arg.contains('=')) {
+            let arg = args.next().unwrap();
+            let (lhs, rhs) = arg.split_once('=').unwrap();
+            env.insert(lhs.to_string(), rhs.to_string());
+        }
+
+        let program = if let Some(program) = args.next() {
+            program
+        } else {
+            env = FxHashMap::default();
+            command
+        };
+
+        let args = args.collect::<Vec<_>>();
+
         task::LaunchRequest {
-            program: self.program.read(cx).text(cx),
+            program,
             cwd: path.is_empty().not().then(|| PathBuf::from(path)),
-            args: Default::default(),
-            env: Default::default(),
+            args,
+            env,
         }
     }
 

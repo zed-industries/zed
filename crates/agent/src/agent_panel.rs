@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use anyhow::{Result, anyhow};
 use assistant_context_editor::{
     AgentPanelDelegate, AssistantContext, ConfigurationError, ContextEditor, ContextEvent,
-    SlashCommandCompletionProvider, humanize_token_count, make_lsp_adapter_delegate,
-    render_remaining_tokens,
+    ContextSummary, SlashCommandCompletionProvider, humanize_token_count,
+    make_lsp_adapter_delegate, render_remaining_tokens,
 };
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
@@ -59,7 +59,7 @@ use crate::agent_configuration::{AgentConfiguration, AssistantConfigurationEvent
 use crate::agent_diff::AgentDiff;
 use crate::history_store::{HistoryStore, RecentEntry};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
-use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
+use crate::thread::{Thread, ThreadError, ThreadId, ThreadSummary, TokenUsageRatio};
 use crate::thread_history::{HistoryEntryElement, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::ui::AgentOnboardingModal;
@@ -196,7 +196,7 @@ impl ActiveView {
     }
 
     pub fn thread(thread: Entity<Thread>, window: &mut Window, cx: &mut App) -> Self {
-        let summary = thread.read(cx).summary_or_default();
+        let summary = thread.read(cx).summary().or_default();
 
         let editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
@@ -218,7 +218,7 @@ impl ActiveView {
                         }
                         EditorEvent::Blurred => {
                             if editor.read(cx).text(cx).is_empty() {
-                                let summary = thread.read(cx).summary_or_default();
+                                let summary = thread.read(cx).summary().or_default();
 
                                 editor.update(cx, |editor, cx| {
                                     editor.set_text(summary, window, cx);
@@ -233,7 +233,7 @@ impl ActiveView {
                 let editor = editor.clone();
                 move |thread, event, window, cx| match event {
                     ThreadEvent::SummaryGenerated => {
-                        let summary = thread.read(cx).summary_or_default();
+                        let summary = thread.read(cx).summary().or_default();
 
                         editor.update(cx, |editor, cx| {
                             editor.set_text(summary, window, cx);
@@ -296,7 +296,8 @@ impl ActiveView {
                                     .read(cx)
                                     .context()
                                     .read(cx)
-                                    .summary_or_default();
+                                    .summary()
+                                    .or_default();
 
                                 editor.update(cx, |editor, cx| {
                                     editor.set_text(summary, window, cx);
@@ -311,7 +312,7 @@ impl ActiveView {
                 let editor = editor.clone();
                 move |assistant_context, event, window, cx| match event {
                     ContextEvent::SummaryGenerated => {
-                        let summary = assistant_context.read(cx).summary_or_default();
+                        let summary = assistant_context.read(cx).summary().or_default();
 
                         editor.update(cx, |editor, cx| {
                             editor.set_text(summary, window, cx);
@@ -1452,23 +1453,45 @@ impl AgentPanel {
                 ..
             } => {
                 let active_thread = self.thread.read(cx);
-                let is_empty = active_thread.is_empty();
-
-                let summary = active_thread.summary(cx);
-
-                if is_empty {
-                    Label::new(Thread::DEFAULT_SUMMARY.clone())
-                        .truncate()
-                        .into_any_element()
-                } else if summary.is_none() {
-                    Label::new(LOADING_SUMMARY_PLACEHOLDER)
-                        .truncate()
-                        .into_any_element()
+                let state = if active_thread.is_empty() {
+                    &ThreadSummary::Pending
                 } else {
-                    div()
+                    active_thread.summary(cx)
+                };
+
+                match state {
+                    ThreadSummary::Pending => Label::new(ThreadSummary::DEFAULT.clone())
+                        .truncate()
+                        .into_any_element(),
+                    ThreadSummary::Generating => Label::new(LOADING_SUMMARY_PLACEHOLDER)
+                        .truncate()
+                        .into_any_element(),
+                    ThreadSummary::Ready(_) => div()
                         .w_full()
                         .child(change_title_editor.clone())
-                        .into_any_element()
+                        .into_any_element(),
+                    ThreadSummary::Error => h_flex()
+                        .w_full()
+                        .child(change_title_editor.clone())
+                        .child(
+                            ui::IconButton::new("retry-summary-generation", IconName::RotateCcw)
+                                .on_click({
+                                    let active_thread = self.thread.clone();
+                                    move |_, _window, cx| {
+                                        active_thread.update(cx, |thread, cx| {
+                                            thread.regenerate_summary(cx);
+                                        });
+                                    }
+                                })
+                                .tooltip(move |_window, cx| {
+                                    cx.new(|_| {
+                                        Tooltip::new("Failed to generate title")
+                                            .meta("Click to try again")
+                                    })
+                                    .into()
+                                }),
+                        )
+                        .into_any_element(),
                 }
             }
             ActiveView::PromptEditor {
@@ -1476,14 +1499,13 @@ impl AgentPanel {
                 context_editor,
                 ..
             } => {
-                let context_editor = context_editor.read(cx);
-                let summary = context_editor.context().read(cx).summary();
+                let summary = context_editor.read(cx).context().read(cx).summary();
 
                 match summary {
-                    None => Label::new(AssistantContext::DEFAULT_SUMMARY.clone())
+                    ContextSummary::Pending => Label::new(ContextSummary::DEFAULT)
                         .truncate()
                         .into_any_element(),
-                    Some(summary) => {
+                    ContextSummary::Content(summary) => {
                         if summary.done {
                             div()
                                 .w_full()
@@ -1495,6 +1517,28 @@ impl AgentPanel {
                                 .into_any_element()
                         }
                     }
+                    ContextSummary::Error => h_flex()
+                        .w_full()
+                        .child(title_editor.clone())
+                        .child(
+                            ui::IconButton::new("retry-summary-generation", IconName::RotateCcw)
+                                .on_click({
+                                    let context_editor = context_editor.clone();
+                                    move |_, _window, cx| {
+                                        context_editor.update(cx, |context_editor, cx| {
+                                            context_editor.regenerate_summary(cx);
+                                        });
+                                    }
+                                })
+                                .tooltip(move |_window, cx| {
+                                    cx.new(|_| {
+                                        Tooltip::new("Failed to generate title")
+                                            .meta("Click to try again")
+                                    })
+                                    .into()
+                                }),
+                        )
+                        .into_any_element(),
                 }
             }
             ActiveView::History => Label::new("History").truncate().into_any_element(),
@@ -1604,6 +1648,12 @@ impl AgentPanel {
                 }),
         );
 
+        let zoom_in_label = if self.is_zoomed(window, cx) {
+            "Zoom Out"
+        } else {
+            "Zoom In"
+        };
+
         let agent_extra_menu = PopoverMenu::new("agent-options-menu")
             .trigger_with_tooltip(
                 IconButton::new("agent-options-menu", IconName::Ellipsis)
@@ -1690,7 +1740,8 @@ impl AgentPanel {
 
                     menu = menu
                         .action("Rules…", Box::new(OpenRulesLibrary::default()))
-                        .action("Settings", Box::new(OpenConfiguration));
+                        .action("Settings", Box::new(OpenConfiguration))
+                        .action(zoom_in_label, Box::new(ToggleZoom));
                     menu
                 }))
             });
