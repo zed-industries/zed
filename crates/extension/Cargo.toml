@@ -17,6 +17,7 @@ async-compression.workspace = true
 async-tar.workspace = true
 async-trait.workspace = true
 collections.workspace = true
+dap.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true

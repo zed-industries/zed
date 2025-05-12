@@ -1,0 +1,16 @@
+[package]
+name = "debug_adapter_extension"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+dap.workspace = true
+extension.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/debug_adapter_extension.rs"

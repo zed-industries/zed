@@ -10,6 +10,7 @@ use std::sync::Arc;
 use ::lsp::LanguageServerName;
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
+use dap::adapters::{DapDelegate, DebugAdapterBinary, DebugTaskDefinition};
 use fs::normalize_path;
 use gpui::{App, Task};
 use language::LanguageName;
@@ -135,6 +136,13 @@ pub trait Extension: Send + Sync + 'static {
         package_name: Arc<str>,
         kv_store: Arc<dyn KeyValueStoreDelegate>,
     ) -> Result<()>;
+
+    async fn get_dap_binary(
+        &self,
+        dap_name: Arc<str>,
+        config: DebugTaskDefinition,
+        user_installed_path: Option<PathBuf>,
+    ) -> Result<DebugAdapterBinary>;
 }
 
 pub fn parse_wasm_extension_version(
