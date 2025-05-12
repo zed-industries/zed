@@ -73,6 +73,7 @@ pub enum Model {
     MistralMixtral8x7BInstructV0,
     MistralMistralLarge2402V1,
     MistralMistralSmall2402V1,
+    MistralPixtralLarge2502V1,
     // Writer models
     PalmyraWriterX5,
     PalmyraWriterX4,
@@ -154,6 +155,7 @@ impl Model {
             Model::MistralMixtral8x7BInstructV0 => "mistral.mixtral-8x7b-instruct-v0:1",
             Model::MistralMistralLarge2402V1 => "mistral.mistral-large-2402-v1:0",
             Model::MistralMistralSmall2402V1 => "mistral.mistral-small-2402-v1:0",
+            Model::MistralPixtralLarge2502V1 => "mistral.pixtral-large-2502-v1:0",
             Model::PalmyraWriterX4 => "writer.palmyra-x4-v1:0",
             Model::PalmyraWriterX5 => "writer.palmyra-x5-v1:0",
             Self::Custom { name, .. } => name,
@@ -203,6 +205,7 @@ impl Model {
             Self::MistralMixtral8x7BInstructV0 => "Mistral Mixtral 8x7B Instruct V0",
             Self::MistralMistralLarge2402V1 => "Mistral Large 2402 V1",
             Self::MistralMistralSmall2402V1 => "Mistral Small 2402 V1",
+            Self::MistralPixtralLarge2502V1 => "Pixtral Large 25.02 V1",
             Self::PalmyraWriterX5 => "Writer Palmyra X5",
             Self::PalmyraWriterX4 => "Writer Palmyra X4",
             Self::Custom {
@@ -222,7 +225,7 @@ impl Model {
             Self::PalmyraWriterX5 => 1_000_000,
             Self::PalmyraWriterX4 => 128_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
-            _ => 200_000,
+            _ => 128_000,
         }
     }
 
@@ -323,7 +326,10 @@ impl Model {
             (Model::Claude3Opus, "us")
             | (Model::Claude3_7Sonnet, "us")
             | (Model::Claude3_7SonnetThinking, "us")
-            | (Model::AmazonNovaPremier, "us") => Ok(format!("{}.{}", region_group, model_id)),
+            | (Model::AmazonNovaPremier, "us")
+            | (Model::MistralPixtralLarge2502V1, "us") => {
+                Ok(format!("{}.{}", region_group, model_id))
+            }
 
             // Models available in US, EU, and APAC
             (Model::Claude3_5SonnetV2, "us")
