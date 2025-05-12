@@ -1,6 +1,7 @@
 use crate::{
     AssistantContext, AssistantEdit, AssistantEditKind, CacheStatus, ContextEvent, ContextId,
-    ContextOperation, InvokedSlashCommandId, MessageCacheMetadata, MessageId, MessageStatus,
+    ContextOperation, ContextSummary, InvokedSlashCommandId, MessageCacheMetadata, MessageId,
+    MessageStatus,
 };
 use anyhow::Result;
 use assistant_slash_command::{
@@ -16,7 +17,10 @@ use futures::{
 };
 use gpui::{App, Entity, SharedString, Task, TestAppContext, WeakEntity, prelude::*};
 use language::{Buffer, BufferSnapshot, LanguageRegistry, LspAdapterDelegate};
-use language_model::{LanguageModelCacheConfiguration, LanguageModelRegistry, Role};
+use language_model::{
+    ConfiguredModel, LanguageModelCacheConfiguration, LanguageModelRegistry, Role,
+    fake_provider::{FakeLanguageModel, FakeLanguageModelProvider},
+};
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use project::Project;
@@ -1573,6 +1577,187 @@ fn test_mark_cache_anchors(cx: &mut App) {
         ],
         "Modifying a message should invalidate all future messages."
     );
+}
+
+#[gpui::test]
+async fn test_summarization(cx: &mut TestAppContext) {
+    let (context, fake_model) = setup_context_editor_with_fake_model(cx);
+
+    // Initial state should be pending
+    context.read_with(cx, |context, _| {
+        assert!(matches!(context.summary(), ContextSummary::Pending));
+        assert_eq!(context.summary().or_default(), ContextSummary::DEFAULT);
+    });
+
+    let message_1 = context.read_with(cx, |context, _cx| context.message_anchors[0].clone());
+    context.update(cx, |context, cx| {
+        context
+            .insert_message_after(message_1.id, Role::Assistant, MessageStatus::Done, cx)
+            .unwrap();
+    });
+
+    // Send a message
+    context.update(cx, |context, cx| {
+        context.assist(cx);
+    });
+
+    simulate_successful_response(&fake_model, cx);
+
+    // Should start generating summary when there are >= 2 messages
+    context.read_with(cx, |context, _| {
+        assert!(!context.summary().content().unwrap().done);
+    });
+
+    cx.run_until_parked();
+    fake_model.stream_last_completion_response("Brief".into());
+    fake_model.stream_last_completion_response(" Introduction".into());
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // Summary should be set
+    context.read_with(cx, |context, _| {
+        assert_eq!(context.summary().or_default(), "Brief Introduction");
+    });
+
+    // We should be able to manually set a summary
+    context.update(cx, |context, cx| {
+        context.set_custom_summary("Brief Intro".into(), cx);
+    });
+
+    context.read_with(cx, |context, _| {
+        assert_eq!(context.summary().or_default(), "Brief Intro");
+    });
+}
+
+#[gpui::test]
+async fn test_thread_summary_error_set_manually(cx: &mut TestAppContext) {
+    let (context, fake_model) = setup_context_editor_with_fake_model(cx);
+
+    test_summarize_error(&fake_model, &context, cx);
+
+    // Now we should be able to set a summary
+    context.update(cx, |context, cx| {
+        context.set_custom_summary("Brief Intro".into(), cx);
+    });
+
+    context.read_with(cx, |context, _| {
+        assert_eq!(context.summary().or_default(), "Brief Intro");
+    });
+}
+
+#[gpui::test]
+async fn test_thread_summary_error_retry(cx: &mut TestAppContext) {
+    let (context, fake_model) = setup_context_editor_with_fake_model(cx);
+
+    test_summarize_error(&fake_model, &context, cx);
+
+    // Sending another message should not trigger another summarize request
+    context.update(cx, |context, cx| {
+        context.assist(cx);
+    });
+
+    simulate_successful_response(&fake_model, cx);
+
+    context.read_with(cx, |context, _| {
+        // State is still Error, not Generating
+        assert!(matches!(context.summary(), ContextSummary::Error));
+    });
+
+    // But the summarize request can be invoked manually
+    context.update(cx, |context, cx| {
+        context.summarize(true, cx);
+    });
+
+    context.read_with(cx, |context, _| {
+        assert!(!context.summary().content().unwrap().done);
+    });
+
+    cx.run_until_parked();
+    fake_model.stream_last_completion_response("A successful summary".into());
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    context.read_with(cx, |context, _| {
+        assert_eq!(context.summary().or_default(), "A successful summary");
+    });
+}
+
+fn test_summarize_error(
+    model: &Arc<FakeLanguageModel>,
+    context: &Entity<AssistantContext>,
+    cx: &mut TestAppContext,
+) {
+    let message_1 = context.read_with(cx, |context, _cx| context.message_anchors[0].clone());
+    context.update(cx, |context, cx| {
+        context
+            .insert_message_after(message_1.id, Role::Assistant, MessageStatus::Done, cx)
+            .unwrap();
+    });
+
+    // Send a message
+    context.update(cx, |context, cx| {
+        context.assist(cx);
+    });
+
+    simulate_successful_response(&model, cx);
+
+    context.read_with(cx, |context, _| {
+        assert!(!context.summary().content().unwrap().done);
+    });
+
+    // Simulate summary request ending
+    cx.run_until_parked();
+    model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // State is set to Error and default message
+    context.read_with(cx, |context, _| {
+        assert_eq!(*context.summary(), ContextSummary::Error);
+        assert_eq!(context.summary().or_default(), ContextSummary::DEFAULT);
+    });
+}
+
+fn setup_context_editor_with_fake_model(
+    cx: &mut TestAppContext,
+) -> (Entity<AssistantContext>, Arc<FakeLanguageModel>) {
+    let registry = Arc::new(LanguageRegistry::test(cx.executor().clone()));
+
+    let fake_provider = Arc::new(FakeLanguageModelProvider);
+    let fake_model = Arc::new(fake_provider.test_model());
+
+    cx.update(|cx| {
+        init_test(cx);
+        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            registry.set_default_model(
+                Some(ConfiguredModel {
+                    provider: fake_provider.clone(),
+                    model: fake_model.clone(),
+                }),
+                cx,
+            )
+        })
+    });
+
+    let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+    let context = cx.new(|cx| {
+        AssistantContext::local(
+            registry,
+            None,
+            None,
+            prompt_builder.clone(),
+            Arc::new(SlashCommandWorkingSet::default()),
+            cx,
+        )
+    });
+
+    (context, fake_model)
+}
+
+fn simulate_successful_response(fake_model: &FakeLanguageModel, cx: &mut TestAppContext) {
+    cx.run_until_parked();
+    fake_model.stream_last_completion_response("Assistant response".into());
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
 }
 
 fn messages(context: &Entity<AssistantContext>, cx: &App) -> Vec<(MessageId, Role, Range<usize>)> {
