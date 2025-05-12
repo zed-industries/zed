@@ -76,8 +76,14 @@ impl Console {
             editor
         });
 
-        let _subscriptions =
-            vec![cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events)];
+        let _subscriptions = vec![
+            cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
+            cx.on_focus_in(&focus_handle, window, |console, window, cx| {
+                if console.is_running(cx) {
+                    console.query_bar.focus_handle(cx).focus(window);
+                }
+            }),
+        ];
 
         Self {
             session,
@@ -97,7 +103,7 @@ impl Console {
         &self.console
     }
 
-    fn is_local(&self, cx: &Context<Self>) -> bool {
+    fn is_running(&self, cx: &Context<Self>) -> bool {
         self.session.read(cx).is_local()
     }
 
@@ -218,7 +224,7 @@ impl Render for Console {
             .on_action(cx.listener(Self::evaluate))
             .size_full()
             .child(self.render_console(cx))
-            .when(self.is_local(cx), |this| {
+            .when(self.is_running(cx), |this| {
                 this.child(Divider::horizontal())
                     .child(self.render_query_bar(cx))
             })
