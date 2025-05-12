@@ -487,7 +487,7 @@ fn render_markdown_code_block(
         .copied_code_block_ids
         .contains(&(message_id, ix));
 
-    let can_expand = metadata.line_count > MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK;
+    let can_expand = metadata.line_count >= MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK;
 
     let is_expanded = if can_expand {
         active_thread
@@ -2356,7 +2356,7 @@ impl ActiveThread {
 
                                             move |el, range, metadata, _, cx| {
                                                 let can_expand = metadata.line_count
-                                                    > MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK;
+                                                    >= MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK;
                                                 if !can_expand {
                                                     return el;
                                                 }
