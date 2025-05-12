@@ -9,7 +9,7 @@ pub struct TitleBarSettings {
     #[serde(default)]
     pub show_branch_icon: bool,
     #[serde(default = "default_true")]
-    pub show_branch_button: bool,
+    pub show_branch_name: bool,
     #[serde(default = "default_true")]
     pub show_project_items: bool,
     #[serde(default = "default_true")]
@@ -32,10 +32,10 @@ pub struct TitleBarSettingsContent {
     ///
     /// Default: true
     pub show_user_picture: Option<bool>,
-    /// Whether to show the branch button with the branch name in the titlebar.
+    /// Whether to show the branch name button in the titlebar.
     ///
     /// Default: true
-    pub show_branch_button: Option<bool>,
+    pub show_branch_name: Option<bool>,
     /// Whether to show the project host and name in the titlebar.
     ///
     /// Default: true

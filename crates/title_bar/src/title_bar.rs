@@ -192,8 +192,7 @@ impl Render for TitleBar {
                         h_flex()
                             .gap_1()
                             .map(|title_bar| {
-                                let mut render_project_items = title_bar_settings
-                                    .show_branch_button
+                                let mut render_project_items = title_bar_settings.show_branch_name
                                     || title_bar_settings.show_project_items;
                                 title_bar
                                     .when_some(self.application_menu.clone(), |title_bar, menu| {
@@ -211,7 +210,7 @@ impl Render for TitleBar {
                                                 },
                                             )
                                             .when(
-                                                title_bar_settings.show_branch_button,
+                                                title_bar_settings.show_branch_name,
                                                 |title_bar| {
                                                     title_bar
                                                         .children(self.render_project_branch(cx))

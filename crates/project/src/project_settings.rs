@@ -119,15 +119,15 @@ pub enum DirenvSettings {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct DiagnosticsSettings {
-    /// Whether or not to include warning diagnostics
+    /// Whether to show the project diagnostics button in the status bar.
     #[serde(default = "default_true")]
     pub button: bool,
 
-    /// Whether to show the project diagnostics button in the status bar.
+    /// Whether or not to include warning diagnostics.
     #[serde(default = "default_true")]
     pub include_warnings: bool,
 
-    /// Settings for showing inline diagnostics
+    /// Settings for showing inline diagnostics.
     #[serde(default)]
     pub inline: InlineDiagnosticsSettings,
 
