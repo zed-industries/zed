@@ -2054,11 +2054,18 @@ impl ContextEditor {
         let active_model = LanguageModelRegistry::read_global(cx)
             .default_model()
             .map(|default| default.model);
-        let focus_handle = self.editor().focus_handle(cx).clone();
         let model_name = match active_model {
             Some(model) => model.name().0,
             None => SharedString::from("No model selected"),
         };
+        let active_provider = LanguageModelRegistry::read_global(cx)
+            .default_model()
+            .map(|default| default.provider);
+        let provider_icon = match active_provider {
+            Some(provider) => provider.icon(),
+            None => IconName::Ai,
+        };
+        let focus_handle = self.editor().focus_handle(cx).clone();
 
         LanguageModelSelectorPopoverMenu::new(
             self.language_model_selector.clone(),
@@ -2068,9 +2075,14 @@ impl ContextEditor {
                     h_flex()
                         .gap_0p5()
                         .child(
+                            Icon::new(provider_icon)
+                                .color(Color::Accent)
+                                .size(IconSize::Small),
+                        )
+                        .child(
                             Label::new(model_name)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
+                                .color(Color::Muted)
+                                .size(LabelSize::Small),
                         )
                         .child(
                             Icon::new(IconName::ChevronDown)
