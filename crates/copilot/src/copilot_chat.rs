@@ -32,11 +32,29 @@ pub enum Role {
     System,
 }
 
-#[serde_with::serde_as]
 #[derive(Deserialize)]
 struct ModelSchema {
-    #[serde_as(as = "serde_with::VecSkipError<_>")]
+    #[serde(deserialize_with = "deserialize_models_skip_errors")]
     data: Vec<Model>,
+}
+
+fn deserialize_models_skip_errors<'de, D>(deserializer: D) -> Result<Vec<Model>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw_values = Vec::<serde_json::Value>::deserialize(deserializer)?;
+    let models = raw_values
+        .into_iter()
+        .filter_map(|value| match serde_json::from_value::<Model>(value) {
+            Ok(model) => Some(model),
+            Err(err) => {
+                log::warn!("GitHub Copilot Chat model failed to deserialize: {:?}", err);
+                None
+            }
+        })
+        .collect();
+
+    Ok(models)
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -403,14 +421,14 @@ async fn get_models(api_token: String, client: Arc<dyn HttpClient>) -> Result<Ve
 
     let mut models: Vec<Model> = all_models
         .into_iter()
-        .filter(|model| model.model_picker_enabled)
         .filter(|model| {
             // Ensure user has access to the model; Policy is present only for models that must be
             // enabled in the GitHub dashboard
-            model
-                .policy
-                .as_ref()
-                .is_none_or(|policy| policy.state == "enabled")
+            model.model_picker_enabled
+                && model
+                    .policy
+                    .as_ref()
+                    .is_none_or(|policy| policy.state == "enabled")
         })
         // The first model from the API response, in any given family, appear to be the non-tagged
         // models, which are likely the best choice (e.g. gpt-4o rather than gpt-4o-2024-11-20)

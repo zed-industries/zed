@@ -51,7 +51,6 @@ util.workspace = true
 workspace.workspace = true
 workspace-hack.workspace = true
 itertools.workspace = true
-serde_with = "3.12.0"
 
 [target.'cfg(windows)'.dependencies]
 async-std = { version = "1.12.0", features = ["unstable"] }
