@@ -1463,7 +1463,9 @@ impl CollabPanel {
     }
 
     fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
-        if self.take_editing_state(window, cx) {
+        if cx.stop_active_drag(window) {
+            return;
+        } else if self.take_editing_state(window, cx) {
             window.focus(&self.filter_editor.focus_handle(cx));
         } else if !self.reset_filter_editor_text(window, cx) {
             self.focus_handle.focus(window);
@@ -2225,6 +2227,7 @@ impl CollabPanel {
                                     client
                                         .authenticate_and_connect(true, &cx)
                                         .await
+                                        .into_response()
                                         .notify_async_err(cx);
                                 })
                                 .detach()

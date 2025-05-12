@@ -139,8 +139,8 @@ foreign-types = "0.5"
 log.workspace = true
 media.workspace = true
 objc.workspace = true
-objc2 = { version = "0.5", optional = true }
-objc2-metal = { version = "0.2", optional = true }
+objc2 = { version = "0.6", optional = true }
+objc2-metal = { version = "0.3", optional = true }
 #TODO: replace with "objc2"
 metal.workspace = true
 
@@ -161,7 +161,7 @@ blade-graphics = { workspace = true, optional = true }
 blade-macros = { workspace = true, optional = true }
 blade-util = { workspace = true, optional = true }
 bytemuck = { version = "1", optional = true }
-cosmic-text = { version = "0.13.2", optional = true }
+cosmic-text = { version = "0.14.0", optional = true }
 font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "5474cfad4b719a72ec8ed2cb7327b2b01fd10568", features = [
     "source-fontconfig-dlopen",
 ], optional = true }

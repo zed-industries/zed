@@ -1,11 +1,10 @@
 use crate::{
-    AppState, FollowerState, Pane, Workspace, WorkspaceSettings,
+    AppState, CollaboratorId, FollowerState, Pane, Workspace, WorkspaceSettings,
     pane_group::element::pane_axis,
     workspace_settings::{PaneSplitDirectionHorizontal, PaneSplitDirectionVertical},
 };
 use anyhow::{Result, anyhow};
 use call::{ActiveCall, ParticipantLocation};
-use client::proto::PeerId;
 use collections::HashMap;
 use gpui::{
     Along, AnyView, AnyWeakView, Axis, Bounds, Entity, Hsla, IntoElement, MouseButton, Pixels,
@@ -29,6 +28,11 @@ const VERTICAL_MIN_SIZE: f32 = 100.;
 #[derive(Clone)]
 pub struct PaneGroup {
     pub root: Member,
+}
+
+pub struct PaneRenderResult {
+    pub element: gpui::AnyElement,
+    pub contains_active_pane: bool,
 }
 
 impl PaneGroup {
@@ -129,7 +133,7 @@ impl PaneGroup {
         window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
-        self.root.render(0, zoomed, render_cx, window, cx)
+        self.root.render(0, zoomed, render_cx, window, cx).element
     }
 
     pub fn panes(&self) -> Vec<&Entity<Pane>> {
@@ -177,6 +181,10 @@ impl PaneGroup {
         };
         self.pane_at_pixel_position(target)
     }
+
+    pub fn invert_axies(&mut self) {
+        self.root.invert_pane_axies();
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -188,7 +196,7 @@ pub enum Member {
 #[derive(Clone, Copy)]
 pub struct PaneRenderContext<'a> {
     pub project: &'a Entity<Project>,
-    pub follower_states: &'a HashMap<PeerId, FollowerState>,
+    pub follower_states: &'a HashMap<CollaboratorId, FollowerState>,
     pub active_call: Option<&'a Entity<ActiveCall>>,
     pub active_pane: &'a Entity<Pane>,
     pub app_state: &'a Arc<AppState>,
@@ -243,88 +251,104 @@ impl PaneLeaderDecorator for PaneRenderContext<'_> {
                 None
             }
         });
-        let leader = follower_state.as_ref().and_then(|(leader_id, _)| {
-            let room = self.active_call?.read(cx).room()?.read(cx);
-            room.remote_participant_for_peer_id(*leader_id)
-        });
-        let Some(leader) = leader else {
+        let Some((leader_id, follower_state)) = follower_state else {
             return LeaderDecoration::default();
         };
-        let is_in_unshared_view = follower_state.as_ref().map_or(false, |(_, state)| {
-            state
-                .active_view_id
-                .is_some_and(|view_id| !state.items_by_leader_view_id.contains_key(&view_id))
-        });
-        let is_in_panel = follower_state
-            .as_ref()
-            .map_or(false, |(_, state)| state.dock_pane.is_some());
 
-        let mut leader_join_data = None;
-        let leader_status_box = match leader.location {
-            ParticipantLocation::SharedProject {
-                project_id: leader_project_id,
-            } => {
-                if Some(leader_project_id) == self.project.read(cx).remote_id() {
-                    is_in_unshared_view.then(|| {
-                        Label::new(format!(
-                            "{} is in an unshared pane",
-                            leader.user.github_login
-                        ))
-                    })
-                } else {
-                    leader_join_data = Some((leader_project_id, leader.user.id));
-                    Some(Label::new(format!(
-                        "Follow {} to their active project",
-                        leader.user.github_login,
-                    )))
-                }
+        let mut leader_color;
+        let status_box;
+        match leader_id {
+            CollaboratorId::PeerId(peer_id) => {
+                let Some(leader) = self.active_call.as_ref().and_then(|call| {
+                    let room = call.read(cx).room()?.read(cx);
+                    room.remote_participant_for_peer_id(peer_id)
+                }) else {
+                    return LeaderDecoration::default();
+                };
+
+                let is_in_unshared_view = follower_state.active_view_id.is_some_and(|view_id| {
+                    !follower_state
+                        .items_by_leader_view_id
+                        .contains_key(&view_id)
+                });
+
+                let mut leader_join_data = None;
+                let leader_status_box = match leader.location {
+                    ParticipantLocation::SharedProject {
+                        project_id: leader_project_id,
+                    } => {
+                        if Some(leader_project_id) == self.project.read(cx).remote_id() {
+                            is_in_unshared_view.then(|| {
+                                Label::new(format!(
+                                    "{} is in an unshared pane",
+                                    leader.user.github_login
+                                ))
+                            })
+                        } else {
+                            leader_join_data = Some((leader_project_id, leader.user.id));
+                            Some(Label::new(format!(
+                                "Follow {} to their active project",
+                                leader.user.github_login,
+                            )))
+                        }
+                    }
+                    ParticipantLocation::UnsharedProject => Some(Label::new(format!(
+                        "{} is viewing an unshared Zed project",
+                        leader.user.github_login
+                    ))),
+                    ParticipantLocation::External => Some(Label::new(format!(
+                        "{} is viewing a window outside of Zed",
+                        leader.user.github_login
+                    ))),
+                };
+                status_box = leader_status_box.map(|status| {
+                    div()
+                        .absolute()
+                        .w_96()
+                        .bottom_3()
+                        .right_3()
+                        .elevation_2(cx)
+                        .p_1()
+                        .child(status)
+                        .when_some(
+                            leader_join_data,
+                            |this, (leader_project_id, leader_user_id)| {
+                                let app_state = self.app_state.clone();
+                                this.cursor_pointer().on_mouse_down(
+                                    MouseButton::Left,
+                                    move |_, _, cx| {
+                                        crate::join_in_room_project(
+                                            leader_project_id,
+                                            leader_user_id,
+                                            app_state.clone(),
+                                            cx,
+                                        )
+                                        .detach_and_log_err(cx);
+                                    },
+                                )
+                            },
+                        )
+                        .into_any_element()
+                });
+                leader_color = cx
+                    .theme()
+                    .players()
+                    .color_for_participant(leader.participant_index.0)
+                    .cursor;
             }
-            ParticipantLocation::UnsharedProject => Some(Label::new(format!(
-                "{} is viewing an unshared Zed project",
-                leader.user.github_login
-            ))),
-            ParticipantLocation::External => Some(Label::new(format!(
-                "{} is viewing a window outside of Zed",
-                leader.user.github_login
-            ))),
-        };
-        let mut leader_color = cx
-            .theme()
-            .players()
-            .color_for_participant(leader.participant_index.0)
-            .cursor;
+            CollaboratorId::Agent => {
+                status_box = None;
+                leader_color = cx.theme().players().agent().cursor;
+            }
+        }
+
+        let is_in_panel = follower_state.dock_pane.is_some();
         if is_in_panel {
             leader_color.fade_out(0.75);
         } else {
             leader_color.fade_out(0.3);
         }
-        let status_box = leader_status_box.map(|status| {
-            div()
-                .absolute()
-                .w_96()
-                .bottom_3()
-                .right_3()
-                .elevation_2(cx)
-                .p_1()
-                .child(status)
-                .when_some(
-                    leader_join_data,
-                    |this, (leader_project_id, leader_user_id)| {
-                        let app_state = self.app_state.clone();
-                        this.cursor_pointer()
-                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                crate::join_in_room_project(
-                                    leader_project_id,
-                                    leader_user_id,
-                                    app_state.clone(),
-                                    cx,
-                                )
-                                .detach_and_log_err(cx);
-                            })
-                    },
-                )
-                .into_any_element()
-        });
+
         LeaderDecoration {
             status_box,
             border: Some(leader_color),
@@ -339,6 +363,7 @@ impl PaneLeaderDecorator for PaneRenderContext<'_> {
         self.workspace
     }
 }
+
 impl Member {
     fn new_axis(old_pane: Entity<Pane>, new_pane: Entity<Pane>, direction: SplitDirection) -> Self {
         use Axis::*;
@@ -378,40 +403,45 @@ impl Member {
         render_cx: &dyn PaneLeaderDecorator,
         window: &mut Window,
         cx: &mut App,
-    ) -> impl IntoElement {
+    ) -> PaneRenderResult {
         match self {
             Member::Pane(pane) => {
                 if zoomed == Some(&pane.downgrade().into()) {
-                    return div().into_any();
+                    return PaneRenderResult {
+                        element: div().into_any(),
+                        contains_active_pane: false,
+                    };
                 }
 
                 let decoration = render_cx.decorate(pane, cx);
+                let is_active = pane == render_cx.active_pane();
 
-                div()
-                    .relative()
-                    .flex_1()
-                    .size_full()
-                    .child(
-                        AnyView::from(pane.clone())
-                            .cached(StyleRefinement::default().v_flex().size_full()),
-                    )
-                    .when_some(decoration.border, |this, color| {
-                        this.child(
-                            div()
-                                .absolute()
-                                .size_full()
-                                .left_0()
-                                .top_0()
-                                .border_2()
-                                .border_color(color),
+                PaneRenderResult {
+                    element: div()
+                        .relative()
+                        .flex_1()
+                        .size_full()
+                        .child(
+                            AnyView::from(pane.clone())
+                                .cached(StyleRefinement::default().v_flex().size_full()),
                         )
-                    })
-                    .children(decoration.status_box)
-                    .into_any()
+                        .when_some(decoration.border, |this, color| {
+                            this.child(
+                                div()
+                                    .absolute()
+                                    .size_full()
+                                    .left_0()
+                                    .top_0()
+                                    .border_2()
+                                    .border_color(color),
+                            )
+                        })
+                        .children(decoration.status_box)
+                        .into_any(),
+                    contains_active_pane: is_active,
+                }
             }
-            Member::Axis(axis) => axis
-                .render(basis + 1, zoomed, render_cx, window, cx)
-                .into_any(),
+            Member::Axis(axis) => axis.render(basis + 1, zoomed, render_cx, window, cx),
         }
     }
 
@@ -423,6 +453,18 @@ impl Member {
                 }
             }
             Member::Pane(pane) => panes.push(pane),
+        }
+    }
+
+    fn invert_pane_axies(&mut self) {
+        match self {
+            Self::Axis(axis) => {
+                axis.axis = axis.axis.invert();
+                for member in axis.members.iter_mut() {
+                    member.invert_pane_axies();
+                }
+            }
+            Self::Pane(_) => {}
         }
     }
 }
@@ -720,27 +762,54 @@ impl PaneAxis {
         render_cx: &dyn PaneLeaderDecorator,
         window: &mut Window,
         cx: &mut App,
-    ) -> gpui::AnyElement {
+    ) -> PaneRenderResult {
         debug_assert!(self.members.len() == self.flexes.lock().len());
         let mut active_pane_ix = None;
+        let mut contains_active_pane = false;
+        let mut is_leaf_pane = vec![false; self.members.len()];
 
-        pane_axis(
+        let rendered_children = self
+            .members
+            .iter()
+            .enumerate()
+            .map(|(ix, member)| {
+                match member {
+                    Member::Pane(pane) => {
+                        is_leaf_pane[ix] = true;
+                        if pane == render_cx.active_pane() {
+                            active_pane_ix = Some(ix);
+                            contains_active_pane = true;
+                        }
+                    }
+                    Member::Axis(_) => {
+                        is_leaf_pane[ix] = false;
+                    }
+                }
+
+                let result = member.render((basis + ix) * 10, zoomed, render_cx, window, cx);
+                if result.contains_active_pane {
+                    contains_active_pane = true;
+                }
+                result.element.into_any_element()
+            })
+            .collect::<Vec<_>>();
+
+        let element = pane_axis(
             self.axis,
             basis,
             self.flexes.clone(),
             self.bounding_boxes.clone(),
             render_cx.workspace().clone(),
         )
-        .children(self.members.iter().enumerate().map(|(ix, member)| {
-            if matches!(member, Member::Pane(pane) if pane == render_cx.active_pane()) {
-                active_pane_ix = Some(ix);
-            }
-            member
-                .render((basis + ix) * 10, zoomed, render_cx, window, cx)
-                .into_any_element()
-        }))
+        .with_is_leaf_pane_mask(is_leaf_pane)
+        .children(rendered_children)
         .with_active_pane(active_pane_ix)
-        .into_any_element()
+        .into_any_element();
+
+        PaneRenderResult {
+            element,
+            contains_active_pane,
+        }
     }
 }
 
@@ -867,6 +936,7 @@ mod element {
             children: SmallVec::new(),
             active_pane_ix: None,
             workspace,
+            is_leaf_pane_mask: Vec::new(),
         }
     }
 
@@ -878,6 +948,8 @@ mod element {
         children: SmallVec<[AnyElement; 2]>,
         active_pane_ix: Option<usize>,
         workspace: WeakEntity<Workspace>,
+        // Track which children are leaf panes (Member::Pane) vs axes (Member::Axis)
+        is_leaf_pane_mask: Vec<bool>,
     }
 
     pub struct PaneAxisLayout {
@@ -889,6 +961,7 @@ mod element {
         bounds: Bounds<Pixels>,
         element: AnyElement,
         handle: Option<PaneAxisHandleLayout>,
+        is_leaf_pane: bool,
     }
 
     struct PaneAxisHandleLayout {
@@ -899,6 +972,11 @@ mod element {
     impl PaneAxisElement {
         pub fn with_active_pane(mut self, active_pane_ix: Option<usize>) -> Self {
             self.active_pane_ix = active_pane_ix;
+            self
+        }
+
+        pub fn with_is_leaf_pane_mask(mut self, mask: Vec<bool>) -> Self {
+            self.is_leaf_pane_mask = mask;
             self
         }
 
@@ -1118,10 +1196,14 @@ mod element {
                 child.prepaint_at(origin, window, cx);
 
                 origin = origin.apply_along(self.axis, |val| val + child_size.along(self.axis));
+
+                let is_leaf_pane = self.is_leaf_pane_mask.get(ix).copied().unwrap_or(true);
+
                 layout.children.push(PaneAxisChildLayout {
                     bounds: child_bounds,
                     element: child,
                     handle: None,
+                    is_leaf_pane,
                 })
             }
 
@@ -1183,12 +1265,15 @@ mod element {
                             .apply_along(Axis::Horizontal, |val| val - Pixels(1.)),
                     };
 
-                    if overlay_opacity.is_some() && self.active_pane_ix != Some(ix) {
+                    if overlay_opacity.is_some()
+                        && child.is_leaf_pane
+                        && self.active_pane_ix != Some(ix)
+                    {
                         window.paint_quad(gpui::fill(overlay_bounds, overlay_background));
                     }
 
                     if let Some(border) = overlay_border {
-                        if self.active_pane_ix == Some(ix) {
+                        if self.active_pane_ix == Some(ix) && child.is_leaf_pane {
                             window.paint_quad(gpui::quad(
                                 overlay_bounds,
                                 0.,

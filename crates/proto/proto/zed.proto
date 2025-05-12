@@ -378,7 +378,15 @@ message Envelope {
         GetDebugAdapterBinary get_debug_adapter_binary = 339;
         DebugAdapterBinary debug_adapter_binary = 340;
         RunDebugLocators run_debug_locators = 341;
-        DebugRequest debug_request = 342; // current max
+        DebugRequest debug_request = 342;
+
+        LspExtGoToParentModule lsp_ext_go_to_parent_module = 343;
+        LspExtGoToParentModuleResponse lsp_ext_go_to_parent_module_response = 344;
+        LspExtCancelFlycheck lsp_ext_cancel_flycheck = 345;
+        LspExtRunFlycheck lsp_ext_run_flycheck = 346;
+        LspExtClearFlycheck lsp_ext_clear_flycheck = 347;
+
+        LogToDebugConsole log_to_debug_console = 348; // current max
     }
 
     reserved 87 to 88;

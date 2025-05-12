@@ -23,7 +23,7 @@ use project::{
     Project, ProjectItem as _, ProjectPath, lsp_store::FormatTrigger,
     project_settings::ProjectSettings, search::SearchQuery,
 };
-use rpc::proto::{self, PeerId, update_view};
+use rpc::proto::{self, update_view};
 use settings::Settings;
 use std::{
     any::TypeId,
@@ -39,7 +39,7 @@ use theme::{Theme, ThemeSettings};
 use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
-    ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
     item::{FollowableItem, Item, ItemEvent, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
 };
@@ -170,14 +170,14 @@ impl FollowableItem for Editor {
         }))
     }
 
-    fn set_leader_peer_id(
+    fn set_leader_id(
         &mut self,
-        leader_peer_id: Option<PeerId>,
+        leader_id: Option<CollaboratorId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.leader_peer_id = leader_peer_id;
-        if self.leader_peer_id.is_some() {
+        self.leader_id = leader_id;
+        if self.leader_id.is_some() {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.remove_active_selections(cx);
             });
@@ -349,6 +349,30 @@ impl FollowableItem for Editor {
         } else {
             None
         }
+    }
+
+    fn update_agent_location(
+        &mut self,
+        location: language::Anchor,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let buffer = self.buffer.read(cx);
+        let buffer = buffer.read(cx);
+        let Some((excerpt_id, _, _)) = buffer.as_singleton() else {
+            return;
+        };
+        let position = buffer.anchor_in_excerpt(*excerpt_id, location).unwrap();
+        let selection = Selection {
+            id: 0,
+            reversed: false,
+            start: position,
+            end: position,
+            goal: SelectionGoal::None,
+        };
+        drop(buffer);
+        self.set_selections_from_remote(vec![selection], None, window, cx);
+        self.request_autoscroll_remotely(Autoscroll::fit(), cx);
     }
 }
 
@@ -1201,6 +1225,9 @@ impl SerializableItem for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
+        if self.mode.is_minimap() {
+            return None;
+        }
         let mut serialize_dirty_buffers = self.serialize_dirty_buffers;
 
         let project = self.project.clone()?;
@@ -1293,7 +1320,7 @@ impl ProjectItem for Editor {
 
     fn for_project_item(
         project: Entity<Project>,
-        pane: &Pane,
+        pane: Option<&Pane>,
         buffer: Entity<Buffer>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1304,7 +1331,7 @@ impl ProjectItem for Editor {
         {
             if WorkspaceSettings::get(None, cx).restore_on_file_reopen {
                 if let Some(restoration_data) = Self::project_item_kind()
-                    .and_then(|kind| pane.project_item_restoration_data.get(&kind))
+                    .and_then(|kind| pane.as_ref()?.project_item_restoration_data.get(&kind))
                     .and_then(|data| data.downcast_ref::<EditorRestorationData>())
                     .and_then(|data| {
                         let file = project::File::from_dyn(buffer.read(cx).file())?;
@@ -1358,7 +1385,7 @@ impl Editor {
         cx: &mut Context<Self>,
         write: impl for<'a> FnOnce(&'a mut RestorationData) + 'static,
     ) {
-        if !WorkspaceSettings::get(None, cx).restore_on_file_reopen {
+        if self.mode.is_minimap() || !WorkspaceSettings::get(None, cx).restore_on_file_reopen {
             return;
         }
 

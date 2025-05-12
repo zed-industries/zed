@@ -37,6 +37,8 @@ pub trait Settings: 'static + Send + Sync {
     /// from the root object.
     const KEY: Option<&'static str>;
 
+    const FALLBACK_KEY: Option<&'static str> = None;
+
     /// The name of the keys in the [`FileContent`](Self::FileContent) that should
     /// always be written to a settings file, even if their value matches the default
     /// value.
@@ -231,7 +233,13 @@ struct SettingValue<T> {
 trait AnySettingValue: 'static + Send + Sync {
     fn key(&self) -> Option<&'static str>;
     fn setting_type_name(&self) -> &'static str;
-    fn deserialize_setting(&self, json: &Value) -> Result<DeserializedSetting>;
+    fn deserialize_setting(&self, json: &Value) -> Result<DeserializedSetting> {
+        self.deserialize_setting_with_key(json).1
+    }
+    fn deserialize_setting_with_key(
+        &self,
+        json: &Value,
+    ) -> (Option<&'static str>, Result<DeserializedSetting>);
     fn load_setting(
         &self,
         sources: SettingsSources<DeserializedSetting>,
@@ -537,7 +545,8 @@ impl SettingsStore {
             .get(&setting_type_id)
             .unwrap_or_else(|| panic!("unregistered setting type {}", type_name::<T>()));
         let raw_settings = parse_json_with_comments::<Value>(text).unwrap_or_default();
-        let old_content = match setting.deserialize_setting(&raw_settings) {
+        let (key, deserialized_setting) = setting.deserialize_setting_with_key(&raw_settings);
+        let old_content = match deserialized_setting {
             Ok(content) => content.0.downcast::<T::FileContent>().unwrap(),
             Err(_) => Box::<<T as Settings>::FileContent>::default(),
         };
@@ -548,7 +557,7 @@ impl SettingsStore {
         let new_value = serde_json::to_value(new_content).unwrap();
 
         let mut key_path = Vec::new();
-        if let Some(key) = T::KEY {
+        if let Some(key) = key {
             key_path.push(key);
         }
 
@@ -1153,17 +1162,27 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
         )?))
     }
 
-    fn deserialize_setting(&self, mut json: &Value) -> Result<DeserializedSetting> {
-        if let Some(key) = T::KEY {
-            if let Some(value) = json.get(key) {
+    fn deserialize_setting_with_key(
+        &self,
+        mut json: &Value,
+    ) -> (Option<&'static str>, Result<DeserializedSetting>) {
+        let mut key = None;
+        if let Some(k) = T::KEY {
+            if let Some(value) = json.get(k) {
                 json = value;
+                key = Some(k);
+            } else if let Some((k, value)) = T::FALLBACK_KEY.and_then(|k| Some((k, json.get(k)?))) {
+                json = value;
+                key = Some(k);
             } else {
                 let value = T::FileContent::default();
-                return Ok(DeserializedSetting(Box::new(value)));
+                return (T::KEY, Ok(DeserializedSetting(Box::new(value))));
             }
         }
-        let value = T::FileContent::deserialize(json)?;
-        Ok(DeserializedSetting(Box::new(value)))
+        let value = T::FileContent::deserialize(json)
+            .map(|value| DeserializedSetting(Box::new(value)))
+            .map_err(anyhow::Error::from);
+        (key, value)
     }
 
     fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any {
@@ -1211,7 +1230,8 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
         text: &mut String,
         edits: &mut Vec<(Range<usize>, String)>,
     ) {
-        let old_content = match self.deserialize_setting(raw_settings) {
+        let (key, deserialized_setting) = self.deserialize_setting_with_key(raw_settings);
+        let old_content = match deserialized_setting {
             Ok(content) => content.0.downcast::<T::FileContent>().unwrap(),
             Err(_) => Box::<<T as Settings>::FileContent>::default(),
         };
@@ -1222,7 +1242,7 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
         let new_value = serde_json::to_value(new_content).unwrap();
 
         let mut key_path = Vec::new();
-        if let Some(key) = T::KEY {
+        if let Some(key) = key {
             key_path.push(key);
         }
 

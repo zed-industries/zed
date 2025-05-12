@@ -7,7 +7,9 @@ use gpui::{App, AppContext, Context, Entity, Subscription, Task};
 use http_client::{HttpClient, Method};
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use web_search::{WebSearchProvider, WebSearchProviderId};
-use zed_llm_client::{WebSearchBody, WebSearchResponse};
+use zed_llm_client::{
+    CLIENT_SUPPORTS_EXA_WEB_SEARCH_PROVIDER_HEADER_NAME, WebSearchBody, WebSearchResponse,
+};
 
 pub struct CloudWebSearchProvider {
     state: Entity<State>,
@@ -75,15 +77,12 @@ async fn perform_web_search(
 
     let token = llm_api_token.acquire(&client).await?;
 
-    let request_builder = http_client::Request::builder().method(Method::POST);
-    let request_builder = if let Ok(web_search_url) = std::env::var("ZED_WEB_SEARCH_URL") {
-        request_builder.uri(web_search_url)
-    } else {
-        request_builder.uri(http_client.build_zed_llm_url("/web_search", &[])?.as_ref())
-    };
-    let request = request_builder
+    let request = http_client::Request::builder()
+        .method(Method::POST)
+        .uri(http_client.build_zed_llm_url("/web_search", &[])?.as_ref())
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {token}"))
+        .header(CLIENT_SUPPORTS_EXA_WEB_SEARCH_PROVIDER_HEADER_NAME, "true")
         .body(serde_json::to_string(&body)?.into())?;
     let mut response = http_client
         .send(request)
