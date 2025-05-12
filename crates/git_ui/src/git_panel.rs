@@ -1735,6 +1735,8 @@ impl GitPanel {
             }
         });
 
+        let temperature = AssistantSettings::temperature_for_model(&model, cx);
+
         self.generate_commit_message_task = Some(cx.spawn(async move |this, cx| {
              async move {
                 let _defer = cx.on_drop(&this, |this, _cx| {
@@ -1788,8 +1790,9 @@ impl GitPanel {
                         cache: false,
                     }],
                     tools: Vec::new(),
+                    tool_choice: None,
                     stop: Vec::new(),
-                    temperature: None,
+                    temperature,
                 };
 
                 let stream = model.stream_completion_text(request, &cx);
@@ -2793,9 +2796,9 @@ impl GitPanel {
         let potential_co_authors = self.potential_co_authors(cx);
 
         let (tooltip_label, icon) = if self.add_coauthors {
-            ("Add co-authored-by", IconName::UserCheck)
-        } else {
             ("Remove co-authored-by", IconName::Person)
+        } else {
+            ("Add co-authored-by", IconName::UserCheck)
         };
 
         if potential_co_authors.is_empty() {

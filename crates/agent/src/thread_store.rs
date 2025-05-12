@@ -5,12 +5,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, anyhow};
-use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings};
+use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings, CompletionMode};
 use assistant_tool::{ToolId, ToolSource, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
-use context_server::manager::{ContextServerManager, ContextServerStatus};
-use context_server::{ContextServerDescriptorRegistry, ContextServerTool};
+use context_server::ContextServerId;
 use futures::channel::{mpsc, oneshot};
 use futures::future::{self, BoxFuture, Shared};
 use futures::{FutureExt as _, StreamExt as _};
@@ -21,6 +20,7 @@ use gpui::{
 use heed::Database;
 use heed::types::SerdeBincode;
 use language_model::{LanguageModelToolUseId, Role, TokenUsage};
+use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
     ProjectContext, PromptBuilder, PromptId, PromptStore, PromptsUpdatedEvent, RulesFileContext,
@@ -28,8 +28,10 @@ use prompt_store::{
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
+use ui::Window;
 use util::ResultExt as _;
 
+use crate::context_server_tool::ContextServerTool;
 use crate::thread::{
     DetailedSummaryState, ExceededWindowError, MessageId, ProjectSnapshot, Thread, ThreadId,
 };
@@ -57,13 +59,14 @@ impl SharedProjectContext {
     }
 }
 
+pub type TextThreadStore = assistant_context_editor::ContextStore;
+
 pub struct ThreadStore {
     project: Entity<Project>,
     tools: Entity<ToolWorkingSet>,
     prompt_builder: Arc<PromptBuilder>,
     prompt_store: Option<Entity<PromptStore>>,
-    context_server_manager: Entity<ContextServerManager>,
-    context_server_tool_ids: HashMap<Arc<str>, Vec<ToolId>>,
+    context_server_tool_ids: HashMap<ContextServerId, Vec<ToolId>>,
     threads: Vec<SerializedThreadMetadata>,
     project_context: SharedProjectContext,
     reload_system_prompt_tx: mpsc::Sender<()>,
@@ -108,11 +111,6 @@ impl ThreadStore {
         prompt_store: Option<Entity<PromptStore>>,
         cx: &mut Context<Self>,
     ) -> (Self, oneshot::Receiver<()>) {
-        let context_server_factory_registry = ContextServerDescriptorRegistry::default_global(cx);
-        let context_server_manager = cx.new(|cx| {
-            ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
-        });
-
         let mut subscriptions = vec![
             cx.observe_global::<SettingsStore>(move |this: &mut Self, cx| {
                 this.load_default_profile(cx);
@@ -159,7 +157,6 @@ impl ThreadStore {
             tools,
             prompt_builder,
             prompt_store,
-            context_server_manager,
             context_server_tool_ids: HashMap::default(),
             threads: Vec::new(),
             project_context: SharedProjectContext::default(),
@@ -354,10 +351,6 @@ impl ThreadStore {
         })
     }
 
-    pub fn context_server_manager(&self) -> Entity<ContextServerManager> {
-        self.context_server_manager.clone()
-    }
-
     pub fn prompt_store(&self) -> &Option<Entity<PromptStore>> {
         &self.prompt_store
     }
@@ -369,6 +362,10 @@ impl ThreadStore {
     /// Returns the number of threads.
     pub fn thread_count(&self) -> usize {
         self.threads.len()
+    }
+
+    pub fn unordered_threads(&self) -> impl Iterator<Item = &SerializedThreadMetadata> {
+        self.threads.iter()
     }
 
     pub fn reverse_chronological_threads(&self) -> Vec<SerializedThreadMetadata> {
@@ -392,18 +389,20 @@ impl ThreadStore {
     pub fn open_thread(
         &self,
         id: &ThreadId,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Thread>>> {
         let id = id.clone();
         let database_future = ThreadsDatabase::global_future(cx);
-        cx.spawn(async move |this, cx| {
+        let this = cx.weak_entity();
+        window.spawn(cx, async move |cx| {
             let database = database_future.await.map_err(|err| anyhow!(err))?;
             let thread = database
                 .try_find_thread(id.clone())
                 .await?
                 .ok_or_else(|| anyhow!("no thread found with ID: {id:?}"))?;
 
-            let thread = this.update(cx, |this, cx| {
+            let thread = this.update_in(cx, |this, window, cx| {
                 cx.new(|cx| {
                     Thread::deserialize(
                         id.clone(),
@@ -412,6 +411,7 @@ impl ThreadStore {
                         this.tools.clone(),
                         this.prompt_builder.clone(),
                         this.project_context.clone(),
+                        window,
                         cx,
                     )
                 })
@@ -494,11 +494,17 @@ impl ThreadStore {
         });
 
         if profile.enable_all_context_servers {
-            for context_server in self.context_server_manager.read(cx).all_servers() {
+            for context_server_id in self
+                .project
+                .read(cx)
+                .context_server_store()
+                .read(cx)
+                .all_server_ids()
+            {
                 self.tools.update(cx, |tools, cx| {
                     tools.enable_source(
                         ToolSource::ContextServer {
-                            id: context_server.id().into(),
+                            id: context_server_id.0.into(),
                         },
                         cx,
                     );
@@ -541,7 +547,7 @@ impl ThreadStore {
 
     fn register_context_server_handlers(&self, cx: &mut Context<Self>) {
         cx.subscribe(
-            &self.context_server_manager.clone(),
+            &self.project.read(cx).context_server_store(),
             Self::handle_context_server_event,
         )
         .detach();
@@ -549,18 +555,19 @@ impl ThreadStore {
 
     fn handle_context_server_event(
         &mut self,
-        context_server_manager: Entity<ContextServerManager>,
-        event: &context_server::manager::Event,
+        context_server_store: Entity<ContextServerStore>,
+        event: &project::context_server_store::Event,
         cx: &mut Context<Self>,
     ) {
         let tool_working_set = self.tools.clone();
         match event {
-            context_server::manager::Event::ServerStatusChanged { server_id, status } => {
+            project::context_server_store::Event::ServerStatusChanged { server_id, status } => {
                 match status {
-                    Some(ContextServerStatus::Running) => {
-                        if let Some(server) = context_server_manager.read(cx).get_server(server_id)
+                    ContextServerStatus::Running => {
+                        if let Some(server) =
+                            context_server_store.read(cx).get_running_server(server_id)
                         {
-                            let context_server_manager = context_server_manager.clone();
+                            let context_server_manager = context_server_store.clone();
                             cx.spawn({
                                 let server = server.clone();
                                 let server_id = server_id.clone();
@@ -608,7 +615,7 @@ impl ThreadStore {
                             .detach();
                         }
                     }
-                    None => {
+                    ContextServerStatus::Stopped | ContextServerStatus::Error(_) => {
                         if let Some(tool_ids) = self.context_server_tool_ids.remove(server_id) {
                             tool_working_set.update(cx, |tool_working_set, _| {
                                 tool_working_set.remove(&tool_ids);
@@ -648,6 +655,8 @@ pub struct SerializedThread {
     pub exceeded_window_error: Option<ExceededWindowError>,
     #[serde(default)]
     pub model: Option<SerializedLanguageModel>,
+    #[serde(default)]
+    pub completion_mode: Option<CompletionMode>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -733,6 +742,8 @@ pub struct SerializedMessage {
     pub tool_results: Vec<SerializedToolResult>,
     #[serde(default)]
     pub context: String,
+    #[serde(default)]
+    pub creases: Vec<SerializedCrease>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -765,6 +776,7 @@ pub struct SerializedToolResult {
     pub tool_use_id: LanguageModelToolUseId,
     pub is_error: bool,
     pub content: Arc<str>,
+    pub output: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -789,6 +801,7 @@ impl LegacySerializedThread {
             detailed_summary_state: DetailedSummaryState::default(),
             exceeded_window_error: None,
             model: None,
+            completion_mode: None,
         }
     }
 }
@@ -813,8 +826,17 @@ impl LegacySerializedMessage {
             tool_uses: self.tool_uses,
             tool_results: self.tool_results,
             context: String::new(),
+            creases: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SerializedCrease {
+    pub start: usize,
+    pub end: usize,
+    pub icon_path: SharedString,
+    pub label: SharedString,
 }
 
 struct GlobalThreadsDatabase(

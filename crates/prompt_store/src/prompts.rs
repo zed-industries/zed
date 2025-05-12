@@ -443,10 +443,6 @@ impl PromptBuilder {
             .lock()
             .render("terminal_assistant_prompt", &context)
     }
-
-    pub fn generate_suggest_edits_prompt(&self) -> Result<String, RenderError> {
-        self.handlebars.lock().render("suggest_edits", &())
-    }
 }
 
 #[cfg(test)]

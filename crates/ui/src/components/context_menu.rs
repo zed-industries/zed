@@ -16,6 +16,8 @@ use super::Tooltip;
 pub enum ContextMenuItem {
     Separator,
     Header(SharedString),
+    /// title, link_label, link_url
+    HeaderWithLink(SharedString, SharedString, SharedString), // This could be folded into header
     Label(SharedString),
     Entry(ContextMenuEntry),
     CustomEntry {
@@ -48,7 +50,7 @@ pub struct ContextMenuEntry {
     handler: Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut App)>,
     action: Option<Box<dyn Action>>,
     disabled: bool,
-    documentation_aside: Option<Rc<dyn Fn(&mut App) -> AnyElement>>,
+    documentation_aside: Option<DocumentationAside>,
     end_slot_icon: Option<IconName>,
     end_slot_title: Option<SharedString>,
     end_slot_handler: Option<Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut App)>>,
@@ -122,9 +124,14 @@ impl ContextMenuEntry {
 
     pub fn documentation_aside(
         mut self,
-        element: impl Fn(&mut App) -> AnyElement + 'static,
+        side: DocumentationSide,
+        render: impl Fn(&mut App) -> AnyElement + 'static,
     ) -> Self {
-        self.documentation_aside = Some(Rc::new(element));
+        self.documentation_aside = Some(DocumentationAside {
+            side,
+            render: Rc::new(render),
+        });
+
         self
     }
 }
@@ -148,8 +155,20 @@ pub struct ContextMenu {
     _on_blur_subscription: Subscription,
     keep_open_on_confirm: bool,
     eager: bool,
-    documentation_aside: Option<(usize, Rc<dyn Fn(&mut App) -> AnyElement>)>,
+    documentation_aside: Option<(usize, DocumentationAside)>,
     fixed_width: Option<DefiniteLength>,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum DocumentationSide {
+    Left,
+    Right,
+}
+
+#[derive(Clone)]
+pub struct DocumentationAside {
+    side: DocumentationSide,
+    render: Rc<dyn Fn(&mut App) -> AnyElement>,
 }
 
 impl Focusable for ContextMenu {
@@ -329,6 +348,20 @@ impl ContextMenu {
 
     pub fn header(mut self, title: impl Into<SharedString>) -> Self {
         self.items.push(ContextMenuItem::Header(title.into()));
+        self
+    }
+
+    pub fn header_with_link(
+        mut self,
+        title: impl Into<SharedString>,
+        link_label: impl Into<SharedString>,
+        link_url: impl Into<SharedString>,
+    ) -> Self {
+        self.items.push(ContextMenuItem::HeaderWithLink(
+            title.into(),
+            link_label.into(),
+            link_url.into(),
+        ));
         self
     }
 
@@ -640,7 +673,7 @@ impl ContextMenu {
         self.selected_index = None;
     }
 
-    fn select_first(&mut self, _: &SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn select_first(&mut self, _: &SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(ix) = self.items.iter().position(|item| item.is_selectable()) {
             self.select_index(ix, window, cx);
         }
@@ -788,6 +821,25 @@ impl ContextMenu {
             ContextMenuItem::Header(header) => ListSubHeader::new(header.clone())
                 .inset(true)
                 .into_any_element(),
+            ContextMenuItem::HeaderWithLink(header, label, url) => {
+                let url = url.clone();
+                let link_id = ElementId::Name(format!("link-{}", url).into());
+                ListSubHeader::new(header.clone())
+                    .inset(true)
+                    .end_slot(
+                        Button::new(link_id, label.clone())
+                            .color(Color::Muted)
+                            .label_size(LabelSize::Small)
+                            .size(ButtonSize::None)
+                            .style(ButtonStyle::Transparent)
+                            .on_click(move |_, _, cx| {
+                                let url = url.clone();
+                                cx.open_url(&url);
+                            })
+                            .into_any_element(),
+                    )
+                    .into_any_element()
+            }
             ContextMenuItem::Label(label) => ListItem::new(ix)
                 .inset(true)
                 .disabled(true)
@@ -898,27 +950,19 @@ impl ContextMenu {
                 .into_any_element()
         };
 
-        let documentation_aside_callback = documentation_aside.clone();
-
         div()
             .id(("context-menu-child", ix))
-            .when_some(
-                documentation_aside_callback.clone(),
-                |this, documentation_aside_callback| {
-                    this.occlude()
-                        .on_hover(cx.listener(move |menu, hovered, _, cx| {
-                            if *hovered {
-                                menu.documentation_aside =
-                                    Some((ix, documentation_aside_callback.clone()));
-                                cx.notify();
-                            } else if matches!(menu.documentation_aside, Some((id, _)) if id == ix)
-                            {
-                                menu.documentation_aside = None;
-                                cx.notify();
-                            }
-                        }))
-                },
-            )
+            .when_some(documentation_aside.clone(), |this, documentation_aside| {
+                this.occlude()
+                    .on_hover(cx.listener(move |menu, hovered, _, cx| {
+                        if *hovered {
+                            menu.documentation_aside = Some((ix, documentation_aside.clone()));
+                        } else if matches!(menu.documentation_aside, Some((id, _)) if id == ix) {
+                            menu.documentation_aside = None;
+                        }
+                        cx.notify();
+                    }))
+            })
             .child(
                 ListItem::new(ix)
                     .group_name("label_container")
@@ -957,21 +1001,18 @@ impl ContextMenu {
                                     })
                                     .map(|binding| {
                                         div().ml_4().child(binding.disabled(*disabled)).when(
-                                            *disabled && documentation_aside_callback.is_some(),
+                                            *disabled && documentation_aside.is_some(),
                                             |parent| parent.invisible(),
                                         )
                                     })
                             }))
-                            .when(
-                                *disabled && documentation_aside_callback.is_some(),
-                                |parent| {
-                                    parent.child(
-                                        Icon::new(IconName::Info)
-                                            .size(IconSize::XSmall)
-                                            .color(Color::Muted),
-                                    )
-                                },
-                            ),
+                            .when(*disabled && documentation_aside.is_some(), |parent| {
+                                parent.child(
+                                    Icon::new(IconName::Info)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Muted),
+                                )
+                            }),
                     )
                     .when_some(
                         end_slot_icon
@@ -1057,6 +1098,7 @@ impl ContextMenuItem {
     fn is_selectable(&self) -> bool {
         match self {
             ContextMenuItem::Header(_)
+            | ContextMenuItem::HeaderWithLink(_, _, _)
             | ContextMenuItem::Separator
             | ContextMenuItem::Label { .. } => false,
             ContextMenuItem::Entry(ContextMenuEntry { disabled, .. }) => !disabled,
@@ -1072,10 +1114,17 @@ impl Render for ContextMenu {
         let rem_size = window.rem_size();
         let is_wide_window = window_size.width / rem_size > rems_from_px(800.).0;
 
-        let aside = self
-            .documentation_aside
-            .as_ref()
-            .map(|(_, callback)| callback.clone());
+        let aside = self.documentation_aside.clone();
+        let render_aside = |aside: DocumentationAside, cx: &mut Context<Self>| {
+            WithRemSize::new(ui_font_size)
+                .occlude()
+                .elevation_2(cx)
+                .p_2()
+                .overflow_hidden()
+                .when(is_wide_window, |this| this.max_w_96())
+                .when(!is_wide_window, |this| this.max_w_48())
+                .child((aside.render)(cx))
+        };
 
         h_flex()
             .when(is_wide_window, |this| this.flex_row())
@@ -1083,15 +1132,8 @@ impl Render for ContextMenu {
             .w_full()
             .items_start()
             .gap_1()
-            .child(div().children(aside.map(|aside| {
-                WithRemSize::new(ui_font_size)
-                    .occlude()
-                    .elevation_2(cx)
-                    .p_2()
-                    .overflow_hidden()
-                    .when(is_wide_window, |this| this.max_w_96())
-                    .when(!is_wide_window, |this| this.max_w_48())
-                    .child(aside(cx))
+            .child(div().children(aside.clone().and_then(|(_, aside)| {
+                (aside.side == DocumentationSide::Left).then(|| render_aside(aside, cx))
             })))
             .child(
                 WithRemSize::new(ui_font_size)
@@ -1149,5 +1191,8 @@ impl Render for ContextMenu {
                             ),
                     ),
             )
+            .child(div().children(aside.and_then(|(_, aside)| {
+                (aside.side == DocumentationSide::Right).then(|| render_aside(aside, cx))
+            })))
     }
 }

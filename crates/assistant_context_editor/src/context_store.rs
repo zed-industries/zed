@@ -7,15 +7,17 @@ use assistant_slash_command::{SlashCommandId, SlashCommandWorkingSet};
 use client::{Client, TypedEnvelope, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::HashMap;
-use context_server::ContextServerDescriptorRegistry;
-use context_server::manager::{ContextServerManager, ContextServerStatus};
+use context_server::ContextServerId;
 use fs::{Fs, RemoveOptions};
 use futures::StreamExt;
 use fuzzy::StringMatchCandidate;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use language::LanguageRegistry;
 use paths::contexts_dir;
-use project::Project;
+use project::{
+    Project,
+    context_server_store::{ContextServerStatus, ContextServerStore},
+};
 use prompt_store::PromptBuilder;
 use regex::Regex;
 use rpc::AnyProtoClient;
@@ -40,8 +42,7 @@ pub struct RemoteContextMetadata {
 pub struct ContextStore {
     contexts: Vec<ContextHandle>,
     contexts_metadata: Vec<SavedContextMetadata>,
-    context_server_manager: Entity<ContextServerManager>,
-    context_server_slash_command_ids: HashMap<Arc<str>, Vec<SlashCommandId>>,
+    context_server_slash_command_ids: HashMap<ContextServerId, Vec<SlashCommandId>>,
     host_contexts: Vec<RemoteContextMetadata>,
     fs: Arc<dyn Fs>,
     languages: Arc<LanguageRegistry>,
@@ -98,15 +99,9 @@ impl ContextStore {
             let (mut events, _) = fs.watch(contexts_dir(), CONTEXT_WATCH_DURATION).await;
 
             let this = cx.new(|cx: &mut Context<Self>| {
-                let context_server_factory_registry =
-                    ContextServerDescriptorRegistry::default_global(cx);
-                let context_server_manager = cx.new(|cx| {
-                    ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
-                });
                 let mut this = Self {
                     contexts: Vec::new(),
                     contexts_metadata: Vec::new(),
-                    context_server_manager,
                     context_server_slash_command_ids: HashMap::default(),
                     host_contexts: Vec::new(),
                     fs,
@@ -344,7 +339,11 @@ impl ContextStore {
         }
     }
 
-    pub fn contexts(&self) -> Vec<SavedContextMetadata> {
+    pub fn unordered_contexts(&self) -> impl Iterator<Item = &SavedContextMetadata> {
+        self.contexts_metadata.iter()
+    }
+
+    pub fn reverse_chronological_contexts(&self) -> Vec<SavedContextMetadata> {
         let mut contexts = self.contexts_metadata.iter().cloned().collect::<Vec<_>>();
         contexts.sort_unstable_by_key(|thread| std::cmp::Reverse(thread.mtime));
         contexts
@@ -649,7 +648,10 @@ impl ContextStore {
                 if context.replica_id() == ReplicaId::default() {
                     Some(proto::ContextMetadata {
                         context_id: context.id().to_proto(),
-                        summary: context.summary().map(|summary| summary.text.clone()),
+                        summary: context
+                            .summary()
+                            .content()
+                            .map(|summary| summary.text.clone()),
                     })
                 } else {
                     None
@@ -802,22 +804,9 @@ impl ContextStore {
         })
     }
 
-    pub fn restart_context_servers(&mut self, cx: &mut Context<Self>) {
-        cx.update_entity(
-            &self.context_server_manager,
-            |context_server_manager, cx| {
-                for server in context_server_manager.running_servers() {
-                    context_server_manager
-                        .restart_server(&server.id(), cx)
-                        .detach_and_log_err(cx);
-                }
-            },
-        );
-    }
-
     fn register_context_server_handlers(&self, cx: &mut Context<Self>) {
         cx.subscribe(
-            &self.context_server_manager.clone(),
+            &self.project.read(cx).context_server_store(),
             Self::handle_context_server_event,
         )
         .detach();
@@ -825,16 +814,18 @@ impl ContextStore {
 
     fn handle_context_server_event(
         &mut self,
-        context_server_manager: Entity<ContextServerManager>,
-        event: &context_server::manager::Event,
+        context_server_manager: Entity<ContextServerStore>,
+        event: &project::context_server_store::Event,
         cx: &mut Context<Self>,
     ) {
         let slash_command_working_set = self.slash_commands.clone();
         match event {
-            context_server::manager::Event::ServerStatusChanged { server_id, status } => {
+            project::context_server_store::Event::ServerStatusChanged { server_id, status } => {
                 match status {
-                    Some(ContextServerStatus::Running) => {
-                        if let Some(server) = context_server_manager.read(cx).get_server(server_id)
+                    ContextServerStatus::Running => {
+                        if let Some(server) = context_server_manager
+                            .read(cx)
+                            .get_running_server(server_id)
                         {
                             let context_server_manager = context_server_manager.clone();
                             cx.spawn({
@@ -858,7 +849,7 @@ impl ContextStore {
                                                     slash_command_working_set.insert(Arc::new(
                                                         assistant_slash_commands::ContextServerSlashCommand::new(
                                                             context_server_manager.clone(),
-                                                            &server,
+                                                            server.id(),
                                                             prompt,
                                                         ),
                                                     ))
@@ -877,7 +868,7 @@ impl ContextStore {
                             .detach();
                         }
                     }
-                    None => {
+                    ContextServerStatus::Stopped | ContextServerStatus::Error(_) => {
                         if let Some(slash_command_ids) =
                             self.context_server_slash_command_ids.remove(server_id)
                         {

@@ -38,6 +38,7 @@ pub enum Model {
     AmazonNovaLite,
     AmazonNovaMicro,
     AmazonNovaPro,
+    AmazonNovaPremier,
     // AI21 models
     AI21J2GrandeInstruct,
     AI21J2JumboInstruct,
@@ -72,6 +73,9 @@ pub enum Model {
     MistralMixtral8x7BInstructV0,
     MistralMistralLarge2402V1,
     MistralMistralSmall2402V1,
+    // Writer models
+    PalmyraWriterX5,
+    PalmyraWriterX4,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -120,6 +124,7 @@ impl Model {
             Model::AmazonNovaLite => "amazon.nova-lite-v1:0",
             Model::AmazonNovaMicro => "amazon.nova-micro-v1:0",
             Model::AmazonNovaPro => "amazon.nova-pro-v1:0",
+            Model::AmazonNovaPremier => "amazon.nova-premier-v1:0",
             Model::DeepSeekR1 => "us.deepseek.r1-v1:0",
             Model::AI21J2GrandeInstruct => "ai21.j2-grande-instruct",
             Model::AI21J2JumboInstruct => "ai21.j2-jumbo-instruct",
@@ -149,6 +154,8 @@ impl Model {
             Model::MistralMixtral8x7BInstructV0 => "mistral.mixtral-8x7b-instruct-v0:1",
             Model::MistralMistralLarge2402V1 => "mistral.mistral-large-2402-v1:0",
             Model::MistralMistralSmall2402V1 => "mistral.mistral-small-2402-v1:0",
+            Model::PalmyraWriterX4 => "writer.palmyra-x4-v1:0",
+            Model::PalmyraWriterX5 => "writer.palmyra-x5-v1:0",
             Self::Custom { name, .. } => name,
         }
     }
@@ -166,6 +173,7 @@ impl Model {
             Self::AmazonNovaLite => "Amazon Nova Lite",
             Self::AmazonNovaMicro => "Amazon Nova Micro",
             Self::AmazonNovaPro => "Amazon Nova Pro",
+            Self::AmazonNovaPremier => "Amazon Nova Premier",
             Self::DeepSeekR1 => "DeepSeek R1",
             Self::AI21J2GrandeInstruct => "AI21 Jurassic2 Grande Instruct",
             Self::AI21J2JumboInstruct => "AI21 Jurassic2 Jumbo Instruct",
@@ -195,6 +203,8 @@ impl Model {
             Self::MistralMixtral8x7BInstructV0 => "Mistral Mixtral 8x7B Instruct V0",
             Self::MistralMistralLarge2402V1 => "Mistral Large 2402 V1",
             Self::MistralMistralSmall2402V1 => "Mistral Small 2402 V1",
+            Self::PalmyraWriterX5 => "Writer Palmyra X5",
+            Self::PalmyraWriterX4 => "Writer Palmyra X4",
             Self::Custom {
                 display_name, name, ..
             } => display_name.as_deref().unwrap_or(name),
@@ -208,6 +218,9 @@ impl Model {
             | Self::Claude3Sonnet
             | Self::Claude3_5Haiku
             | Self::Claude3_7Sonnet => 200_000,
+            Self::AmazonNovaPremier => 1_000_000,
+            Self::PalmyraWriterX5 => 1_000_000,
+            Self::PalmyraWriterX4 => 128_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
             _ => 200_000,
         }
@@ -217,7 +230,7 @@ impl Model {
         match self {
             Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3_5Haiku => 4_096,
             Self::Claude3_7Sonnet | Self::Claude3_7SonnetThinking => 128_000,
-            Self::Claude3_5SonnetV2 => 8_192,
+            Self::Claude3_5SonnetV2 | Self::PalmyraWriterX4 | Self::PalmyraWriterX5 => 8_192,
             Self::Custom {
                 max_output_tokens, ..
             } => max_output_tokens.unwrap_or(4_096),
@@ -252,7 +265,10 @@ impl Model {
             | Self::Claude3_5Haiku => true,
 
             // Amazon Nova models (all support tool use)
-            Self::AmazonNovaPro | Self::AmazonNovaLite | Self::AmazonNovaMicro => true,
+            Self::AmazonNovaPremier
+            | Self::AmazonNovaPro
+            | Self::AmazonNovaLite
+            | Self::AmazonNovaMicro => true,
 
             // AI21 Jamba 1.5 models support tool use
             Self::AI21Jamba15LargeV1 | Self::AI21Jamba15MiniV1 => true,
@@ -305,10 +321,10 @@ impl Model {
 
             // Models available only in US
             (Model::Claude3Opus, "us")
+            | (Model::Claude3_5Sonnet, "us")
             | (Model::Claude3_7Sonnet, "us")
-            | (Model::Claude3_7SonnetThinking, "us") => {
-                Ok(format!("{}.{}", region_group, model_id))
-            }
+            | (Model::Claude3_7SonnetThinking, "us")
+            | (Model::AmazonNovaPremier, "us") => Ok(format!("{}.{}", region_group, model_id)),
 
             // Models available in US, EU, and APAC
             (Model::Claude3_5SonnetV2, "us")
@@ -337,6 +353,12 @@ impl Model {
             | (Model::MetaLlama3170BInstructV1_128k, "us")
             | (Model::MetaLlama3211BInstructV1, "us")
             | (Model::MetaLlama3290BInstructV1, "us") => {
+                Ok(format!("{}.{}", region_group, model_id))
+            }
+
+            // Writer models only available in the US
+            (Model::PalmyraWriterX4, "us") | (Model::PalmyraWriterX5, "us") => {
+                // They have some goofiness
                 Ok(format!("{}.{}", region_group, model_id))
             }
 

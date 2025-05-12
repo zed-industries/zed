@@ -195,6 +195,16 @@
     }
   },
   {
+    "context": "Editor && editor_agent_diff",
+    "bindings": {
+      "ctrl-y": "agent::Keep",
+      "ctrl-n": "agent::Reject",
+      "ctrl-shift-y": "agent::KeepAll",
+      "ctrl-shift-n": "agent::RejectAll",
+      "shift-ctrl-r": "agent::OpenAgentDiff"
+    }
+  },
+  {
     "context": "AgentDiff",
     "bindings": {
       "ctrl-y": "agent::Keep",
@@ -204,34 +214,21 @@
     }
   },
   {
-    "context": "AssistantPanel",
-    "bindings": {
-      "ctrl-k c": "assistant::CopyCode",
-      "ctrl-shift-e": "project_panel::ToggleFocus",
-      "ctrl-g": "search::SelectNextMatch",
-      "ctrl-shift-g": "search::SelectPreviousMatch",
-      "ctrl-alt-/": "assistant::ToggleModelSelector",
-      "ctrl-k h": "assistant::DeployHistory",
-      "ctrl-k l": "assistant::OpenRulesLibrary",
-      "new": "assistant::NewChat",
-      "ctrl-t": "assistant::NewChat",
-      "ctrl-n": "assistant::NewChat"
-    }
-  },
-  {
     "context": "ContextEditor > Editor",
     "bindings": {
       "ctrl-enter": "assistant::Assist",
-      "ctrl-shift-enter": "assistant::Edit",
       "ctrl-s": "workspace::Save",
       "save": "workspace::Save",
       "ctrl->": "assistant::QuoteSelection",
       "ctrl-<": "assistant::InsertIntoEditor",
-      "ctrl-alt-/": "assistant::ToggleModelSelector",
       "shift-enter": "assistant::Split",
       "ctrl-r": "assistant::CycleMessageRole",
       "enter": "assistant::ConfirmCommand",
-      "alt-enter": "editor::Newline"
+      "alt-enter": "editor::Newline",
+      "ctrl-k c": "assistant::CopyCode",
+      "ctrl-g": "search::SelectNextMatch",
+      "ctrl-shift-g": "search::SelectPreviousMatch",
+      "ctrl-k l": "agent::OpenRulesLibrary"
     }
   },
   {
@@ -241,14 +238,15 @@
       "ctrl-alt-n": "agent::NewTextThread",
       "ctrl-shift-h": "agent::OpenHistory",
       "ctrl-alt-c": "agent::OpenConfiguration",
-      "ctrl-alt-p": "assistant::OpenRulesLibrary",
+      "ctrl-alt-p": "agent::OpenRulesLibrary",
       "ctrl-i": "agent::ToggleProfileSelector",
-      "ctrl-alt-/": "assistant::ToggleModelSelector",
+      "ctrl-alt-/": "agent::ToggleModelSelector",
       "ctrl-shift-a": "agent::ToggleContextPicker",
       "ctrl-shift-o": "agent::ToggleNavigationMenu",
       "ctrl-shift-i": "agent::ToggleOptionsMenu",
       "shift-escape": "agent::ExpandMessageEditor",
-      "ctrl-alt-e": "agent::RemoveAllContext"
+      "ctrl-alt-e": "agent::RemoveAllContext",
+      "ctrl-shift-e": "project_panel::ToggleFocus"
     }
   },
   {
@@ -558,7 +556,7 @@
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-b": "outline_panel::ToggleFocus",
       "ctrl-shift-g": "git_panel::ToggleFocus",
-      "ctrl-?": "assistant::ToggleFocus",
+      "ctrl-?": "agent::ToggleFocus",
       "alt-save": "workspace::SaveAll",
       "ctrl-alt-s": "workspace::SaveAll",
       "ctrl-k m": "language_selector::Toggle",
@@ -699,8 +697,8 @@
   {
     "context": "PromptEditor",
     "bindings": {
-      "ctrl-[": "assistant::CyclePreviousInlineAssist",
-      "ctrl-]": "assistant::CycleNextInlineAssist",
+      "ctrl-[": "agent::CyclePreviousInlineAssist",
+      "ctrl-]": "agent::CycleNextInlineAssist",
       "ctrl-alt-e": "agent::RemoveAllContext"
     }
   },
@@ -936,6 +934,7 @@
       "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"],
       "ctrl-o": ["terminal::SendKeystroke", "ctrl-o"],
       "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
+      "ctrl-backspace": ["terminal::SendKeystroke", "ctrl-w"],
       "ctrl-shift-a": "editor::SelectAll",
       "find": "buffer_search::Deploy",
       "ctrl-shift-f": "buffer_search::Deploy",
@@ -953,7 +952,10 @@
       "shift-down": "terminal::ScrollLineDown",
       "shift-home": "terminal::ScrollToTop",
       "shift-end": "terminal::ScrollToBottom",
-      "ctrl-shift-space": "terminal::ToggleViMode"
+      "ctrl-shift-space": "terminal::ToggleViMode",
+      "ctrl-shift-r": "terminal::RerunTask",
+      "ctrl-alt-r": "terminal::RerunTask",
+      "alt-t": "terminal::RerunTask"
     }
   },
   {

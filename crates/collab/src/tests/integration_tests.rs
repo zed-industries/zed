@@ -1253,6 +1253,7 @@ async fn test_calls_on_multiple_connections(
     client_b1
         .authenticate_and_connect(false, &cx_b1.to_async())
         .await
+        .into_response()
         .unwrap();
 
     // User B hangs up, and user A calls them again.
@@ -1633,6 +1634,7 @@ async fn test_project_reconnect(
     client_a
         .authenticate_and_connect(false, &cx_a.to_async())
         .await
+        .into_response()
         .unwrap();
     executor.run_until_parked();
 
@@ -1761,6 +1763,7 @@ async fn test_project_reconnect(
     client_b
         .authenticate_and_connect(false, &cx_b.to_async())
         .await
+        .into_response()
         .unwrap();
     executor.run_until_parked();
 
@@ -4317,6 +4320,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
             token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
         })
         .await
+        .into_response()
         .unwrap();
     fake_language_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
@@ -5699,6 +5703,7 @@ async fn test_contacts(
     client_c
         .authenticate_and_connect(false, &cx_c.to_async())
         .await
+        .into_response()
         .unwrap();
 
     executor.run_until_parked();
@@ -6229,6 +6234,7 @@ async fn test_contact_requests(
         client
             .authenticate_and_connect(false, &cx.to_async())
             .await
+            .into_response()
             .unwrap();
     }
 }
@@ -6709,8 +6715,6 @@ async fn test_context_collaboration_with_reconnect(
         assert_eq!(project.collaborators().len(), 1);
     });
 
-    cx_a.update(context_server::init);
-    cx_b.update(context_server::init);
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context_store_a = cx_a
         .update(|cx| {

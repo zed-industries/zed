@@ -10,9 +10,9 @@ use super::dap_command::{
     TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
 };
 use super::dap_store::DapStore;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use collections::{HashMap, HashSet, IndexMap, IndexSet};
-use dap::adapters::{DebugAdapterBinary, DebugTaskDefinition};
+use dap::adapters::{DebugAdapterBinary, DebugAdapterName};
 use dap::messages::Response;
 use dap::requests::{Request, RunInTerminal, StartDebugging};
 use dap::{
@@ -32,7 +32,7 @@ use gpui::{
     Task, WeakEntity,
 };
 
-use serde_json::{Value, json};
+use serde_json::Value;
 use smol::stream::StreamExt;
 use std::any::TypeId;
 use std::collections::BTreeMap;
@@ -45,7 +45,7 @@ use std::{
     sync::Arc,
 };
 use text::{PointUtf16, ToPointUtf16};
-use util::{ResultExt, merge_json_value_into};
+use util::ResultExt;
 use worktree::Worktree;
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, PartialOrd, Ord, Eq)]
@@ -169,8 +169,7 @@ impl LocalMode {
                     .await?
             } else {
                 DebugAdapterClient::start(session_id, binary.clone(), message_handler, cx.clone())
-                    .await
-                    .with_context(|| "Failed to start communication with debug adapter")?
+                    .await?
             },
         );
 
@@ -307,18 +306,11 @@ impl LocalMode {
     fn initialize_sequence(
         &self,
         capabilities: &Capabilities,
-        definition: &DebugTaskDefinition,
         initialized_rx: oneshot::Receiver<()>,
         dap_store: WeakEntity<DapStore>,
-        breakpoint_store: Entity<BreakpointStore>,
         cx: &App,
     ) -> Task<Result<()>> {
-        let mut raw = self.binary.request_args.clone();
-
-        merge_json_value_into(
-            definition.initialize_args.clone().unwrap_or(json!({})),
-            &mut raw.configuration,
-        );
+        let raw = self.binary.request_args.clone();
 
         // Of relevance: https://github.com/microsoft/vscode/issues/4902#issuecomment-368583522
         let launch = match raw.request {
@@ -349,6 +341,8 @@ impl LocalMode {
         let worktree = self.worktree().clone();
         let configuration_sequence = cx.spawn({
             async move |cx| {
+                let breakpoint_store =
+                    dap_store.update(cx, |dap_store, _| dap_store.breakpoint_store().clone())?;
                 initialized_rx.await?;
                 let errors_by_path = cx
                     .update(|cx| this.send_source_breakpoints(false, &breakpoint_store, cx))?
@@ -505,9 +499,10 @@ pub struct OutputToken(pub usize);
 /// Represents a current state of a single debug adapter and provides ways to mutate it.
 pub struct Session {
     pub mode: Mode,
-    definition: DebugTaskDefinition,
-    pub(super) capabilities: Capabilities,
     id: SessionId,
+    label: SharedString,
+    adapter: DebugAdapterName,
+    pub(super) capabilities: Capabilities,
     child_session_ids: HashSet<SessionId>,
     parent_session: Option<Entity<Session>>,
     modules: Vec<dap::Module>,
@@ -636,7 +631,8 @@ impl Session {
         breakpoint_store: Entity<BreakpointStore>,
         session_id: SessionId,
         parent_session: Option<Entity<Session>>,
-        template: DebugTaskDefinition,
+        label: SharedString,
+        adapter: DebugAdapterName,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new::<Self>(|cx| {
@@ -685,7 +681,8 @@ impl Session {
                 ignore_breakpoints: false,
                 breakpoint_store,
                 exception_breakpoints: Default::default(),
-                definition: template,
+                label,
+                adapter,
             };
 
             this
@@ -805,20 +802,43 @@ impl Session {
         &local_mode.binary
     }
 
-    pub fn adapter_name(&self) -> SharedString {
-        self.definition.adapter.clone()
+    pub fn adapter(&self) -> DebugAdapterName {
+        self.adapter.clone()
     }
 
     pub fn label(&self) -> SharedString {
-        self.definition.label.clone()
-    }
-
-    pub fn definition(&self) -> DebugTaskDefinition {
-        self.definition.clone()
+        self.label.clone()
     }
 
     pub fn is_terminated(&self) -> bool {
         self.is_session_terminated
+    }
+
+    pub fn console_output(&mut self, cx: &mut Context<Self>) -> mpsc::UnboundedSender<String> {
+        let (tx, mut rx) = mpsc::unbounded();
+
+        cx.spawn(async move |this, cx| {
+            while let Some(output) = rx.next().await {
+                this.update(cx, |this, _| {
+                    this.output_token.0 += 1;
+                    this.output.push_back(dap::OutputEvent {
+                        category: None,
+                        output,
+                        group: None,
+                        variables_reference: None,
+                        source: None,
+                        line: None,
+                        column: None,
+                        data: None,
+                        location_reference: None,
+                    });
+                })?;
+            }
+            anyhow::Ok(())
+        })
+        .detach();
+
+        return tx;
     }
 
     pub fn is_local(&self) -> bool {
@@ -943,7 +963,7 @@ impl Session {
     }
 
     pub(super) fn request_initialize(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let adapter_id = String::from(self.definition.adapter.clone());
+        let adapter_id = self.adapter().to_string();
         let request = Initialize { adapter_id };
         match &self.mode {
             Mode::Running(local_mode) => {
@@ -983,14 +1003,9 @@ impl Session {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         match &self.mode {
-            Mode::Running(local_mode) => local_mode.initialize_sequence(
-                &self.capabilities,
-                &self.definition,
-                initialize_rx,
-                dap_store,
-                self.breakpoint_store.clone(),
-                cx,
-            ),
+            Mode::Running(local_mode) => {
+                local_mode.initialize_sequence(&self.capabilities, initialize_rx, dap_store, cx)
+            }
             Mode::Building => Task::ready(Err(anyhow!("cannot initialize, still building"))),
         }
     }
@@ -1157,8 +1172,7 @@ impl Session {
                 self.clear_active_debug_line(cx);
             }
             Events::Terminated(_) => {
-                self.is_session_terminated = true;
-                self.clear_active_debug_line(cx);
+                self.shutdown(cx).detach();
             }
             Events::Thread(event) => {
                 let thread_id = ThreadId(event.thread_id);
@@ -1981,6 +1995,18 @@ impl Session {
         source: Option<Source>,
         cx: &mut Context<Self>,
     ) -> Task<()> {
+        self.output_token.0 += 1;
+        self.output.push_back(dap::OutputEvent {
+            category: None,
+            output: format!("> {expression}"),
+            group: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            data: None,
+            location_reference: None,
+        });
         let request = self.mode.request_dap(EvaluateCommand {
             expression,
             context,

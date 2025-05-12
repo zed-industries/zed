@@ -86,7 +86,7 @@ use std::{
 use text::{Anchor, BufferId, LineEnding, OffsetRangeExt};
 use url::Url;
 use util::{
-    ResultExt, TryFutureExt as _, debug_panic, defer, maybe, merge_json_value_into,
+    ResultExt as _, debug_panic, defer, maybe, merge_json_value_into,
     paths::{PathExt, SanitizedPath},
     post_inc,
 };
@@ -1769,7 +1769,8 @@ impl LocalLspStore {
                                         ..Default::default()
                                     },
                                 )
-                                .await;
+                                .await
+                                .into_response();
 
                             if execute_command_result.is_err() {
                                 zlog::error!(
@@ -1894,7 +1895,8 @@ impl LocalLspStore {
                         options: lsp_command::lsp_formatting_options(settings),
                         work_done_progress_params: Default::default(),
                     })
-                    .await?
+                    .await
+                    .into_response()?
                 {
                     edits.get_or_insert_with(Vec::new).append(&mut edit);
                 }
@@ -1945,7 +1947,8 @@ impl LocalLspStore {
                     options: lsp_command::lsp_formatting_options(settings),
                     work_done_progress_params: Default::default(),
                 })
-                .await?
+                .await
+                .into_response()?
         } else if matches!(range_formatting_provider, Some(p) if *p != OneOf::Left(false)) {
             let _timer = zlog::time!(logger => "format-range");
             let buffer_start = lsp::Position::new(0, 0);
@@ -1957,7 +1960,8 @@ impl LocalLspStore {
                     options: lsp_command::lsp_formatting_options(settings),
                     work_done_progress_params: Default::default(),
                 })
-                .await?
+                .await
+                .into_response()?
         } else {
             None
         };
@@ -2065,7 +2069,8 @@ impl LocalLspStore {
                     *lsp_action = Box::new(
                         lang_server
                             .request::<lsp::request::CodeActionResolveRequest>(*lsp_action.clone())
-                            .await?,
+                            .await
+                            .into_response()?,
                     );
                 }
             }
@@ -2073,7 +2078,8 @@ impl LocalLspStore {
                 if !action.resolved && GetCodeLens::can_resolve_lens(&lang_server.capabilities()) {
                     *lens = lang_server
                         .request::<lsp::request::CodeLensResolve>(lens.clone())
-                        .await?;
+                        .await
+                        .into_response()?;
                 }
             }
             LspAction::Command(_) => {}
@@ -2578,7 +2584,9 @@ impl LocalLspStore {
                             arguments: command.arguments.clone().unwrap_or_default(),
                             ..Default::default()
                         })
-                        .await?;
+                        .await
+                        .into_response()
+                        .context("execute command")?;
 
                     lsp_store.update(cx, |this, _| {
                         if let LspStoreMode::Local(mode) = &mut this.mode {
@@ -3530,7 +3538,7 @@ impl LspStore {
             )
             .detach();
         } else {
-            log::info!("No extension events global found. Skipping JSON schema auto-reload setup");
+            log::debug!("No extension events global found. Skipping JSON schema auto-reload setup");
         }
         cx.observe_global::<SettingsStore>(Self::on_settings_changed)
             .detach();
@@ -4223,7 +4231,7 @@ impl LspStore {
                     language_server.name(),
                     err
                 );
-                log::warn!("{}", message);
+                log::warn!("{message}");
                 return Task::ready(Err(anyhow!(message)));
             }
         };
@@ -4268,7 +4276,7 @@ impl LspStore {
                 None
             };
 
-            let result = lsp_request.await;
+            let result = lsp_request.await.into_response();
 
             let response = result.map_err(|err| {
                 let message = format!(
@@ -4277,7 +4285,7 @@ impl LspStore {
                     language_server.name(),
                     err
                 );
-                log::warn!("{}", message);
+                log::warn!("{message}");
                 anyhow!(message)
             })?;
 
@@ -4521,15 +4529,14 @@ impl LspStore {
                                 .remove(&lang_server.server_id());
                         })?;
 
-                        let result = lang_server
+                        let _result = lang_server
                             .request::<lsp::request::ExecuteCommand>(lsp::ExecuteCommandParams {
                                 command: command.command.clone(),
                                 arguments: command.arguments.clone().unwrap_or_default(),
-                                ..Default::default()
+                                ..lsp::ExecuteCommandParams::default()
                             })
-                            .await;
-
-                        result?;
+                            .await.into_response()
+                            .context("execute command")?;
 
                         return this.update(cx, |this, _| {
                             this.as_local_mut()
@@ -4649,6 +4656,7 @@ impl LspStore {
                 );
                 let resolved_hint = resolve_task
                     .await
+                    .into_response()
                     .context("inlay hint resolve LSP request")?;
                 let resolved_hint = InlayHints::lsp_to_project_hint(
                     resolved_hint,
@@ -5232,7 +5240,10 @@ impl LspStore {
                 }
             }
         };
-        let resolved_completion = request.await?;
+        let resolved_completion = request
+            .await
+            .into_response()
+            .context("resolve completion")?;
 
         let mut updated_insert_range = None;
         if let Some(text_edit) = resolved_completion.text_edit.as_ref() {
@@ -5847,27 +5858,30 @@ impl LspStore {
                                     ..Default::default()
                                 },
                             )
-                            .log_err()
                             .map(move |response| {
-                                let lsp_symbols = response.flatten().map(|symbol_response| match symbol_response {
-                                    lsp::WorkspaceSymbolResponse::Flat(flat_responses) => {
-                                        flat_responses.into_iter().map(|lsp_symbol| {
-                                        (lsp_symbol.name, lsp_symbol.kind, lsp_symbol.location)
-                                        }).collect::<Vec<_>>()
-                                    }
-                                    lsp::WorkspaceSymbolResponse::Nested(nested_responses) => {
-                                        nested_responses.into_iter().filter_map(|lsp_symbol| {
-                                            let location = match lsp_symbol.location {
-                                                OneOf::Left(location) => location,
-                                                OneOf::Right(_) => {
-                                                    log::error!("Unexpected: client capabilities forbid symbol resolutions in workspace.symbol.resolveSupport");
-                                                    return None
-                                                }
-                                            };
-                                            Some((lsp_symbol.name, lsp_symbol.kind, location))
-                                        }).collect::<Vec<_>>()
-                                    }
-                                }).unwrap_or_default();
+                                let lsp_symbols = response.into_response()
+                                    .context("workspace symbols request")
+                                    .log_err()
+                                    .flatten()
+                                    .map(|symbol_response| match symbol_response {
+                                        lsp::WorkspaceSymbolResponse::Flat(flat_responses) => {
+                                            flat_responses.into_iter().map(|lsp_symbol| {
+                                            (lsp_symbol.name, lsp_symbol.kind, lsp_symbol.location)
+                                            }).collect::<Vec<_>>()
+                                        }
+                                        lsp::WorkspaceSymbolResponse::Nested(nested_responses) => {
+                                            nested_responses.into_iter().filter_map(|lsp_symbol| {
+                                                let location = match lsp_symbol.location {
+                                                    OneOf::Left(location) => location,
+                                                    OneOf::Right(_) => {
+                                                        log::error!("Unexpected: client capabilities forbid symbol resolutions in workspace.symbol.resolveSupport");
+                                                        return None
+                                                    }
+                                                };
+                                                Some((lsp_symbol.name, lsp_symbol.kind, location))
+                                            }).collect::<Vec<_>>()
+                                        }
+                                    }).unwrap_or_default();
 
                                 WorkspaceSymbolsResult {
                                     server_id,
@@ -6092,7 +6106,7 @@ impl LspStore {
                         content_changes,
                     },
                 )
-                .log_err();
+                .ok();
         }
 
         None
@@ -6125,7 +6139,7 @@ impl LspStore {
                             text,
                         },
                     )
-                    .log_err();
+                    .ok();
             }
         }
 
@@ -7472,7 +7486,7 @@ impl LspStore {
                                 new_uri: new_uri.clone(),
                             }],
                         })
-                        .log_err();
+                        .ok();
                 }
             }
             Some(())
@@ -7517,8 +7531,10 @@ impl LspStore {
                                     .request::<WillRenameFiles>(RenameFilesParams {
                                         files: vec![FileRename { old_uri, new_uri }],
                                     })
-                                    .log_err()
                                     .await
+                                    .into_response()
+                                    .context("will rename files")
+                                    .log_err()
                                     .flatten()?;
 
                                 LocalLspStore::deserialize_workspace_edit(
@@ -7575,7 +7591,7 @@ impl LspStore {
                     .notify::<lsp::notification::DidChangeWatchedFiles>(
                         &lsp::DidChangeWatchedFilesParams { changes },
                     )
-                    .log_err();
+                    .ok();
             }
             Some(())
         });
@@ -7788,6 +7804,8 @@ impl LspStore {
                         server
                             .request::<lsp::request::ResolveCompletionItem>(lsp_completion)
                             .await
+                            .into_response()
+                            .context("resolve completion item")
                     } else {
                         anyhow::Ok(lsp_completion)
                     }
@@ -9140,7 +9158,7 @@ impl LspStore {
                     if !params.changes.is_empty() {
                         server
                             .notify::<lsp::notification::DidChangeWatchedFiles>(&params)
-                            .log_err();
+                            .ok();
                     }
                 }
             }
