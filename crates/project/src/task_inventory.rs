@@ -179,6 +179,14 @@ impl TaskContexts {
             })
             .copied()
     }
+
+    pub fn task_context_for_worktree_id(&self, worktree_id: WorktreeId) -> Option<&TaskContext> {
+        self.active_worktree_context
+            .iter()
+            .chain(self.other_worktree_contexts.iter())
+            .find(|(id, _)| *id == worktree_id)
+            .map(|(_, context)| context)
+    }
 }
 
 impl TaskSourceKind {
@@ -206,23 +214,26 @@ impl Inventory {
         cx.new(|_| Self::default())
     }
 
-    pub fn list_debug_scenarios(&self, worktree: Option<WorktreeId>) -> Vec<DebugScenario> {
+    pub fn list_debug_scenarios(
+        &self,
+        worktrees: impl Iterator<Item = WorktreeId>,
+    ) -> Vec<(TaskSourceKind, DebugScenario)> {
         let global_scenarios = self.global_debug_scenarios_from_settings();
-        let worktree_scenarios = self.worktree_scenarios_from_settings(worktree);
 
-        worktree_scenarios
+        worktrees
+            .flat_map(|tree_id| self.worktree_scenarios_from_settings(Some(tree_id)))
             .chain(global_scenarios)
-            .map(|(_, scenario)| scenario)
             .collect()
     }
 
     pub fn task_template_by_label(
         &self,
         buffer: Option<Entity<Buffer>>,
+        worktree_id: Option<WorktreeId>,
         label: &str,
         cx: &App,
     ) -> Option<TaskTemplate> {
-        let (worktree_id, file, language) = buffer
+        let (buffer_worktree_id, file, language) = buffer
             .map(|buffer| {
                 let buffer = buffer.read(cx);
                 let file = buffer.file().cloned();
@@ -234,7 +245,7 @@ impl Inventory {
             })
             .unwrap_or((None, None, None));
 
-        self.list_tasks(file, language, worktree_id, cx)
+        self.list_tasks(file, language, worktree_id.or(buffer_worktree_id), cx)
             .iter()
             .find(|(_, template)| template.label == label)
             .map(|val| val.1.clone())
@@ -797,10 +808,6 @@ impl ContextProvider for BasicContextProvider {
 
         Task::ready(Ok(task_variables))
     }
-
-    fn debug_adapter(&self) -> Option<String> {
-        None
-    }
 }
 
 /// A ContextProvider that doesn't provide any task variables on it's own, though it has some associated tasks.
@@ -823,10 +830,6 @@ impl ContextProvider for ContextProviderWithTasks {
         _: &App,
     ) -> Option<TaskTemplates> {
         Some(self.templates.clone())
-    }
-
-    fn debug_adapter(&self) -> Option<String> {
-        None
     }
 }
 

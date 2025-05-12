@@ -806,23 +806,6 @@ impl Worktree {
         }
     }
 
-    pub fn file_exists(&self, path: &Path, cx: &Context<Worktree>) -> Task<Result<bool>> {
-        match self {
-            Worktree::Local(this) => {
-                let fs = this.fs.clone();
-                let path = this.absolutize(path);
-                cx.background_spawn(async move {
-                    let path = path?;
-                    let metadata = fs.metadata(&path).await?;
-                    Ok(metadata.map_or(false, |metadata| !metadata.is_dir))
-                })
-            }
-            Worktree::Remote(_) => Task::ready(Err(anyhow!(
-                "remote worktrees can't yet check file existence"
-            ))),
-        }
-    }
-
     pub fn load_file(&self, path: &Path, cx: &Context<Worktree>) -> Task<Result<LoadedFile>> {
         match self {
             Worktree::Local(this) => this.load_file(path, cx),
@@ -2665,7 +2648,7 @@ impl Snapshot {
     }
 
     pub fn root_entry(&self) -> Option<&Entry> {
-        self.entry_for_path("")
+        self.entries_by_path.first()
     }
 
     /// TODO: what's the difference between `root_dir` and `abs_path`?
@@ -3871,7 +3854,7 @@ impl BackgroundScanner {
             Some(ancestor_dot_git)
         });
 
-        log::info!("containing git repository: {containing_git_repository:?}");
+        log::trace!("containing git repository: {containing_git_repository:?}");
 
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
         {
@@ -4375,11 +4358,7 @@ impl BackgroundScanner {
                 let canonical_path = match self.fs.canonicalize(&child_abs_path).await {
                     Ok(path) => path,
                     Err(err) => {
-                        log::error!(
-                            "error reading target of symlink {:?}: {:?}",
-                            child_abs_path,
-                            err
-                        );
+                        log::error!("error reading target of symlink {child_abs_path:?}: {err:#}",);
                         continue;
                     }
                 };

@@ -25,6 +25,7 @@ use wasmtime::{
 pub use latest::CodeLabelSpanLiteral;
 pub use latest::{
     CodeLabel, CodeLabelSpan, Command, ExtensionProject, Range, SlashCommand,
+    zed::extension::context_server::ContextServerConfiguration,
     zed::extension::lsp::{
         Completion, CompletionKind, CompletionLabelDetails, InsertTextFormat, Symbol, SymbolKind,
     },
@@ -61,7 +62,7 @@ pub fn wasm_api_version_range(release_channel: ReleaseChannel) -> RangeInclusive
 
     let max_version = match release_channel {
         ReleaseChannel::Dev | ReleaseChannel::Nightly => latest::MAX_VERSION,
-        ReleaseChannel::Stable | ReleaseChannel::Preview => since_v0_4_0::MAX_VERSION,
+        ReleaseChannel::Stable | ReleaseChannel::Preview => latest::MAX_VERSION,
     };
 
     since_v0_0_1::MIN_VERSION..=max_version
@@ -112,8 +113,6 @@ impl Extension {
         let _ = release_channel;
 
         if version >= latest::MIN_VERSION {
-            authorize_access_to_unreleased_wasm_api_version(release_channel)?;
-
             let extension =
                 latest::Extension::instantiate_async(store, component, latest::linker())
                     .await
@@ -722,6 +721,29 @@ impl Extension {
             | Extension::V0_0_6(_)
             | Extension::V0_1_0(_) => Err(anyhow!(
                 "`context_server_command` not available prior to v0.2.0"
+            )),
+        }
+    }
+
+    pub async fn call_context_server_configuration(
+        &self,
+        store: &mut Store<WasmState>,
+        context_server_id: Arc<str>,
+        project: Resource<ExtensionProject>,
+    ) -> Result<Result<Option<ContextServerConfiguration>, String>> {
+        match self {
+            Extension::V0_5_0(ext) => {
+                ext.call_context_server_configuration(store, &context_server_id, project)
+                    .await
+            }
+            Extension::V0_0_1(_)
+            | Extension::V0_0_4(_)
+            | Extension::V0_0_6(_)
+            | Extension::V0_1_0(_)
+            | Extension::V0_2_0(_)
+            | Extension::V0_3_0(_)
+            | Extension::V0_4_0(_) => Err(anyhow!(
+                "`context_server_configuration` not available prior to v0.5.0"
             )),
         }
     }

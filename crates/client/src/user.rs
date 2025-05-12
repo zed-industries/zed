@@ -11,7 +11,7 @@ use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
 use std::sync::{Arc, Weak};
 use text::ReplicaId;
-use util::TryFutureExt as _;
+use util::{TryFutureExt as _, maybe};
 
 pub type UserId = u64;
 
@@ -101,6 +101,13 @@ pub struct UserStore {
     participant_indices: HashMap<u64, ParticipantIndex>,
     update_contacts_tx: mpsc::UnboundedSender<UpdateContacts>,
     current_plan: Option<proto::Plan>,
+    subscription_period: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    trial_started_at: Option<DateTime<Utc>>,
+    model_request_usage_amount: Option<u32>,
+    model_request_usage_limit: Option<proto::UsageLimit>,
+    edit_predictions_usage_amount: Option<u32>,
+    edit_predictions_usage_limit: Option<proto::UsageLimit>,
+    is_usage_based_billing_enabled: Option<bool>,
     current_user: watch::Receiver<Option<Arc<User>>>,
     accepted_tos_at: Option<Option<DateTime<Utc>>>,
     contacts: Vec<Arc<Contact>>,
@@ -160,6 +167,13 @@ impl UserStore {
             by_github_login: Default::default(),
             current_user: current_user_rx,
             current_plan: None,
+            subscription_period: None,
+            trial_started_at: None,
+            model_request_usage_amount: None,
+            model_request_usage_limit: None,
+            edit_predictions_usage_amount: None,
+            edit_predictions_usage_limit: None,
+            is_usage_based_billing_enabled: None,
             accepted_tos_at: None,
             contacts: Default::default(),
             incoming_contact_requests: Default::default(),
@@ -321,6 +335,26 @@ impl UserStore {
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             this.current_plan = Some(message.payload.plan());
+            this.subscription_period = maybe!({
+                let period = message.payload.subscription_period?;
+                let started_at = DateTime::from_timestamp(period.started_at as i64, 0)?;
+                let ended_at = DateTime::from_timestamp(period.ended_at as i64, 0)?;
+
+                Some((started_at, ended_at))
+            });
+            this.trial_started_at = message
+                .payload
+                .trial_started_at
+                .and_then(|trial_started_at| DateTime::from_timestamp(trial_started_at as i64, 0));
+            this.is_usage_based_billing_enabled = message.payload.is_usage_based_billing_enabled;
+
+            if let Some(usage) = message.payload.usage {
+                this.model_request_usage_amount = Some(usage.model_requests_usage_amount);
+                this.model_request_usage_limit = usage.model_requests_usage_limit;
+                this.edit_predictions_usage_amount = Some(usage.edit_predictions_usage_amount);
+                this.edit_predictions_usage_limit = usage.edit_predictions_usage_limit;
+            }
+
             cx.notify();
         })?;
         Ok(())
@@ -686,6 +720,34 @@ impl UserStore {
 
     pub fn current_plan(&self) -> Option<proto::Plan> {
         self.current_plan
+    }
+
+    pub fn subscription_period(&self) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+        self.subscription_period
+    }
+
+    pub fn trial_started_at(&self) -> Option<DateTime<Utc>> {
+        self.trial_started_at
+    }
+
+    pub fn usage_based_billing_enabled(&self) -> Option<bool> {
+        self.is_usage_based_billing_enabled
+    }
+
+    pub fn model_request_usage_amount(&self) -> Option<u32> {
+        self.model_request_usage_amount
+    }
+
+    pub fn model_request_usage_limit(&self) -> Option<proto::UsageLimit> {
+        self.model_request_usage_limit.clone()
+    }
+
+    pub fn edit_predictions_usage_amount(&self) -> Option<u32> {
+        self.edit_predictions_usage_amount
+    }
+
+    pub fn edit_predictions_usage_limit(&self) -> Option<proto::UsageLimit> {
+        self.edit_predictions_usage_limit.clone()
     }
 
     pub fn watch_current_user(&self) -> watch::Receiver<Option<Arc<User>>> {

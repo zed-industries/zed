@@ -28,7 +28,7 @@ use task::{HideStrategy, RevealStrategy, SpawnInTerminal, TaskId};
 use ui::ActiveTheme;
 use util::ResultExt;
 use workspace::{SaveIntent, notifications::NotifyResultExt};
-use zed_actions::RevealTarget;
+use zed_actions::{OpenDocs, RevealTarget};
 
 use crate::{
     ToggleMarksView, ToggleRegistersView, Vim,
@@ -876,7 +876,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::str(("C", "ollab"), "collab_panel::ToggleFocus"),
         VimCommand::str(("Ch", "at"), "chat_panel::ToggleFocus"),
         VimCommand::str(("No", "tifications"), "notification_panel::ToggleFocus"),
-        VimCommand::str(("A", "I"), "assistant::ToggleFocus"),
+        VimCommand::str(("A", "I"), "agent::ToggleFocus"),
         VimCommand::str(("G", "it"), "git_panel::ToggleFocus"),
         VimCommand::new(("noh", "lsearch"), search::buffer_search::Dismiss),
         VimCommand::new(("$", ""), EndOfDocument),
@@ -888,6 +888,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("cpp", "link"), editor::actions::CopyPermalinkToLine).range(act_on_range),
         VimCommand::str(("opt", "ions"), "zed::OpenDefaultSettings"),
         VimCommand::str(("map", ""), "vim::OpenDefaultKeymap"),
+        VimCommand::new(("h", "elp"), OpenDocs),
     ]
 }
 
@@ -1466,9 +1467,22 @@ impl ShellExec {
                     show_command: false,
                     show_rerun: false,
                 };
-                workspace
-                    .spawn_in_terminal(spawn_in_terminal, window, cx)
-                    .detach_and_log_err(cx);
+
+                let task_status = workspace.spawn_in_terminal(spawn_in_terminal, window, cx);
+                cx.background_spawn(async move {
+                    match task_status.await {
+                        Some(Ok(status)) => {
+                            if status.success() {
+                                log::debug!("Vim shell exec succeeded");
+                            } else {
+                                log::debug!("Vim shell exec failed, code: {:?}", status.code());
+                            }
+                        }
+                        Some(Err(e)) => log::error!("Vim shell exec failed: {e}"),
+                        None => log::debug!("Vim shell exec got cancelled"),
+                    }
+                })
+                .detach();
             });
             return;
         };

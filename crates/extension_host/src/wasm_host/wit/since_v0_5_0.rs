@@ -7,7 +7,6 @@ use anyhow::{Context, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
-use context_server_settings::ContextServerSettings;
 use extension::{
     ExtensionLanguageServerProxy, KeyValueStoreDelegate, ProjectDelegate, WorktreeDelegate,
 };
@@ -244,6 +243,21 @@ impl From<SlashCommandArgumentCompletion> for extension::SlashCommandArgumentCom
             new_text: value.new_text,
             run_command: value.run_command,
         }
+    }
+}
+
+impl TryFrom<ContextServerConfiguration> for extension::ContextServerConfiguration {
+    type Error = anyhow::Error;
+
+    fn try_from(value: ContextServerConfiguration) -> Result<Self, Self::Error> {
+        let settings_schema: serde_json::Value = serde_json::from_str(&value.settings_schema)
+            .context("Failed to parse settings_schema")?;
+
+        Ok(Self {
+            installation_instructions: value.installation_instructions,
+            default_settings: value.default_settings,
+            settings_schema,
+        })
     }
 }
 
@@ -610,6 +624,9 @@ impl process::Host for WasmState {
 #[async_trait]
 impl slash_command::Host for WasmState {}
 
+#[async_trait]
+impl context_server::Host for WasmState {}
+
 impl ExtensionImports for WasmState {
     async fn get_settings(
         &mut self,
@@ -658,21 +675,23 @@ impl ExtensionImports for WasmState {
                         })?)
                     }
                     "context_servers" => {
-                        let settings = key
+                        let configuration = key
                             .and_then(|key| {
-                                ContextServerSettings::get(location, cx)
+                                ProjectSettings::get(location, cx)
                                     .context_servers
                                     .get(key.as_str())
                             })
                             .cloned()
                             .unwrap_or_default();
                         Ok(serde_json::to_string(&settings::ContextServerSettings {
-                            command: settings.command.map(|command| settings::CommandSettings {
-                                path: Some(command.path),
-                                arguments: Some(command.args),
-                                env: command.env.map(|env| env.into_iter().collect()),
+                            command: configuration.command.map(|command| {
+                                settings::CommandSettings {
+                                    path: Some(command.path),
+                                    arguments: Some(command.args),
+                                    env: command.env.map(|env| env.into_iter().collect()),
+                                }
                             }),
-                            settings: settings.settings,
+                            settings: configuration.settings,
                         })?)
                     }
                     _ => {

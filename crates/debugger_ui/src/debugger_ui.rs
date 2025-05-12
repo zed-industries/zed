@@ -24,7 +24,7 @@ actions!(
     [
         Start,
         Continue,
-        Disconnect,
+        Detach,
         Pause,
         Restart,
         StepInto,
@@ -34,7 +34,6 @@ actions!(
         Stop,
         ToggleIgnoreBreakpoints,
         ClearAllBreakpoints,
-        CreateDebuggingSession,
         FocusConsole,
         FocusVariables,
         FocusBreakpointList,
@@ -147,33 +146,8 @@ pub fn init(cx: &mut App) {
                         })
                     },
                 )
-                .register_action(
-                    |workspace: &mut Workspace, _: &CreateDebuggingSession, window, cx| {
-                        if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
-                            let weak_panel = debug_panel.downgrade();
-                            let weak_workspace = cx.weak_entity();
-
-                            workspace.toggle_modal(window, cx, |window, cx| {
-                                NewSessionModal::new(
-                                    debug_panel.read(cx).past_debug_definition.clone(),
-                                    weak_panel,
-                                    weak_workspace,
-                                    window,
-                                    cx,
-                                )
-                            });
-                        }
-                    },
-                )
                 .register_action(|workspace: &mut Workspace, _: &Start, window, cx| {
-                    tasks_ui::toggle_modal(
-                        workspace,
-                        None,
-                        task::TaskModal::DebugModal,
-                        window,
-                        cx,
-                    )
-                    .detach();
+                    NewSessionModal::show(workspace, window, cx);
                 });
         })
     })
