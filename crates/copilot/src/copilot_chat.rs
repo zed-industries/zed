@@ -597,7 +597,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_resilient_model_schema_deserialze() {
+    fn test_resilient_model_schema_deserialize() {
         let json = r#"{
               "data": [
                 {
