@@ -255,7 +255,7 @@ impl AssistantSettingsContent {
                             }
                             AssistantProviderContentV1::Mistral { default_model, .. } => {
                                 default_model.map(|model| LanguageModelSelection {
-                                    provider: LanguageModelProviderSetting("mistral".to_string()),
+                                    provider: "mistral".into(),
                                     model: model.id().to_string(),
                                 })
                             }
