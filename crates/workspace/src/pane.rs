@@ -2671,7 +2671,11 @@ impl Pane {
                 }
             })
             .children(pinned_tabs.len().ne(&0).then(|| {
-                let content_width = self.tab_bar_scroll_handle.content_size().width;
+                let content_width = self
+                    .tab_bar_scroll_handle
+                    .content_size()
+                    .map(|content_size| content_size.size.width)
+                    .unwrap_or(px(0.));
                 let viewport_width = self.tab_bar_scroll_handle.viewport().size.width;
                 // We need to check both because offset returns delta values even when the scroll handle is not scrollable
                 let is_scrollable = content_width > viewport_width;
