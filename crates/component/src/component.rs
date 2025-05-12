@@ -292,6 +292,7 @@ pub enum ComponentScope {
     Collaboration,
     #[strum(serialize = "Data Display")]
     DataDisplay,
+    Debugger,
     Editor,
     #[strum(serialize = "Images & Icons")]
     Images,
