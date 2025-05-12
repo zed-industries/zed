@@ -505,7 +505,6 @@ impl CopilotChatLanguageModel {
                         }
                     }
 
-                    // Collect text content for the assistant message
                     let text_content = {
                         let mut buffer = String::new();
                         for string in message.content.iter().filter_map(|content| match content {
