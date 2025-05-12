@@ -93,6 +93,18 @@ pub struct LaunchRequest {
     pub env: FxHashMap<String, String>,
 }
 
+impl LaunchRequest {
+    pub fn env_json(&self)-> serde_json::Value {
+        serde_json::Value::Object(
+            self
+                .env
+                .iter()
+                .map(|(k, v)| (k.clone(), v.to_owned().into()))
+                .collect::<serde_json::Map<String, serde_json::Value>>(),
+        )
+    }
+}
+
 /// Represents the type that will determine which request to call on the debug adapter
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "lowercase", untagged)]
