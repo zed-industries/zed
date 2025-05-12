@@ -234,7 +234,7 @@ impl Zeta {
     }
 
     pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
-        self.last_usage.clone().or_else(|| {
+        self.last_usage.or_else(|| {
             let user_store = self.user_store.read(cx);
             maybe!({
                 let amount = user_store.edit_predictions_usage_amount()?;
