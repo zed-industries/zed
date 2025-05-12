@@ -73,6 +73,9 @@ pub enum Model {
     MistralMixtral8x7BInstructV0,
     MistralMistralLarge2402V1,
     MistralMistralSmall2402V1,
+    // Writer models
+    PalmyraWriterX5,
+    PalmyraWriterX4,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -151,6 +154,8 @@ impl Model {
             Model::MistralMixtral8x7BInstructV0 => "mistral.mixtral-8x7b-instruct-v0:1",
             Model::MistralMistralLarge2402V1 => "mistral.mistral-large-2402-v1:0",
             Model::MistralMistralSmall2402V1 => "mistral.mistral-small-2402-v1:0",
+            Model::PalmyraWriterX4 => "writer.palmyra-x4-v1:0",
+            Model::PalmyraWriterX5 => "writer.palmyra-x5-v1:0",
             Self::Custom { name, .. } => name,
         }
     }
@@ -198,6 +203,8 @@ impl Model {
             Self::MistralMixtral8x7BInstructV0 => "Mistral Mixtral 8x7B Instruct V0",
             Self::MistralMistralLarge2402V1 => "Mistral Large 2402 V1",
             Self::MistralMistralSmall2402V1 => "Mistral Small 2402 V1",
+            Self::PalmyraWriterX5 => "Writer Palmyra X5",
+            Self::PalmyraWriterX4 => "Writer Palmyra X4",
             Self::Custom {
                 display_name, name, ..
             } => display_name.as_deref().unwrap_or(name),
@@ -212,6 +219,8 @@ impl Model {
             | Self::Claude3_5Haiku
             | Self::Claude3_7Sonnet => 200_000,
             Self::AmazonNovaPremier => 1_000_000,
+            Self::PalmyraWriterX5 => 1_000_000,
+            Self::PalmyraWriterX4 => 128_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
             _ => 200_000,
         }
@@ -221,7 +230,7 @@ impl Model {
         match self {
             Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3_5Haiku => 4_096,
             Self::Claude3_7Sonnet | Self::Claude3_7SonnetThinking => 128_000,
-            Self::Claude3_5SonnetV2 => 8_192,
+            Self::Claude3_5SonnetV2 | Self::PalmyraWriterX4 | Self::PalmyraWriterX5 => 8_192,
             Self::Custom {
                 max_output_tokens, ..
             } => max_output_tokens.unwrap_or(4_096),
@@ -343,6 +352,12 @@ impl Model {
             | (Model::MetaLlama3170BInstructV1_128k, "us")
             | (Model::MetaLlama3211BInstructV1, "us")
             | (Model::MetaLlama3290BInstructV1, "us") => {
+                Ok(format!("{}.{}", region_group, model_id))
+            }
+
+            // Writer models only available in the US
+            (Model::PalmyraWriterX4, "us") | (Model::PalmyraWriterX5, "us") => {
+                // They have some goofiness
                 Ok(format!("{}.{}", region_group, model_id))
             }
 
