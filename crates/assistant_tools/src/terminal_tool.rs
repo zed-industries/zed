@@ -132,6 +132,12 @@ impl Tool for TerminalTool {
         let program = self.determine_shell.clone();
         let command = if cfg!(windows) {
             format!("$null | & {{{}}}", input.command.replace("\"", "'"))
+        } else if let Some(cwd) = working_dir
+            .as_ref()
+            .and_then(|cwd| cwd.as_os_str().to_str())
+        {
+            // Make sure once we're *inside* the shell, we cd into `cwd`
+            format!("(cd {cwd}; {}) </dev/null", input.command)
         } else {
             format!("({}) </dev/null", input.command)
         };
