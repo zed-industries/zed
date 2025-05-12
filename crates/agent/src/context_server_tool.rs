@@ -30,6 +30,10 @@ impl ContextServerTool {
 
 impl Tool for ContextServerTool {
     fn name(&self) -> String {
+        format!("{}-{}", self.server_id, self.tool.name)
+    }
+
+    fn ui_name(&self) -> String {
         self.tool.name.clone()
     }
 
