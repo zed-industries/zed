@@ -284,6 +284,9 @@ impl Render for SshPrompt {
                         .child(MarkdownElement::new(prompt.0.clone(), markdown_style))
                         .child(self.editor.clone()),
                 )
+                .when(window.capslock().on, |el| {
+                    el.child(Label::new("⚠️ ⇪ is on"))
+                })
             })
     }
 }

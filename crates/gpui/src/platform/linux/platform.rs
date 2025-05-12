@@ -858,6 +858,14 @@ impl crate::Modifiers {
     }
 }
 
+#[cfg(any(feature = "wayland", feature = "x11"))]
+impl crate::Capslock {
+    pub(super) fn from_xkb(keymap_state: &State) -> Self {
+        let on = keymap_state.mod_name_is_active(xkb::MOD_NAME_CAPS, xkb::STATE_MODS_EFFECTIVE);
+        Self { on }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

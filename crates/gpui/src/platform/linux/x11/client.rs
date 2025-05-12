@@ -47,23 +47,26 @@ use super::{
 use super::{X11Display, X11WindowStatePtr, XcbAtoms};
 use super::{XimCallbackEvent, XimHandler};
 
-use crate::platform::{
-    LinuxCommon, PlatformWindow,
-    blade::BladeContext,
-    linux::{
-        LinuxClient, get_xkb_compose_state, is_within_click_distance, open_uri_internal,
-        platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
-        reveal_path_internal,
-        xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
-    },
-    scap_screen_capture::scap_screen_sources,
-};
 use crate::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
     LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, Pixels, Platform,
     PlatformDisplay, PlatformInput, PlatformKeyboardLayout, Point, RequestFrameOptions,
     ScaledPixels, ScreenCaptureSource, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
     modifiers_from_xinput_info, point, px,
+};
+use crate::{
+    Capslock,
+    platform::{
+        LinuxCommon, PlatformWindow,
+        blade::BladeContext,
+        linux::{
+            LinuxClient, get_xkb_compose_state, is_within_click_distance, open_uri_internal,
+            platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
+            reveal_path_internal,
+            xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
+        },
+        scap_screen_capture::scap_screen_sources,
+    },
 };
 
 /// Value for DeviceId parameters which selects all devices.
@@ -188,8 +191,11 @@ pub struct X11ClientState {
     pub(crate) ximc: Option<X11rbClient<Rc<XCBConnection>>>,
     pub(crate) xim_handler: Option<XimHandler>,
     pub modifiers: Modifiers,
+    pub capslock: Capslock,
     // TODO: Can the other updates to `modifiers` be removed so that this is unnecessary?
+    // capslock logic was done analog to modifiers
     pub last_modifiers_changed_event: Modifiers,
+    pub last_capslock_changed_event: Capslock,
 
     pub(crate) compose_state: Option<xkbc::compose::State>,
     pub(crate) pre_edit_text: Option<String>,
@@ -438,7 +444,9 @@ impl X11Client {
 
         X11Client(Rc::new(RefCell::new(X11ClientState {
             modifiers: Modifiers::default(),
+            capslock: Capslock::default(),
             last_modifiers_changed_event: Modifiers::default(),
+            last_capslock_changed_event: Capslock::default(),
             event_loop: Some(event_loop),
             loop_handle: handle,
             common,
@@ -872,17 +880,25 @@ impl X11Client {
                 }
 
                 let modifiers = Modifiers::from_xkb(&state.xkb);
-                if state.last_modifiers_changed_event == modifiers {
+                let capslock = Capslock::from_xkb(&state.xkb);
+                if state.last_modifiers_changed_event == modifiers
+                    && state.last_capslock_changed_event == capslock
+                {
                     drop(state);
                 } else {
                     let focused_window_id = state.keyboard_focused_window?;
                     state.modifiers = modifiers;
                     state.last_modifiers_changed_event = modifiers;
+                    state.capslock = capslock;
+                    state.last_capslock_changed_event = capslock;
                     drop(state);
 
                     let focused_window = self.get_window(focused_window_id)?;
                     focused_window.handle_input(PlatformInput::ModifiersChanged(
-                        ModifiersChangedEvent { modifiers },
+                        ModifiersChangedEvent {
+                            modifiers,
+                            capslock,
+                        },
                     ));
                 }
             }
