@@ -146,7 +146,7 @@ impl Tool for FindPathTool {
         cx: &mut App,
     ) -> Option<assistant_tool::AnyToolCard> {
         let output = serde_json::from_value::<FindPathToolOutput>(output).ok()?;
-        let card = cx.new(|_| FindPathToolCard::from_ouput(output));
+        let card = cx.new(|_| FindPathToolCard::from_output(output));
         Some(card.into())
     }
 }
@@ -207,7 +207,7 @@ impl FindPathToolCard {
         }
     }
 
-    fn from_ouput(output: FindPathToolOutput) -> Self {
+    fn from_output(output: FindPathToolOutput) -> Self {
         Self {
             glob: output.glob,
             paths: output.paths,
