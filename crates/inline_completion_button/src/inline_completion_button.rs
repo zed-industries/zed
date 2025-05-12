@@ -857,7 +857,7 @@ async fn open_disabled_globs_setting_in_editor(
             });
 
             if !edits.is_empty() {
-                item.edit(edits.iter().cloned(), cx);
+                item.edit(edits, cx);
             }
 
             let text = item.buffer().read(cx).snapshot(cx).text();
