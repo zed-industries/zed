@@ -429,7 +429,6 @@ fn handle_keyup_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Opt
     let event = match keystroke_or_modifier {
         KeystrokeOrModifier::Keystroke(keystroke) => PlatformInput::KeyUp(KeyUpEvent { keystroke }),
         KeystrokeOrModifier::Modifier(modifiers) => {
-            println!("KeyUp: {:?}", modifiers);
             PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers })
         }
     };
