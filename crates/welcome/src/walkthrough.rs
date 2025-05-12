@@ -24,7 +24,7 @@ use time_format::TimestampFormat;
 use ui::{CheckboxWithLabel, Divider, scrollbar};
 use ui::{ScrollbarState, prelude::*};
 use vim_mode_setting::VimModeSetting;
-use workspace::OpenOptions;
+use workspace::OpenFiles;
 use workspace::{
     SerializableItem, Workspace, WorkspaceId, delete_unloaded_items,
     item::{Item, ItemEvent},
@@ -582,17 +582,14 @@ impl Walkthrough {
                     //     .size_full()
                     //     .p_1()
                     //     .child(
-                            div()
-                                .id("provider-configuration")
-                                .size_full()
-                                .track_scroll(&scroll_handle)
-                                .overflow_y_scroll()
-                                .child(
-                                    view.clone().into_any()
-                                )
+                    div()
+                        .id("provider-configuration")
+                        .size_full()
+                        .track_scroll(&scroll_handle)
+                        .overflow_y_scroll()
+                        .child(view.clone().into_any())
                         .child(scrollbar(scrollbar_state.clone(), window))
-                        // )
-
+                    // )
                 }
             });
         }
@@ -608,49 +605,60 @@ impl Walkthrough {
         static HOME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
             Regex::new(&format!("^{}", paths::home_dir().to_string_lossy())).unwrap()
         });
-        if !self.recent_projects.is_empty() {
+        let recents = if !self.recent_projects.is_empty() {
             let mut tabs = PillTabs::new(tab_selection.clone());
             for (name, projects) in &self.recent_projects {
                 let workspace = self.workspace.clone();
                 let projects = projects.clone();
                 tabs = tabs.tab(name.to_owned(), move |_window, _cx| {
                     let workspace = workspace.clone();
-                    v_flex().children(projects.iter().enumerate().map(move |(i, path)| {
-                        let workspace = workspace.clone();
-                        Button::new(i, HOME_REGEX.replace(path, "~").to_string()).on_click({
-                            let dir = PathBuf::from(path.clone());
+                    let projects = projects.clone();
+                    v_flex().children(projects.into_iter().enumerate().map(move |(i, path)| {
+                        Button::new(i, HOME_REGEX.replace(&path, "~").to_string()).on_click(
                             move |_, window, cx| {
-                                let dir = dir.clone();
-                                workspace
-                                    .update(cx, |_workspace, cx| {
-                                        cx.spawn_in(window, async move |workspace, cx| {
-                                            workspace
-                                                .update_in(cx, |workspace, window, cx| {
-                                                    workspace.open_paths(
-                                                        vec![dir],
-                                                        OpenOptions {
-                                                            open_new_workspace: Some(true),
-                                                            focus: Some(true),
-                                                            ..Default::default()
-                                                        },
-                                                        None,
-                                                        window,
-                                                        cx,
-                                                    )
-                                                })
-                                                .ok();
+                                let dir = PathBuf::from(&path);
+                                let Some(app_state) = workspace::AppState::try_global(cx)
+                                    .and_then(|app_state| app_state.upgrade())
+                                else {
+                                    return;
+                                };
+                                window
+                                    .spawn(cx, async move |cx| {
+                                        cx.update(|_window, cx| {
+                                            workspace::open_paths(
+                                                &[dir],
+                                                app_state,
+                                                workspace::OpenOptions::default(),
+                                                cx,
+                                            )
                                         })
                                     })
-                                    .ok();
-                            }
-                        })
+                                    .detach();
+                            },
+                        )
                     }))
                 })
             }
             tabs.into_any_element()
         } else {
             "No Recent projects found".into_any()
-        }
+        };
+        v_flex().justify_between()
+            .child(recents)
+            .child(
+                h_flex()
+                    .child(
+                        Button::new("open-remote", "Open Remote").on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(zed_actions::OpenRemote), cx)
+                        }),
+                    )
+                    .child(
+                        Button::new("open-new", "Open File").on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(OpenFiles), cx)
+                        }),
+                    ),
+            )
+            .into_any()
         // TODO: add "open project", "connect to remote host", and "new file" buttons
     }
 }
@@ -738,7 +746,7 @@ impl Render for Walkthrough {
                     .child(
                         h_flex()
                             .w(px(576.0))
-                            .h_full()
+                            // .h_full()
                             .child(
                                 list(self.list.clone())
                                     .with_sizing_behavior(ListSizingBehavior::Infer)
@@ -746,11 +754,13 @@ impl Render for Walkthrough {
                                     .w(relative(0.33)),
                             )
                             .child(Divider::vertical())
-                            .child(div().w(relative(0.66)).h_96().child(self.render_subpane(
-                                self.active_step,
-                                window,
-                                cx,
-                            ))),
+                            .child(
+                                div()
+                                    .w(relative(0.66))
+                                    .h_96()
+                                    .m_4()
+                                    .child(self.render_subpane(self.active_step, window, cx)),
+                            ),
                     ),
             )
     }
