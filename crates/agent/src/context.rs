@@ -868,11 +868,11 @@ pub fn load_context(
             match context {
                 AgentContext::File(context) => {
                     file_context.push(context);
-                    loaded_files.push(context.full_path);
+                    loaded_files.push(context.full_path.clone());
                 }
                 AgentContext::Directory(context) => {
                     directory_context.push(context);
-                    loaded_dirs.push(context.full_path);
+                    loaded_dirs.push(context.full_path.clone());
                 }
                 AgentContext::Symbol(context) => symbol_context.push(context),
                 AgentContext::Selection(context) => selection_context.push(context),
