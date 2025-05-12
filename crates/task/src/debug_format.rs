@@ -94,10 +94,9 @@ pub struct LaunchRequest {
 }
 
 impl LaunchRequest {
-    pub fn env_json(&self)-> serde_json::Value {
+    pub fn env_json(&self) -> serde_json::Value {
         serde_json::Value::Object(
-            self
-                .env
+            self.env
                 .iter()
                 .map(|(k, v)| (k.clone(), v.to_owned().into()))
                 .collect::<serde_json::Map<String, serde_json::Value>>(),

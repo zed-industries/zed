@@ -62,7 +62,7 @@ impl DebugAdapter for RubyDebugAdapter {
         let tcp_connection = definition.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
-        let DebugRequest::Launch(mut launch) = definition.request.clone() else {
+        let DebugRequest::Launch(launch) = definition.request.clone() else {
             anyhow::bail!("rdbg does not yet support attaching");
         };
 
