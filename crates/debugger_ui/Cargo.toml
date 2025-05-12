@@ -51,6 +51,7 @@ rpc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+shlex.workspace = true
 sysinfo.workspace = true
 task.workspace = true
 tasks_ui.workspace = true

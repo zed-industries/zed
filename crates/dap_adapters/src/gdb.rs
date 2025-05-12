@@ -35,6 +35,10 @@ impl GdbDebugAdapter {
                     map.insert("args".into(), launch.args.clone().into());
                 }
 
+                if !launch.env.is_empty() {
+                    map.insert("env".into(), launch.env_json());
+                }
+
                 if let Some(stop_on_entry) = config.stop_on_entry {
                     map.insert(
                         "stopAtBeginningOfMainSubprogram".into(),
