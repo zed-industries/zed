@@ -1020,6 +1020,9 @@ impl DebugPanel {
                                 serialized_scenario,
                             ]))?;
 
+                        if let Some(parent) = path.parent() {
+                            fs.create_dir(parent).await.ok();
+                        }
                         fs.create_file(path, Default::default()).await?;
                         fs.save(path, &content.into(), Default::default()).await?;
                     } else {
