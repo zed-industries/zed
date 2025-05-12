@@ -503,7 +503,7 @@ mod tests {
             "Berlin_Önemli_Ğündem",
             "KİTAPLIK/london/dosya",
             "tokyo/kyoto/fuji",
-            "new_york/san_francisco"
+            "new_york/san_francisco",
         ];
 
         assert_eq!(
@@ -533,7 +533,7 @@ mod tests {
             "東京_über_driver",
             "déjà_vu_cairo",
             "seoul_piñata_game",
-            "voilà_istanbul_result"
+            "voilà_istanbul_result",
         ];
 
         assert_eq!(
@@ -556,7 +556,7 @@ mod tests {
             "project_👨‍👩‍👧‍👦_family",
             "flags_🇯🇵🇺🇸🇪🇺_world",
             "code_😀😃😄😁_happy",
-            "photo_👩‍👩‍👧‍👦_album"
+            "photo_👩‍👩‍👧‍👦_album",
         ];
 
         assert_eq!(
@@ -572,17 +572,23 @@ mod tests {
         let edge_paths = vec![
             "İİİİİİİİİİ_source_code",
             "normal_ĞĞĞ_ŞŞŞ_ÜÜÜ_file",
-            "prefix_İŞĞÜÇÖ_suffix"
+            "prefix_İŞĞÜÇÖ_suffix",
         ];
 
         assert_eq!(
             match_single_path_query("İİİİsource", false, &edge_paths),
-            vec![("İİİİİİİİİİ_source_code", vec![0, 1, 2, 3, 11, 12, 13, 14, 15, 16])]
+            vec![(
+                "İİİİİİİİİİ_source_code",
+                vec![0, 1, 2, 3, 11, 12, 13, 14, 15, 16]
+            )]
         );
 
         assert_eq!(
             match_single_path_query("normalŞŞÜÜ", false, &edge_paths),
-            vec![("normal_ĞĞĞ_ŞŞŞ_ÜÜÜ_file", vec![0, 1, 2, 3, 4, 5, 9, 10, 13, 14])]
+            vec![(
+                "normal_ĞĞĞ_ŞŞŞ_ÜÜÜ_file",
+                vec![0, 1, 2, 3, 4, 5, 9, 10, 13, 14]
+            )]
         );
     }
 
