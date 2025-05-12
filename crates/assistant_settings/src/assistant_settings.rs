@@ -153,7 +153,6 @@ impl LanguageModelParameters {
 
 /// Assistant panel settings
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
-#[schemars(deny_unknown_fields)]
 pub struct AssistantSettingsContent {
     #[serde(flatten)]
     pub inner: Option<AssistantSettingsContentInner>,
