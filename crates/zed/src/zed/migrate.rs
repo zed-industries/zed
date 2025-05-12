@@ -76,15 +76,15 @@ impl MigrationBanner {
                 migration_type,
                 migrated,
             } => {
-                if self.migration_type == Some(*migration_type) {
-                    let location = if *migrated {
-                        ToolbarItemLocation::Secondary
-                    } else {
-                        ToolbarItemLocation::Hidden
-                    };
-                    cx.emit(ToolbarItemEvent::ChangeLocation(location));
-                    cx.notify();
-                }
+                if *migrated {
+                    self.migration_type = Some(migration_type.clone());
+                    self.show(cx);
+                } else {
+                    cx.emit(ToolbarItemEvent::ChangeLocation(
+                        ToolbarItemLocation::Hidden,
+                    ));
+                    self.reset(cx);
+                };
             }
         }
     }
