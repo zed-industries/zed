@@ -204,7 +204,7 @@ impl AgentConfiguration {
                                         let is_open = this
                                             .expanded_provider_configurations
                                             .entry(provider_id.clone())
-                                            .or_insert(false);
+                                            .or_insert(true);
 
                                         *is_open = !*is_open;
                                     }
