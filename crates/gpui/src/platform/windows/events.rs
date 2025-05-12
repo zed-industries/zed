@@ -385,10 +385,6 @@ fn handle_keydown_msg(
         return Some(1);
     };
     let mut lock = state_ptr.state.borrow_mut();
-    let Some(mut func) = lock.callbacks.input.take() else {
-        return Some(1);
-    };
-    drop(lock);
 
     let event = match keystroke_or_modifier {
         KeystrokeOrModifier::Keystroke(keystroke) => PlatformInput::KeyDown(KeyDownEvent {
@@ -396,9 +392,19 @@ fn handle_keydown_msg(
             is_held: lparam.0 & (0x1 << 30) > 0,
         }),
         KeystrokeOrModifier::Modifier(modifiers) => {
+            if let Some(prev_modifiers) = lock.last_reported_modifiers {
+                if prev_modifiers == modifiers {
+                    return Some(0);
+                }
+            }
+            lock.last_reported_modifiers = Some(modifiers);
             PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers })
         }
     };
+    let Some(mut func) = lock.callbacks.input.take() else {
+        return Some(1);
+    };
+    drop(lock);
 
     let result = if func(event).default_prevented {
         Some(0)
@@ -423,6 +429,7 @@ fn handle_keyup_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Opt
     let event = match keystroke_or_modifier {
         KeystrokeOrModifier::Keystroke(keystroke) => PlatformInput::KeyUp(KeyUpEvent { keystroke }),
         KeystrokeOrModifier::Modifier(modifiers) => {
+            println!("KeyUp: {:?}", modifiers);
             PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers })
         }
     };
