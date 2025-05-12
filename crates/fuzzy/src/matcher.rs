@@ -493,6 +493,99 @@ mod tests {
         );
     }
 
+    #[test]
+    fn match_unicode_path_entries() {
+        let mixed_unicode_paths = vec![
+            "İstanbul/code",
+            "Athens/Şanlıurfa",
+            "Çanakkale/scripts",
+            "paris/Düzce_İl",
+            "Berlin_Önemli_Ğündem",
+            "KİTAPLIK/london/dosya",
+            "tokyo/kyoto/fuji",
+            "new_york/san_francisco"
+        ];
+
+        assert_eq!(
+            match_single_path_query("İst/code", false, &mixed_unicode_paths),
+            vec![("İstanbul/code", vec![0, 1, 2, 8, 9, 10, 11, 12])]
+        );
+
+        assert_eq!(
+            match_single_path_query("athens/şa", false, &mixed_unicode_paths),
+            vec![("Athens/Şanlıurfa", vec![0, 1, 2, 3, 4, 5, 7, 8])]
+        );
+
+        assert_eq!(
+            match_single_path_query("BerlinÖĞ", false, &mixed_unicode_paths),
+            vec![("Berlin_Önemli_Ğündem", vec![0, 1, 2, 3, 4, 5, 7, 14])]
+        );
+
+        assert_eq!(
+            match_single_path_query("tokyo/fuji", false, &mixed_unicode_paths),
+            vec![("tokyo/kyoto/fuji", vec![0, 1, 2, 3, 4, 11, 12, 13, 14])]
+        );
+
+        let mixed_script_paths = vec![
+            "résumé_Москва",
+            "naïve_київ_implementation",
+            "café_北京_app",
+            "東京_über_driver",
+            "déjà_vu_cairo",
+            "seoul_piñata_game",
+            "voilà_istanbul_result"
+        ];
+
+        assert_eq!(
+            match_single_path_query("résmé", false, &mixed_script_paths),
+            vec![("résumé_Москва", vec![0, 1, 2, 3, 5])]
+        );
+
+        assert_eq!(
+            match_single_path_query("北京café", false, &mixed_script_paths),
+            vec![("café_北京_app", vec![0, 1, 2, 3, 5, 6])]
+        );
+
+        assert_eq!(
+            match_single_path_query("ista", false, &mixed_script_paths),
+            vec![("voilà_istanbul_result", vec![6, 7, 8, 9])]
+        );
+
+        let complex_paths = vec![
+            "document_📚_library",
+            "project_👨‍👩‍👧‍👦_family",
+            "flags_🇯🇵🇺🇸🇪🇺_world",
+            "code_😀😃😄😁_happy",
+            "photo_👩‍👩‍👧‍👦_album"
+        ];
+
+        assert_eq!(
+            match_single_path_query("doc📚lib", false, &complex_paths),
+            vec![("document_📚_library", vec![0, 1, 2, 9, 11, 12, 13])]
+        );
+
+        assert_eq!(
+            match_single_path_query("codehappy", false, &complex_paths),
+            vec![("code_😀😃😄😁_happy", vec![0, 1, 2, 3, 15, 16, 17, 18, 19])]
+        );
+
+        let edge_paths = vec![
+            "İİİİİİİİİİ_source_code",
+            "normal_ĞĞĞ_ŞŞŞ_ÜÜÜ_file",
+            "prefix_İŞĞÜÇÖ_suffix"
+        ];
+
+        assert_eq!(
+            match_single_path_query("İİİİsource", false, &edge_paths),
+            vec![("İİİİİİİİİİ_source_code", vec![0, 1, 2, 3, 11, 12, 13, 14, 15, 16])]
+        );
+
+        assert_eq!(
+            match_single_path_query("normalŞŞÜÜ", false, &edge_paths),
+            vec![("normal_ĞĞĞ_ŞŞŞ_ÜÜÜ_file", vec![0, 1, 2, 3, 4, 5, 9, 10, 13, 14])]
+        );
+    }
+
     fn match_single_path_query<'a>(
         query: &str,
         smart_case: bool,
