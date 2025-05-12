@@ -1967,7 +1967,7 @@ mod tests {
 
     #[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
     #[schemars(deny_unknown_fields)]
-    struct UserSettingsJson {
+    struct UserSettingsContent {
         name: Option<String>,
         age: Option<u32>,
         staff: Option<bool>,
@@ -1975,7 +1975,7 @@ mod tests {
 
     impl Settings for UserSettings {
         const KEY: Option<&'static str> = Some("user");
-        type FileContent = UserSettingsJson;
+        type FileContent = UserSettingsContent;
 
         fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
             sources.json_merge()
