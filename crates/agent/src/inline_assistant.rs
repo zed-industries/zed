@@ -325,28 +325,6 @@ impl InlineAssistant {
         }
     }
 
-    fn is_cursor_within_range(
-        range: &Range<Anchor>,
-        cursor_point: Point,
-        buffer_snapshot: &MultiBufferSnapshot,
-    ) -> bool {
-        // Check if cursor position is exactly within the range
-        let cursor_anchor = buffer_snapshot.anchor_before(cursor_point);
-        range.start.cmp(&cursor_anchor, buffer_snapshot).is_le()
-            && range.end.cmp(&cursor_anchor, buffer_snapshot).is_ge()
-    }
-
-    fn is_cursor_on_same_line_as_range(
-        range: &Range<Anchor>,
-        cursor_point: Point,
-        buffer_snapshot: &MultiBufferSnapshot,
-    ) -> bool {
-        // Check if cursor is on the same line as any part of the range
-        let assist_start_point = range.start.to_point(buffer_snapshot);
-        let assist_end_point = range.end.to_point(buffer_snapshot);
-        cursor_point.row >= assist_start_point.row && cursor_point.row <= assist_end_point.row
-    }
-
     pub fn assist(
         &mut self,
         editor: &Entity<Editor>,
@@ -360,40 +338,26 @@ impl InlineAssistant {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let (snapshot, newest_selection) = editor.update(cx, |editor, cx| {
+        let (snapshot, initial_selections, newest_selection) = editor.update(cx, |editor, cx| {
             let selections = editor.selections.all::<Point>(cx);
-            let newest = selections.iter().max_by_key(|sel| sel.id).cloned();
-            (editor.snapshot(window, cx), newest)
+            let newest_selection = editor.selections.newest::<Point>(cx);
+            (editor.snapshot(window, cx), selections, newest_selection)
         });
 
-        // Check if this editor already has active assistants
-        if let Some(newest_selection) = &newest_selection {
-            if let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) {
-                if !editor_assists.assist_ids.is_empty() {
-                    // Check for an assist at the current cursor position
-                    for &assist_id in &editor_assists.assist_ids {
-                        let assist = &self.assists[&assist_id];
-                        let cursor_point = newest_selection.start;
-
-                        // Use the helper functions to check if cursor is within range or on the same line
-                        if Self::is_cursor_within_range(
-                            &assist.range,
-                            cursor_point,
-                            &snapshot.buffer_snapshot,
-                        ) || Self::is_cursor_on_same_line_as_range(
-                            &assist.range,
-                            cursor_point,
-                            &snapshot.buffer_snapshot,
-                        ) {
-                            self.focus_assist(assist_id, window, cx);
-                            return;
-                        }
-                    }
+        // Check if there is already an inline assistant on the same line as the
+        // cursor, if there is, focus it
+        if let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) {
+            for assist_id in &editor_assists.assist_ids {
+                let assist = &self.assists[assist_id];
+                let range = assist.range.to_point(&snapshot.buffer_snapshot);
+                if range.start.row <= newest_selection.start.row
+                    && newest_selection.end.row <= range.end.row
+                {
+                    self.focus_assist(*assist_id, window, cx);
+                    return;
                 }
             }
         }
-
-        let initial_selections = editor.update(cx, |editor, cx| editor.selections.all::<Point>(cx));
 
         let mut selections = Vec::<Selection<Point>>::new();
         let mut newest_selection = None;
