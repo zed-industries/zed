@@ -229,10 +229,15 @@ impl<'a> Matcher<'a> {
                 .sum::<usize>();
             let j_regular = j - extra_lowercase_chars_count;
 
-            let path_char = if j_regular < prefix.len() {
+            let path_char = if j < prefix.len() {
                 lowercase_prefix[j]
             } else {
-                path_lowercased[j - prefix.len()]
+                let path_index = j - prefix.len();
+                if path_index < path_lowercased.len() {
+                    path_lowercased[path_index]
+                } else {
+                    continue;
+                }
             };
             let is_path_sep = path_char == MAIN_SEPARATOR;
 
@@ -517,7 +522,7 @@ mod tests {
 
         assert_eq!(
             match_single_path_query("İo/oluş", false, &mixed_unicode_paths),
-            vec![("İolu/oluş", vec![0, 2, 4, 4, 8, 10, 12])]
+            vec![("İolu/oluş", vec![0, 2, 4, 6, 8, 10, 12])]
         );
 
         assert_eq!(
