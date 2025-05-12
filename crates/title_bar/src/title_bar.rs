@@ -128,6 +128,7 @@ pub struct TitleBar {
 
 impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let title_bar_settings = *TitleBarSettings::get_global(cx);
         let close_action = Box::new(workspace::CloseWindow);
         let height = Self::height(window);
         let supported_controls = window.window_controls();
@@ -191,26 +192,39 @@ impl Render for TitleBar {
                         h_flex()
                             .gap_1()
                             .map(|title_bar| {
-                                let mut render_project_items = true;
+                                let mut render_project_items = title_bar_settings
+                                    .show_branch_button
+                                    || title_bar_settings.show_project_items;
                                 title_bar
                                     .when_some(self.application_menu.clone(), |title_bar, menu| {
-                                        render_project_items = !menu.read(cx).all_menus_shown();
+                                        render_project_items &= !menu.read(cx).all_menus_shown();
                                         title_bar.child(menu)
                                     })
                                     .when(render_project_items, |title_bar| {
                                         title_bar
-                                            .children(self.render_project_host(cx))
-                                            .child(self.render_project_name(cx))
-                                            .children(self.render_project_branch(cx))
+                                            .when(
+                                                title_bar_settings.show_project_items,
+                                                |title_bar| {
+                                                    title_bar
+                                                        .children(self.render_project_host(cx))
+                                                        .child(self.render_project_name(cx))
+                                                },
+                                            )
+                                            .when(
+                                                title_bar_settings.show_branch_button,
+                                                |title_bar| {
+                                                    title_bar
+                                                        .children(self.render_project_branch(cx))
+                                                },
+                                            )
                                     })
                             })
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()),
                     )
                     .child(self.render_collaborator_list(window, cx))
-                    .when(
-                        TitleBarSettings::get_global(cx).show_onboarding_banner,
-                        |title_bar| title_bar.child(self.banner.clone()),
-                    )
+                    .when(title_bar_settings.show_onboarding_banner, |title_bar| {
+                        title_bar.child(self.banner.clone())
+                    })
                     .child(
                         h_flex()
                             .gap_1()
