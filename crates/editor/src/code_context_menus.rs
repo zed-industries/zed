@@ -510,22 +510,25 @@ impl CompletionsMenu {
 
                         let completion_label = StyledText::new(completion.label.text.clone())
                             .with_default_highlights(&style.text, highlights);
-                        let documentation_label = if let Some(
-                            CompletionDocumentation::SingleLine(text),
-                        ) = documentation
-                        {
-                            if text.trim().is_empty() {
-                                None
-                            } else {
-                                Some(
-                                    Label::new(text.clone())
-                                        .ml_4()
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                )
+
+                        let documentation_label = match documentation {
+                            Some(CompletionDocumentation::SingleLine(text))
+                            | Some(CompletionDocumentation::SingleLineAndMultiLinePlainText {
+                                single_line: text,
+                                ..
+                            }) => {
+                                if text.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(
+                                        Label::new(text.clone())
+                                            .ml_4()
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                }
                             }
-                        } else {
-                            None
+                            _ => None,
                         };
 
                         let start_slot = completion
@@ -597,6 +600,10 @@ impl CompletionsMenu {
             .as_ref()?
         {
             CompletionDocumentation::MultiLinePlainText(text) => div().child(text.clone()),
+            CompletionDocumentation::SingleLineAndMultiLinePlainText {
+                plain_text: Some(text),
+                ..
+            } => div().child(text.clone()),
             CompletionDocumentation::MultiLineMarkdown(parsed) if !parsed.is_empty() => {
                 let markdown = self.markdown_element.get_or_insert_with(|| {
                     cx.new(|cx| {
@@ -627,6 +634,11 @@ impl CompletionsMenu {
             CompletionDocumentation::MultiLineMarkdown(_) => return None,
             CompletionDocumentation::SingleLine(_) => return None,
             CompletionDocumentation::Undocumented => return None,
+            CompletionDocumentation::SingleLineAndMultiLinePlainText {
+                plain_text: None, ..
+            } => {
+                return None;
+            }
         };
 
         Some(
