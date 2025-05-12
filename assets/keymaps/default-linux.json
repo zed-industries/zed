@@ -671,7 +671,7 @@
     }
   },
   {
-    "context": "Editor && showing_multiple_signature_help && !showing_completions",
+    "context": "Editor && can_scroll_signature_help && !showing_completions",
     "bindings": {
       "up": "editor::SignatureHelpPrevious",
       "down": "editor::SignatureHelpNext"
