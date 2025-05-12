@@ -78,6 +78,10 @@ pub struct Upstream {
 }
 
 impl Upstream {
+    pub fn is_remote(&self) -> bool {
+        self.remote_name().is_some()
+    }
+
     pub fn remote_name(&self) -> Option<&str> {
         self.ref_name
             .strip_prefix("refs/remotes/")
