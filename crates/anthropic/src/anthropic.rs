@@ -578,6 +578,7 @@ pub enum ToolChoice {
     Auto,
     Any,
     Tool { name: String },
+    None,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -7,7 +7,7 @@ use gpui::{
     AnyWindowHandle, App, AppContext, Context, Entity, IntoElement, Task, WeakEntity, Window,
 };
 use language;
-use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -73,9 +73,10 @@ impl Tool for FindPathTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _model: Arc<dyn LanguageModel>,
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
@@ -98,7 +99,7 @@ impl Tool for FindPathTool {
             sender.send(paginated_matches.to_vec()).log_err();
 
             if matches.is_empty() {
-                Ok("No matches found".to_string())
+                Ok("No matches found".to_string().into())
             } else {
                 let mut message = format!("Found {} total matches.", matches.len());
                 if matches.len() > RESULTS_PER_PAGE {
@@ -113,7 +114,7 @@ impl Tool for FindPathTool {
                 for mat in matches.into_iter().skip(offset).take(RESULTS_PER_PAGE) {
                     write!(&mut message, "\n{}", mat.display()).unwrap();
                 }
-                Ok(message)
+                Ok(message.into())
             }
         });
 

@@ -153,6 +153,8 @@ pub struct LanguageSettings {
     pub show_completion_documentation: bool,
     /// Completion settings for this language.
     pub completions: CompletionSettings,
+    /// Preferred debuggers for this language.
+    pub debuggers: Vec<String>,
 }
 
 impl LanguageSettings {
@@ -242,7 +244,7 @@ pub struct EditPredictionSettings {
     pub copilot: CopilotSettings,
     /// Whether edit predictions are enabled in the assistant panel.
     /// This setting has no effect if globally disabled.
-    pub enabled_in_assistant: bool,
+    pub enabled_in_text_threads: bool,
 }
 
 impl EditPredictionSettings {
@@ -551,6 +553,10 @@ pub struct LanguageSettingsContent {
     pub show_completion_documentation: Option<bool>,
     /// Controls how completions are processed for this language.
     pub completions: Option<CompletionSettings>,
+    /// Preferred debuggers for this language.
+    ///
+    /// Default: []
+    pub debuggers: Option<Vec<String>>,
 }
 
 /// The behavior of `editor::Rewrap`.
@@ -584,7 +590,7 @@ pub struct EditPredictionSettingsContent {
     /// Whether edit predictions are enabled in the assistant prompt editor.
     /// This has no effect if globally disabled.
     #[serde(default = "default_true")]
-    pub enabled_in_assistant: bool,
+    pub enabled_in_text_threads: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -1216,10 +1222,10 @@ impl settings::Settings for AllLanguageSettings {
             })
             .unwrap_or_default();
 
-        let mut edit_predictions_enabled_in_assistant = default_value
+        let mut enabled_in_text_threads = default_value
             .edit_predictions
             .as_ref()
-            .map(|settings| settings.enabled_in_assistant)
+            .map(|settings| settings.enabled_in_text_threads)
             .unwrap_or(true);
 
         let mut file_types: FxHashMap<Arc<str>, GlobSet> = FxHashMap::default();
@@ -1245,7 +1251,7 @@ impl settings::Settings for AllLanguageSettings {
 
             if let Some(edit_predictions) = user_settings.edit_predictions.as_ref() {
                 edit_predictions_mode = edit_predictions.mode;
-                edit_predictions_enabled_in_assistant = edit_predictions.enabled_in_assistant;
+                enabled_in_text_threads = edit_predictions.enabled_in_text_threads;
 
                 if let Some(disabled_globs) = edit_predictions.disabled_globs.as_ref() {
                     completion_globs.extend(disabled_globs.iter());
@@ -1323,7 +1329,7 @@ impl settings::Settings for AllLanguageSettings {
                     .collect(),
                 mode: edit_predictions_mode,
                 copilot: copilot_settings,
-                enabled_in_assistant: edit_predictions_enabled_in_assistant,
+                enabled_in_text_threads,
             },
             defaults,
             languages,

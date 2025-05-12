@@ -2,7 +2,7 @@ use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
-use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -86,9 +86,10 @@ impl Tool for MovePathTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _model: Arc<dyn LanguageModel>,
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
@@ -117,10 +118,9 @@ impl Tool for MovePathTool {
 
         cx.background_spawn(async move {
             match rename_task.await {
-                Ok(_) => Ok(format!(
-                    "Moved {} to {}",
-                    input.source_path, input.destination_path
-                )),
+                Ok(_) => {
+                    Ok(format!("Moved {} to {}", input.source_path, input.destination_path).into())
+                }
                 Err(err) => Err(anyhow!(
                     "Failed to move {} to {}: {}",
                     input.source_path,
