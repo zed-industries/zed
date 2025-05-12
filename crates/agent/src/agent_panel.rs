@@ -1648,6 +1648,12 @@ impl AgentPanel {
                 }),
         );
 
+        let zoom_in_label = if self.is_zoomed(window, cx) {
+            "Zoom Out"
+        } else {
+            "Zoom In"
+        };
+
         let agent_extra_menu = PopoverMenu::new("agent-options-menu")
             .trigger_with_tooltip(
                 IconButton::new("agent-options-menu", IconName::Ellipsis)
@@ -1734,7 +1740,8 @@ impl AgentPanel {
 
                     menu = menu
                         .action("Rules…", Box::new(OpenRulesLibrary::default()))
-                        .action("Settings", Box::new(OpenConfiguration));
+                        .action("Settings", Box::new(OpenConfiguration))
+                        .action(zoom_in_label, Box::new(ToggleZoom));
                     menu
                 }))
             });
