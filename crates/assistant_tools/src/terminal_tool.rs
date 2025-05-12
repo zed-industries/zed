@@ -374,7 +374,10 @@ fn working_dir(
             .worktrees(cx)
             .any(|worktree| input_path.starts_with(&worktree.read(cx).abs_path()))
         {
-            bail!("The absolute path must be within one of the project's worktrees");
+            bail!(
+                "The absolute path {:?} must be within one of the project's worktrees",
+                input_path
+            );
         }
 
         Ok(Some(input_path.into()))
