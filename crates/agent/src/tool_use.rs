@@ -52,11 +52,14 @@ impl ToolUseState {
     /// Constructs a [`ToolUseState`] from the given list of [`SerializedMessage`]s.
     ///
     /// Accepts a function to filter the tools that should be used to populate the state.
+    ///
+    /// If `window` is `None` (typically in headless mode and when running evals),
+    /// tool cards won't be deserialized
     pub fn from_serialized_messages(
         tools: Entity<ToolWorkingSet>,
         messages: &[SerializedMessage],
         project: Entity<Project>,
-        window: Option<&mut Window>,
+        window: Option<&mut Window>, // None in headless mode
         cx: &mut App,
     ) -> Self {
         let mut this = Self::new(tools);

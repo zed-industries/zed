@@ -71,7 +71,7 @@ fn eval_extract_handle_command_output() {
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
-                            create_or_overwrite: false,
+                            mode: EditFileMode::Edit,
                         },
                     )],
                 ),
@@ -127,7 +127,7 @@ fn eval_delete_run_git_blame() {
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
-                            create_or_overwrite: false,
+                            mode: EditFileMode::Edit,
                         },
                     )],
                 ),
@@ -182,7 +182,7 @@ fn eval_translate_doc_comments() {
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
-                            create_or_overwrite: false,
+                            mode: EditFileMode::Edit,
                         },
                     )],
                 ),
@@ -297,7 +297,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
-                            create_or_overwrite: false,
+                            mode: EditFileMode::Edit,
                         },
                     )],
                 ),
@@ -372,7 +372,7 @@ fn eval_disable_cursor_blinking() {
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
-                            create_or_overwrite: false,
+                            mode: EditFileMode::Edit,
                         },
                     )],
                 ),
@@ -566,7 +566,7 @@ fn eval_from_pixels_constructor() {
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
-                            create_or_overwrite: false,
+                            mode: EditFileMode::Edit,
                         },
                     )],
                 ),
@@ -643,7 +643,7 @@ fn eval_zode() {
                             EditFileToolInput {
                                 display_description: edit_description.into(),
                                 path: input_file_path.into(),
-                                create_or_overwrite: true,
+                                mode: EditFileMode::Create,
                             },
                         ),
                     ],
@@ -888,7 +888,7 @@ fn eval_add_overwrite_test() {
                             EditFileToolInput {
                                 display_description: edit_description.into(),
                                 path: input_file_path.into(),
-                                create_or_overwrite: false,
+                                mode: EditFileMode::Edit,
                             },
                         ),
                     ],
@@ -1232,7 +1232,7 @@ fn eval_create_test_module() {
                             EditFileToolInput {
                                 display_description: edit_description.into(),
                                 path: input_file_path.into(),
-                                create_or_overwrite: true,
+                                mode: EditFileMode::Rewrite,
                             },
                         ),
                     ],
