@@ -10,7 +10,6 @@ use std::sync::Arc;
 use ::lsp::LanguageServerName;
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
-use dap::adapters::{DebugAdapterBinary, DebugTaskDefinition};
 use fs::normalize_path;
 use gpui::{App, Task};
 use language::LanguageName;

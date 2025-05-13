@@ -5103,6 +5103,7 @@ dependencies = [
  "client",
  "collections",
  "ctor",
+ "dap",
  "env_logger 0.11.8",
  "extension",
  "fs",

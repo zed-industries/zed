@@ -17,18 +17,23 @@ interface dap {
     }
 
     record tcp-arguments {
-        port: option<u16>,
-        host: option<string>,
+        port: u16,
+        host: u32,
         timeout: option<u64>,
     }
 
+    record tcp-arguments-template {
+        port: option<u16>,
+        host: option<u32>,
+        timeout: option<u64>,
+    }
     record debug-task-definition {
         label: string,
         adapter: string,
         request: debug-request,
         initialize-args: option<string>,
         stop-on-entry: option<bool>,
-        tcp-connection: option<tcp-arguments>,
+        tcp-connection: option<tcp-arguments-template>,
     }
 
     enum start-debugging-request-arguments-request {

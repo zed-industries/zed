@@ -7,16 +7,16 @@ mod since_v0_3_0;
 mod since_v0_4_0;
 mod since_v0_5_0;
 mod since_v0_6_0;
-use extension::{KeyValueStoreDelegate, WorktreeDelegate};
+use extension::{DebugTaskDefinition, KeyValueStoreDelegate, WorktreeDelegate};
 use language::LanguageName;
 use lsp::LanguageServerName;
 use release_channel::ReleaseChannel;
-use since_v0_6_0 as latest;
 
 use super::{WasmState, wasm_engine};
 use anyhow::{Context as _, Result, anyhow};
 use semantic_version::SemanticVersion;
-use std::{ops::RangeInclusive, sync::Arc};
+use since_v0_6_0 as latest;
+use std::{ops::RangeInclusive, path::PathBuf, sync::Arc};
 use wasmtime::{
     Store,
     component::{Component, Linker, Resource},
@@ -25,7 +25,7 @@ use wasmtime::{
 #[cfg(test)]
 pub use latest::CodeLabelSpanLiteral;
 pub use latest::{
-    CodeLabel, CodeLabelSpan, Command, ExtensionProject, Range, SlashCommand,
+    CodeLabel, CodeLabelSpan, Command, DebugAdapterBinary, ExtensionProject, Range, SlashCommand,
     zed::extension::context_server::ContextServerConfiguration,
     zed::extension::lsp::{
         Completion, CompletionKind, CompletionLabelDetails, InsertTextFormat, Symbol, SymbolKind,
@@ -63,7 +63,7 @@ pub fn wasm_api_version_range(release_channel: ReleaseChannel) -> RangeInclusive
 
     let max_version = match release_channel {
         ReleaseChannel::Dev | ReleaseChannel::Nightly => latest::MAX_VERSION,
-        ReleaseChannel::Stable | ReleaseChannel::Preview => since_v0_5_0::MAX_VERSION,
+        ReleaseChannel::Stable | ReleaseChannel::Preview => latest::MAX_VERSION,
     };
 
     since_v0_0_1::MIN_VERSION..=max_version
@@ -116,20 +116,16 @@ impl Extension {
 
         if version >= latest::MIN_VERSION {
             authorize_access_to_unreleased_wasm_api_version(release_channel)?;
-
             let extension =
                 latest::Extension::instantiate_async(store, component, latest::linker())
                     .await
                     .context("failed to instantiate wasm extension")?;
             Ok(Self::V0_6_0(extension))
         } else if version >= since_v0_5_0::MIN_VERSION {
-            let extension = since_v0_5_0::Extension::instantiate_async(
-                store,
-                component,
-                since_v0_5_0::linker(),
-            )
-            .await
-            .context("failed to instantiate wasm extension")?;
+            let extension =
+                since_v0_5_0::Extension::instantiate_async(store, component, latest::linker())
+                    .await
+                    .context("failed to instantiate wasm extension")?;
             Ok(Self::V0_5_0(extension))
         } else if version >= since_v0_4_0::MIN_VERSION {
             let extension = since_v0_4_0::Extension::instantiate_async(
@@ -223,18 +219,18 @@ impl Extension {
                 ext.call_language_server_command(store, &language_server_id.0, resource)
                     .await
             }
-            Extension::V0_5_0(ext) => {
-                ext.call_language_server_command(store, &language_server_id.0, resource)
-                    .await
-            }
-            Extension::V0_4_0(ext) => {
-                ext.call_language_server_command(store, &language_server_id.0, resource)
-                    .await
-            }
-            Extension::V0_3_0(ext) => {
-                ext.call_language_server_command(store, &language_server_id.0, resource)
-                    .await
-            }
+            Extension::V0_5_0(ext) => Ok(ext
+                .call_language_server_command(store, &language_server_id.0, resource)
+                .await?
+                .map(|command| command.into())),
+            Extension::V0_4_0(ext) => Ok(ext
+                .call_language_server_command(store, &language_server_id.0, resource)
+                .await?
+                .map(|command| command.into())),
+            Extension::V0_3_0(ext) => Ok(ext
+                .call_language_server_command(store, &language_server_id.0, resource)
+                .await?
+                .map(|command| command.into())),
             Extension::V0_2_0(ext) => Ok(ext
                 .call_language_server_command(store, &language_server_id.0, resource)
                 .await?
@@ -623,11 +619,7 @@ impl Extension {
                     .await
             }
             Extension::V0_5_0(ext) => Ok(ext
-                .call_labels_for_symbols(
-                    store,
-                    &language_server_id.0,
-                    &symbols.into_iter().collect::<Vec<_>>(),
-                )
+                .call_labels_for_symbols(store, &language_server_id.0, &symbols)
                 .await?
                 .map(|labels| {
                     labels
@@ -897,6 +889,30 @@ impl Extension {
             }
         }
     }
+    pub async fn call_get_dap_binary(
+        &self,
+        store: &mut Store<WasmState>,
+        adapter_name: Arc<str>,
+        task: DebugTaskDefinition,
+        user_installed_path: Option<PathBuf>,
+    ) -> Result<Result<DebugAdapterBinary, String>> {
+        match self {
+            Extension::V0_6_0(ext) => {
+                let dap_binary = ext
+                    .call_get_dap_binary(
+                        store,
+                        &adapter_name,
+                        &task.try_into()?,
+                        user_installed_path.as_ref().and_then(|p| p.to_str()),
+                    )
+                    .await?
+                    .map_err(|e| anyhow!("{e:?}"))?;
+
+                Ok(Ok(dap_binary))
+            }
+            _ => Err(anyhow!("`get_dap_binary` not available prior to v0.6.0")),
+        }
+    }
 }
 
 trait ToWasmtimeResult<T> {
@@ -905,6 +921,6 @@ trait ToWasmtimeResult<T> {
 
 impl<T> ToWasmtimeResult<T> for Result<T> {
     fn to_wasmtime_result(self) -> wasmtime::Result<Result<T, String>> {
-        Ok(self.map_err(|error| format!("{error:?}")))
+        Ok(self.map_err(|error| error.to_string()))
     }
 }
