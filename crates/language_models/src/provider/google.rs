@@ -313,6 +313,10 @@ impl LanguageModel for GoogleLanguageModel {
         true
     }
 
+    fn supports_images(&self) -> bool {
+        true
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto

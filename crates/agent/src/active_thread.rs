@@ -33,7 +33,9 @@ use language_model::{
     LanguageModelRequestMessage, LanguageModelToolUseId, MessageContent, Role, StopReason,
 };
 use markdown::parser::{CodeBlockKind, CodeBlockMetadata};
-use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown};
+use markdown::{
+    HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown, PathWithRange,
+};
 use project::{ProjectEntryId, ProjectItem as _};
 use rope::Point;
 use settings::{Settings as _, SettingsStore, update_settings_file};
@@ -430,49 +432,8 @@ fn render_markdown_code_block(
                         let path_range = path_range.clone();
                         move |_, window, cx| {
                             workspace
-                                .update(cx, {
-                                    |workspace, cx| {
-                                        let Some(project_path) = workspace
-                                            .project()
-                                            .read(cx)
-                                            .find_project_path(&path_range.path, cx)
-                                        else {
-                                            return;
-                                        };
-                                        let Some(target) = path_range.range.as_ref().map(|range| {
-                                            Point::new(
-                                                // Line number is 1-based
-                                                range.start.line.saturating_sub(1),
-                                                range.start.col.unwrap_or(0),
-                                            )
-                                        }) else {
-                                            return;
-                                        };
-                                        let open_task = workspace.open_path(
-                                            project_path,
-                                            None,
-                                            true,
-                                            window,
-                                            cx,
-                                        );
-                                        window
-                                            .spawn(cx, async move |cx| {
-                                                let item = open_task.await?;
-                                                if let Some(active_editor) =
-                                                    item.downcast::<Editor>()
-                                                {
-                                                    active_editor
-                                                        .update_in(cx, |editor, window, cx| {
-                                                            editor.go_to_singleton_buffer_point(
-                                                                target, window, cx,
-                                                            );
-                                                        })
-                                                        .ok();
-                                                }
-                                                anyhow::Ok(())
-                                            })
-                                            .detach_and_log_err(cx);
-                                    }
+                                .update(cx, |workspace, cx| {
+                                    open_path(&path_range, window, workspace, cx)
                                 })
                                 .ok();
                         }
@@ -596,6 +557,45 @@ fn render_markdown_code_block(
         .bg(cx.theme().colors().editor_background)
         .child(codeblock_header)
         .when(can_expand && !is_expanded, |this| this.max_h_80())
+}
+
+fn open_path(
+    path_range: &PathWithRange,
+    window: &mut Window,
+    workspace: &mut Workspace,
+    cx: &mut Context<'_, Workspace>,
+) {
+    let Some(project_path) = workspace
+        .project()
+        .read(cx)
+        .find_project_path(&path_range.path, cx)
+    else {
+        return; // TODO instead of just bailing out, open that path in a buffer.
+    };
+
+    let Some(target) = path_range.range.as_ref().map(|range| {
+        Point::new(
+            // Line number is 1-based
+            range.start.line.saturating_sub(1),
+            range.start.col.unwrap_or(0),
+        )
+    }) else {
+        return;
+    };
+    let open_task = workspace.open_path(project_path, None, true, window, cx);
+    window
+        .spawn(cx, async move |cx| {
+            let item = open_task.await?;
+            if let Some(active_editor) = item.downcast::<Editor>() {
+                active_editor
+                    .update_in(cx, |editor, window, cx| {
+                        editor.go_to_singleton_buffer_point(target, window, cx);
+                    })
+                    .ok();
+            }
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
 }
 
 fn render_code_language(

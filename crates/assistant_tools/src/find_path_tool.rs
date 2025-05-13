@@ -1,6 +1,8 @@
 use crate::{schema::json_schema_for, ui::ToolCallCardHeader};
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolResultOutput, ToolUseStatus};
+use assistant_tool::{
+    ActionLog, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
+};
 use editor::Editor;
 use futures::channel::oneshot::{self, Receiver};
 use gpui::{
@@ -126,7 +128,7 @@ impl Tool for FindPathTool {
                     write!(&mut message, "\n{}", mat.display()).unwrap();
                 }
                 Ok(ToolResultOutput {
-                    content: message,
+                    content: ToolResultContent::Text(message),
                     output: Some(serde_json::to_value(output)?),
                 })
             }
