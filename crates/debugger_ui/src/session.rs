@@ -1,6 +1,6 @@
 pub mod running;
 
-use std::sync::OnceLock;
+use std::{cell::OnceCell, sync::OnceLock};
 
 use dap::client::SessionId;
 use gpui::{
@@ -17,15 +17,16 @@ use workspace::{
     item::{self, Item},
 };
 
-use crate::{debugger_panel::DebugPanel, persistence::SerializedLayout};
+use crate::{StackTraceView, debugger_panel::DebugPanel, persistence::SerializedLayout};
 
 pub struct DebugSession {
     remote_id: Option<workspace::ViewId>,
     running_state: Entity<RunningState>,
     label: OnceLock<SharedString>,
+    stack_trace_view: OnceCell<Entity<StackTraceView>>,
     _debug_panel: WeakEntity<DebugPanel>,
     _worktree_store: WeakEntity<WorktreeStore>,
-    _workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<Workspace>,
     _subscriptions: [Subscription; 1],
 }
 
@@ -66,13 +67,40 @@ impl DebugSession {
             running_state,
             label: OnceLock::new(),
             _debug_panel,
+            stack_trace_view: OnceCell::new(),
             _worktree_store: project.read(cx).worktree_store().downgrade(),
-            _workspace: workspace,
+            workspace,
         })
     }
 
     pub(crate) fn session_id(&self, cx: &App) -> SessionId {
         self.running_state.read(cx).session_id()
+    }
+
+    pub(crate) fn stack_trace_view(
+        &mut self,
+        project: &Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> &Entity<StackTraceView> {
+        let workspace = self.workspace.clone();
+        let running_state = self.running_state.clone();
+
+        self.stack_trace_view.get_or_init(|| {
+            let stackframe_list = running_state.read(cx).stack_frame_list().clone();
+
+            let stack_frame_view = cx.new(|cx| {
+                StackTraceView::new(
+                    workspace.clone(),
+                    project.clone(),
+                    stackframe_list,
+                    window,
+                    cx,
+                )
+            });
+
+            stack_frame_view
+        })
     }
 
     pub fn session(&self, cx: &App) -> Entity<Session> {
