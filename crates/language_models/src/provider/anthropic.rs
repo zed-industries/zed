@@ -589,7 +589,7 @@ pub fn into_anthropic(
                                 is_error: tool_result.is_error,
                                 content: match tool_result.content {
                                     LanguageModelToolResultContent::Text(text) => {
-                                        ToolResultContent::JustText(text.to_string())
+                                        ToolResultContent::Plain(text.to_string())
                                     }
                                     LanguageModelToolResultContent::Image(image) => {
                                         ToolResultContent::Multipart(vec![ToolResultPart::Image {

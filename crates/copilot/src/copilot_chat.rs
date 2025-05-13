@@ -217,7 +217,7 @@ pub enum ChatMessage {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ChatMessageContent {
-    OnlyText(String),
+    Plain(String),
     Multipart(Vec<ChatMessagePart>),
 }
 
@@ -230,7 +230,7 @@ impl ChatMessageContent {
 impl From<Vec<ChatMessagePart>> for ChatMessageContent {
     fn from(mut parts: Vec<ChatMessagePart>) -> Self {
         if let [ChatMessagePart::Text { text }] = parts.as_mut_slice() {
-            ChatMessageContent::OnlyText(std::mem::take(text))
+            ChatMessageContent::Plain(std::mem::take(text))
         } else {
             ChatMessageContent::Multipart(parts)
         }
@@ -239,7 +239,7 @@ impl From<Vec<ChatMessagePart>> for ChatMessageContent {
 
 impl From<String> for ChatMessageContent {
     fn from(text: String) -> Self {
-        ChatMessageContent::OnlyText(text)
+        ChatMessageContent::Plain(text)
     }
 }
 
