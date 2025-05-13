@@ -5,8 +5,9 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use copilot::copilot_chat::{
-    ChatMessage, ChatMessageContent, CopilotChat, ImageUrl, Model as CopilotChatModel, ModelVendor,
-    Request as CopilotChatRequest, ResponseEvent, Tool, ToolCall,
+    ChatMessage, ChatMessageContent, ChatMessagePart, CopilotChat, ImageUrl,
+    Model as CopilotChatModel, ModelVendor, Request as CopilotChatRequest, ResponseEvent, Tool,
+    ToolCall,
 };
 use copilot::{Copilot, Status};
 use futures::future::BoxFuture;
@@ -20,12 +21,14 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelToolChoice, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason,
+    LanguageModelRequestMessage, LanguageModelToolChoice, LanguageModelToolResultContent,
+    LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, RateLimiter, Role,
+    StopReason,
 };
 use settings::SettingsStore;
 use std::time::Duration;
 use ui::prelude::*;
+use util::debug_panic;
 
 use super::anthropic::count_anthropic_tokens;
 use super::google::count_google_tokens;
@@ -196,6 +199,10 @@ impl LanguageModel for CopilotChatLanguageModel {
 
     fn supports_tools(&self) -> bool {
         self.model.supports_tools()
+    }
+
+    fn supports_images(&self) -> bool {
+        self.model.supports_vision()
     }
 
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
@@ -447,9 +454,28 @@ fn into_copilot_chat(
             Role::User => {
                 for content in &message.content {
                     if let MessageContent::ToolResult(tool_result) = content {
+                        let content = match &tool_result.content {
+                            LanguageModelToolResultContent::Text(text) => text.to_string().into(),
+                            LanguageModelToolResultContent::Image(image) => {
+                                if model.supports_vision() {
+                                    ChatMessageContent::Multipart(vec![ChatMessagePart::Image {
+                                        image_url: ImageUrl {
+                                            url: image.to_base64_url(),
+                                        },
+                                    }])
+                                } else {
+                                    debug_panic!(
+                                        "This should be caught at {} level",
+                                        tool_result.tool_name
+                                    );
+                                    "[Tool responded with an image, but this model does not support vision]".to_string().into()
+                                }
+                            }
+                        };
+
                         messages.push(ChatMessage::Tool {
                             tool_call_id: tool_result.tool_use_id.to_string(),
-                            content: tool_result.content.to_string(),
+                            content,
                         });
                     }
                 }
@@ -460,18 +486,18 @@ fn into_copilot_chat(
                         MessageContent::Text(text) | MessageContent::Thinking { text, .. }
                             if !text.is_empty() =>
                         {
-                            if let Some(ChatMessageContent::Text { text: text_content }) =
+                            if let Some(ChatMessagePart::Text { text: text_content }) =
                                 content_parts.last_mut()
                             {
                                 text_content.push_str(text);
                             } else {
-                                content_parts.push(ChatMessageContent::Text {
+                                content_parts.push(ChatMessagePart::Text {
                                     text: text.to_string(),
                                 });
                             }
                         }
                         MessageContent::Image(image) if model.supports_vision() => {
-                            content_parts.push(ChatMessageContent::Image {
+                            content_parts.push(ChatMessagePart::Image {
                                 image_url: ImageUrl {
                                     url: image.to_base64_url(),
                                 },
@@ -483,7 +509,7 @@ fn into_copilot_chat(
 
                 if !content_parts.is_empty() {
                     messages.push(ChatMessage::User {
-                        content: content_parts,
+                        content: content_parts.into(),
                     });
                 }
             }
@@ -523,9 +549,9 @@ fn into_copilot_chat(
 
                 messages.push(ChatMessage::Assistant {
                     content: if text_content.is_empty() {
-                        None
+                        ChatMessageContent::empty()
                     } else {
-                        Some(text_content)
+                        text_content.into()
                     },
                     tool_calls,
                 });
