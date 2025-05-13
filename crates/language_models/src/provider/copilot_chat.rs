@@ -5,7 +5,7 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use copilot::copilot_chat::{
-    ChatMessage, CopilotChat, Model as CopilotChatModel, ModelVendor,
+    ChatMessage, ChatMessageContent, CopilotChat, ImageUrl, Model as CopilotChatModel, ModelVendor,
     Request as CopilotChatRequest, ResponseEvent, Tool, ToolCall,
 };
 use copilot::{Copilot, Status};
@@ -264,7 +264,7 @@ impl LanguageModel for CopilotChatLanguageModel {
             }
         }
 
-        let copilot_request = match self.to_copilot_chat_request(request) {
+        let copilot_request = match into_copilot_chat(&self.model, request) {
             Ok(request) => request,
             Err(err) => return futures::future::ready(Err(err)).boxed(),
         };
@@ -423,136 +423,161 @@ pub fn map_to_language_model_completion_events(
     .flat_map(futures::stream::iter)
 }
 
-impl CopilotChatLanguageModel {
-    pub fn to_copilot_chat_request(
-        &self,
-        request: LanguageModelRequest,
-    ) -> Result<CopilotChatRequest> {
-        let mut request_messages: Vec<LanguageModelRequestMessage> = Vec::new();
-        for message in request.messages {
-            if let Some(last_message) = request_messages.last_mut() {
-                if last_message.role == message.role {
-                    last_message.content.extend(message.content);
-                } else {
-                    request_messages.push(message);
-                }
+fn into_copilot_chat(
+    model: &copilot::copilot_chat::Model,
+    request: LanguageModelRequest,
+) -> Result<CopilotChatRequest> {
+    let mut request_messages: Vec<LanguageModelRequestMessage> = Vec::new();
+    for message in request.messages {
+        if let Some(last_message) = request_messages.last_mut() {
+            if last_message.role == message.role {
+                last_message.content.extend(message.content);
             } else {
                 request_messages.push(message);
             }
+        } else {
+            request_messages.push(message);
         }
+    }
 
-        let mut tool_called = false;
-        let mut messages: Vec<ChatMessage> = Vec::new();
-        for message in request_messages {
-            let text_content = {
-                let mut buffer = String::new();
-                for string in message.content.iter().filter_map(|content| match content {
-                    MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
-                        Some(text.as_str())
-                    }
-                    MessageContent::ToolUse(_)
-                    | MessageContent::RedactedThinking(_)
-                    | MessageContent::ToolResult(_)
-                    | MessageContent::Image(_) => None,
-                }) {
-                    buffer.push_str(string);
-                }
-
-                buffer
-            };
-
-            match message.role {
-                Role::User => {
-                    for content in &message.content {
-                        if let MessageContent::ToolResult(tool_result) = content {
-                            messages.push(ChatMessage::Tool {
-                                tool_call_id: tool_result.tool_use_id.to_string(),
-                                content: tool_result.content.to_string(),
-                            });
-                        }
-                    }
-
-                    if !text_content.is_empty() {
-                        messages.push(ChatMessage::User {
-                            content: text_content,
+    let mut tool_called = false;
+    let mut messages: Vec<ChatMessage> = Vec::new();
+    for message in request_messages {
+        match message.role {
+            Role::User => {
+                for content in &message.content {
+                    if let MessageContent::ToolResult(tool_result) = content {
+                        messages.push(ChatMessage::Tool {
+                            tool_call_id: tool_result.tool_use_id.to_string(),
+                            content: tool_result.content.to_string(),
                         });
                     }
                 }
-                Role::Assistant => {
-                    let mut tool_calls = Vec::new();
-                    for content in &message.content {
-                        if let MessageContent::ToolUse(tool_use) = content {
-                            tool_called = true;
-                            tool_calls.push(ToolCall {
-                                id: tool_use.id.to_string(),
-                                content: copilot::copilot_chat::ToolCallContent::Function {
-                                    function: copilot::copilot_chat::FunctionContent {
-                                        name: tool_use.name.to_string(),
-                                        arguments: serde_json::to_string(&tool_use.input)?,
-                                    },
+
+                let mut content_parts = Vec::new();
+                for content in &message.content {
+                    match content {
+                        MessageContent::Text(text) | MessageContent::Thinking { text, .. }
+                            if !text.is_empty() =>
+                        {
+                            if let Some(ChatMessageContent::Text { text: text_content }) =
+                                content_parts.last_mut()
+                            {
+                                text_content.push_str(text);
+                            } else {
+                                content_parts.push(ChatMessageContent::Text {
+                                    text: text.to_string(),
+                                });
+                            }
+                        }
+                        MessageContent::Image(image) if model.supports_vision() => {
+                            content_parts.push(ChatMessageContent::Image {
+                                image_url: ImageUrl {
+                                    url: image.to_base64_url(),
                                 },
                             });
                         }
+                        _ => {}
                     }
+                }
 
-                    messages.push(ChatMessage::Assistant {
-                        content: if text_content.is_empty() {
-                            None
-                        } else {
-                            Some(text_content)
-                        },
-                        tool_calls,
+                if !content_parts.is_empty() {
+                    messages.push(ChatMessage::User {
+                        content: content_parts,
                     });
                 }
-                Role::System => messages.push(ChatMessage::System {
-                    content: message.string_contents(),
-                }),
             }
-        }
+            Role::Assistant => {
+                let mut tool_calls = Vec::new();
+                for content in &message.content {
+                    if let MessageContent::ToolUse(tool_use) = content {
+                        tool_called = true;
+                        tool_calls.push(ToolCall {
+                            id: tool_use.id.to_string(),
+                            content: copilot::copilot_chat::ToolCallContent::Function {
+                                function: copilot::copilot_chat::FunctionContent {
+                                    name: tool_use.name.to_string(),
+                                    arguments: serde_json::to_string(&tool_use.input)?,
+                                },
+                            },
+                        });
+                    }
+                }
 
-        let mut tools = request
-            .tools
-            .iter()
-            .map(|tool| Tool::Function {
-                function: copilot::copilot_chat::Function {
-                    name: tool.name.clone(),
-                    description: tool.description.clone(),
-                    parameters: tool.input_schema.clone(),
-                },
-            })
-            .collect::<Vec<_>>();
+                let text_content = {
+                    let mut buffer = String::new();
+                    for string in message.content.iter().filter_map(|content| match content {
+                        MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
+                            Some(text.as_str())
+                        }
+                        MessageContent::ToolUse(_)
+                        | MessageContent::RedactedThinking(_)
+                        | MessageContent::ToolResult(_)
+                        | MessageContent::Image(_) => None,
+                    }) {
+                        buffer.push_str(string);
+                    }
 
-        // The API will return a Bad Request (with no error message) when tools
-        // were used previously in the conversation but no tools are provided as
-        // part of this request. Inserting a dummy tool seems to circumvent this
-        // error.
-        if tool_called && tools.is_empty() {
-            tools.push(Tool::Function {
-                function: copilot::copilot_chat::Function {
-                    name: "noop".to_string(),
-                    description: "No operation".to_string(),
-                    parameters: serde_json::json!({
-                        "type": "object"
-                    }),
-                },
-            });
-        }
+                    buffer
+                };
 
-        Ok(CopilotChatRequest {
-            intent: true,
-            n: 1,
-            stream: self.model.uses_streaming(),
-            temperature: 0.1,
-            model: self.model.id().to_string(),
-            messages,
-            tools,
-            tool_choice: request.tool_choice.map(|choice| match choice {
-                LanguageModelToolChoice::Auto => copilot::copilot_chat::ToolChoice::Auto,
-                LanguageModelToolChoice::Any => copilot::copilot_chat::ToolChoice::Any,
-                LanguageModelToolChoice::None => copilot::copilot_chat::ToolChoice::None,
+                messages.push(ChatMessage::Assistant {
+                    content: if text_content.is_empty() {
+                        None
+                    } else {
+                        Some(text_content)
+                    },
+                    tool_calls,
+                });
+            }
+            Role::System => messages.push(ChatMessage::System {
+                content: message.string_contents(),
             }),
-        })
+        }
     }
+
+    let mut tools = request
+        .tools
+        .iter()
+        .map(|tool| Tool::Function {
+            function: copilot::copilot_chat::Function {
+                name: tool.name.clone(),
+                description: tool.description.clone(),
+                parameters: tool.input_schema.clone(),
+            },
+        })
+        .collect::<Vec<_>>();
+
+    // The API will return a Bad Request (with no error message) when tools
+    // were used previously in the conversation but no tools are provided as
+    // part of this request. Inserting a dummy tool seems to circumvent this
+    // error.
+    if tool_called && tools.is_empty() {
+        tools.push(Tool::Function {
+            function: copilot::copilot_chat::Function {
+                name: "noop".to_string(),
+                description: "No operation".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object"
+                }),
+            },
+        });
+    }
+
+    Ok(CopilotChatRequest {
+        intent: true,
+        n: 1,
+        stream: model.uses_streaming(),
+        temperature: 0.1,
+        model: model.id().to_string(),
+        messages,
+        tools,
+        tool_choice: request.tool_choice.map(|choice| match choice {
+            LanguageModelToolChoice::Auto => copilot::copilot_chat::ToolChoice::Auto,
+            LanguageModelToolChoice::Any => copilot::copilot_chat::ToolChoice::Any,
+            LanguageModelToolChoice::None => copilot::copilot_chat::ToolChoice::None,
+        }),
+    })
 }
 
 struct ConfigurationView {

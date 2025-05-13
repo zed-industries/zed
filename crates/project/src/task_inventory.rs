@@ -230,9 +230,9 @@ impl Inventory {
         }
     }
 
-    pub fn list_debug_scenarios<'a>(
+    pub fn list_debug_scenarios(
         &self,
-        task_contexts: &'a TaskContexts,
+        task_contexts: &TaskContexts,
         cx: &mut App,
     ) -> (Vec<DebugScenario>, Vec<(TaskSourceKind, DebugScenario)>) {
         let mut scenarios = Vec::new();

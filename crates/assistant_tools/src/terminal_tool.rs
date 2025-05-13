@@ -131,8 +131,12 @@ impl Tool for TerminalTool {
             Err(err) => return Task::ready(Err(err)).into(),
         };
         let program = self.determine_shell.clone();
-        let command = format!("({}) </dev/null", input.command);
-        let args = vec!["-c".into(), command.clone()];
+        let command = if cfg!(windows) {
+            format!("$null | & {{{}}}", input.command.replace("\"", "'"))
+        } else {
+            format!("({}) </dev/null", input.command)
+        };
+        let args = vec!["-c".into(), command];
         let cwd = working_dir.clone();
         let env = match &working_dir {
             Some(dir) => project.update(cx, |project, cx| {
