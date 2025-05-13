@@ -475,7 +475,7 @@ pub async fn get_models(client: &dyn HttpClient, api_url: &str) -> Result<Vec<Mo
     // Fetch base models and coding models in parallel
     let (base_models_result, coding_models_result) = join!(
         fetch_models(client, api_url, None),
-        // this is intentional and put make it convenient to figure out which models to put on top of the list as openrouter supports mopre than 300 nmodels.
+        // this is intentional and put make it convenient to figure out which models to put on top of the list as openrouter supports more than 300 nmodels.
         fetch_models(client, api_url, Some("category=programming"))
     );
 
