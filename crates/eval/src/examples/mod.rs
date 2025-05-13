@@ -68,7 +68,7 @@ impl DeclarativeExample {
 
         let existing_thread_json = if let Some(path) = base.existing_thread_path {
             let content = fs::read_to_string(example_dir.join(&path))
-                .expect(&format!("Failed to read existing thread file: {}", path));
+                .unwrap_or_else(|_| panic!("Failed to read existing thread file: {}", path));
             Some(content)
         } else {
             None

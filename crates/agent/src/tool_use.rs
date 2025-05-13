@@ -115,7 +115,7 @@ impl ToolUseState {
                                         if let Some(card) = tool.deserialize_card(
                                             output,
                                             project.clone(),
-                                            *window,
+                                            window,
                                             cx,
                                         ) {
                                             this.tool_result_cards.insert(tool_use_id, card);
