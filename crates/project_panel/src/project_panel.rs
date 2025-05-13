@@ -415,11 +415,7 @@ impl ProjectPanel {
                 });
             }
 
-            let filename_editor = cx.new(|cx| {
-                let mut editor = Editor::single_line(window, cx);
-                editor.disable_content_offset(cx);
-                editor
-            });
+            let filename_editor = cx.new(|cx| Editor::single_line(window, cx));
 
             cx.subscribe(
                 &filename_editor,
