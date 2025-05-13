@@ -371,7 +371,7 @@ pub struct EditorSettingsContent {
     pub hover_popover_enabled: Option<bool>,
     /// Time to wait before showing the informational hover box
     ///
-    /// Default: 350
+    /// Default: 300
     pub hover_popover_delay: Option<u64>,
     /// Toolbar related settings
     pub toolbar: Option<ToolbarContent>,
