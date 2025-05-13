@@ -4143,6 +4143,7 @@ dependencies = [
  "dap",
  "extension",
  "gpui",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -18032,7 +18033,6 @@ dependencies = [
  "aho-corasick",
  "anstream",
  "arrayvec",
- "async-compression",
  "async-std",
  "async-tungstenite",
  "aws-config",

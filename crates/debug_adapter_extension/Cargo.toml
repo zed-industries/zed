@@ -11,6 +11,7 @@ async-trait.workspace = true
 dap.workspace = true
 extension.workspace = true
 gpui.workspace = true
+workspace-hack = { version = "0.1", path = "../../tooling/workspace-hack" }
 
 [lints]
 workspace = true
