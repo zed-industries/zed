@@ -33,7 +33,9 @@ use language_model::{
     LanguageModelRequestMessage, LanguageModelToolUseId, MessageContent, Role, StopReason,
 };
 use markdown::parser::{CodeBlockKind, CodeBlockMetadata};
-use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown};
+use markdown::{
+    HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown, PathWithRange,
+};
 use project::{ProjectEntryId, ProjectItem as _};
 use rope::Point;
 use settings::{Settings as _, SettingsStore, update_settings_file};
@@ -430,49 +432,8 @@ fn render_markdown_code_block(
                         let path_range = path_range.clone();
                         move |_, window, cx| {
                             workspace
-                                .update(cx, {
-                                    |workspace, cx| {
-                                        let Some(project_path) = workspace
-                                            .project()
-                                            .read(cx)
-                                            .find_project_path(&path_range.path, cx)
-                                        else {
-                                            return;
-                                        };
-                                        let Some(target) = path_range.range.as_ref().map(|range| {
-                                            Point::new(
-                                                // Line number is 1-based
-                                                range.start.line.saturating_sub(1),
-                                                range.start.col.unwrap_or(0),
-                                            )
-                                        }) else {
-                                            return;
-                                        };
-                                        let open_task = workspace.open_path(
-                                            project_path,
-                                            None,
-                                            true,
-                                            window,
-                                            cx,
-                                        );
-                                        window
-                                            .spawn(cx, async move |cx| {
-                                                let item = open_task.await?;
-                                                if let Some(active_editor) =
-                                                    item.downcast::<Editor>()
-                                                {
-                                                    active_editor
-                                                        .update_in(cx, |editor, window, cx| {
-                                                            editor.go_to_singleton_buffer_point(
-                                                                target, window, cx,
-                                                            );
-                                                        })
-                                                        .ok();
-                                                }
-                                                anyhow::Ok(())
-                                            })
-                                            .detach_and_log_err(cx);
-                                    }
+                                .update(cx, |workspace, cx| {
+                                    open_path(&path_range, window, workspace, cx)
                                 })
                                 .ok();
                         }
@@ -487,15 +448,10 @@ fn render_markdown_code_block(
         .copied_code_block_ids
         .contains(&(message_id, ix));
 
-    let can_expand = metadata.line_count > MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK;
+    let can_expand = metadata.line_count >= MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK;
 
     let is_expanded = if can_expand {
-        active_thread
-            .read(cx)
-            .expanded_code_blocks
-            .get(&(message_id, ix))
-            .copied()
-            .unwrap_or(false)
+        active_thread.read(cx).is_codeblock_expanded(message_id, ix)
     } else {
         false
     };
@@ -582,11 +538,7 @@ fn render_markdown_code_block(
                             let active_thread = active_thread.clone();
                             move |_event, _window, cx| {
                                 active_thread.update(cx, |this, cx| {
-                                    let is_expanded = this
-                                        .expanded_code_blocks
-                                        .entry((message_id, ix))
-                                        .or_insert(true);
-                                    *is_expanded = !*is_expanded;
+                                    this.toggle_codeblock_expanded(message_id, ix);
                                     cx.notify();
                                 });
                             }
@@ -605,6 +557,45 @@ fn render_markdown_code_block(
         .bg(cx.theme().colors().editor_background)
         .child(codeblock_header)
         .when(can_expand && !is_expanded, |this| this.max_h_80())
+}
+
+fn open_path(
+    path_range: &PathWithRange,
+    window: &mut Window,
+    workspace: &mut Workspace,
+    cx: &mut Context<'_, Workspace>,
+) {
+    let Some(project_path) = workspace
+        .project()
+        .read(cx)
+        .find_project_path(&path_range.path, cx)
+    else {
+        return; // TODO instead of just bailing out, open that path in a buffer.
+    };
+
+    let Some(target) = path_range.range.as_ref().map(|range| {
+        Point::new(
+            // Line number is 1-based
+            range.start.line.saturating_sub(1),
+            range.start.col.unwrap_or(0),
+        )
+    }) else {
+        return;
+    };
+    let open_task = workspace.open_path(project_path, None, true, window, cx);
+    window
+        .spawn(cx, async move |cx| {
+            let item = open_task.await?;
+            if let Some(active_editor) = item.downcast::<Editor>() {
+                active_editor
+                    .update_in(cx, |editor, window, cx| {
+                        editor.go_to_singleton_buffer_point(target, window, cx);
+                    })
+                    .ok();
+            }
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
 }
 
 fn render_code_language(
@@ -2356,17 +2347,14 @@ impl ActiveThread {
 
                                             move |el, range, metadata, _, cx| {
                                                 let can_expand = metadata.line_count
-                                                    > MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK;
+                                                    >= MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK;
                                                 if !can_expand {
                                                     return el;
                                                 }
 
                                                 let is_expanded = active_thread
                                                     .read(cx)
-                                                    .expanded_code_blocks
-                                                    .get(&(message_id, range.start))
-                                                    .copied()
-                                                    .unwrap_or(false);
+                                                    .is_codeblock_expanded(message_id, range.start);
                                                 if is_expanded {
                                                     return el;
                                                 }
@@ -3383,6 +3371,21 @@ impl ActiveThread {
                 })
                 .log_err();
         }))
+    }
+
+    pub fn is_codeblock_expanded(&self, message_id: MessageId, ix: usize) -> bool {
+        self.expanded_code_blocks
+            .get(&(message_id, ix))
+            .copied()
+            .unwrap_or(false)
+    }
+
+    pub fn toggle_codeblock_expanded(&mut self, message_id: MessageId, ix: usize) {
+        let is_expanded = self
+            .expanded_code_blocks
+            .entry((message_id, ix))
+            .or_insert(false);
+        *is_expanded = !*is_expanded;
     }
 }
 

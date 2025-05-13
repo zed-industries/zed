@@ -21,8 +21,25 @@ Want to try it for yourself? Here are some MCP servers available as Zed extensio
 
 Browse all available MCP extensions either on [Zed's website](https://zed.dev/extensions?filter=context-servers) or directly in Zed via the `zed: extensions` action in the Command Palette.
 
+If there's an existing MCP server you'd like to bring to Zed, check out the [context server extension docs](../extensions/context-servers.md) for how to make it available as an extension.
+
 ## Bring your own context server
 
-If there's an existing MCP server you'd like to bring to Zed, check out the [context server extension docs](../extensions/context-servers.md) for how to make it available as an extension.
+You can bring your own context server by adding something like this to your settings:
+
+```json
+{
+  "context_servers": {
+    "some-context-server": {
+      "command": {
+        "path": "some-command",
+        "args": ["arg-1", "arg-2"],
+        "env": {}
+      }
+      "settings": {}
+    }
+  }
+}
+```
 
 If you are interested in building your own MCP server, check out the [Model Context Protocol docs](https://modelcontextprotocol.io/introduction#get-started-with-mcp) to get started.

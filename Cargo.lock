@@ -3309,6 +3309,7 @@ dependencies = [
  "http_client",
  "indoc",
  "inline_completion",
+ "itertools 0.14.0",
  "language",
  "log",
  "lsp",
@@ -3318,11 +3319,9 @@ dependencies = [
  "paths",
  "project",
  "rpc",
- "schemars",
  "serde",
  "serde_json",
  "settings",
- "strum 0.27.1",
  "task",
  "theme",
  "ui",
@@ -4168,6 +4167,7 @@ dependencies = [
  "editor",
  "env_logger 0.11.8",
  "feature_flags",
+ "file_icons",
  "futures 0.3.31",
  "fuzzy",
  "gpui",
@@ -4183,6 +4183,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "shlex",
  "sysinfo",
  "task",
  "tasks_ui",
@@ -7225,7 +7226,6 @@ dependencies = [
  "lsp",
  "paths",
  "project",
- "proto",
  "regex",
  "serde_json",
  "settings",
@@ -7233,7 +7233,6 @@ dependencies = [
  "telemetry",
  "theme",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
  "zed_actions",
@@ -10039,7 +10038,7 @@ name = "perplexity"
 version = "0.1.0"
 dependencies = [
  "serde",
- "zed_extension_api 0.5.0",
+ "zed_extension_api 0.6.0",
 ]
 
 [[package]]
@@ -18697,7 +18696,7 @@ dependencies = [
 
 [[package]]
 name = "zed_extension_api"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -18757,7 +18756,7 @@ dependencies = [
 name = "zed_test_extension"
 version = "0.1.0"
 dependencies = [
- "zed_extension_api 0.5.0",
+ "zed_extension_api 0.6.0",
 ]
 
 [[package]]

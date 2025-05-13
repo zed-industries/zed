@@ -2,8 +2,9 @@ use crate::persistence::DebuggerPaneItem;
 use crate::session::DebugSession;
 use crate::{
     ClearAllBreakpoints, Continue, Detach, FocusBreakpointList, FocusConsole, FocusFrames,
-    FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, Pause, Restart, StepBack,
-    StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints, persistence,
+    FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, Pause, Restart,
+    ShowStackTrace, StepBack, StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints,
+    persistence,
 };
 use anyhow::{Result, anyhow};
 use command_palette_hooks::CommandPaletteFilter;
@@ -22,7 +23,7 @@ use gpui::{
 
 use language::Buffer;
 use project::debugger::session::{Session, SessionStateEvent};
-use project::{Fs, WorktreeId};
+use project::{Fs, ProjectPath, WorktreeId};
 use project::{Project, debugger::session::ThreadStatus};
 use rpc::proto::{self};
 use settings::Settings;
@@ -67,11 +68,7 @@ pub struct DebugPanel {
 }
 
 impl DebugPanel {
-    pub fn new(
-        workspace: &Workspace,
-        _window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) -> Entity<Self> {
+    pub fn new(workspace: &Workspace, cx: &mut Context<Workspace>) -> Entity<Self> {
         cx.new(|cx| {
             let project = workspace.project().clone();
 
@@ -119,6 +116,7 @@ impl DebugPanel {
             TypeId::of::<StepOver>(),
             TypeId::of::<StepInto>(),
             TypeId::of::<StepOut>(),
+            TypeId::of::<ShowStackTrace>(),
             TypeId::of::<editor::actions::DebuggerRunToCursor>(),
             TypeId::of::<editor::actions::DebuggerEvaluateSelectedText>(),
         ];
@@ -170,8 +168,8 @@ impl DebugPanel {
         cx: &mut AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(async move |cx| {
-            workspace.update_in(cx, |workspace, window, cx| {
-                let debug_panel = DebugPanel::new(workspace, window, cx);
+            workspace.update(cx, |workspace, cx| {
+                let debug_panel = DebugPanel::new(workspace, cx);
 
                 workspace.register_action(|workspace, _: &ClearAllBreakpoints, _, cx| {
                     workspace.project().read(cx).breakpoint_store().update(
@@ -218,6 +216,18 @@ impl DebugPanel {
                 cx,
             )
         });
+        if let Some(inventory) = self
+            .project
+            .read(cx)
+            .task_store()
+            .read(cx)
+            .task_inventory()
+            .cloned()
+        {
+            inventory.update(cx, |inventory, _| {
+                inventory.scenario_scheduled(scenario.clone());
+            })
+        }
         let task = cx.spawn_in(window, {
             let session = session.clone();
             async move |this, cx| {
@@ -409,6 +419,7 @@ impl DebugPanel {
     pub fn active_session(&self) -> Option<Entity<DebugSession>> {
         self.active_session.clone()
     }
+
     fn close_session(&mut self, entity_id: EntityId, window: &mut Window, cx: &mut Context<Self>) {
         let Some(session) = self
             .sessions
@@ -987,7 +998,7 @@ impl DebugPanel {
                 this.go_to_selected_stack_frame(window, cx);
             });
         });
-        self.active_session = Some(session_item);
+        self.active_session = Some(session_item.clone());
         cx.notify();
     }
 
@@ -997,7 +1008,7 @@ impl DebugPanel {
         worktree_id: WorktreeId,
         window: &mut Window,
         cx: &mut App,
-    ) -> Task<Result<()>> {
+    ) -> Task<Result<ProjectPath>> {
         self.workspace
             .update(cx, |workspace, cx| {
                 let Some(mut path) = workspace.absolute_path_of_worktree(worktree_id, cx) else {
@@ -1006,13 +1017,19 @@ impl DebugPanel {
 
                 let serialized_scenario = serde_json::to_value(scenario);
 
-                path.push(paths::local_debug_file_relative_path());
-
                 cx.spawn_in(window, async move |workspace, cx| {
                     let serialized_scenario = serialized_scenario?;
-                    let path = path.as_path();
                     let fs =
                         workspace.update(cx, |workspace, _| workspace.app_state().fs.clone())?;
+
+                    path.push(paths::local_settings_folder_relative_path());
+                    if !fs.is_dir(path.as_path()).await {
+                        fs.create_dir(path.as_path()).await?;
+                    }
+                    path.pop();
+
+                    path.push(paths::local_debug_file_relative_path());
+                    let path = path.as_path();
 
                     if !fs.is_file(path).await {
                         let content =
@@ -1034,21 +1051,19 @@ impl DebugPanel {
                         .await?;
                     }
 
-                    workspace.update_in(cx, |workspace, window, cx| {
+                    workspace.update(cx, |workspace, cx| {
                         if let Some(project_path) = workspace
                             .project()
                             .read(cx)
                             .project_path_for_absolute_path(&path, cx)
                         {
-                            workspace.open_path(project_path, None, true, window, cx)
+                            Ok(project_path)
                         } else {
-                            Task::ready(Err(anyhow!(
+                            Err(anyhow!(
                                 "Couldn't get project path for .zed/debug.json in active worktree"
-                            )))
+                            ))
                         }
-                    })?.await?;
-
-                    anyhow::Ok(())
+                    })?
                 })
             })
             .unwrap_or_else(|err| Task::ready(Err(err)))
@@ -1115,7 +1130,7 @@ impl Panel for DebugPanel {
     }
 
     fn set_size(&mut self, size: Option<Pixels>, _window: &mut Window, _cx: &mut Context<Self>) {
-        self.size = size.unwrap();
+        self.size = size.unwrap_or(px(300.));
     }
 
     fn remote_id() -> Option<proto::PanelId> {

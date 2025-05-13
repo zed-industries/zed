@@ -1238,12 +1238,12 @@ impl Render for LspLogToolbarItemView {
             }
         });
         let available_language_servers: Vec<_> = menu_rows
-            .iter()
+            .into_iter()
             .map(|row| {
                 (
                     row.server_id,
-                    row.server_name.clone(),
-                    row.worktree_root_name.clone(),
+                    row.server_name,
+                    row.worktree_root_name,
                     row.selected_entry,
                 )
             })

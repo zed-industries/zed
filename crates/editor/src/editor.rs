@@ -289,6 +289,7 @@ impl InlayId {
 }
 
 pub enum ActiveDebugLine {}
+pub enum DebugStackFrameLine {}
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
 enum InputComposition {}
@@ -5331,9 +5332,9 @@ impl Editor {
                                                     .map(SharedString::from)
                                             })?;
 
-                                    dap_store.update(cx, |this, cx| {
+                                    dap_store.update(cx, |dap_store, cx| {
                                         for (_, task) in &resolved_tasks.templates {
-                                            if let Some(scenario) = this
+                                            if let Some(scenario) = dap_store
                                                 .debug_scenario_for_build_task(
                                                     task.original_task().clone(),
                                                     debug_adapter.clone().into(),
@@ -5758,10 +5759,22 @@ impl Editor {
         let cursor_position = newest_selection.head();
         let (cursor_buffer, cursor_buffer_position) =
             buffer.text_anchor_for_position(cursor_position, cx)?;
-        let (tail_buffer, _) = buffer.text_anchor_for_position(newest_selection.tail(), cx)?;
+        let (tail_buffer, tail_buffer_position) =
+            buffer.text_anchor_for_position(newest_selection.tail(), cx)?;
         if cursor_buffer != tail_buffer {
             return None;
         }
+
+        let snapshot = cursor_buffer.read(cx).snapshot();
+        let (start_word_range, _) = snapshot.surrounding_word(cursor_buffer_position);
+        let (end_word_range, _) = snapshot.surrounding_word(tail_buffer_position);
+        if start_word_range != end_word_range {
+            self.document_highlights_task.take();
+            self.clear_background_highlights::<DocumentHighlightRead>(cx);
+            self.clear_background_highlights::<DocumentHighlightWrite>(cx);
+            return None;
+        }
+
         let debounce = EditorSettings::get_global(cx).lsp_highlight_debounce;
         self.document_highlights_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor()
@@ -13868,7 +13881,10 @@ impl Editor {
             Default::default(),
             cx,
         );
-        self.request_autoscroll(Autoscroll::center().for_anchor(start), cx);
+
+        if self.buffer.read(cx).is_singleton() {
+            self.request_autoscroll(Autoscroll::center().for_anchor(start), cx);
+        }
     }
 
     pub fn go_to_definition(
@@ -16874,6 +16890,7 @@ impl Editor {
 
                 handled = true;
                 self.clear_row_highlights::<ActiveDebugLine>();
+
                 self.go_to_line::<ActiveDebugLine>(
                     multibuffer_anchor,
                     Some(cx.theme().colors().editor_debugger_active_line_background),
@@ -17888,9 +17905,7 @@ impl Editor {
         let Some(project) = self.project.clone() else {
             return;
         };
-        let Some(buffer) = self.buffer.read(cx).as_singleton() else {
-            return;
-        };
+
         if !self.inline_value_cache.enabled {
             let inlays = std::mem::take(&mut self.inline_value_cache.inlays);
             self.splice_inlays(&inlays, Vec::new(), cx);
@@ -17908,15 +17923,24 @@ impl Editor {
                 .ok()?;
 
             let inline_values = editor
-                .update(cx, |_, cx| {
+                .update(cx, |editor, cx| {
                     let Some(current_execution_position) = current_execution_position else {
                         return Some(Task::ready(Ok(Vec::new())));
                     };
 
-                    // todo(debugger) when introducing multi buffer inline values check execution position's buffer id to make sure the text
-                    // anchor is in the same buffer
+                    let buffer = editor.buffer.read_with(cx, |buffer, cx| {
+                        let snapshot = buffer.snapshot(cx);
+
+                        let excerpt = snapshot.excerpt_containing(
+                            current_execution_position..current_execution_position,
+                        )?;
+
+                        editor.buffer.read(cx).buffer(excerpt.buffer_id())
+                    })?;
+
                     let range =
                         buffer.read(cx).anchor_before(0)..current_execution_position.text_anchor;
+
                     project.inline_values(buffer, range, cx)
                 })
                 .ok()
@@ -19860,9 +19884,15 @@ fn snippet_completions(
                             filter_range: 0..matching_prefix.len(),
                         },
                         icon_path: None,
-                        documentation: snippet.description.clone().map(|description| {
-                            CompletionDocumentation::SingleLine(description.into())
-                        }),
+                        documentation: Some(
+                            CompletionDocumentation::SingleLineAndMultiLinePlainText {
+                                single_line: snippet.name.clone().into(),
+                                plain_text: snippet
+                                    .description
+                                    .clone()
+                                    .map(|description| description.into()),
+                            },
+                        ),
                         insert_text_mode: None,
                         confirm: None,
                     })

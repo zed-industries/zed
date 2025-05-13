@@ -22,7 +22,7 @@ use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
-    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent,
+    LanguageModelToolResultContent, LanguageModelToolUseId, MessageContent,
     ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role, SelectedModel,
     StopReason, TokenUsage,
 };
@@ -880,7 +880,13 @@ impl Thread {
     }
 
     pub fn output_for_tool(&self, id: &LanguageModelToolUseId) -> Option<&Arc<str>> {
-        Some(&self.tool_use.tool_result(id)?.content)
+        match &self.tool_use.tool_result(id)?.content {
+            LanguageModelToolResultContent::Text(str) => Some(str),
+            LanguageModelToolResultContent::Image(_) => {
+                // TODO: We should display image
+                None
+            }
+        }
     }
 
     pub fn card_for_tool(&self, id: &LanguageModelToolUseId) -> Option<AnyToolCard> {
@@ -1682,10 +1688,6 @@ impl Thread {
 
                             if error.is::<PaymentRequiredError>() {
                                 cx.emit(ThreadEvent::ShowError(ThreadError::PaymentRequired));
-                            } else if error.is::<MaxMonthlySpendReachedError>() {
-                                cx.emit(ThreadEvent::ShowError(
-                                    ThreadError::MaxMonthlySpendReached,
-                                ));
                             } else if let Some(error) =
                                 error.downcast_ref::<ModelRequestLimitReachedError>()
                             {
@@ -2241,7 +2243,7 @@ impl Thread {
             .read(cx)
             .enabled_tools(cx)
             .iter()
-            .map(|tool| tool.name().to_string())
+            .map(|tool| tool.name())
             .collect();
 
         self.message_feedback.insert(message_id, feedback);
@@ -2502,7 +2504,15 @@ impl Thread {
                 }
 
                 writeln!(markdown, "**\n")?;
-                writeln!(markdown, "{}", tool_result.content)?;
+                match &tool_result.content {
+                    LanguageModelToolResultContent::Text(str) => {
+                        writeln!(markdown, "{}", str)?;
+                    }
+                    LanguageModelToolResultContent::Image(image) => {
+                        writeln!(markdown, "![Image](data:base64,{})", image.source)?;
+                    }
+                }
+
                 if let Some(output) = tool_result.output.as_ref() {
                     writeln!(
                         markdown,
@@ -2692,8 +2702,6 @@ impl Thread {
 pub enum ThreadError {
     #[error("Payment required")]
     PaymentRequired,
-    #[error("Max monthly spend reached")]
-    MaxMonthlySpendReached,
     #[error("Model request limit reached")]
     ModelRequestLimitReached { plan: Plan },
     #[error("Message {header}: {message}")]

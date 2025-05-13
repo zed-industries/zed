@@ -158,7 +158,6 @@ impl<'a> Matcher<'a> {
         if score <= 0.0 {
             return 0.0;
         }
-
         let path_len = prefix.len() + path.len();
         let mut cur_start = 0;
         let mut byte_ix = 0;
@@ -173,8 +172,17 @@ impl<'a> Matcher<'a> {
                 byte_ix += ch.len_utf8();
                 char_ix += 1;
             }
-            cur_start = match_char_ix + 1;
+
             self.match_positions[i] = byte_ix;
+
+            let matched_ch = prefix
+                .get(match_char_ix)
+                .or_else(|| path.get(match_char_ix - prefix.len()))
+                .unwrap();
+            byte_ix += matched_ch.len_utf8();
+
+            cur_start = match_char_ix + 1;
+            char_ix = match_char_ix + 1;
         }
 
         score
@@ -209,8 +217,11 @@ impl<'a> Matcher<'a> {
         let query_char = self.lowercase_query[query_idx];
         let limit = self.last_positions[query_idx];
 
+        let max_valid_index = (prefix.len() + path_lowercased.len()).saturating_sub(1);
+        let safe_limit = limit.min(max_valid_index);
+
         let mut last_slash = 0;
-        for j in path_idx..=limit {
+        for j in path_idx..=safe_limit {
             let extra_lowercase_chars_count = extra_lowercase_chars
                 .iter()
                 .take_while(|(i, _)| i < &&j)
@@ -218,10 +229,15 @@ impl<'a> Matcher<'a> {
                 .sum::<usize>();
             let j_regular = j - extra_lowercase_chars_count;
 
-            let path_char = if j_regular < prefix.len() {
+            let path_char = if j < prefix.len() {
                 lowercase_prefix[j]
             } else {
-                path_lowercased[j - prefix.len()]
+                let path_index = j - prefix.len();
+                if path_index < path_lowercased.len() {
+                    path_lowercased[path_index]
+                } else {
+                    continue;
+                }
             };
             let is_path_sep = path_char == MAIN_SEPARATOR;
 
@@ -487,6 +503,89 @@ mod tests {
                 ("αβγδ/bcde", vec![10, 11, 12]),
                 ("c1️⃣2️⃣3️⃣/d4️⃣5️⃣6️⃣/e7️⃣8️⃣9️⃣/f", vec![0, 23, 46]),
             ]
+        );
+    }
+
+    #[test]
+    fn match_unicode_path_entries() {
+        let mixed_unicode_paths = vec![
+            "İolu/oluş",
+            "İstanbul/code",
+            "Athens/Şanlıurfa",
+            "Çanakkale/scripts",
+            "paris/Düzce_İl",
+            "Berlin_Önemli_Ğündem",
+            "KİTAPLIK/london/dosya",
+            "tokyo/kyoto/fuji",
+            "new_york/san_francisco",
+        ];
+
+        assert_eq!(
+            match_single_path_query("İo/oluş", false, &mixed_unicode_paths),
+            vec![("İolu/oluş", vec![0, 2, 4, 6, 8, 10, 12])]
+        );
+
+        assert_eq!(
+            match_single_path_query("İst/code", false, &mixed_unicode_paths),
+            vec![("İstanbul/code", vec![0, 2, 4, 6, 8, 10, 12, 14])]
+        );
+
+        assert_eq!(
+            match_single_path_query("athens/şa", false, &mixed_unicode_paths),
+            vec![("Athens/Şanlıurfa", vec![0, 1, 2, 3, 4, 5, 6, 7, 9])]
+        );
+
+        assert_eq!(
+            match_single_path_query("BerlinÖĞ", false, &mixed_unicode_paths),
+            vec![("Berlin_Önemli_Ğündem", vec![0, 1, 2, 3, 4, 5, 7, 15])]
+        );
+
+        assert_eq!(
+            match_single_path_query("tokyo/fuji", false, &mixed_unicode_paths),
+            vec![("tokyo/kyoto/fuji", vec![0, 1, 2, 3, 4, 5, 12, 13, 14, 15])]
+        );
+
+        let mixed_script_paths = vec![
+            "résumé_Москва",
+            "naïve_київ_implementation",
+            "café_北京_app",
+            "東京_über_driver",
+            "déjà_vu_cairo",
+            "seoul_piñata_game",
+            "voilà_istanbul_result",
+        ];
+
+        assert_eq!(
+            match_single_path_query("résmé", false, &mixed_script_paths),
+            vec![("résumé_Москва", vec![0, 1, 3, 5, 6])]
+        );
+
+        assert_eq!(
+            match_single_path_query("café北京", false, &mixed_script_paths),
+            vec![("café_北京_app", vec![0, 1, 2, 3, 6, 9])]
+        );
+
+        assert_eq!(
+            match_single_path_query("ista", false, &mixed_script_paths),
+            vec![("voilà_istanbul_result", vec![7, 8, 9, 10])]
+        );
+
+        let complex_paths = vec![
+            "document_📚_library",
+            "project_👨‍👩‍👧‍👦_family",
+            "flags_🇯🇵🇺🇸🇪🇺_world",
+            "code_😀😃😄😁_happy",
+            "photo_👩‍👩‍👧‍👦_album",
+        ];
+
+        assert_eq!(
+            match_single_path_query("doc📚lib", false, &complex_paths),
+            vec![("document_📚_library", vec![0, 1, 2, 9, 14, 15, 16])]
+        );
+
+        assert_eq!(
+            match_single_path_query("codehappy", false, &complex_paths),
+            vec![("code_😀😃😄😁_happy", vec![0, 1, 2, 3, 22, 23, 24, 25, 26])]
         );
     }
 

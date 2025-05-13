@@ -15,13 +15,16 @@ use project::debugger::session::{Session, SessionEvent, StackFrame};
 use project::{ProjectItem, ProjectPath};
 use ui::{Scrollbar, ScrollbarState, Tooltip, prelude::*};
 use util::ResultExt;
-use workspace::Workspace;
+use workspace::{ItemHandle, Workspace};
+
+use crate::StackTraceView;
 
 use super::RunningState;
 
 #[derive(Debug)]
 pub enum StackFrameListEvent {
     SelectedStackFrameChanged(StackFrameId),
+    BuiltEntries,
 }
 
 pub struct StackFrameList {
@@ -101,13 +104,18 @@ impl StackFrameList {
         &self.entries
     }
 
-    #[cfg(test)]
-    pub(crate) fn flatten_entries(&self) -> Vec<dap::StackFrame> {
+    pub(crate) fn flatten_entries(&self, show_collapsed: bool) -> Vec<dap::StackFrame> {
         self.entries
             .iter()
             .flat_map(|frame| match frame {
                 StackFrameEntry::Normal(frame) => vec![frame.clone()],
-                StackFrameEntry::Collapsed(frames) => frames.clone(),
+                StackFrameEntry::Collapsed(frames) => {
+                    if show_collapsed {
+                        frames.clone()
+                    } else {
+                        vec![]
+                    }
+                }
             })
             .collect::<Vec<_>>()
     }
@@ -134,6 +142,25 @@ impl StackFrameList {
 
     pub fn selected_stack_frame_id(&self) -> Option<StackFrameId> {
         self.selected_stack_frame_id
+    }
+
+    pub(crate) fn select_stack_frame_id(
+        &mut self,
+        id: StackFrameId,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.entries.iter().any(|entry| match entry {
+            StackFrameEntry::Normal(entry) => entry.id == id,
+            StackFrameEntry::Collapsed(stack_frames) => {
+                stack_frames.iter().any(|frame| frame.id == id)
+            }
+        }) {
+            return;
+        }
+
+        self.selected_stack_frame_id = Some(id);
+        self.go_to_selected_stack_frame(window, cx);
     }
 
     pub(super) fn schedule_refresh(
@@ -206,6 +233,7 @@ impl StackFrameList {
                 .detach_and_log_err(cx);
         }
 
+        cx.emit(StackFrameListEvent::BuiltEntries);
         cx.notify();
     }
 
@@ -255,7 +283,7 @@ impl StackFrameList {
 
         let row = (stack_frame.line.saturating_sub(1)) as u32;
 
-        let Some(abs_path) = self.abs_path_from_stack_frame(&stack_frame) else {
+        let Some(abs_path) = Self::abs_path_from_stack_frame(&stack_frame) else {
             return Task::ready(Err(anyhow!("Project path not found")));
         };
 
@@ -294,12 +322,22 @@ impl StackFrameList {
                     let project_path = buffer.read(cx).project_path(cx).ok_or_else(|| {
                         anyhow!("Could not select a stack frame for unnamed buffer")
                     })?;
+
+                    let open_preview = !workspace
+                        .item_of_type::<StackTraceView>(cx)
+                        .map(|viewer| {
+                            workspace
+                                .active_item(cx)
+                                .is_some_and(|item| item.item_id() == viewer.item_id())
+                        })
+                        .unwrap_or_default();
+
                     anyhow::Ok(workspace.open_path_preview(
                         project_path,
                         None,
-                        false,
                         true,
                         true,
+                        open_preview,
                         window,
                         cx,
                     ))
@@ -332,7 +370,7 @@ impl StackFrameList {
         })
     }
 
-    fn abs_path_from_stack_frame(&self, stack_frame: &dap::StackFrame) -> Option<Arc<Path>> {
+    pub(crate) fn abs_path_from_stack_frame(stack_frame: &dap::StackFrame) -> Option<Arc<Path>> {
         stack_frame.source.as_ref().and_then(|s| {
             s.path
                 .as_deref()

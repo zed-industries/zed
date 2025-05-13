@@ -36,6 +36,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 pub struct ProjectSettings {
     /// Configuration for language servers.
     ///
@@ -119,11 +120,15 @@ pub enum DirenvSettings {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct DiagnosticsSettings {
-    /// Whether or not to include warning diagnostics
-    #[serde(default = "true_value")]
+    /// Whether to show the project diagnostics button in the status bar.
+    #[serde(default = "default_true")]
+    pub button: bool,
+
+    /// Whether or not to include warning diagnostics.
+    #[serde(default = "default_true")]
     pub include_warnings: bool,
 
-    /// Settings for showing inline diagnostics
+    /// Settings for showing inline diagnostics.
     #[serde(default)]
     pub inline: InlineDiagnosticsSettings,
 
@@ -304,7 +309,7 @@ pub struct InlineBlameSettings {
     /// the currently focused line.
     ///
     /// Default: true
-    #[serde(default = "true_value")]
+    #[serde(default = "default_true")]
     pub enabled: bool,
     /// Whether to only show the inline blame information
     /// after a delay once the cursor stops moving.
@@ -320,10 +325,6 @@ pub struct InlineBlameSettings {
     /// Default: false
     #[serde(default)]
     pub show_commit_summary: bool,
-}
-
-const fn true_value() -> bool {
-    true
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]

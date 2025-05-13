@@ -1648,6 +1648,12 @@ impl AgentPanel {
                 }),
         );
 
+        let zoom_in_label = if self.is_zoomed(window, cx) {
+            "Zoom Out"
+        } else {
+            "Zoom In"
+        };
+
         let agent_extra_menu = PopoverMenu::new("agent-options-menu")
             .trigger_with_tooltip(
                 IconButton::new("agent-options-menu", IconName::Ellipsis)
@@ -1734,7 +1740,8 @@ impl AgentPanel {
 
                     menu = menu
                         .action("Rules…", Box::new(OpenRulesLibrary::default()))
-                        .action("Settings", Box::new(OpenConfiguration));
+                        .action("Settings", Box::new(OpenConfiguration))
+                        .action(zoom_in_label, Box::new(ToggleZoom));
                     menu
                 }))
             });
@@ -2432,9 +2439,6 @@ impl AgentPanel {
                 .occlude()
                 .child(match last_error {
                     ThreadError::PaymentRequired => self.render_payment_required_error(cx),
-                    ThreadError::MaxMonthlySpendReached => {
-                        self.render_max_monthly_spend_reached_error(cx)
-                    }
                     ThreadError::ModelRequestLimitReached { plan } => {
                         self.render_model_request_limit_reached_error(plan, cx)
                     }
@@ -2481,56 +2485,6 @@ impl AgentPanel {
                             cx.notify();
                         },
                     )))
-                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
-                        |this, _, _, cx| {
-                            this.thread.update(cx, |this, _cx| {
-                                this.clear_last_error();
-                            });
-
-                            cx.notify();
-                        },
-                    ))),
-            )
-            .into_any()
-    }
-
-    fn render_max_monthly_spend_reached_error(&self, cx: &mut Context<Self>) -> AnyElement {
-        const ERROR_MESSAGE: &str = "You have reached your maximum monthly spend. Increase your spend limit to continue using Zed LLMs.";
-
-        v_flex()
-            .gap_0p5()
-            .child(
-                h_flex()
-                    .gap_1p5()
-                    .items_center()
-                    .child(Icon::new(IconName::XCircle).color(Color::Error))
-                    .child(Label::new("Max Monthly Spend Reached").weight(FontWeight::MEDIUM)),
-            )
-            .child(
-                div()
-                    .id("error-message")
-                    .max_h_24()
-                    .overflow_y_scroll()
-                    .child(Label::new(ERROR_MESSAGE)),
-            )
-            .child(
-                h_flex()
-                    .justify_end()
-                    .mt_1()
-                    .gap_1()
-                    .child(self.create_copy_button(ERROR_MESSAGE))
-                    .child(
-                        Button::new("subscribe", "Update Monthly Spend Limit").on_click(
-                            cx.listener(|this, _, _, cx| {
-                                this.thread.update(cx, |this, _cx| {
-                                    this.clear_last_error();
-                                });
-
-                                cx.open_url(&zed_urls::account_url(cx));
-                                cx.notify();
-                            }),
-                        ),
-                    )
                     .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
                         |this, _, _, cx| {
                             this.thread.update(cx, |this, _cx| {
