@@ -251,14 +251,20 @@ impl StackTraceView {
 
         self.editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(window, cx).display_snapshot;
-            let color = cx
-                .theme()
-                .colors()
-                .editor_debugger_active_line_background
-                .opacity(0.5);
+            let first_color = cx.theme().colors().editor_debugger_active_line_background;
 
-            for (_, highlight) in self.highlights.iter().skip(active_idx + 1) {
+            let color = first_color.opacity(0.5);
+
+            let mut is_first = true;
+
+            for (_, highlight) in self.highlights.iter().skip(active_idx) {
                 let position = highlight.to_point(&snapshot.buffer_snapshot);
+                let color = if is_first {
+                    is_first = false;
+                    first_color
+                } else {
+                    color
+                };
 
                 let start = snapshot
                     .buffer_snapshot

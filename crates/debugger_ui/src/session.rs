@@ -1,6 +1,6 @@
 pub mod running;
 
-use std::sync::OnceLock;
+use std::{sync::OnceLock, cell::OnceCell};
 
 use dap::client::SessionId;
 use gpui::{
@@ -23,12 +23,11 @@ pub struct DebugSession {
     remote_id: Option<workspace::ViewId>,
     running_state: Entity<RunningState>,
     label: OnceLock<SharedString>,
-    stack_trace_view: Option<Entity<StackTraceView>>,
+    stack_trace_view: OnceCell<Entity<StackTraceView>>,
     _debug_panel: WeakEntity<DebugPanel>,
     _worktree_store: WeakEntity<WorktreeStore>,
     workspace: WeakEntity<Workspace>,
     _subscriptions: [Subscription; 1],
-    _stack_frame_viewer: Option<Entity<StackTraceView>>,
 }
 
 #[derive(Debug)]
@@ -68,10 +67,9 @@ impl DebugSession {
             running_state,
             label: OnceLock::new(),
             _debug_panel,
-            stack_trace_view: None,
+            stack_trace_view: OnceCell::new(),
             _worktree_store: project.read(cx).worktree_store().downgrade(),
             workspace,
-            _stack_frame_viewer: None,
         })
     }
 
@@ -88,7 +86,7 @@ impl DebugSession {
         let workspace = self.workspace.clone();
         let running_state = self.running_state.clone();
 
-        self.stack_trace_view.get_or_insert_with(|| {
+        self.stack_trace_view.get_or_init(|| {
             let stackframe_list = running_state.read(cx).stack_frame_list().clone();
 
             let stack_frame_view = cx.new(|cx| {
