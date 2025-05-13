@@ -366,13 +366,10 @@ impl Model {
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
             // Models available in APAC
-            (
-                Model::Claude3_5Sonnet
-                | Model::Claude3_5SonnetV2
-                | Model::Claude3Haiku
-                | Model::Claude3Sonnet,
-                "apac",
-            ) => Ok(format!("{}.{}", region_group, model_id)),
+            (Model::Claude3_5Sonnet | Model::Claude3Haiku | Model::Claude3Sonnet, "apac") => {
+                dbg!("{}.{}", region_group, model_id);
+                Ok(format!("{}.{}", region_group, model_id))
+            }
 
             // Any other combination is not supported
             _ => Ok(self.id().into()),
@@ -421,6 +418,10 @@ mod tests {
         // Test Asia-Pacific regions
         assert_eq!(
             Model::Claude3_5SonnetV2.cross_region_inference_id("ap-northeast-1")?,
+            "apac.anthropic.claude-3-5-sonnet-20241022-v2:0"
+        );
+        assert_eq!(
+            Model::Claude3_5SonnetV2.cross_region_inference_id("ap-southeast-2")?,
             "apac.anthropic.claude-3-5-sonnet-20241022-v2:0"
         );
         assert_eq!(

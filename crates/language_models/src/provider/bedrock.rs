@@ -531,13 +531,13 @@ impl LanguageModel for BedrockModel {
     > {
         let Ok(region) = cx.read_entity(&self.state, |state, _cx| {
             // Get region - from credentials or directly from settings
-            let region = state
-                .credentials
-                .as_ref()
-                .map(|s| s.region.clone())
-                .unwrap_or(String::from("us-east-1"));
+            let credentials_region = state.credentials.as_ref().map(|s| s.region.clone());
+            let settings_region = state.settings.as_ref().and_then(|s| s.region.clone());
 
-            region
+            // Use credentials region if available, otherwise use settings region, finally fall back to default
+            credentials_region
+                .or(settings_region)
+                .unwrap_or(String::from("us-east-1"))
         }) else {
             return async move { Err(anyhow!("App State Dropped")) }.boxed();
         };
