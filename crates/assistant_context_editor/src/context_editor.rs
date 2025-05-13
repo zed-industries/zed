@@ -1594,7 +1594,7 @@ impl ContextEditor {
         &mut self,
         cx: &mut Context<Self>,
     ) -> (String, CopyMetadata, Vec<text::Selection<usize>>) {
-        let (selection, creases) = self.editor.update(cx, |editor, cx| {
+        let (mut selection, creases) = self.editor.update(cx, |editor, cx| {
             let mut selection = editor.selections.newest_adjusted(cx);
             let snapshot = editor.buffer().read(cx).snapshot(cx);
 
@@ -1652,7 +1652,18 @@ impl ContextEditor {
             } else if message.offset_range.end >= selection.range().start {
                 let range = cmp::max(message.offset_range.start, selection.range().start)
                     ..cmp::min(message.offset_range.end, selection.range().end);
-                if !range.is_empty() {
+                if range.is_empty() {
+                    let snapshot = context.buffer().read(cx).snapshot();
+                    let point = snapshot.offset_to_point(range.start);
+                    selection.start = snapshot.point_to_offset(Point::new(point.row, 0));
+                    selection.end = snapshot.point_to_offset(cmp::min(
+                        Point::new(point.row + 1, 0),
+                        snapshot.max_point(),
+                    ));
+                    for chunk in context.buffer().read(cx).text_for_range(selection.range()) {
+                        text.push_str(chunk);
+                    }
+                } else {
                     for chunk in context.buffer().read(cx).text_for_range(range) {
                         text.push_str(chunk);
                     }
