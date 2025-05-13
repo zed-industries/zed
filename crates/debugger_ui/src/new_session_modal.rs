@@ -124,7 +124,11 @@ impl NewSessionModal {
                         ),
                     ];
 
-                    let custom_mode = CustomMode::new(None, window, cx);
+                    let active_cwd = task_contexts
+                        .active_context()
+                        .and_then(|context| context.cwd.clone());
+
+                    let custom_mode = CustomMode::new(None, active_cwd, window, cx);
 
                     Self {
                         launch_picker,
@@ -146,7 +150,7 @@ impl NewSessionModal {
         .detach();
     }
 
-    fn render_mode(&self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
+    fn render_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         let dap_menu = self.adapter_drop_down_menu(window, cx);
         match self.mode {
             NewSessionMode::Attach => self.attach_mode.update(cx, |this, cx| {
@@ -257,17 +261,12 @@ impl NewSessionModal {
         })
     }
     fn adapter_drop_down_menu(
-        &self,
+        &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ui::DropdownMenu {
         let workspace = self.workspace.clone();
         let weak = cx.weak_entity();
-        let label = self
-            .debugger
-            .as_ref()
-            .map(|d| d.0.clone())
-            .unwrap_or_else(|| SELECT_DEBUGGER_LABEL.clone());
         let active_buffer_language = self
             .task_contexts
             .active_item_context
@@ -279,10 +278,33 @@ impl NewSessionModal {
             })
             .cloned();
 
+        let mut available_adapters = workspace
+            .update(cx, |_, cx| DapRegistry::global(cx).enumerate_adapters())
+            .unwrap_or_default();
+        if let Some(language) = active_buffer_language {
+            available_adapters.sort_by_key(|adapter| {
+                language
+                    .config()
+                    .debuggers
+                    .get_index_of(adapter.0.as_ref())
+                    .unwrap_or(usize::MAX)
+            });
+        }
+
+        if self.debugger.is_none() {
+            self.debugger = available_adapters.first().cloned();
+        }
+
+        let label = self
+            .debugger
+            .as_ref()
+            .map(|d| d.0.clone())
+            .unwrap_or_else(|| SELECT_DEBUGGER_LABEL.clone());
+
         DropdownMenu::new(
             "dap-adapter-picker",
             label,
-            ContextMenu::build(window, cx, move |mut menu, _, cx| {
+            ContextMenu::build(window, cx, move |mut menu, _, _| {
                 let setter_for_name = |name: DebugAdapterName| {
                     let weak = weak.clone();
                     move |window: &mut Window, cx: &mut App| {
@@ -297,22 +319,10 @@ impl NewSessionModal {
                     }
                 };
 
-                let mut available_adapters = workspace
-                    .update(cx, |_, cx| DapRegistry::global(cx).enumerate_adapters())
-                    .unwrap_or_default();
-                if let Some(language) = active_buffer_language {
-                    available_adapters.sort_by_key(|adapter| {
-                        language
-                            .config()
-                            .debuggers
-                            .get_index_of(adapter.0.as_ref())
-                            .unwrap_or(usize::MAX)
-                    });
-                }
-
                 for adapter in available_adapters.into_iter() {
                     menu = menu.entry(adapter.0.clone(), None, setter_for_name(adapter.clone()));
                 }
+
                 menu
             }),
         )
@@ -705,12 +715,13 @@ pub(super) struct CustomMode {
 impl CustomMode {
     pub(super) fn new(
         past_launch_config: Option<LaunchRequest>,
+        active_cwd: Option<PathBuf>,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
         let (past_program, past_cwd) = past_launch_config
             .map(|config| (Some(config.program), config.cwd))
-            .unwrap_or_else(|| (None, None));
+            .unwrap_or_else(|| (None, active_cwd));
 
         let program = cx.new(|cx| Editor::single_line(window, cx));
         program.update(cx, |this, cx| {
@@ -760,6 +771,34 @@ impl CustomMode {
             command
         };
 
+        let program = if let Some(program) = program.strip_prefix('~') {
+            format!(
+                "$ZED_WORKTREE_ROOT{}{}",
+                std::path::MAIN_SEPARATOR,
+                &program
+            )
+        } else if !program.starts_with(std::path::MAIN_SEPARATOR) {
+            format!(
+                "$ZED_WORKTREE_ROOT{}{}",
+                std::path::MAIN_SEPARATOR,
+                &program
+            )
+        } else {
+            program
+        };
+
+        let path = if path.starts_with('~') && !path.is_empty() {
+            format!(
+                "$ZED_WORKTREE_ROOT{}{}",
+                std::path::MAIN_SEPARATOR,
+                &path[1..]
+            )
+        } else if !path.starts_with(std::path::MAIN_SEPARATOR) && !path.is_empty() {
+            format!("$ZED_WORKTREE_ROOT{}{}", std::path::MAIN_SEPARATOR, &path)
+        } else {
+            path
+        };
+
         let args = args.collect::<Vec<_>>();
 
         task::LaunchRequest {
@@ -782,14 +821,6 @@ impl CustomMode {
             .gap_3()
             .track_focus(&self.program.focus_handle(cx))
             .child(
-                div().child(
-                    Label::new("Program")
-                        .size(ui::LabelSize::Small)
-                        .color(Color::Muted),
-                ),
-            )
-            .child(render_editor(&self.program, window, cx))
-            .child(
                 h_flex()
                     .child(
                         Label::new("Debugger")
@@ -799,10 +830,14 @@ impl CustomMode {
                     .gap(ui::DynamicSpacing::Base08.rems(cx))
                     .child(adapter_menu),
             )
+            .child(render_editor(&self.program, window, cx))
+            .child(render_editor(&self.cwd, window, cx))
             .child(
                 CheckboxWithLabel::new(
                     "debugger-stop-on-entry",
-                    Label::new("Stop on Entry").size(ui::LabelSize::Small),
+                    Label::new("Stop on Entry")
+                        .size(ui::LabelSize::Small)
+                        .color(Color::Muted),
                     self.stop_on_entry,
                     {
                         let this = cx.weak_entity();
