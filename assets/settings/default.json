@@ -113,7 +113,7 @@
   // Whether to show the informational hover box when moving the mouse
   // over symbols in the editor.
   "hover_popover_enabled": true,
-  // Time to wait before showing the informational hover box
+  // Time to wait in milliseconds before showing the informational hover box.
   "hover_popover_delay": 300,
   // Whether to confirm before quitting Zed.
   "confirm_quit": false,
