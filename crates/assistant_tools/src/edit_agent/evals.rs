@@ -1,5 +1,9 @@
 use super::*;
-use crate::{ReadFileToolInput, edit_file_tool::EditFileToolInput, grep_tool::GrepToolInput};
+use crate::{
+    ReadFileToolInput,
+    edit_file_tool::{EditFileMode, EditFileToolInput},
+    grep_tool::GrepToolInput,
+};
 use Role::*;
 use anyhow::anyhow;
 use assistant_tool::ToolRegistry;
