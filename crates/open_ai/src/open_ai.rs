@@ -283,7 +283,6 @@ pub enum RequestMessage {
         tool_calls: Vec<ToolCall>,
     },
     User {
-        // todo! serialize as string if len is 1
         content: MessageContent,
     },
     System {
