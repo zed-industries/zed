@@ -626,7 +626,7 @@ pub fn count_open_router_tokens(
 
         // OpenRouter serves a variety of models, but we'll use o200k_base for token counting
         // This is the encoding used by modern OpenAI models like GPT-4o
-        tiktoken_rs::num_tokens_from_messages("o200k_base", &messages)
+        tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages)
     })
     .boxed()
 }

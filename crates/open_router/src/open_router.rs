@@ -99,7 +99,7 @@ impl Model {
     }
 
     pub fn max_output_tokens(&self) -> Option<u32> {
-        u32::try_from(self.max_tokens).ok()
+        None
     }
 
     pub fn supports_tool_calls(&self) -> bool {
@@ -282,6 +282,8 @@ pub struct ModelEntry {
     pub description: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_length: Option<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supported_parameters: Vec<String>,
 
     /// Indicates whether the model can handle OpenAI‑style tool/function calls.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -470,30 +472,25 @@ pub async fn stream_completion(
 }
 
 pub async fn get_models(client: &dyn HttpClient, api_url: &str) -> Result<Vec<ModelEntry>> {
-    // Fetch all three model lists in parallel
-    let (base_models_result, tool_models_result, coding_models_result) = join!(
+    // Fetch base models and coding models in parallel
+    let (base_models_result, coding_models_result) = join!(
         fetch_models(client, api_url, None),
-        fetch_models(client, api_url, Some("supported_parameters=tools")),
+        // this is intentional and put make it convenient to figure out which models to put on top of the list as openrouter supports mopre than 300 nmodels.
         fetch_models(client, api_url, Some("category=programming"))
     );
 
     // Get the base model list
     let mut models = base_models_result?;
 
-    // Create HashSets of model IDs for efficient lookups
-    let tool_model_ids = tool_models_result?
-        .into_iter()
-        .map(|m| m.id)
-        .collect::<std::collections::HashSet<_>>();
-
+    // Create HashSet of coding model IDs for efficient lookups
     let coding_model_ids = coding_models_result?
         .into_iter()
         .map(|m| m.id)
         .collect::<std::collections::HashSet<_>>();
 
-    // Update model flags based on presence in specialized sets
+    // Update model flags based on supported_parameters and coding category
     for model in &mut models {
-        model.supports_tool_calls = tool_model_ids.contains(&model.id);
+        model.supports_tool_calls = model.supported_parameters.contains(&"tools".to_string());
         model.excels_at_coding = coding_model_ids.contains(&model.id);
     }
 
