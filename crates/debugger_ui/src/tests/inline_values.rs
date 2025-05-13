@@ -1,7 +1,7 @@
 use std::{path::Path, sync::Arc};
 
 use dap::{Scope, StackFrame, Variable, requests::Variables};
-use editor::{Editor, EditorMode, MultiBuffer, actions::ToggleInlineValues};
+use editor::{Editor, EditorMode, MultiBuffer};
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_python, tree_sitter_rust};
 use project::{FakeFs, Project};
