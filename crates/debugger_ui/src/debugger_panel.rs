@@ -1,9 +1,10 @@
 use crate::persistence::DebuggerPaneItem;
 use crate::session::DebugSession;
 use crate::{
-    ClearAllBreakpoints, Continue, Detach, ExpandStackFrames, FocusBreakpointList, FocusConsole,
-    FocusFrames, FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, Pause, Restart,
-    StepBack, StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints, persistence,
+    ClearAllBreakpoints, Continue, Detach, FocusBreakpointList, FocusConsole, FocusFrames,
+    FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, Pause, Restart,
+    ShowStackTrace, StepBack, StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints,
+    persistence,
 };
 use anyhow::{Result, anyhow};
 use command_palette_hooks::CommandPaletteFilter;
@@ -115,7 +116,7 @@ impl DebugPanel {
             TypeId::of::<StepOver>(),
             TypeId::of::<StepInto>(),
             TypeId::of::<StepOut>(),
-            TypeId::of::<ExpandStackFrames>(),
+            TypeId::of::<ShowStackTrace>(),
             TypeId::of::<editor::actions::DebuggerRunToCursor>(),
             TypeId::of::<editor::actions::DebuggerEvaluateSelectedText>(),
         ];

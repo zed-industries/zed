@@ -43,7 +43,7 @@ actions!(
         FocusModules,
         FocusLoadedSources,
         FocusTerminal,
-        ExpandStackFrames,
+        ShowStackTrace,
     ]
 );
 
@@ -150,7 +150,7 @@ pub fn init(cx: &mut App) {
                     },
                 )
                 .register_action(
-                    |workspace: &mut Workspace, _: &ExpandStackFrames, window, cx| {
+                    |workspace: &mut Workspace, _: &ShowStackTrace, window, cx| {
                         let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
                             return;
                         };

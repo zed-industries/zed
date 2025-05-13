@@ -150,17 +150,12 @@ impl StackFrameList {
         window: &Window,
         cx: &mut Context<Self>,
     ) {
-        if !self
-            .entries
-            .iter()
-            .find(|entry| match entry {
-                StackFrameEntry::Normal(entry) => entry.id == id,
-                StackFrameEntry::Collapsed(stack_frames) => {
-                    stack_frames.iter().any(|frame| frame.id == id)
-                }
-            })
-            .is_some()
-        {
+        if !self.entries.iter().any(|entry| match entry {
+            StackFrameEntry::Normal(entry) => entry.id == id,
+            StackFrameEntry::Collapsed(stack_frames) => {
+                stack_frames.iter().any(|frame| frame.id == id)
+            }
+        }) {
             return;
         }
 
