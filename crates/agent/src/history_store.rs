@@ -71,8 +71,8 @@ impl Eq for RecentEntry {}
 impl RecentEntry {
     pub(crate) fn summary(&self, cx: &App) -> SharedString {
         match self {
-            RecentEntry::Thread(_, thread) => thread.read(cx).summary_or_default(),
-            RecentEntry::Context(context) => context.read(cx).summary_or_default(),
+            RecentEntry::Thread(_, thread) => thread.read(cx).summary().or_default(),
+            RecentEntry::Context(context) => context.read(cx).summary().or_default(),
         }
     }
 }

@@ -114,7 +114,6 @@ type MessageHeader = MessageMetadata;
 #[derive(Clone)]
 enum AssistError {
     PaymentRequired,
-    MaxMonthlySpendReached,
     Message(SharedString),
 }
 
@@ -731,9 +730,6 @@ impl ContextEditor {
             }
             ContextEvent::ShowPaymentRequiredError => {
                 self.last_error = Some(AssistError::PaymentRequired);
-            }
-            ContextEvent::ShowMaxMonthlySpendReachedError => {
-                self.last_error = Some(AssistError::MaxMonthlySpendReached);
             }
         }
     }
@@ -1860,7 +1856,12 @@ impl ContextEditor {
     }
 
     pub fn title(&self, cx: &App) -> SharedString {
-        self.context.read(cx).summary_or_default()
+        self.context.read(cx).summary().or_default()
+    }
+
+    pub fn regenerate_summary(&mut self, cx: &mut Context<Self>) {
+        self.context
+            .update(cx, |context, cx| context.summarize(true, cx));
     }
 
     fn render_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -2102,9 +2103,6 @@ impl ContextEditor {
                 .occlude()
                 .child(match last_error {
                     AssistError::PaymentRequired => self.render_payment_required_error(cx),
-                    AssistError::MaxMonthlySpendReached => {
-                        self.render_max_monthly_spend_reached_error(cx)
-                    }
                     AssistError::Message(error_message) => {
                         self.render_assist_error(error_message, cx)
                     }
@@ -2143,48 +2141,6 @@ impl ContextEditor {
                             cx.notify();
                         },
                     )))
-                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
-                        |this, _, _window, cx| {
-                            this.last_error = None;
-                            cx.notify();
-                        },
-                    ))),
-            )
-            .into_any()
-    }
-
-    fn render_max_monthly_spend_reached_error(&self, cx: &mut Context<Self>) -> AnyElement {
-        const ERROR_MESSAGE: &str = "You have reached your maximum monthly spend. Increase your spend limit to continue using Zed LLMs.";
-
-        v_flex()
-            .gap_0p5()
-            .child(
-                h_flex()
-                    .gap_1p5()
-                    .items_center()
-                    .child(Icon::new(IconName::XCircle).color(Color::Error))
-                    .child(Label::new("Max Monthly Spend Reached").weight(FontWeight::MEDIUM)),
-            )
-            .child(
-                div()
-                    .id("error-message")
-                    .max_h_24()
-                    .overflow_y_scroll()
-                    .child(Label::new(ERROR_MESSAGE)),
-            )
-            .child(
-                h_flex()
-                    .justify_end()
-                    .mt_1()
-                    .child(
-                        Button::new("subscribe", "Update Monthly Spend Limit").on_click(
-                            cx.listener(|this, _, _window, cx| {
-                                this.last_error = None;
-                                cx.open_url(&zed_urls::account_url(cx));
-                                cx.notify();
-                            }),
-                        ),
-                    )
                     .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
                         |this, _, _window, cx| {
                             this.last_error = None;

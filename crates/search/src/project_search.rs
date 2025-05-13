@@ -106,6 +106,40 @@ pub fn init(cx: &mut App) {
             ProjectSearchView::search_in_new(workspace, action, window, cx)
         });
 
+        register_workspace_action_for_present_search(
+            workspace,
+            |workspace, _: &menu::Cancel, window, cx| {
+                if let Some(project_search_bar) = workspace
+                    .active_pane()
+                    .read(cx)
+                    .toolbar()
+                    .read(cx)
+                    .item_of_type::<ProjectSearchBar>()
+                {
+                    project_search_bar.update(cx, |project_search_bar, cx| {
+                        let search_is_focused = project_search_bar
+                            .active_project_search
+                            .as_ref()
+                            .is_some_and(|search_view| {
+                                search_view
+                                    .read(cx)
+                                    .query_editor
+                                    .read(cx)
+                                    .focus_handle(cx)
+                                    .is_focused(window)
+                            });
+                        if search_is_focused {
+                            project_search_bar.move_focus_to_results(window, cx);
+                        } else {
+                            project_search_bar.focus_search(window, cx)
+                        }
+                    });
+                } else {
+                    cx.propagate();
+                }
+            },
+        );
+
         // Both on present and dismissed search, we need to unconditionally handle those actions to focus from the editor.
         workspace.register_action(move |workspace, action: &DeploySearch, window, cx| {
             if workspace.has_active_modal(window, cx) {

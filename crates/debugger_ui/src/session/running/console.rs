@@ -5,7 +5,7 @@ use super::{
 use anyhow::Result;
 use collections::HashMap;
 use dap::OutputEvent;
-use editor::{CompletionProvider, Editor, EditorElement, EditorStyle, ExcerptId};
+use editor::{Bias, CompletionProvider, Editor, EditorElement, EditorStyle, ExcerptId};
 use fuzzy::StringMatchCandidate;
 use gpui::{
     Context, Entity, FocusHandle, Focusable, Render, Subscription, Task, TextStyle, WeakEntity,
@@ -45,6 +45,7 @@ impl Console {
             let mut editor = Editor::multi_line(window, cx);
             editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
             editor.set_read_only(true);
+            editor.disable_scrollbars_and_minimap(window, cx);
             editor.set_show_gutter(false, cx);
             editor.set_show_runnables(false, cx);
             editor.set_show_breakpoints(false, cx);
@@ -61,7 +62,6 @@ impl Console {
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
             editor
         });
-        let focus_handle = cx.focus_handle();
 
         let this = cx.weak_entity();
         let query_bar = cx.new(|cx| {
@@ -75,6 +75,8 @@ impl Console {
 
             editor
         });
+
+        let focus_handle = query_bar.focus_handle(cx);
 
         let _subscriptions =
             vec![cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events)];
@@ -109,6 +111,7 @@ impl Console {
     ) {
         match event {
             StackFrameListEvent::SelectedStackFrameChanged(_) => cx.notify(),
+            StackFrameListEvent::BuiltEntries => {}
         }
     }
 
@@ -401,28 +404,21 @@ impl ConsoleQueryBarCompletionProvider {
                             .as_ref()
                             .unwrap_or(&completion.label)
                             .to_owned();
-                        let mut word_bytes_length = 0;
-                        for chunk in snapshot
-                            .reversed_chunks_in_range(language::Anchor::MIN..buffer_position)
-                        {
-                            let mut processed_bytes = 0;
-                            if let Some(_) = chunk.chars().rfind(|c| {
-                                let is_whitespace = c.is_whitespace();
-                                if !is_whitespace {
-                                    processed_bytes += c.len_utf8();
-                                }
+                        let buffer_text = snapshot.text();
+                        let buffer_bytes = buffer_text.as_bytes();
+                        let new_bytes = new_text.as_bytes();
 
-                                is_whitespace
-                            }) {
-                                word_bytes_length += processed_bytes;
+                        let mut prefix_len = 0;
+                        for i in (0..new_bytes.len()).rev() {
+                            if buffer_bytes.ends_with(&new_bytes[0..i]) {
+                                prefix_len = i;
                                 break;
-                            } else {
-                                word_bytes_length += chunk.len();
                             }
                         }
 
                         let buffer_offset = buffer_position.to_offset(&snapshot);
-                        let start = buffer_offset - word_bytes_length;
+                        let start = buffer_offset - prefix_len;
+                        let start = snapshot.clip_offset(start, Bias::Left);
                         let start = snapshot.anchor_before(start);
                         let replace_range = start..buffer_position;
 

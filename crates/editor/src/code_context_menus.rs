@@ -450,29 +450,7 @@ impl CompletionsMenu {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> AnyElement {
-        let completions = self.completions.borrow_mut();
         let show_completion_documentation = self.show_completion_documentation;
-        let widest_completion_ix = self
-            .entries
-            .borrow()
-            .iter()
-            .enumerate()
-            .max_by_key(|(_, mat)| {
-                let completion = &completions[mat.candidate_id];
-                let documentation = &completion.documentation;
-
-                let mut len = completion.label.text.chars().count();
-                if let Some(CompletionDocumentation::SingleLine(text)) = documentation {
-                    if show_completion_documentation {
-                        len += text.chars().count();
-                    }
-                }
-
-                len
-            })
-            .map(|(ix, _)| ix);
-        drop(completions);
-
         let selected_item = self.selected_item;
         let completions = self.completions.clone();
         let entries = self.entries.clone();
@@ -532,22 +510,25 @@ impl CompletionsMenu {
 
                         let completion_label = StyledText::new(completion.label.text.clone())
                             .with_default_highlights(&style.text, highlights);
-                        let documentation_label = if let Some(
-                            CompletionDocumentation::SingleLine(text),
-                        ) = documentation
-                        {
-                            if text.trim().is_empty() {
-                                None
-                            } else {
-                                Some(
-                                    Label::new(text.clone())
-                                        .ml_4()
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                )
+
+                        let documentation_label = match documentation {
+                            Some(CompletionDocumentation::SingleLine(text))
+                            | Some(CompletionDocumentation::SingleLineAndMultiLinePlainText {
+                                single_line: text,
+                                ..
+                            }) => {
+                                if text.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(
+                                        Label::new(text.clone())
+                                            .ml_4()
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                }
                             }
-                        } else {
-                            None
+                            _ => None,
                         };
 
                         let start_slot = completion
@@ -596,8 +577,8 @@ impl CompletionsMenu {
         .occlude()
         .max_h(max_height_in_lines as f32 * window.line_height())
         .track_scroll(self.scroll_handle.clone())
-        .with_width_from_item(widest_completion_ix)
-        .with_sizing_behavior(ListSizingBehavior::Infer);
+        .with_sizing_behavior(ListSizingBehavior::Infer)
+        .w(rems(34.));
 
         Popover::new().child(list).into_any_element()
     }
@@ -619,6 +600,10 @@ impl CompletionsMenu {
             .as_ref()?
         {
             CompletionDocumentation::MultiLinePlainText(text) => div().child(text.clone()),
+            CompletionDocumentation::SingleLineAndMultiLinePlainText {
+                plain_text: Some(text),
+                ..
+            } => div().child(text.clone()),
             CompletionDocumentation::MultiLineMarkdown(parsed) if !parsed.is_empty() => {
                 let markdown = self.markdown_element.get_or_insert_with(|| {
                     cx.new(|cx| {
@@ -649,6 +634,11 @@ impl CompletionsMenu {
             CompletionDocumentation::MultiLineMarkdown(_) => return None,
             CompletionDocumentation::SingleLine(_) => return None,
             CompletionDocumentation::Undocumented => return None,
+            CompletionDocumentation::SingleLineAndMultiLinePlainText {
+                plain_text: None, ..
+            } => {
+                return None;
+            }
         };
 
         Some(
@@ -1113,6 +1103,7 @@ impl CodeActionsMenu {
                                     this.child(
                                         h_flex()
                                             .overflow_hidden()
+                                            .child("debug: ")
                                             .child(scenario.label.clone())
                                             .when(selected, |this| {
                                                 this.text_color(colors.text_accent)
@@ -1148,7 +1139,9 @@ impl CodeActionsMenu {
                     CodeActionsItem::CodeAction { action, .. } => {
                         action.lsp_action.title().chars().count()
                     }
-                    CodeActionsItem::DebugScenario(scenario) => scenario.label.chars().count(),
+                    CodeActionsItem::DebugScenario(scenario) => {
+                        format!("debug: {}", scenario.label).chars().count()
+                    }
                 })
                 .map(|(ix, _)| ix),
         )

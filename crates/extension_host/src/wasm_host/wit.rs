@@ -63,7 +63,7 @@ pub fn wasm_api_version_range(release_channel: ReleaseChannel) -> RangeInclusive
 
     let max_version = match release_channel {
         ReleaseChannel::Dev | ReleaseChannel::Nightly => latest::MAX_VERSION,
-        ReleaseChannel::Stable | ReleaseChannel::Preview => latest::MAX_VERSION,
+        ReleaseChannel::Stable | ReleaseChannel::Preview => since_v0_5_0::MAX_VERSION,
     };
 
     since_v0_0_1::MIN_VERSION..=max_version
@@ -116,16 +116,20 @@ impl Extension {
 
         if version >= latest::MIN_VERSION {
             authorize_access_to_unreleased_wasm_api_version(release_channel)?;
+
             let extension =
                 latest::Extension::instantiate_async(store, component, latest::linker())
                     .await
                     .context("failed to instantiate wasm extension")?;
             Ok(Self::V0_6_0(extension))
         } else if version >= since_v0_5_0::MIN_VERSION {
-            let extension =
-                since_v0_5_0::Extension::instantiate_async(store, component, latest::linker())
-                    .await
-                    .context("failed to instantiate wasm extension")?;
+            let extension = since_v0_5_0::Extension::instantiate_async(
+                store,
+                component,
+                since_v0_5_0::linker(),
+            )
+            .await
+            .context("failed to instantiate wasm extension")?;
             Ok(Self::V0_5_0(extension))
         } else if version >= since_v0_4_0::MIN_VERSION {
             let extension = since_v0_4_0::Extension::instantiate_async(
@@ -619,7 +623,11 @@ impl Extension {
                     .await
             }
             Extension::V0_5_0(ext) => Ok(ext
-                .call_labels_for_symbols(store, &language_server_id.0, &symbols)
+                .call_labels_for_symbols(
+                    store,
+                    &language_server_id.0,
+                    &symbols.into_iter().collect::<Vec<_>>(),
+                )
                 .await?
                 .map(|labels| {
                     labels
@@ -921,6 +929,6 @@ trait ToWasmtimeResult<T> {
 
 impl<T> ToWasmtimeResult<T> for Result<T> {
     fn to_wasmtime_result(self) -> wasmtime::Result<Result<T, String>> {
-        Ok(self.map_err(|error| error.to_string()))
+        Ok(self.map_err(|error| format!("{error:?}")))
     }
 }
