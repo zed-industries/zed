@@ -278,20 +278,74 @@ pub struct FunctionDefinition {
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum RequestMessage {
     Assistant {
-        content: Option<String>,
+        content: MessageContent,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
     },
     User {
-        content: String,
+        // todo! serialize as string if len is 1
+        content: MessageContent,
     },
     System {
-        content: String,
+        content: MessageContent,
     },
     Tool {
-        content: String,
+        content: MessageContent,
         tool_call_id: String,
     },
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+#[serde(untagged)]
+pub enum MessageContent {
+    Plain(String),
+    Multipart(Vec<MessagePart>),
+}
+
+impl MessageContent {
+    pub fn empty() -> Self {
+        MessageContent::Multipart(vec![])
+    }
+
+    pub fn push_part(&mut self, part: MessagePart) {
+        match self {
+            MessageContent::Plain(text) => {
+                *self =
+                    MessageContent::Multipart(vec![MessagePart::Text { text: text.clone() }, part]);
+            }
+            MessageContent::Multipart(parts) if parts.is_empty() => match part {
+                MessagePart::Text { text } => *self = MessageContent::Plain(text),
+                MessagePart::Image { .. } => *self = MessageContent::Multipart(vec![part]),
+            },
+            MessageContent::Multipart(parts) => parts.push(part),
+        }
+    }
+}
+
+impl From<Vec<MessagePart>> for MessageContent {
+    fn from(mut parts: Vec<MessagePart>) -> Self {
+        if let [MessagePart::Text { text }] = parts.as_mut_slice() {
+            MessageContent::Plain(std::mem::take(text))
+        } else {
+            MessageContent::Multipart(parts)
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+#[serde(tag = "type")]
+pub enum MessagePart {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image_url")]
+    Image { image_url: ImageUrl },
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+pub struct ImageUrl {
+    pub url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -509,24 +563,45 @@ fn adapt_response_to_stream(response: Response) -> ResponseStreamEvent {
         choices: response
             .choices
             .into_iter()
-            .map(|choice| ChoiceDelta {
-                index: choice.index,
-                delta: ResponseMessageDelta {
-                    role: Some(match choice.message {
-                        RequestMessage::Assistant { .. } => Role::Assistant,
-                        RequestMessage::User { .. } => Role::User,
-                        RequestMessage::System { .. } => Role::System,
-                        RequestMessage::Tool { .. } => Role::Tool,
-                    }),
-                    content: match choice.message {
-                        RequestMessage::Assistant { content, .. } => content,
-                        RequestMessage::User { content } => Some(content),
-                        RequestMessage::System { content } => Some(content),
-                        RequestMessage::Tool { content, .. } => Some(content),
+            .map(|choice| {
+                let content = match &choice.message {
+                    RequestMessage::Assistant { content, .. } => content,
+                    RequestMessage::User { content } => content,
+                    RequestMessage::System { content } => content,
+                    RequestMessage::Tool { content, .. } => content,
+                };
+
+                let mut text_content = String::new();
+                match content {
+                    MessageContent::Plain(text) => text_content.push_str(&text),
+                    MessageContent::Multipart(parts) => {
+                        for part in parts {
+                            match part {
+                                MessagePart::Text { text } => text_content.push_str(&text),
+                                MessagePart::Image { .. } => {}
+                            }
+                        }
+                    }
+                };
+
+                ChoiceDelta {
+                    index: choice.index,
+                    delta: ResponseMessageDelta {
+                        role: Some(match choice.message {
+                            RequestMessage::Assistant { .. } => Role::Assistant,
+                            RequestMessage::User { .. } => Role::User,
+                            RequestMessage::System { .. } => Role::System,
+                            RequestMessage::Tool { .. } => Role::Tool,
+                        }),
+                        content: if text_content.is_empty() {
+                            None
+                        } else {
+                            Some(text_content)
+                        },
+                        tool_calls: None,
                     },
-                    tool_calls: None,
-                },
-                finish_reason: choice.finish_reason,
+                    finish_reason: choice.finish_reason,
+                }
             })
             .collect(),
         usage: Some(response.usage),
