@@ -191,9 +191,9 @@ pub trait Extension: Send + Sync {
     /// Returns the debug adapter binary for the specified adapter name and configuration.
     fn get_dap_binary(
         &mut self,
-        adapter_name: String,
-        config: DebugTaskDefinition,
-        user_provided_path: Option<String>,
+        _adapter_name: String,
+        _config: DebugTaskDefinition,
+        _user_provided_path: Option<String>,
     ) -> Result<DebugAdapterBinary, String> {
         Err("`get_dap_binary` not implemented".to_string())
     }
@@ -387,7 +387,7 @@ impl wit::Guest for Component {
         config: DebugTaskDefinition,
         user_installed_path: Option<String>,
     ) -> Result<DebugAdapterBinary, String> {
-        extension().get_dap_binary(adapter_name, config, user_provided_path)
+        extension().get_dap_binary(adapter_name, config, user_installed_path)
     }
 }
 
