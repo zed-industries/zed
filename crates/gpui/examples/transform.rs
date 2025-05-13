@@ -1,134 +1,197 @@
 use gpui::{
-    App, Application, Bounds, Context, IntoElement, Radians, Render, Size, TransformationMatrix,
-    Window, WindowBounds, WindowOptions, canvas, div, fill, point, prelude::*, px, rgb, scaled_px,
-    size,
+    App, Application, Bounds, Context, IntoElement, Radians, Render, TransformationMatrix, Window,
+    WindowBounds, WindowOptions, canvas, div, fill, point, prelude::*, px, rgb, scaled_px, size,
 };
-use std::f32::consts::PI;
+use smol::Timer;
+use std::{f32::consts::PI, time::Duration};
 
-struct QuadTransformationsDemo;
+struct TransformExample {
+    epoch: u64,
+}
 
-impl Render for QuadTransformationsDemo {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div().size_full().child(canvas(
-            |_, _, _| {},
-            move |_, _, window, _| {
-                let window_size = window.viewport_size();
-                let center_x = window_size.width.0 / 2.0;
-                let center_y = window_size.height.0 / 2.0;
-
-                // Original quad (no transformation)
-                let quad_size = 100.0;
-                let original_bounds = Bounds::new(
-                    point(
-                        px(center_x - quad_size / 2.0),
-                        px(center_y - quad_size / 2.0),
-                    ),
-                    size(px(quad_size), px(quad_size)),
-                );
-                window.paint_quad(fill(original_bounds, rgb(0x888888)));
-
-                // 1. Rotation transformation (45 degrees)
-                let rotated_bounds = Bounds::new(
-                    point(
-                        px(center_x - quad_size / 2.0 + 150.0),
-                        px(center_y - quad_size / 2.0),
-                    ),
-                    size(px(quad_size), px(quad_size)),
-                );
-
-                // Calculate center of the quad for transformation
-                let rotated_center = point(px(center_x + 150.0), px(center_y));
-
-                // Create transformation matrix that rotates around the center
-                let to_origin = TransformationMatrix::unit().translate(point(
-                    scaled_px(-rotated_center.x.0, window),
-                    scaled_px(-rotated_center.y.0, window),
-                ));
-                let rotation = TransformationMatrix::unit().rotate(Radians(PI / 4.0));
-                let from_origin = TransformationMatrix::unit().translate(point(
-                    scaled_px(rotated_center.x.0, window),
-                    scaled_px(rotated_center.y.0, window),
-                ));
-
-                // Compose the transformations: first to origin, then rotate, then back from origin
-                let rotation_matrix = from_origin.compose(rotation.compose(to_origin));
-
-                let rotated_quad = fill(rotated_bounds, rgb(0xFF5252));
-                window.paint_quad(rotated_quad.transformation(rotation_matrix));
-
-                // 2. Scaling transformation (1.5x)
-                let scaled_bounds = Bounds::new(
-                    point(
-                        px(center_x - quad_size / 2.0 - 150.0),
-                        px(center_y - quad_size / 2.0),
-                    ),
-                    size(px(quad_size), px(quad_size)),
-                );
-
-                // Calculate center of the quad for transformation
-                let scaled_center = point(px(center_x - 150.0), px(center_y));
-
-                // Create transformation matrix that scales around the center
-                let to_origin = TransformationMatrix::unit().translate(point(
-                    scaled_px(-scaled_center.x.0, window),
-                    scaled_px(-scaled_center.y.0, window),
-                ));
-                let scaling = TransformationMatrix::unit().scale(Size::new(1.5, 0.8));
-                let from_origin = TransformationMatrix::unit().translate(point(
-                    scaled_px(scaled_center.x.0, window),
-                    scaled_px(scaled_center.y.0, window),
-                ));
-
-                // Compose the transformations: first to origin, then scale, then back from origin
-                let scale_matrix = from_origin.compose(scaling.compose(to_origin));
-
-                let scaled_quad = fill(scaled_bounds, rgb(0x4CAF50));
-                window.paint_quad(scaled_quad.transformation(scale_matrix));
-
-                // 3. Combined transformation (rotate and scale)
-                let combined_bounds = Bounds::new(
-                    point(
-                        px(center_x - quad_size / 2.0),
-                        px(center_y - quad_size / 2.0 + 150.0),
-                    ),
-                    size(px(quad_size), px(quad_size)),
-                );
-
-                // Calculate center of the quad for transformation
-                let combined_center = point(px(center_x), px(center_y + 150.0));
-
-                // Create transformation matrix that combines rotation and scaling around the center
-                let to_origin = TransformationMatrix::unit().translate(point(
-                    scaled_px(-combined_center.x.0, window),
-                    scaled_px(-combined_center.y.0, window),
-                ));
-                let rotation = TransformationMatrix::unit().rotate(Radians(PI / 6.0));
-                let scaling = TransformationMatrix::unit().scale(Size::new(1.2, 1.2));
-                let from_origin = TransformationMatrix::unit().translate(point(
-                    scaled_px(combined_center.x.0, window),
-                    scaled_px(combined_center.y.0, window),
-                ));
-
-                // Compose the transformations: first to origin, then rotate and scale, then back from origin
-                let combined_matrix =
-                    from_origin.compose(scaling.compose(rotation.compose(to_origin)));
-
-                let combined_quad = fill(combined_bounds, rgb(0x2196F3));
-                window.paint_quad(combined_quad.transformation(combined_matrix));
-            },
-        ))
+impl Render for TransformExample {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .bg(gpui::black())
+            .size_full()
+            .child(render_canvas(self.epoch, window, cx))
     }
+}
+
+impl TransformExample {
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        cx.spawn_in(window, async move |example, cx| {
+            loop {
+                Timer::after(Duration::from_millis(16)).await;
+                example
+                    .update(cx, |example, cx| {
+                        example.update_epoch(cx);
+                    })
+                    .ok();
+            }
+        })
+        .detach();
+
+        Self { epoch: 0 }
+    }
+
+    fn update_epoch(&mut self, cx: &mut Context<Self>) {
+        const MAX_EPOCH: u64 = 360;
+
+        let direction = if (self.epoch / MAX_EPOCH) % 2 == 0 {
+            1
+        } else {
+            -1
+        };
+
+        self.epoch = (self.epoch as i64 + direction).rem_euclid(MAX_EPOCH as i64) as u64;
+
+        cx.notify();
+    }
+}
+
+fn render_canvas(epoch: u64, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |_, _, window, _| {
+            let epoch = epoch;
+            let window_size = window.viewport_size();
+            let center_x = window_size.width.0 / 2.0;
+            let center_y = window_size.height.0 / 2.0;
+
+            let quad_size = 100.0;
+            let original_bounds = Bounds::new(
+                point(
+                    px(center_x - quad_size / 2.0),
+                    px(center_y - quad_size / 2.0),
+                ),
+                size(px(quad_size), px(quad_size)),
+            );
+            window.paint_quad(fill(original_bounds, rgb(0x00FFFF)));
+
+            let rotated_bounds = Bounds::new(
+                point(
+                    px(center_x - quad_size / 2.0 + 300.0),
+                    px(center_y - quad_size / 2.0),
+                ),
+                size(px(quad_size), px(quad_size)),
+            );
+
+            let rotated_center = point(px(center_x + 300.0), px(center_y));
+
+            let to_origin = TransformationMatrix::unit().translate(point(
+                scaled_px(-rotated_center.x.0, window),
+                scaled_px(-rotated_center.y.0, window),
+            ));
+            let rotation_angle = (epoch as f32 / 360.0) * 2.0 * PI;
+            let rotation = TransformationMatrix::unit().rotate(Radians(rotation_angle));
+            let from_origin = TransformationMatrix::unit().translate(point(
+                scaled_px(rotated_center.x.0, window),
+                scaled_px(rotated_center.y.0, window),
+            ));
+
+            let scale_factor = 0.75 + 0.5 * ((epoch as f32 / 180.0) * PI).sin().abs();
+            let scaling = TransformationMatrix::unit().scale(size(scale_factor, scale_factor));
+
+            let rotation_matrix = from_origin.compose(rotation.compose(scaling.compose(to_origin)));
+
+            let rotated_quad = fill(rotated_bounds, rgb(0xFFFF00));
+            window.paint_quad(rotated_quad.transformation(rotation_matrix));
+
+            let translated_bounds = Bounds::new(
+                point(
+                    px(center_x - quad_size / 2.0 - 300.0),
+                    px(center_y - quad_size / 2.0),
+                ),
+                size(px(quad_size), px(quad_size)),
+            );
+
+            let translation_x = (((epoch as f32 / 90.0) * PI).sin() * 100.0) + 50.0;
+            let translation = TransformationMatrix::unit().translate(point(
+                scaled_px(translation_x, window),
+                scaled_px(0.0, window),
+            ));
+
+            let translated_quad = fill(translated_bounds, rgb(0x00FF00));
+            window.paint_quad(translated_quad.transformation(translation));
+
+            let combined_bounds = Bounds::new(
+                point(
+                    px(center_x - quad_size / 2.0 + 300.0),
+                    px(center_y - quad_size / 2.0 + 150.0),
+                ),
+                size(px(quad_size), px(quad_size)),
+            );
+
+            let combined_center = point(px(center_x + 300.0), px(center_y + 150.0));
+
+            let to_origin = TransformationMatrix::unit().translate(point(
+                scaled_px(-combined_center.x.0, window),
+                scaled_px(-combined_center.y.0, window),
+            ));
+            let combined_rotation_angle = -((epoch as f32 / 360.0) * 2.0 * PI);
+            let rotation = TransformationMatrix::unit().rotate(Radians(combined_rotation_angle));
+            let translation_x = ((epoch as f32 / 90.0) * 2.0 * PI).cos() * 75.0;
+            let translation_y = ((epoch as f32 / 90.0) * 2.0 * PI).sin() * 30.0;
+            let translation = TransformationMatrix::unit().translate(point(
+                scaled_px(translation_x, window),
+                scaled_px(translation_y, window),
+            ));
+            let scale_x = 1.0 + 0.3 * ((epoch as f32 / 120.0) * 2.0 * PI).cos();
+            let scale_y = 1.0 + 0.3 * ((epoch as f32 / 120.0) * 2.0 * PI).sin();
+            let scaling = TransformationMatrix::unit().scale(size(scale_x, scale_y));
+            let from_origin = TransformationMatrix::unit().translate(point(
+                scaled_px(combined_center.x.0, window),
+                scaled_px(combined_center.y.0, window),
+            ));
+
+            let combined_matrix = from_origin
+                .compose(translation.compose(scaling.compose(rotation.compose(to_origin))));
+
+            let combined_quad = fill(combined_bounds, rgb(0x00FF00));
+            window.paint_quad(combined_quad.transformation(combined_matrix));
+
+            let scale_bounds = Bounds::new(
+                point(
+                    px(center_x - quad_size / 2.0),
+                    px(center_y - quad_size / 2.0 - 150.0),
+                ),
+                size(px(quad_size), px(quad_size)),
+            );
+
+            let scale_center = point(px(center_x), px(center_y - 150.0));
+
+            let to_origin = TransformationMatrix::unit().translate(point(
+                scaled_px(-scale_center.x.0, window),
+                scaled_px(-scale_center.y.0, window),
+            ));
+
+            let breath_scale = 0.5 + ((epoch as f32 / 360.0) * 2.0 * PI).sin().abs();
+            let scaling = TransformationMatrix::unit().scale(size(breath_scale, breath_scale));
+
+            let from_origin = TransformationMatrix::unit().translate(point(
+                scaled_px(scale_center.x.0, window),
+                scaled_px(scale_center.y.0, window),
+            ));
+
+            let scale_matrix = from_origin.compose(scaling.compose(to_origin));
+
+            let scale_quad = fill(scale_bounds, rgb(0xFF00FF));
+            window.paint_quad(scale_quad.transformation(scale_matrix));
+        },
+    )
+    .size_full()
 }
 
 fn main() {
     Application::new().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
+        let bounds = Bounds::centered(None, size(px(1200.0), px(800.0)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, cx| cx.new(|_| QuadTransformationsDemo),
+            |window, cx| cx.new(|cx| TransformExample::new(window, cx)),
         )
         .unwrap();
         cx.activate(true);

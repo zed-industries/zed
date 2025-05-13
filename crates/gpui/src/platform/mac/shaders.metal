@@ -10,9 +10,10 @@ float4 srgb_to_oklab(float4 color);
 float4 oklab_to_srgb(float4 color);
 float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
                           constant Size_DevicePixels *viewport_size);
-float4 to_device_position_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
-                          TransformationMatrix transformation,
-                          constant Size_DevicePixels *input_viewport_size);
+float4
+to_device_position_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
+                               TransformationMatrix transformation,
+                               constant Size_DevicePixels *input_viewport_size);
 
 float2 to_tile_position(float2 unit_vertex, AtlasTile tile,
                         constant Size_DevicePixels *atlas_size);
@@ -22,7 +23,8 @@ float corner_dash_velocity(float dv1, float dv2);
 float dash_alpha(float t, float period, float length, float dash_velocity,
                  float antialias_threshold);
 float quarter_ellipse_sdf(float2 point, float2 radii);
-float pick_corner_radius(float2 center_to_point, Corners_ScaledPixels corner_radii);
+float pick_corner_radius(float2 center_to_point,
+                         Corners_ScaledPixels corner_radii);
 float quad_sdf(float2 point, Bounds_ScaledPixels bounds,
                Corners_ScaledPixels corner_radii);
 float quad_sdf_impl(float2 center_to_point, float corner_radius);
@@ -32,15 +34,17 @@ float blur_along_x(float x, float y, float sigma, float corner,
                    float2 half_size);
 float4 over(float4 below, float4 above);
 float radians(float degrees);
-float4 fill_color(Background background, float2 position, Bounds_ScaledPixels bounds,
-  float4 solid_color, float4 color0, float4 color1);
+float4 fill_color(Background background, float2 position,
+                  Bounds_ScaledPixels bounds, float4 solid_color, float4 color0,
+                  float4 color1);
 
 struct GradientColor {
   float4 solid;
   float4 color0;
   float4 color1;
 };
-GradientColor prepare_fill_color(uint tag, uint color_space, Hsla solid, Hsla color0, Hsla color1);
+GradientColor prepare_fill_color(uint tag, uint color_space, Hsla solid,
+                                 Hsla color0, Hsla color1);
 
 struct QuadVertexOutput {
   uint quad_id [[flat]];
@@ -71,19 +75,15 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
                                     [[buffer(QuadInputIndex_ViewportSize)]]) {
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Quad quad = quads[quad_id];
-  float4 device_position =
-      to_device_position_transformed(unit_vertex, quad.bounds, quad.transformation, viewport_size);
+  float4 device_position = to_device_position_transformed(
+      unit_vertex, quad.bounds, quad.transformation, viewport_size);
   float4 clip_distance = distance_from_clip_rect(unit_vertex, quad.bounds,
                                                  quad.content_mask.bounds);
   float4 border_color = hsla_to_rgba(quad.border_color);
 
   GradientColor gradient = prepare_fill_color(
-    quad.background.tag,
-    quad.background.color_space,
-    quad.background.solid,
-    quad.background.colors[0].color,
-    quad.background.colors[1].color
-  );
+      quad.background.tag, quad.background.color_space, quad.background.solid,
+      quad.background.colors[0].color, quad.background.colors[1].color);
 
   return QuadVertexOutput{
       quad_id,
@@ -99,26 +99,60 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
                               constant Quad *quads
                               [[buffer(QuadInputIndex_Quads)]]) {
   Quad quad = quads[input.quad_id];
-  float4 background_color = fill_color(quad.background, input.position.xy, quad.bounds,
-    input.background_solid, input.background_color0, input.background_color1);
+  float4 background_color = fill_color(
+      quad.background, input.position.xy, quad.bounds, input.background_solid,
+      input.background_color0, input.background_color1);
 
   bool unrounded = quad.corner_radii.top_left == 0.0 &&
-    quad.corner_radii.bottom_left == 0.0 &&
-    quad.corner_radii.top_right == 0.0 &&
-    quad.corner_radii.bottom_right == 0.0;
+                   quad.corner_radii.bottom_left == 0.0 &&
+                   quad.corner_radii.top_right == 0.0 &&
+                   quad.corner_radii.bottom_right == 0.0;
 
-  // Fast path when the quad is not rounded and doesn't have any border
-  if (quad.border_widths.top == 0.0 &&
-      quad.border_widths.left == 0.0 &&
-      quad.border_widths.right == 0.0 &&
-      quad.border_widths.bottom == 0.0 &&
-      unrounded) {
-    return background_color;
-  }
+  // // Fast path when the quad is not rounded and doesn't have any border
+  // if (quad.border_widths.top == 0.0 && quad.border_widths.left == 0.0 &&
+  //     quad.border_widths.right == 0.0 && quad.border_widths.bottom == 0.0 &&
+  //     unrounded) {
+  //   return background_color;
+  // }
 
   float2 size = float2(quad.bounds.size.width, quad.bounds.size.height);
   float2 half_size = size / 2.0;
-  float2 point = input.position.xy - float2(quad.bounds.origin.x, quad.bounds.origin.y);
+
+  TransformationMatrix transformation = quad.transformation;
+
+  // Invert the transformation matrix if it's going to be applied
+  float det =
+      transformation.rotation_scale[0][0] *
+          transformation.rotation_scale[1][1] -
+      transformation.rotation_scale[0][1] * transformation.rotation_scale[1][0];
+  float2x2 inverted_rotation_scale;
+  if (abs(det) > 0.0001) {
+    inverted_rotation_scale[0][0] = transformation.rotation_scale[1][1] / det;
+    inverted_rotation_scale[0][1] = -transformation.rotation_scale[0][1] / det;
+    inverted_rotation_scale[1][0] = -transformation.rotation_scale[1][0] / det;
+    inverted_rotation_scale[1][1] = transformation.rotation_scale[0][0] / det;
+  } else {
+    // If determinant is close to zero, use identity matrix as fallback
+    inverted_rotation_scale[0][0] = 1.0;
+    inverted_rotation_scale[0][1] = 0.0;
+    inverted_rotation_scale[1][0] = 0.0;
+    inverted_rotation_scale[1][1] = 1.0;
+  }
+
+  // Translate point back to origin, then apply inverse rotation/scale
+  float2 translated_position =
+      input.position.xy -
+      float2(transformation.translation[0], transformation.translation[1]);
+  float2 transformed_position;
+  transformed_position[0] =
+      translated_position[0] * inverted_rotation_scale[0][0] +
+      translated_position[1] * inverted_rotation_scale[0][1];
+  transformed_position[1] =
+      translated_position[0] * inverted_rotation_scale[1][0] +
+      translated_position[1] * inverted_rotation_scale[1][1];
+
+  float2 point =
+      transformed_position - float2(quad.bounds.origin.x, quad.bounds.origin.y);
   float2 center_to_point = point - half_size;
 
   // Signed distance field threshold for inclusion of pixels. 0.5 is the
@@ -129,16 +163,16 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
   float corner_radius = pick_corner_radius(center_to_point, quad.corner_radii);
 
   // Width of the nearest borders
-  float2 border = float2(
-    center_to_point.x < 0.0 ? quad.border_widths.left : quad.border_widths.right,
-    center_to_point.y < 0.0 ? quad.border_widths.top : quad.border_widths.bottom
-  );
+  float2 border = float2(center_to_point.x < 0.0 ? quad.border_widths.left
+                                                 : quad.border_widths.right,
+                         center_to_point.y < 0.0 ? quad.border_widths.top
+                                                 : quad.border_widths.bottom);
 
   // 0-width borders are reduced so that `inner_sdf >= antialias_threshold`.
   // The purpose of this is to not draw antialiasing pixels in this case.
-  float2 reduced_border = float2(
-    border.x == 0.0 ? -antialias_threshold : border.x,
-    border.y == 0.0 ? -antialias_threshold : border.y);
+  float2 reduced_border =
+      float2(border.x == 0.0 ? -antialias_threshold : border.x,
+             border.y == 0.0 ? -antialias_threshold : border.y);
 
   // Vector from the corner of the quad bounds to the point, after mirroring
   // the point into the bottom right quadrant. Both components are <= 0.
@@ -150,26 +184,25 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
 
   // Whether the nearest point on the border is rounded
   bool is_near_rounded_corner =
-    corner_center_to_point.x >= 0.0 &&
-    corner_center_to_point.y >= 0.0;
+      corner_center_to_point.x >= 0.0 && corner_center_to_point.y >= 0.0;
 
   // Vector from straight border inner corner to point.
   //
   // 0-width borders are turned into width -1 so that inner_sdf is > 1.0 near
   // the border. Without this, antialiasing pixels would be drawn.
-  float2 straight_border_inner_corner_to_point = corner_to_point + reduced_border;
+  float2 straight_border_inner_corner_to_point =
+      corner_to_point + reduced_border;
 
   // Whether the point is beyond the inner edge of the straight border
   bool is_beyond_inner_straight_border =
-    straight_border_inner_corner_to_point.x > 0.0 ||
-    straight_border_inner_corner_to_point.y > 0.0;
-
+      straight_border_inner_corner_to_point.x > 0.0 ||
+      straight_border_inner_corner_to_point.y > 0.0;
 
   // Whether the point is far enough inside the quad, such that the pixels are
   // not affected by the straight border.
   bool is_within_inner_straight_border =
-    straight_border_inner_corner_to_point.x < -antialias_threshold &&
-    straight_border_inner_corner_to_point.y < -antialias_threshold;
+      straight_border_inner_corner_to_point.x < -antialias_threshold &&
+      straight_border_inner_corner_to_point.y < -antialias_threshold;
 
   // Fast path for points that must be part of the background
   if (is_within_inner_straight_border && !is_near_rounded_corner) {
@@ -199,7 +232,8 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
     // Fast path for circular inner edge.
     inner_sdf = -(outer_sdf + reduced_border.x);
   } else {
-    float2 ellipse_radii = max(float2(0.0), float2(corner_radius) - reduced_border);
+    float2 ellipse_radii =
+        max(float2(0.0), float2(corner_radius) - reduced_border);
     inner_sdf = quarter_ellipse_sdf(corner_center_to_point, ellipse_radii);
   }
 
@@ -227,7 +261,8 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
       // Dash pattern: (2 * border width) dash, (1 * border width) gap
       const float dash_length_per_width = 2.0;
       const float dash_gap_per_width = 1.0;
-      const float dash_period_per_width = dash_length_per_width + dash_gap_per_width;
+      const float dash_period_per_width =
+          dash_length_per_width + dash_gap_per_width;
 
       // Since the dash size is determined by border width, the density of
       // dashes varies. Multiplying a pixel distance by this returns a
@@ -242,7 +277,8 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
         // When corners aren't rounded, the dashes are separately laid
         // out on each straight line, rather than around the whole
         // perimeter. This way each line starts and ends with a dash.
-        bool is_horizontal = corner_center_to_point.x < corner_center_to_point.y;
+        bool is_horizontal =
+            corner_center_to_point.x < corner_center_to_point.y;
         float border_width = is_horizontal ? border.x : border.y;
         dash_velocity = dv_numerator / border_width;
         t = is_horizontal ? point.x : point.y;
@@ -297,7 +333,8 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
         max_t = upto_tl + c_tl;
 
         if (is_near_rounded_corner) {
-          float radians = atan2(corner_center_to_point.y, corner_center_to_point.x);
+          float radians =
+              atan2(corner_center_to_point.y, corner_center_to_point.x);
           float corner_t = radians * corner_radius;
 
           if (center_to_point.x >= 0.0) {
@@ -330,7 +367,8 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
           }
         } else {
           // Straight borders
-          bool is_horizontal = corner_center_to_point.x < corner_center_to_point.y;
+          bool is_horizontal =
+              corner_center_to_point.x < corner_center_to_point.y;
           if (is_horizontal) {
             if (center_to_point.y < 0.0) {
               dash_velocity = dv_t;
@@ -370,8 +408,8 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
         float dash_gap = max_t - dash_length;
         if (dash_gap > 0.0) {
           float dash_period = dash_length + dash_gap;
-          border_color.a *= dash_alpha(t, dash_period, dash_length, dash_velocity,
-                                       antialias_threshold);
+          border_color.a *= dash_alpha(t, dash_period, dash_length,
+                                       dash_velocity, antialias_threshold);
         }
       }
     }
@@ -383,7 +421,8 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
                 saturate(antialias_threshold - inner_sdf));
   }
 
-  return color * float4(1.0, 1.0, 1.0, saturate(antialias_threshold - outer_sdf));
+  return color *
+         float4(1.0, 1.0, 1.0, saturate(antialias_threshold - outer_sdf));
 }
 
 // Returns the dash velocity of a corner given the dash velocity of the two
@@ -406,9 +445,8 @@ float corner_dash_velocity(float dv1, float dv2) {
 
 // Returns alpha used to render antialiased dashes.
 // `t` is within the dash when `fmod(t, period) < length`.
-float dash_alpha(
-    float t, float period, float length, float dash_velocity,
-    float antialias_threshold) {
+float dash_alpha(float t, float period, float length, float dash_velocity,
+                 float antialias_threshold) {
   float half_period = period / 2.0;
   float half_length = length / 2.0;
   // Value in [-half_period, half_period]
@@ -507,7 +545,8 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
 
   float alpha;
   if (shadow.blur_radius == 0.) {
-    float distance = quad_sdf(input.position.xy, shadow.bounds, shadow.corner_radii);
+    float distance =
+        quad_sdf(input.position.xy, shadow.bounds, shadow.corner_radii);
     alpha = saturate(0.5 - distance);
   } else {
     // The signal is only non-zero in a limited range, so don't waste samples
@@ -613,8 +652,8 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
     [[buffer(SpriteInputIndex_AtlasTextureSize)]]) {
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   MonochromeSprite sprite = sprites[sprite_id];
-  float4 device_position =
-      to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation, viewport_size);
+  float4 device_position = to_device_position_transformed(
+      unit_vertex, sprite.bounds, sprite.transformation, viewport_size);
   float4 clip_distance = distance_from_clip_rect(unit_vertex, sprite.bounds,
                                                  sprite.content_mask.bounds);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
@@ -770,21 +809,12 @@ vertex PathSpriteVertexOutput path_sprite_vertex(
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
 
   GradientColor gradient = prepare_fill_color(
-    sprite.color.tag,
-    sprite.color.color_space,
-    sprite.color.solid,
-    sprite.color.colors[0].color,
-    sprite.color.colors[1].color
-  );
+      sprite.color.tag, sprite.color.color_space, sprite.color.solid,
+      sprite.color.colors[0].color, sprite.color.colors[1].color);
 
-  return PathSpriteVertexOutput{
-    device_position,
-    tile_position,
-    sprite_id,
-    gradient.solid,
-    gradient.color0,
-    gradient.color1
-  };
+  return PathSpriteVertexOutput{device_position, tile_position,
+                                sprite_id,       gradient.solid,
+                                gradient.color0, gradient.color1};
 }
 
 fragment float4 path_sprite_fragment(
@@ -799,7 +829,7 @@ fragment float4 path_sprite_fragment(
   PathSprite sprite = sprites[input.sprite_id];
   Background background = sprite.color;
   float4 color = fill_color(background, input.position.xy, sprite.bounds,
-    input.solid_color, input.color0, input.color1);
+                            input.solid_color, input.color0, input.color1);
   color.a *= mask;
   return color;
 }
@@ -904,34 +934,32 @@ float4 hsla_to_rgba(Hsla hsla) {
   return rgba;
 }
 
-float3 srgb_to_linear(float3 color) {
-  return pow(color, float3(2.2));
-}
+float3 srgb_to_linear(float3 color) { return pow(color, float3(2.2)); }
 
-float3 linear_to_srgb(float3 color) {
-  return pow(color, float3(1.0 / 2.2));
-}
+float3 linear_to_srgb(float3 color) { return pow(color, float3(1.0 / 2.2)); }
 
 // Converts a sRGB color to the Oklab color space.
-// Reference: https://bottosson.github.io/posts/oklab/#converting-from-linear-srgb-to-oklab
+// Reference:
+// https://bottosson.github.io/posts/oklab/#converting-from-linear-srgb-to-oklab
 float4 srgb_to_oklab(float4 color) {
   // Convert non-linear sRGB to linear sRGB
   color = float4(srgb_to_linear(color.rgb), color.a);
 
-  float l = 0.4122214708 * color.r + 0.5363325363 * color.g + 0.0514459929 * color.b;
-  float m = 0.2119034982 * color.r + 0.6806995451 * color.g + 0.1073969566 * color.b;
-  float s = 0.0883024619 * color.r + 0.2817188376 * color.g + 0.6299787005 * color.b;
+  float l =
+      0.4122214708 * color.r + 0.5363325363 * color.g + 0.0514459929 * color.b;
+  float m =
+      0.2119034982 * color.r + 0.6806995451 * color.g + 0.1073969566 * color.b;
+  float s =
+      0.0883024619 * color.r + 0.2817188376 * color.g + 0.6299787005 * color.b;
 
-  float l_ = pow(l, 1.0/3.0);
-  float m_ = pow(m, 1.0/3.0);
-  float s_ = pow(s, 1.0/3.0);
+  float l_ = pow(l, 1.0 / 3.0);
+  float m_ = pow(m, 1.0 / 3.0);
+  float s_ = pow(s, 1.0 / 3.0);
 
-  return float4(
-   	0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
-   	1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
-   	0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
-   	color.a
-  );
+  return float4(0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+                1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+                0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
+                color.a);
 }
 
 // Converts an Oklab color to the sRGB color space.
@@ -944,11 +972,10 @@ float4 oklab_to_srgb(float4 color) {
   float m = m_ * m_ * m_;
   float s = s_ * s_ * s_;
 
-  float3 linear_rgb = float3(
-   	4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
-   	-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
-   	-0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
-  );
+  float3 linear_rgb =
+      float3(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+             -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+             -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s);
 
   // Convert linear sRGB to non-linear sRGB
   return float4(linear_to_srgb(linear_rgb), color.a);
@@ -966,17 +993,20 @@ float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,
   return float4(device_position, 0., 1.);
 }
 
-float4 to_device_position_transformed(float2 unit_vertex, Bounds_ScaledPixels bounds,
-                          TransformationMatrix transformation,
-                          constant Size_DevicePixels *input_viewport_size) {
+float4 to_device_position_transformed(
+    float2 unit_vertex, Bounds_ScaledPixels bounds,
+    TransformationMatrix transformation,
+    constant Size_DevicePixels *input_viewport_size) {
   float2 position =
       unit_vertex * float2(bounds.size.width, bounds.size.height) +
       float2(bounds.origin.x, bounds.origin.y);
 
   // Apply the transformation matrix to the position via matrix multiplication.
   float2 transformed_position = float2(0, 0);
-  transformed_position[0] = position[0] * transformation.rotation_scale[0][0] + position[1] * transformation.rotation_scale[0][1];
-  transformed_position[1] = position[0] * transformation.rotation_scale[1][0] + position[1] * transformation.rotation_scale[1][1];
+  transformed_position[0] = position[0] * transformation.rotation_scale[0][0] +
+                            position[1] * transformation.rotation_scale[0][1];
+  transformed_position[1] = position[0] * transformation.rotation_scale[1][0] +
+                            position[1] * transformation.rotation_scale[1][1];
 
   // Add in the translation component of the transformation matrix.
   transformed_position[0] += transformation.translation[0];
@@ -989,7 +1019,6 @@ float4 to_device_position_transformed(float2 unit_vertex, Bounds_ScaledPixels bo
   return float4(device_position, 0., 1.);
 }
 
-
 float2 to_tile_position(float2 unit_vertex, AtlasTile tile,
                         constant Size_DevicePixels *atlas_size) {
   float2 tile_origin = float2(tile.bounds.origin.x, tile.bounds.origin.y);
@@ -999,7 +1028,8 @@ float2 to_tile_position(float2 unit_vertex, AtlasTile tile,
 }
 
 // Selects corner radius based on quadrant.
-float pick_corner_radius(float2 center_to_point, Corners_ScaledPixels corner_radii) {
+float pick_corner_radius(float2 center_to_point,
+                         Corners_ScaledPixels corner_radii) {
   if (center_to_point.x < 0.) {
     if (center_to_point.y < 0.) {
       return corner_radii.top_left;
@@ -1019,31 +1049,31 @@ float pick_corner_radius(float2 center_to_point, Corners_ScaledPixels corner_rad
 // border, and negative inside.
 float quad_sdf(float2 point, Bounds_ScaledPixels bounds,
                Corners_ScaledPixels corner_radii) {
-    float2 half_size = float2(bounds.size.width, bounds.size.height) / 2.0;
-    float2 center = float2(bounds.origin.x, bounds.origin.y) + half_size;
-    float2 center_to_point = point - center;
-    float corner_radius = pick_corner_radius(center_to_point, corner_radii);
-    float2 corner_to_point = fabs(center_to_point) - half_size;
-    float2 corner_center_to_point = corner_to_point + corner_radius;
-    return quad_sdf_impl(corner_center_to_point, corner_radius);
+  float2 half_size = float2(bounds.size.width, bounds.size.height) / 2.0;
+  float2 center = float2(bounds.origin.x, bounds.origin.y) + half_size;
+  float2 center_to_point = point - center;
+  float corner_radius = pick_corner_radius(center_to_point, corner_radii);
+  float2 corner_to_point = fabs(center_to_point) - half_size;
+  float2 corner_center_to_point = corner_to_point + corner_radius;
+  return quad_sdf_impl(corner_center_to_point, corner_radius);
 }
 
 // Implementation of quad signed distance field
 float quad_sdf_impl(float2 corner_center_to_point, float corner_radius) {
-    if (corner_radius == 0.0) {
-        // Fast path for unrounded corners
-        return max(corner_center_to_point.x, corner_center_to_point.y);
-    } else {
-        // Signed distance of the point from a quad that is inset by corner_radius
-        // It is negative inside this quad, and positive outside
-        float signed_distance_to_inset_quad =
-            // 0 inside the inset quad, and positive outside
-            length(max(float2(0.0), corner_center_to_point)) +
-            // 0 outside the inset quad, and negative inside
-            min(0.0, max(corner_center_to_point.x, corner_center_to_point.y));
+  if (corner_radius == 0.0) {
+    // Fast path for unrounded corners
+    return max(corner_center_to_point.x, corner_center_to_point.y);
+  } else {
+    // Signed distance of the point from a quad that is inset by corner_radius
+    // It is negative inside this quad, and positive outside
+    float signed_distance_to_inset_quad =
+        // 0 inside the inset quad, and positive outside
+        length(max(float2(0.0), corner_center_to_point)) +
+        // 0 outside the inset quad, and negative inside
+        min(0.0, max(corner_center_to_point.x, corner_center_to_point.y));
 
-        return signed_distance_to_inset_quad - corner_radius;
-    }
+    return signed_distance_to_inset_quad - corner_radius;
+  }
 }
 
 // A standard gaussian function, used for weighting samples
@@ -1055,7 +1085,8 @@ float gaussian(float x, float sigma) {
 float2 erf(float2 x) {
   float2 s = sign(x);
   float2 a = abs(x);
-  float2 r1 = 1. + (0.278393 + (0.230389 + (0.000972 + 0.078108 * a) * a) * a) * a;
+  float2 r1 =
+      1. + (0.278393 + (0.230389 + (0.000972 + 0.078108 * a) * a) * a) * a;
   float2 r2 = r1 * r1;
   return s - s / (r2 * r2);
 }
@@ -1091,7 +1122,7 @@ float4 over(float4 below, float4 above) {
 }
 
 GradientColor prepare_fill_color(uint tag, uint color_space, Hsla solid,
-                                     Hsla color0, Hsla color1) {
+                                 Hsla color0, Hsla color1) {
   GradientColor out;
   if (tag == 0 || tag == 2) {
     out.solid = hsla_to_rgba(solid);
@@ -1112,80 +1143,83 @@ GradientColor prepare_fill_color(uint tag, uint color_space, Hsla solid,
 }
 
 float2x2 rotate2d(float angle) {
-    float s = sin(angle);
-    float c = cos(angle);
-    return float2x2(c, -s, s, c);
+  float s = sin(angle);
+  float c = cos(angle);
+  return float2x2(c, -s, s, c);
 }
 
-float4 fill_color(Background background,
-                      float2 position,
-                      Bounds_ScaledPixels bounds,
-                      float4 solid_color, float4 color0, float4 color1) {
+float4 fill_color(Background background, float2 position,
+                  Bounds_ScaledPixels bounds, float4 solid_color, float4 color0,
+                  float4 color1) {
   float4 color;
 
   switch (background.tag) {
+  case 0:
+    color = solid_color;
+    break;
+  case 1: {
+    // -90 degrees to match the CSS gradient angle.
+    float gradient_angle = background.gradient_angle_or_pattern_height;
+    float radians = (fmod(gradient_angle, 360.0) - 90.0) * (M_PI_F / 180.0);
+    float2 direction = float2(cos(radians), sin(radians));
+
+    // Expand the short side to be the same as the long side
+    if (bounds.size.width > bounds.size.height) {
+      direction.y *= bounds.size.height / bounds.size.width;
+    } else {
+      direction.x *= bounds.size.width / bounds.size.height;
+    }
+
+    // Get the t value for the linear gradient with the color stop percentages.
+    float2 half_size = float2(bounds.size.width, bounds.size.height) / 2.;
+    float2 center = float2(bounds.origin.x, bounds.origin.y) + half_size;
+    float2 center_to_point = position - center;
+    float t = dot(center_to_point, direction) / length(direction);
+    // Check the direction to determine whether to use x or y
+    if (abs(direction.x) > abs(direction.y)) {
+      t = (t + half_size.x) / bounds.size.width;
+    } else {
+      t = (t + half_size.y) / bounds.size.height;
+    }
+
+    // Adjust t based on the stop percentages
+    t = (t - background.colors[0].percentage) /
+        (background.colors[1].percentage - background.colors[0].percentage);
+    t = clamp(t, 0.0, 1.0);
+
+    switch (background.color_space) {
     case 0:
-      color = solid_color;
+      color = mix(color0, color1, t);
       break;
     case 1: {
-      // -90 degrees to match the CSS gradient angle.
-      float gradient_angle = background.gradient_angle_or_pattern_height;
-      float radians = (fmod(gradient_angle, 360.0) - 90.0) * (M_PI_F / 180.0);
-      float2 direction = float2(cos(radians), sin(radians));
-
-      // Expand the short side to be the same as the long side
-      if (bounds.size.width > bounds.size.height) {
-          direction.y *= bounds.size.height / bounds.size.width;
-      } else {
-          direction.x *=  bounds.size.width / bounds.size.height;
-      }
-
-      // Get the t value for the linear gradient with the color stop percentages.
-      float2 half_size = float2(bounds.size.width, bounds.size.height) / 2.;
-      float2 center = float2(bounds.origin.x, bounds.origin.y) + half_size;
-      float2 center_to_point = position - center;
-      float t = dot(center_to_point, direction) / length(direction);
-      // Check the direction to determine whether to use x or y
-      if (abs(direction.x) > abs(direction.y)) {
-          t = (t + half_size.x) / bounds.size.width;
-      } else {
-          t = (t + half_size.y) / bounds.size.height;
-      }
-
-      // Adjust t based on the stop percentages
-      t = (t - background.colors[0].percentage)
-        / (background.colors[1].percentage
-        - background.colors[0].percentage);
-      t = clamp(t, 0.0, 1.0);
-
-      switch (background.color_space) {
-        case 0:
-          color = mix(color0, color1, t);
-          break;
-        case 1: {
-          float4 oklab_color = mix(color0, color1, t);
-          color = oklab_to_srgb(oklab_color);
-          break;
-        }
-      }
+      float4 oklab_color = mix(color0, color1, t);
+      color = oklab_to_srgb(oklab_color);
       break;
     }
-    case 2: {
-        float gradient_angle_or_pattern_height = background.gradient_angle_or_pattern_height;
-        float pattern_width = (gradient_angle_or_pattern_height / 65535.0f) / 255.0f;
-        float pattern_interval = fmod(gradient_angle_or_pattern_height, 65535.0f) / 255.0f;
-        float pattern_height = pattern_width + pattern_interval;
-        float stripe_angle = M_PI_F / 4.0;
-        float pattern_period = pattern_height * sin(stripe_angle);
-        float2x2 rotation = rotate2d(stripe_angle);
-        float2 relative_position = position - float2(bounds.origin.x, bounds.origin.y);
-        float2 rotated_point = rotation * relative_position;
-        float pattern = fmod(rotated_point.x, pattern_period);
-        float distance = min(pattern, pattern_period - pattern) - pattern_period * (pattern_width / pattern_height) /  2.0f;
-        color = solid_color;
-        color.a *= saturate(0.5 - distance);
-        break;
     }
+    break;
+  }
+  case 2: {
+    float gradient_angle_or_pattern_height =
+        background.gradient_angle_or_pattern_height;
+    float pattern_width =
+        (gradient_angle_or_pattern_height / 65535.0f) / 255.0f;
+    float pattern_interval =
+        fmod(gradient_angle_or_pattern_height, 65535.0f) / 255.0f;
+    float pattern_height = pattern_width + pattern_interval;
+    float stripe_angle = M_PI_F / 4.0;
+    float pattern_period = pattern_height * sin(stripe_angle);
+    float2x2 rotation = rotate2d(stripe_angle);
+    float2 relative_position =
+        position - float2(bounds.origin.x, bounds.origin.y);
+    float2 rotated_point = rotation * relative_position;
+    float pattern = fmod(rotated_point.x, pattern_period);
+    float distance = min(pattern, pattern_period - pattern) -
+                     pattern_period * (pattern_width / pattern_height) / 2.0f;
+    color = solid_color;
+    color.a *= saturate(0.5 - distance);
+    break;
+  }
   }
 
   return color;
