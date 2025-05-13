@@ -405,7 +405,7 @@ pub async fn fetch_models(
     api_url: &str,
     api_key: &str,
 ) -> Result<Vec<Model>> {
-    let uri = format!("{}/v1/models", api_url);
+    let uri = format!("{}/models", api_url);
     let request_builder = HttpRequest::builder()
         .method(Method::GET)
         .uri(uri)
