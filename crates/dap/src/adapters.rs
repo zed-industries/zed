@@ -4,7 +4,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
-use dap_types::{StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest};
+pub use dap_types::{StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest};
 use futures::io::BufReader;
 use gpui::{AsyncApp, SharedString};
 pub use http_client::{HttpClient, github::latest_github_release};
