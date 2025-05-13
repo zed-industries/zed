@@ -351,9 +351,7 @@ fn handle_syskeydown_msg(
             }
         }
         lock.last_reported_modifiers = Some(modifiers);
-        PlatformInput::ModifiersChanged(ModifiersChangedEvent {
-            modifiers,
-        })
+        PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers })
     } else {
         let keystroke = parse_syskeydown_msg_keystroke(wparam)?;
         PlatformInput::KeyDown(KeyDownEvent {
@@ -363,7 +361,6 @@ fn handle_syskeydown_msg(
     };
     let mut func = lock.callbacks.input.take()?;
     drop(lock);
-    println!("handle_syskeydown_msg: {:?}", input);
     let result = if !func(input).propagate {
         state_ptr.state.borrow_mut().system_key_handled = true;
         Some(0)
@@ -388,16 +385,13 @@ fn handle_syskeyup_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> 
             }
         }
         lock.last_reported_modifiers = Some(modifiers);
-        PlatformInput::ModifiersChanged(ModifiersChangedEvent {
-            modifiers,
-        })
+        PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers })
     } else {
         let keystroke = parse_syskeydown_msg_keystroke(wparam)?;
         PlatformInput::KeyUp(KeyUpEvent { keystroke })
     };
     let mut func = lock.callbacks.input.take()?;
     drop(lock);
-    println!("handle_syskeyup_msg: {:?}", input);
     let result = if !func(input).propagate {
         Some(0)
     } else {
@@ -435,7 +429,6 @@ fn handle_keydown_msg(
             PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers })
         }
     };
-    println!("handle_keydown_msg: {:?}", event);
     let Some(mut func) = lock.callbacks.input.take() else {
         return Some(1);
     };
@@ -474,7 +467,6 @@ fn handle_keyup_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Opt
     };
     drop(lock);
 
-    println!("handle_keyup_msg: {:?}", event);
     let result = if func(event).default_prevented {
         Some(0)
     } else {
