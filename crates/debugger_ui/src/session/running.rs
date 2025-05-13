@@ -1212,10 +1212,11 @@ impl RunningState {
         }
     }
 
-    pub(crate) fn go_to_selected_stack_frame(&self, window: &Window, cx: &mut Context<Self>) {
+    pub(crate) fn go_to_selected_stack_frame(&self, window: &mut Window, cx: &mut Context<Self>) {
         if self.thread_id.is_some() {
             self.stack_frame_list
-                .update(cx, |list, cx| list.go_to_selected_stack_frame(window, cx));
+                .update(cx, |list, cx| list.go_to_selected_stack_frame(window, cx))
+                .detach();
         }
     }
 

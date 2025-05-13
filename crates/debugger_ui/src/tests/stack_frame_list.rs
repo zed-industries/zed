@@ -380,7 +380,8 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
     // select second stack frame
     stack_frame_list
         .update_in(cx, |stack_frame_list, window, cx| {
-            stack_frame_list.select_stack_frame(&stack_frames[1], true, window, cx)
+            stack_frame_list.select_ix(1, cx);
+            stack_frame_list.go_to_selected_stack_frame(window, cx)
         })
         .await
         .unwrap();

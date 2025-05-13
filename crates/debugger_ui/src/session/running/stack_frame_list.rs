@@ -5,8 +5,9 @@ use std::time::Duration;
 use anyhow::{Result, anyhow};
 use dap::StackFrameId;
 use gpui::{
-    AnyElement, Entity, EventEmitter, FocusHandle, Focusable, ListState, MouseButton, Stateful,
-    Subscription, Task, WeakEntity, list,
+    AnyElement, Entity, EventEmitter, FocusHandle, Focusable, ListState, MouseButton,
+    ScrollStrategy, Stateful, Subscription, Task, UniformListScrollHandle, WeakEntity,
+    uniform_list,
 };
 
 use language::PointUtf16;
@@ -14,7 +15,6 @@ use project::debugger::breakpoint_store::ActiveStackFrame;
 use project::debugger::session::{Session, SessionEvent, StackFrame};
 use project::{ProjectItem, ProjectPath};
 use ui::{Scrollbar, ScrollbarState, Tooltip, prelude::*};
-use util::ResultExt;
 use workspace::Workspace;
 
 use super::RunningState;
@@ -32,9 +32,9 @@ pub struct StackFrameList {
     state: WeakEntity<RunningState>,
     entries: Vec<StackFrameEntry>,
     workspace: WeakEntity<Workspace>,
-    selected_stack_frame_id: Option<StackFrameId>,
     selected_ix: Option<usize>,
     scrollbar_state: ScrollbarState,
+    scroll_handle: UniformListScrollHandle,
     _refresh_task: Task<()>,
 }
 
@@ -55,20 +55,7 @@ impl StackFrameList {
     ) -> Self {
         let weak_entity = cx.weak_entity();
         let focus_handle = cx.focus_handle();
-
-        let list = ListState::new(
-            0,
-            gpui::ListAlignment::Top,
-            px(1000.),
-            move |ix, _window, cx| {
-                weak_entity
-                    .upgrade()
-                    .map(|stack_frame_list| {
-                        stack_frame_list.update(cx, |this, cx| this.render_entry(ix, cx))
-                    })
-                    .unwrap_or(div().into_any())
-            },
-        );
+        let scroll_handle = UniformListScrollHandle::new();
 
         let _subscription =
             cx.subscribe_in(&session, window, |this, _, event, window, cx| match event {
@@ -82,16 +69,15 @@ impl StackFrameList {
             });
 
         let mut this = Self {
-            scrollbar_state: ScrollbarState::new(list.clone()),
-            list,
+            scrollbar_state: ScrollbarState::new(scroll_handle.clone()),
             session,
             workspace,
             focus_handle,
             state,
             _subscription,
             entries: Default::default(),
-            selected_stack_frame_id: None,
             selected_ix: None,
+            scroll_handle,
             _refresh_task: Task::ready(()),
         };
         this.schedule_refresh(true, window, cx);
@@ -117,7 +103,7 @@ impl StackFrameList {
     fn stack_frames(&self, cx: &mut App) -> Vec<StackFrame> {
         self.state
             .read_with(cx, |state, _| state.thread_id)
-            .log_err()
+            .ok()
             .flatten()
             .map(|thread_id| {
                 self.session
@@ -135,7 +121,10 @@ impl StackFrameList {
     }
 
     pub fn selected_stack_frame_id(&self) -> Option<StackFrameId> {
-        self.selected_stack_frame_id
+        self.selected_ix.and_then(|ix| match self.entries.get(ix) {
+            Some(StackFrameEntry::Normal(frame)) => Some(frame.id),
+            _ => None,
+        })
     }
 
     pub(super) fn schedule_refresh(
@@ -174,7 +163,7 @@ impl StackFrameList {
     ) {
         let mut entries = Vec::new();
         let mut collapsed_entries = Vec::new();
-        let mut current_stack_frame = None;
+        let mut first_stack_frame = None;
 
         let stack_frames = self.stack_frames(cx);
         for stack_frame in &stack_frames {
@@ -188,7 +177,7 @@ impl StackFrameList {
                         entries.push(StackFrameEntry::Collapsed(collapsed_entries.clone()));
                     }
 
-                    current_stack_frame.get_or_insert(&stack_frame.dap);
+                    first_stack_frame.get_or_insert((entries.len(), &stack_frame.dap));
                     entries.push(StackFrameEntry::Normal(stack_frame.dap.clone()));
                 }
             }
@@ -200,65 +189,49 @@ impl StackFrameList {
         }
 
         std::mem::swap(&mut self.entries, &mut entries);
-        self.list.reset(self.entries.len());
 
-        if let Some(current_stack_frame) = current_stack_frame.filter(|_| select_first_stack_frame)
+        if let Some((ix, first_stack_frame)) =
+            first_stack_frame.filter(|_| select_first_stack_frame)
         {
-            self.select_stack_frame(current_stack_frame, true, window, cx)
-                .detach_and_log_err(cx);
+            self.select_ix(ix, cx);
+            self.open_stack_frame(first_stack_frame, window, cx)
+                .detach();
         }
 
         cx.notify();
     }
 
-    pub fn go_to_selected_stack_frame(&mut self, window: &Window, cx: &mut Context<Self>) {
-        if let Some(selected_stack_frame_id) = self.selected_stack_frame_id {
-            let frame = self
-                .entries
-                .iter()
-                .find_map(|entry| match entry {
-                    StackFrameEntry::Normal(dap) => {
-                        if dap.id == selected_stack_frame_id {
-                            Some(dap)
-                        } else {
-                            None
-                        }
-                    }
-                    StackFrameEntry::Collapsed(daps) => {
-                        daps.iter().find(|dap| dap.id == selected_stack_frame_id)
-                    }
-                })
-                .cloned();
-
-            if let Some(frame) = frame.as_ref() {
-                self.select_stack_frame(frame, true, window, cx)
-                    .detach_and_log_err(cx);
-            }
-        }
-    }
-
-    pub fn select_stack_frame(
+    pub fn go_to_selected_stack_frame(
         &mut self,
-        stack_frame: &dap::StackFrame,
-        go_to_stack_frame: bool,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        self.selected_stack_frame_id = Some(stack_frame.id);
+        if let Some(ix) = self.selected_ix {
+            if let Some(StackFrameEntry::Normal(frame)) = self.entries.get(ix) {
+                return self.open_stack_frame(&frame.clone(), window, cx);
+            }
+        }
+        Task::ready(Ok(()))
+    }
 
-        cx.emit(StackFrameListEvent::SelectedStackFrameChanged(
-            stack_frame.id,
-        ));
-        cx.notify();
-
-        if !go_to_stack_frame {
-            return Task::ready(Ok(()));
+    pub(crate) fn select_ix(&mut self, ix: usize, cx: &mut Context<Self>) {
+        self.selected_ix = Some(ix);
+        if let Some(StackFrameEntry::Normal(frame)) = self.entries.get(ix) {
+            cx.emit(StackFrameListEvent::SelectedStackFrameChanged(frame.id));
         };
+        cx.notify();
+    }
 
+    fn open_stack_frame(
+        &mut self,
+        stack_frame: &dap::StackFrame,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
         let row = (stack_frame.line.saturating_sub(1)) as u32;
 
         let Some(abs_path) = self.abs_path_from_stack_frame(&stack_frame) else {
-            return Task::ready(Err(anyhow!("Project path not found")));
+            return Task::ready(Ok(()));
         };
 
         let stack_frame_id = stack_frame.id;
@@ -355,8 +328,7 @@ impl StackFrameList {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let source = stack_frame.source.clone();
-        let is_selected_frame = Some(stack_frame.id) == self.selected_stack_frame_id;
-        let is_selected_ix = Some(ix) == self.selected_ix;
+        let is_selected_frame = Some(ix) == self.selected_ix;
 
         let path = source.clone().and_then(|s| s.path.or(s.name));
         let formatted_path = path.map(|path| format!("{}:{}", path, stack_frame.line,));
@@ -392,14 +364,11 @@ impl StackFrameList {
             .when(is_selected_frame, |this| {
                 this.bg(cx.theme().colors().element_hover)
             })
-            .when(is_selected_ix, |this| {
-                this.border_1().border_color(gpui::red())
-            })
             .on_click(cx.listener({
                 let stack_frame = stack_frame.clone();
                 move |this, _, window, cx| {
-                    this.select_stack_frame(&stack_frame, true, window, cx)
-                        .detach_and_log_err(cx);
+                    this.select_ix(ix, cx);
+                    this.open_stack_frame(&stack_frame, window, cx).detach();
                 }
             }))
             .hover(|style| style.bg(cx.theme().colors().element_hover).cursor_pointer())
@@ -467,7 +436,7 @@ impl StackFrameList {
                 .iter()
                 .map(|frame| StackFrameEntry::Normal(frame.clone())),
         );
-        self.list.reset(self.entries.len());
+        self.select_ix(ix, cx);
         cx.notify();
     }
 
@@ -478,6 +447,7 @@ impl StackFrameList {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let first_stack_frame = &stack_frames[0];
+        let is_selected = Some(ix) == self.selected_ix;
 
         h_flex()
             .rounded_md()
@@ -486,6 +456,9 @@ impl StackFrameList {
             .group("")
             .id(("stack-frame", first_stack_frame.id))
             .p_1()
+            .when(is_selected, |this| {
+                this.bg(cx.theme().colors().element_hover)
+            })
             .on_click(cx.listener({
                 let stack_frames = stack_frames.clone();
                 move |this, _, _window, cx| {
@@ -553,8 +526,15 @@ impl StackFrameList {
             .children(Scrollbar::vertical(self.scrollbar_state.clone()))
     }
 
-    fn select_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
-        self.selected_ix = match self.selected_ix {
+    fn scroll_to_selected_ix(&mut self) {
+        if let Some(ix) = self.selected_ix {
+            self.scroll_handle
+                .scroll_to_item(ix, ScrollStrategy::Center);
+        }
+    }
+
+    fn select_next(&mut self, _: &menu::SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
+        let ix = match self.selected_ix {
             _ if self.entries.len() == 0 => None,
             None => Some(0),
             Some(ix) => {
@@ -565,16 +545,20 @@ impl StackFrameList {
                 }
             }
         };
+        if let Some(ix) = ix {
+            self.select_ix(ix, cx);
+            self.scroll_to_selected_ix();
+        }
         cx.notify();
     }
 
     fn select_previous(
         &mut self,
         _: &menu::SelectPrevious,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.selected_ix = match self.selected_ix {
+        let ix = match self.selected_ix {
             _ if self.entries.len() == 0 => None,
             None => Some(self.entries.len() - 1),
             Some(ix) => {
@@ -585,22 +569,43 @@ impl StackFrameList {
                 }
             }
         };
+        if let Some(ix) = ix {
+            self.select_ix(ix, cx);
+            self.scroll_to_selected_ix();
+        }
         cx.notify();
     }
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(StackFrameEntry::Normal(frame)) =
-            self.selected_ix.and_then(|ix| self.entries.get(ix))
-        {
-            let frame = frame.clone();
-            self.select_stack_frame(&frame, true, window, cx)
-                .detach_and_log_err(cx);
+        let Some(ix) = self.selected_ix else { return };
+        let Some(entry) = self.entries.get(ix) else {
+            return;
+        };
+        // XXX clones
+        match entry {
+            StackFrameEntry::Normal(frame) => {
+                self.open_stack_frame(&frame.clone(), window, cx).detach();
+            }
+            StackFrameEntry::Collapsed(frames) => {
+                self.expand_collapsed_entry(ix, &frames.clone(), cx);
+            }
         }
+    }
+
+    fn render_list(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        uniform_list(
+            cx.entity(),
+            "stack-frame-list",
+            self.entries.len(),
+            |this, range, _window, cx| range.map(|ix| this.render_entry(ix, cx)).collect(),
+        )
+        .track_scroll(self.scroll_handle.clone())
+        .size_full()
     }
 }
 
 impl Render for StackFrameList {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .track_focus(&self.focus_handle)
             .size_full()
@@ -608,7 +613,7 @@ impl Render for StackFrameList {
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::confirm))
-            .child(list(self.list.clone()).size_full())
+            .child(self.render_list(window, cx))
             .child(self.render_vertical_scrollbar(cx))
     }
 }

@@ -1778,7 +1778,8 @@ async fn test_it_fetches_scopes_variables_when_you_select_a_stack_frame(
             running_state
                 .stack_frame_list()
                 .update(cx, |stack_frame_list, cx| {
-                    stack_frame_list.select_stack_frame(&stack_frames[1], true, window, cx)
+                    stack_frame_list.select_ix(1, cx);
+                    stack_frame_list.go_to_selected_stack_frame(window, cx)
                 })
         })
         .await
