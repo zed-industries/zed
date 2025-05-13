@@ -448,3 +448,411 @@ pub async fn fetch_models(
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resilient_model_schema_deserialize() {
+        let json = r#"{
+            "object": "list",
+            "data": [
+                {
+                    "id": "mistral-large-latest",
+                    "object": "model",
+                    "created": 1747143320,
+                    "owned_by": "mistralai",
+                    "capabilities": {
+                        "completion_chat": true,
+                        "completion_fim": false,
+                        "function_calling": true,
+                        "fine_tuning": true,
+                        "vision": false,
+                        "classification": false
+                    },
+                    "name": "mistral-large-2411",
+                    "description": "Official mistral-large-2411 Mistral AI model",
+                    "max_context_length": 131072,
+                    "aliases": [
+                        "mistral-large-2411"
+                    ],
+                    "deprecation": null,
+                    "default_model_temperature": 0.7,
+                    "type": "base"
+                },
+                {
+                    "id": "pixtral-large-latest",
+                    "object": "model",
+                    "created": 1747143320,
+                    "owned_by": "mistralai",
+                    "capabilities": {
+                        "completion_chat": true,
+                        "completion_fim": false,
+                        "function_calling": true,
+                        "fine_tuning": false,
+                        "vision": true,
+                        "classification": false
+                    },
+                    "name": "pixtral-large-2411",
+                    "description": "Official pixtral-large-2411 Mistral AI model",
+                    "max_context_length": 131072,
+                    "aliases": [
+                        "pixtral-large-2411",
+                        "mistral-large-pixtral-2411"
+                    ],
+                    "deprecation": null,
+                    "default_model_temperature": 0.7,
+                    "type": "base"
+                },
+                {
+                    "id": "codestral-latest",
+                    "object": "model",
+                    "created": 1747143320,
+                    "owned_by": "mistralai",
+                    "capabilities": {
+                        "completion_chat": true,
+                        "completion_fim": true,
+                        "function_calling": true,
+                        "fine_tuning": false,
+                        "vision": false,
+                        "classification": false
+                    },
+                    "name": "codestral-2501",
+                    "description": "Official codestral-2501 Mistral AI model",
+                    "max_context_length": 262144,
+                    "aliases": [
+                        "codestral-2501",
+                        "codestral-2412",
+                        "codestral-2411-rc5"
+                    ],
+                    "deprecation": null,
+                    "default_model_temperature": 0.3,
+                    "type": "base"
+                },
+                {
+                    "id": "codestral-mamba-latest",
+                    "object": "model",
+                    "created": 1747143320,
+                    "owned_by": "mistralai",
+                    "capabilities": {
+                        "completion_chat": true,
+                        "completion_fim": false,
+                        "function_calling": true,
+                        "fine_tuning": false,
+                        "vision": false,
+                        "classification": false
+                    },
+                    "name": "codestral-mamba-2407",
+                    "description": "Official codestral-mamba-2407 Mistral AI model",
+                    "max_context_length": 262144,
+                    "aliases": [
+                        "codestral-mamba-2407",
+                        "open-codestral-mamba"
+                    ],
+                    "deprecation": null,
+                    "default_model_temperature": 0.7,
+                    "type": "base"
+                },
+                {
+                    "id": "pixtral-12b-latest",
+                    "object": "model",
+                    "created": 1747143320,
+                    "owned_by": "mistralai",
+                    "capabilities": {
+                        "completion_chat": true,
+                        "completion_fim": false,
+                        "function_calling": true,
+                        "fine_tuning": false,
+                        "vision": true,
+                        "classification": false
+                    },
+                    "name": "pixtral-12b-2409",
+                    "description": "Official pixtral-12b-2409 Mistral AI model",
+                    "max_context_length": 131072,
+                    "aliases": [
+                        "pixtral-12b-2409",
+                        "pixtral-12b"
+                    ],
+                    "deprecation": null,
+                    "default_model_temperature": 0.3,
+                    "type": "base"
+                },
+                {
+                    "id": "mistral-small-latest",
+                    "object": "model",
+                    "created": 1747143320,
+                    "owned_by": "mistralai",
+                    "capabilities": {
+                        "completion_chat": true,
+                        "completion_fim": false,
+                        "function_calling": true,
+                        "fine_tuning": false,
+                        "vision": true,
+                        "classification": false
+                    },
+                    "name": "mistral-small-2503",
+                    "description": "Official mistral-small-2503 Mistral AI model",
+                    "max_context_length": 131072,
+                    "aliases": [
+                        "mistral-small-2503"
+                    ],
+                    "deprecation": null,
+                    "default_model_temperature": 0.3,
+                    "type": "base"
+                },
+                {
+                    "id": "mistral-medium-latest",
+                    "object": "model",
+                    "created": 1747143320,
+                    "owned_by": "mistralai",
+                    "capabilities": {
+                        "completion_chat": true,
+                        "completion_fim": false,
+                        "function_calling": true,
+                        "fine_tuning": false,
+                        "vision": true,
+                        "classification": false
+                    },
+                    "name": "mistral-medium-2505",
+                    "description": "Official mistral-medium-2505 Mistral AI model",
+                    "max_context_length": 131072,
+                    "aliases": [
+                        "mistral-medium-2505",
+                        "mistral-medium"
+                    ],
+                    "deprecation": null,
+                    "default_model_temperature": 0.3,
+                    "type": "base"
+                },
+                {
+                    "id": "mistral-ocr-latest",
+                    "object": "model",
+                    "created": 1747143320,
+                    "owned_by": "mistralai",
+                    "capabilities": {
+                        "completion_chat": false,
+                        "completion_fim": false,
+                        "function_calling": false,
+                        "fine_tuning": false,
+                        "vision": false,
+                        "classification": false
+                    },
+                    "name": "mistral-ocr-2503",
+                    "description": "Official mistral-ocr-2503 Mistral AI model",
+                    "max_context_length": 32768,
+                    "aliases": [
+                        "mistral-ocr-2503"
+                    ],
+                    "deprecation": null,
+                    "default_model_temperature": null,
+                    "type": "base"
+                }
+            ]
+        }"#;
+
+        let schema: ModelResponse = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(schema.data.len(), 8);
+        assert_eq!(schema.data[0].id, "mistral-large-latest");
+        assert_eq!(schema.data[1].id, "pixtral-large-latest");
+
+        assert!(schema.data[0].capabilities.function_calling);
+        assert!(schema.data[0].capabilities.fine_tuning);
+        assert!(!schema.data[0].capabilities.vision);
+
+        assert!(schema.data[1].capabilities.vision);
+    }
+
+    #[test]
+    fn test_resilient_model_deserialization() {
+        let json = r#"{
+            "object": "list",
+            "data": [
+                {
+                    "id": "valid-model",
+                    "name": "Valid Model",
+                    "capabilities": {
+                        "completion_chat": true,
+                        "completion_fim": false,
+                        "function_calling": true,
+                        "fine_tuning": false,
+                        "vision": false,
+                        "classification": false
+                    },
+                    "max_context_length": 4000,
+                    "description": "A test model",
+                    "aliases": []
+                },
+                {
+                    "id": "invalid-model",
+                    "name": "Invalid Model"
+                }
+            ]
+        }"#;
+
+        let schema: ModelResponse = serde_json::from_str(json).unwrap();
+
+        assert_eq!(schema.data.len(), 1);
+        assert_eq!(schema.data[0].id, "valid-model");
+        assert_eq!(schema.data[0].name, "Valid Model");
+        assert!(schema.data[0].capabilities.completion_chat);
+        assert!(schema.data[0].capabilities.function_calling);
+    }
+
+    #[test]
+    fn test_empty_model_list() {
+        let json = r#"{
+            "object": "list",
+            "data": []
+        }"#;
+
+        let schema: ModelResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(schema.data.len(), 0);
+    }
+
+    #[test]
+    fn test_response_deserialization() {
+        let json = r#"{
+            "id": "resp-12345",
+            "object": "chat.completion",
+            "created": 1717612000,
+            "model": "mistral-medium-latest",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "Hello, how can I help you today?"
+                    },
+                    "finish_reason": "stop"
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 8,
+                "total_tokens": 18
+            }
+        }"#;
+
+        let response: Response = serde_json::from_str(json).unwrap();
+
+        assert_eq!(response.id, "resp-12345");
+        assert_eq!(response.model, "mistral-medium-latest");
+        assert_eq!(response.choices.len(), 1);
+
+        let choice = &response.choices[0];
+        assert_eq!(choice.index, 0);
+        assert_eq!(choice.finish_reason, Some("stop".to_string()));
+
+        if let RequestMessage::Assistant { content, .. } = &choice.message {
+            assert_eq!(
+                content,
+                &Some("Hello, how can I help you today?".to_string())
+            );
+        } else {
+            panic!("Expected Assistant message");
+        }
+
+        assert_eq!(response.usage.prompt_tokens, 10);
+        assert_eq!(response.usage.completion_tokens, 8);
+        assert_eq!(response.usage.total_tokens, 18);
+    }
+
+    #[test]
+    fn test_stream_response_deserialization() {
+        let json = r#"{
+            "id": "cmpl-12345",
+            "object": "chat.completion.chunk",
+            "created": 1717612000,
+            "model": "mistral-small-latest",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "role": "assistant",
+                        "content": "Hello"
+                    },
+                    "finish_reason": null
+                }
+            ]
+        }"#;
+
+        let response: StreamResponse = serde_json::from_str(json).unwrap();
+
+        assert_eq!(response.id, "cmpl-12345");
+        assert_eq!(response.model, "mistral-small-latest");
+        assert_eq!(response.choices.len(), 1);
+
+        let choice = &response.choices[0];
+        assert_eq!(choice.index, 0);
+        assert!(choice.finish_reason.is_none());
+
+        let delta = &choice.delta;
+        assert_eq!(delta.role, Some(Role::Assistant));
+        assert_eq!(delta.content, Some("Hello".to_string()));
+    }
+
+    #[test]
+    fn test_complex_request_serialization() {
+        let request = Request {
+            model: "mistral-medium-latest".to_string(),
+            messages: vec![
+                RequestMessage::System {
+                    content: "You are a helpful assistant.".to_string(),
+                },
+                RequestMessage::User {
+                    content: "Tell me about Rust programming.".to_string(),
+                },
+            ],
+            stream: true,
+            max_tokens: Some(100),
+            temperature: Some(0.7),
+            response_format: Some(ResponseFormat::Text),
+            tool_choice: None,
+            parallel_tool_calls: None,
+            tools: vec![],
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+
+        // Check for key elements in the serialized JSON
+        assert!(json.contains("\"model\":\"mistral-medium-latest\""));
+        assert!(json.contains("\"stream\":true"));
+        assert!(json.contains("\"max_tokens\":100"));
+        assert!(json.contains("\"temperature\":0.7"));
+        assert!(json.contains("\"role\":\"system\""));
+        assert!(json.contains("\"role\":\"user\""));
+        assert!(json.contains("\"content\":\"You are a helpful assistant.\""));
+        assert!(json.contains("\"content\":\"Tell me about Rust programming.\""));
+    }
+
+    #[test]
+    fn test_tool_call_serialization() {
+        let tool_call = ToolCall {
+            id: "call_12345".to_string(),
+            content: ToolCallContent::Function {
+                function: FunctionContent {
+                    name: "get_weather".to_string(),
+                    arguments: r#"{"location":"New York"}"#.to_string(),
+                },
+            },
+        };
+
+        let json = serde_json::to_string(&tool_call).unwrap();
+
+        assert!(json.contains("\"id\":\"call_12345\""));
+        assert!(json.contains("\"type\":\"function\""));
+        assert!(json.contains("\"name\":\"get_weather\""));
+        assert!(json.contains("\"arguments\":\"{\\\"location\\\":\\\"New York\\\"}\""));
+
+        // Test round-trip serialization/deserialization
+        let deserialized: ToolCall = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.id, "call_12345");
+
+        // ToolCallContent is currently only Function, so we don't need if let
+        let ToolCallContent::Function { function } = &deserialized.content;
+        assert_eq!(function.name, "get_weather");
+        assert_eq!(function.arguments, r#"{"location":"New York"}"#);
+    }
+}

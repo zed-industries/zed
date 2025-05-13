@@ -846,3 +846,65 @@ impl Render for ConfigurationView {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use language_model;
+
+    #[test]
+    fn test_into_mistral_conversion() {
+        let request = language_model::LanguageModelRequest {
+            messages: vec![
+                language_model::LanguageModelRequestMessage {
+                    role: language_model::Role::System,
+                    content: vec![language_model::MessageContent::Text(
+                        "You are a helpful assistant.".to_string(),
+                    )],
+                    cache: false,
+                },
+                language_model::LanguageModelRequestMessage {
+                    role: language_model::Role::User,
+                    content: vec![language_model::MessageContent::Text(
+                        "Hello, how are you?".to_string(),
+                    )],
+                    cache: false,
+                },
+            ],
+            temperature: Some(0.7),
+            tools: Vec::new(),
+            tool_choice: None,
+            thread_id: None,
+            prompt_id: None,
+            mode: None,
+            stop: Vec::new(),
+        };
+
+        let model_name = "mistral-medium-latest".to_string();
+        let max_output_tokens = Some(1000);
+        let mistral_request = into_mistral(request, model_name, max_output_tokens);
+
+        assert_eq!(mistral_request.model, "mistral-medium-latest");
+        assert_eq!(mistral_request.temperature, Some(0.7));
+        assert_eq!(mistral_request.max_tokens, Some(1000));
+        assert!(mistral_request.stream);
+        assert!(mistral_request.tools.is_empty());
+        assert!(mistral_request.tool_choice.is_none());
+
+        assert_eq!(mistral_request.messages.len(), 2);
+
+        match &mistral_request.messages[0] {
+            mistral::RequestMessage::System { content } => {
+                assert_eq!(content, "You are a helpful assistant.");
+            }
+            _ => panic!("Expected System message"),
+        }
+
+        match &mistral_request.messages[1] {
+            mistral::RequestMessage::User { content } => {
+                assert_eq!(content, "Hello, how are you?");
+            }
+            _ => panic!("Expected User message"),
+        }
+    }
+}
