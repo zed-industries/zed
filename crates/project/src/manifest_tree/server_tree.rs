@@ -28,8 +28,8 @@ use crate::{LanguageServerId, ProjectPath, project_settings::LspSettings};
 use super::{ManifestTree, ManifestTreeEvent};
 
 #[derive(Debug, Default)]
-struct ServersForWorktree {
-    roots: BTreeMap<
+pub(crate) struct ServersForWorktree {
+    pub(crate) roots: BTreeMap<
         Arc<Path>,
         BTreeMap<LanguageServerName, (Arc<InnerTreeNode>, BTreeSet<LanguageName>)>,
     >,
@@ -37,7 +37,7 @@ struct ServersForWorktree {
 
 pub struct LanguageServerTree {
     manifest_tree: Entity<ManifestTree>,
-    instances: BTreeMap<WorktreeId, ServersForWorktree>,
+    pub(crate) instances: BTreeMap<WorktreeId, ServersForWorktree>,
     attach_kind_cache: HashMap<LanguageServerName, Attach>,
     languages: Arc<LanguageRegistry>,
     _subscriptions: Subscription,
@@ -47,7 +47,7 @@ pub struct LanguageServerTree {
 /// - A language server that has already been initialized/updated for a given project
 /// - A soon-to-be-initialized language server.
 #[derive(Clone)]
-pub(crate) struct LanguageServerTreeNode(Weak<InnerTreeNode>);
+pub struct LanguageServerTreeNode(Weak<InnerTreeNode>);
 
 /// Describes a request to launch a language server.
 #[derive(Debug)]
@@ -96,7 +96,7 @@ impl From<Weak<InnerTreeNode>> for LanguageServerTreeNode {
 }
 
 #[derive(Debug)]
-struct InnerTreeNode {
+pub struct InnerTreeNode {
     id: OnceLock<LanguageServerId>,
     name: LanguageServerName,
     attach: Attach,

@@ -9,7 +9,9 @@ use crate::{
     environment::ProjectEnvironment,
     lsp_command::{self, *},
     lsp_store,
-    manifest_tree::{AdapterQuery, LanguageServerTree, LaunchDisposition, ManifestTree},
+    manifest_tree::{
+        AdapterQuery, LanguageServerTree, LanguageServerTreeNode, LaunchDisposition, ManifestTree,
+    },
     prettier_store::{self, PrettierStore, PrettierStoreEvent},
     project_settings::{LspSettings, ProjectSettings},
     relativize_path, resolve_path,
@@ -2284,19 +2286,29 @@ impl LocalLspStore {
         else {
             return;
         };
-        let delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
-        let servers = self.lsp_tree.clone().update(cx, |this, cx| {
-            this.get(
-                ProjectPath { worktree_id, path },
-                AdapterQuery::Language(&language.name()),
-                delegate.clone(),
-                cx,
-            )
-            .collect::<Vec<_>>()
-        });
+        let (delegate, servers) = self
+            .reuse_existing_language_server(&worktree, &language, cx)
+            .unwrap_or_else(|| {
+                let delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
+                let servers = self
+                    .lsp_tree
+                    .clone()
+                    .update(cx, |language_server_tree, cx| {
+                        language_server_tree
+                            .get(
+                                ProjectPath { worktree_id, path },
+                                AdapterQuery::Language(&language.name()),
+                                delegate.clone(),
+                                cx,
+                            )
+                            .collect::<Vec<_>>()
+                    });
+                (delegate, servers)
+            });
         let servers = servers
             .into_iter()
             .filter_map(|server_node| {
+                // TODO kb this is invoked on restart for both kinds of worktrees, bad
                 let server_id = server_node.server_id_or_init(
                     |LaunchDisposition {
                          server_name,
@@ -2433,6 +2445,55 @@ impl LocalLspStore {
                     });
             }
         }
+    }
+
+    fn reuse_existing_language_server(
+        &self,
+        worktree: &Entity<Worktree>,
+        language: &Language,
+        cx: &mut App,
+    ) -> Option<(Arc<LocalLspAdapterDelegate>, Vec<LanguageServerTreeNode>)> {
+        if worktree.read(cx).is_visible() {
+            return None;
+        }
+        let language_name = language.name();
+        let instances = &self.lsp_tree.read(cx).instances;
+        let worktree_store = self.worktree_store.read(cx);
+        let (worktree_id, servers) = instances
+            .iter()
+            .filter(|(worktree_id, _)| {
+                worktree_store
+                    .worktree_for_id(**worktree_id, cx)
+                    .is_some_and(|worktree| worktree.read(cx).is_visible())
+            })
+            .map(|(worktree_id, servers)| {
+                servers
+                    .roots
+                    .iter()
+                    .flat_map(|(_, language_servers)| language_servers)
+                    .map(move |(_, (server_node, server_languages))| {
+                        (worktree_id, server_node, server_languages)
+                    })
+                    .filter(|(_, _, server_languages)| server_languages.contains(&language_name))
+                    .map(|(worktree_id, server_node, _)| {
+                        (
+                            *worktree_id,
+                            LanguageServerTreeNode::from(Arc::downgrade(server_node)),
+                        )
+                    })
+            })
+            .flatten()
+            .fold(HashMap::default(), |mut acc, (worktree_id, server_node)| {
+                acc.entry(worktree_id)
+                    .or_insert_with(Vec::new)
+                    .push(server_node);
+                acc
+            })
+            .into_iter()
+            .max_by_key(|(_, servers)| servers.len())?;
+
+        let delegate = LocalLspAdapterDelegate::from_local_lsp(self, worktree, cx);
+        Some((delegate, servers))
     }
 
     pub(crate) fn unregister_old_buffer_from_language_servers(
