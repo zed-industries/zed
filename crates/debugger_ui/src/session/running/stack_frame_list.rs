@@ -25,7 +25,6 @@ pub enum StackFrameListEvent {
 }
 
 pub struct StackFrameList {
-    list: ListState,
     focus_handle: FocusHandle,
     _subscription: Subscription,
     session: Entity<Session>,
@@ -53,7 +52,6 @@ impl StackFrameList {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let weak_entity = cx.weak_entity();
         let focus_handle = cx.focus_handle();
         let scroll_handle = UniformListScrollHandle::new();
 
@@ -573,7 +571,23 @@ impl StackFrameList {
             self.select_ix(ix, cx);
             self.scroll_to_selected_ix();
         }
-        cx.notify();
+    }
+
+    fn select_first(
+        &mut self,
+        _: &menu::SelectFirst,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.entries.len() > 0 {
+            self.select_ix(0, cx);
+        }
+    }
+
+    fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.entries.len() > 0 {
+            self.select_ix(self.entries.len() - 1, cx);
+        }
     }
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
@@ -612,6 +626,8 @@ impl Render for StackFrameList {
             .p_1()
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
+            .on_action(cx.listener(Self::select_first))
+            .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::confirm))
             .child(self.render_list(window, cx))
             .child(self.render_vertical_scrollbar(cx))
