@@ -3,7 +3,6 @@ use std::{
     borrow::Cow,
     ops::Not,
     path::{Path, PathBuf},
-    sync::Arc,
     time::Duration,
     usize,
 };
@@ -50,7 +49,6 @@ pub(super) struct NewSessionModal {
     attach_mode: Entity<AttachMode>,
     custom_mode: Entity<CustomMode>,
     debugger: Option<DebugAdapterName>,
-    task_contexts: Arc<TaskContexts>,
     save_scenario_state: Option<SaveScenarioState>,
     _subscriptions: [Subscription; 2],
 }
@@ -85,14 +83,6 @@ impl NewSessionModal {
         let task_store = workspace.project().read(cx).task_store().clone();
 
         cx.spawn_in(window, async move |workspace, cx| {
-            let task_contexts = Arc::from(
-                workspace
-                    .update_in(cx, |workspace, window, cx| {
-                        tasks_ui::task_contexts(workspace, window, cx)
-                    })?
-                    .await,
-            );
-
             workspace.update_in(cx, |workspace, window, cx| {
                 let workspace_handle = workspace.weak_handle();
                 workspace.toggle_modal(window, cx, |window, cx| {
@@ -100,12 +90,7 @@ impl NewSessionModal {
 
                     let launch_picker = cx.new(|cx| {
                         Picker::uniform_list(
-                            DebugScenarioDelegate::new(
-                                debug_panel.downgrade(),
-                                workspace_handle.clone(),
-                                task_store,
-                                task_contexts.clone(),
-                            ),
+                            DebugScenarioDelegate::new(debug_panel.downgrade(), task_store),
                             window,
                             cx,
                         )
@@ -124,11 +109,38 @@ impl NewSessionModal {
                         ),
                     ];
 
-                    let active_cwd = task_contexts
-                        .active_context()
-                        .and_then(|context| context.cwd.clone());
+                    let custom_mode = CustomMode::new(None, window, cx);
 
-                    let custom_mode = CustomMode::new(None, active_cwd, window, cx);
+                    cx.spawn_in(window, {
+                        let workspace_handle = workspace_handle.clone();
+                        async move |this, cx| {
+                            let task_contexts = workspace_handle
+                                .update_in(cx, |workspace, window, cx| {
+                                    tasks_ui::task_contexts(workspace, window, cx)
+                                })?
+                                .await;
+
+                            this.update_in(cx, |this, window, cx| {
+                                if let Some(active_cwd) = task_contexts
+                                    .active_context()
+                                    .and_then(|context| context.cwd.clone())
+                                {
+                                    this.custom_mode.update(cx, |custom, cx| {
+                                        custom.load(active_cwd, window, cx);
+                                    });
+                                }
+
+                                this.launch_picker.update(cx, |picker, cx| {
+                                    picker
+                                        .delegate
+                                        .task_contexts_loaded(task_contexts, window, cx);
+                                    picker.refresh(window, cx);
+                                    cx.notify();
+                                });
+                            })
+                        }
+                    })
+                    .detach();
 
                     Self {
                         launch_picker,
@@ -138,7 +150,6 @@ impl NewSessionModal {
                         mode: NewSessionMode::Launch,
                         debug_panel: debug_panel.downgrade(),
                         workspace: workspace_handle,
-                        task_contexts,
                         save_scenario_state: None,
                         _subscriptions,
                     }
@@ -205,8 +216,6 @@ impl NewSessionModal {
 
     fn start_new_session(&self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(debugger) = self.debugger.as_ref() else {
-            // todo(debugger): show in UI.
-            log::error!("No debugger selected");
             return;
         };
 
@@ -223,10 +232,12 @@ impl NewSessionModal {
         };
 
         let debug_panel = self.debug_panel.clone();
-        let task_contexts = self.task_contexts.clone();
+        let Some(task_contexts) = self.task_contexts(cx) else {
+            return;
+        };
+        let task_context = task_contexts.active_context().cloned().unwrap_or_default();
+        let worktree_id = task_contexts.worktree();
         cx.spawn_in(window, async move |this, cx| {
-            let task_context = task_contexts.active_context().cloned().unwrap_or_default();
-            let worktree_id = task_contexts.worktree();
             debug_panel.update_in(cx, |debug_panel, window, cx| {
                 debug_panel.start_session(config, task_context, None, worktree_id, window, cx)
             })?;
@@ -260,6 +271,11 @@ impl NewSessionModal {
             cx.notify();
         })
     }
+
+    fn task_contexts<'a>(&self, cx: &'a mut Context<Self>) -> Option<&'a TaskContexts> {
+        self.launch_picker.read(cx).delegate.task_contexts.as_ref()
+    }
+
     fn adapter_drop_down_menu(
         &mut self,
         window: &mut Window,
@@ -267,15 +283,14 @@ impl NewSessionModal {
     ) -> ui::DropdownMenu {
         let workspace = self.workspace.clone();
         let weak = cx.weak_entity();
-        let active_buffer_language = self
-            .task_contexts
-            .active_item_context
-            .as_ref()
-            .and_then(|item| {
-                item.1
-                    .as_ref()
-                    .and_then(|location| location.buffer.read(cx).language())
-            })
+        let active_buffer = self.task_contexts(cx).and_then(|tc| {
+            tc.active_item_context
+                .as_ref()
+                .and_then(|aic| aic.1.as_ref().map(|l| l.buffer.clone()))
+        });
+
+        let active_buffer_language = active_buffer
+            .and_then(|buffer| buffer.read(cx).language())
             .cloned();
 
         let mut available_adapters = workspace
@@ -515,7 +530,10 @@ impl Render for NewSessionModal {
                                             .debugger
                                             .as_ref()
                                             .and_then(|debugger| this.debug_scenario(&debugger, cx))
-                                            .zip(this.task_contexts.worktree())
+                                            .zip(
+                                                this.task_contexts(cx)
+                                                    .and_then(|tcx| tcx.worktree()),
+                                            )
                                             .and_then(|(scenario, worktree_id)| {
                                                 this.debug_panel
                                                     .update(cx, |panel, cx| {
@@ -715,13 +733,12 @@ pub(super) struct CustomMode {
 impl CustomMode {
     pub(super) fn new(
         past_launch_config: Option<LaunchRequest>,
-        active_cwd: Option<PathBuf>,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
         let (past_program, past_cwd) = past_launch_config
             .map(|config| (Some(config.program), config.cwd))
-            .unwrap_or_else(|| (None, active_cwd));
+            .unwrap_or_else(|| (None, None));
 
         let program = cx.new(|cx| Editor::single_line(window, cx));
         program.update(cx, |this, cx| {
@@ -743,6 +760,14 @@ impl CustomMode {
             cwd,
             stop_on_entry: ToggleState::Unselected,
         })
+    }
+
+    fn load(&mut self, cwd: PathBuf, window: &mut Window, cx: &mut App) {
+        self.cwd.update(cx, |editor, cx| {
+            if editor.is_empty(cx) {
+                editor.set_text(cwd.to_string_lossy(), window, cx);
+            }
+        });
     }
 
     pub(super) fn debug_request(&self, cx: &App) -> task::LaunchRequest {
@@ -894,32 +919,63 @@ impl AttachMode {
 
 pub(super) struct DebugScenarioDelegate {
     task_store: Entity<TaskStore>,
-    candidates: Option<Vec<(TaskSourceKind, DebugScenario)>>,
+    candidates: Vec<(Option<TaskSourceKind>, DebugScenario)>,
     selected_index: usize,
     matches: Vec<StringMatch>,
     prompt: String,
     debug_panel: WeakEntity<DebugPanel>,
-    workspace: WeakEntity<Workspace>,
-    task_contexts: Arc<TaskContexts>,
+    task_contexts: Option<TaskContexts>,
+    divider_index: Option<usize>,
+    last_used_candidate_index: Option<usize>,
 }
 
 impl DebugScenarioDelegate {
-    pub(super) fn new(
-        debug_panel: WeakEntity<DebugPanel>,
-        workspace: WeakEntity<Workspace>,
-        task_store: Entity<TaskStore>,
-        task_contexts: Arc<TaskContexts>,
-    ) -> Self {
+    pub(super) fn new(debug_panel: WeakEntity<DebugPanel>, task_store: Entity<TaskStore>) -> Self {
         Self {
             task_store,
-            candidates: None,
+            candidates: Vec::default(),
             selected_index: 0,
             matches: Vec::new(),
             prompt: String::new(),
             debug_panel,
-            workspace,
-            task_contexts,
+            task_contexts: None,
+            divider_index: None,
+            last_used_candidate_index: None,
         }
+    }
+
+    pub fn task_contexts_loaded(
+        &mut self,
+        task_contexts: TaskContexts,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        self.task_contexts = Some(task_contexts);
+
+        let (recent, scenarios) = self
+            .task_store
+            .update(cx, |task_store, cx| {
+                task_store.task_inventory().map(|inventory| {
+                    inventory.update(cx, |inventory, cx| {
+                        inventory.list_debug_scenarios(self.task_contexts.as_ref().unwrap(), cx)
+                    })
+                })
+            })
+            .unwrap_or_default();
+
+        if !recent.is_empty() {
+            self.last_used_candidate_index = Some(recent.len() - 1);
+        }
+
+        self.candidates = recent
+            .into_iter()
+            .map(|scenario| (None, scenario))
+            .chain(
+                scenarios
+                    .into_iter()
+                    .map(|(kind, scenario)| (Some(kind), scenario)),
+            )
+            .collect();
     }
 }
 
@@ -954,53 +1010,15 @@ impl PickerDelegate for DebugScenarioDelegate {
         cx: &mut Context<picker::Picker<Self>>,
     ) -> gpui::Task<()> {
         let candidates = self.candidates.clone();
-        let workspace = self.workspace.clone();
-        let task_store = self.task_store.clone();
 
         cx.spawn_in(window, async move |picker, cx| {
-            let candidates: Vec<_> = match &candidates {
-                Some(candidates) => candidates
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, (_, candidate))| {
-                        StringMatchCandidate::new(index, candidate.label.as_ref())
-                    })
-                    .collect(),
-                None => {
-                    let worktree_ids: Vec<_> = workspace
-                        .update(cx, |this, cx| {
-                            this.visible_worktrees(cx)
-                                .map(|tree| tree.read(cx).id())
-                                .collect()
-                        })
-                        .ok()
-                        .unwrap_or_default();
-
-                    let scenarios: Vec<_> = task_store
-                        .update(cx, |task_store, cx| {
-                            task_store.task_inventory().map(|item| {
-                                item.read(cx).list_debug_scenarios(worktree_ids.into_iter())
-                            })
-                        })
-                        .ok()
-                        .flatten()
-                        .unwrap_or_default();
-
-                    picker
-                        .update(cx, |picker, _| {
-                            picker.delegate.candidates = Some(scenarios.clone());
-                        })
-                        .ok();
-
-                    scenarios
-                        .into_iter()
-                        .enumerate()
-                        .map(|(index, (_, candidate))| {
-                            StringMatchCandidate::new(index, candidate.label.as_ref())
-                        })
-                        .collect()
-                }
-            };
+            let candidates: Vec<_> = candidates
+                .into_iter()
+                .enumerate()
+                .map(|(index, (_, candidate))| {
+                    StringMatchCandidate::new(index, candidate.label.as_ref())
+                })
+                .collect();
 
             let matches = fuzzy::match_strings(
                 &candidates,
@@ -1019,6 +1037,13 @@ impl PickerDelegate for DebugScenarioDelegate {
                     delegate.matches = matches;
                     delegate.prompt = query;
 
+                    delegate.divider_index = delegate.last_used_candidate_index.and_then(|index| {
+                        let index = delegate
+                            .matches
+                            .partition_point(|matching_task| matching_task.candidate_id <= index);
+                        Some(index).and_then(|index| (index != 0).then(|| index - 1))
+                    });
+
                     if delegate.matches.is_empty() {
                         delegate.selected_index = 0;
                     } else {
@@ -1030,34 +1055,34 @@ impl PickerDelegate for DebugScenarioDelegate {
         })
     }
 
+    fn separators_after_indices(&self) -> Vec<usize> {
+        if let Some(i) = self.divider_index {
+            vec![i]
+        } else {
+            Vec::new()
+        }
+    }
+
     fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<picker::Picker<Self>>) {
         let debug_scenario = self
             .matches
             .get(self.selected_index())
-            .and_then(|match_candidate| {
-                self.candidates
-                    .as_ref()
-                    .map(|candidates| candidates[match_candidate.candidate_id].clone())
-            });
+            .and_then(|match_candidate| self.candidates.get(match_candidate.candidate_id).cloned());
 
-        let Some((task_source_kind, debug_scenario)) = debug_scenario else {
+        let Some((_, debug_scenario)) = debug_scenario else {
             return;
         };
 
-        let (task_context, worktree_id) = if let TaskSourceKind::Worktree {
-            id: worktree_id,
-            directory_in_worktree: _,
-            id_base: _,
-        } = task_source_kind
-        {
-            self.task_contexts
-                .task_context_for_worktree_id(worktree_id)
-                .cloned()
-                .map(|context| (context, Some(worktree_id)))
-        } else {
-            None
-        }
-        .unwrap_or_default();
+        let (task_context, worktree_id) = self
+            .task_contexts
+            .as_ref()
+            .and_then(|task_contexts| {
+                Some((
+                    task_contexts.active_context().cloned()?,
+                    task_contexts.worktree(),
+                ))
+            })
+            .unwrap_or_default();
 
         self.debug_panel
             .update(cx, |panel, cx| {
@@ -1087,10 +1112,19 @@ impl PickerDelegate for DebugScenarioDelegate {
             char_count: hit.string.chars().count(),
             color: Color::Default,
         };
+        let task_kind = &self.candidates[hit.candidate_id].0;
 
-        let icon = Icon::new(IconName::FileTree)
-            .color(Color::Muted)
-            .size(ui::IconSize::Small);
+        let icon = match task_kind {
+            Some(TaskSourceKind::Lsp(..)) => Some(Icon::new(IconName::Bolt)),
+            Some(TaskSourceKind::UserInput) => Some(Icon::new(IconName::Terminal)),
+            Some(TaskSourceKind::AbsPath { .. }) => Some(Icon::new(IconName::Settings)),
+            Some(TaskSourceKind::Worktree { .. }) => Some(Icon::new(IconName::FileTree)),
+            Some(TaskSourceKind::Language { name }) => file_icons::FileIcons::get(cx)
+                .get_icon_for_type(&name.to_lowercase(), cx)
+                .map(Icon::from_path),
+            None => Some(Icon::new(IconName::HistoryRerun)),
+        }
+        .map(|icon| icon.color(Color::Muted).size(ui::IconSize::Small));
 
         Some(
             ListItem::new(SharedString::from(format!("debug-scenario-selection-{ix}")))

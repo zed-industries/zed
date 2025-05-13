@@ -4167,6 +4167,7 @@ dependencies = [
  "editor",
  "env_logger 0.11.8",
  "feature_flags",
+ "file_icons",
  "futures 0.3.31",
  "fuzzy",
  "gpui",

@@ -5332,9 +5332,9 @@ impl Editor {
                                                     .map(SharedString::from)
                                             })?;
 
-                                    dap_store.update(cx, |this, cx| {
+                                    dap_store.update(cx, |dap_store, cx| {
                                         for (_, task) in &resolved_tasks.templates {
-                                            if let Some(scenario) = this
+                                            if let Some(scenario) = dap_store
                                                 .debug_scenario_for_build_task(
                                                     task.original_task().clone(),
                                                     debug_adapter.clone().into(),
