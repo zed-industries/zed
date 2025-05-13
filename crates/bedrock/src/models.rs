@@ -367,7 +367,6 @@ impl Model {
 
             // Models available in APAC
             (Model::Claude3_5Sonnet | Model::Claude3Haiku | Model::Claude3Sonnet, "apac") => {
-                dbg!("{}.{}", region_group, model_id);
                 Ok(format!("{}.{}", region_group, model_id))
             }
 
