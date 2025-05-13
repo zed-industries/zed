@@ -4,7 +4,7 @@ If you can accurately express the change in just the subject line, don't include
 
 Don't repeat information from the subject line in the message body.
 
-Only return the commit message in your response. Do not include any additional meta-commentary about the task. Do not include the raw diff output in the commit message.
+Only return the commit message in your response. Do not include any additional meta-commentary about the task. Do not include the raw diff output in the commit message. Do not include any code block backtics (```) or similar around the response.
 
 Follow good Git style:
 
