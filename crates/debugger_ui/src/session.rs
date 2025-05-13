@@ -1,6 +1,6 @@
 pub mod running;
 
-use std::{sync::OnceLock, cell::OnceCell};
+use std::{cell::OnceCell, sync::OnceLock};
 
 use dap::client::SessionId;
 use gpui::{
