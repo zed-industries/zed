@@ -63,7 +63,7 @@ pub fn wasm_api_version_range(release_channel: ReleaseChannel) -> RangeInclusive
 
     let max_version = match release_channel {
         ReleaseChannel::Dev | ReleaseChannel::Nightly => latest::MAX_VERSION,
-        ReleaseChannel::Stable | ReleaseChannel::Preview => latest::MAX_VERSION,
+        ReleaseChannel::Stable | ReleaseChannel::Preview => since_v0_5_0::MAX_VERSION,
     };
 
     since_v0_0_1::MIN_VERSION..=max_version
