@@ -9,7 +9,7 @@ use handlebars::Handlebars;
 use language::{Buffer, DiagnosticSeverity, OffsetRangeExt as _};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
-    MessageContent, Role, TokenUsage,
+    LanguageModelToolResultContent, MessageContent, Role, TokenUsage,
 };
 use project::lsp_store::OpenLspBufferHandle;
 use project::{DiagnosticSummary, Project, ProjectPath};
@@ -964,7 +964,15 @@ impl RequestMarkdown {
                         if tool_result.is_error {
                             messages.push_str("**ERROR:**\n");
                         }
-                        messages.push_str(&format!("{}\n\n", tool_result.content));
+
+                        match &tool_result.content {
+                            LanguageModelToolResultContent::Text(str) => {
+                                writeln!(messages, "{}\n", str).ok();
+                            }
+                            LanguageModelToolResultContent::Image(image) => {
+                                writeln!(messages, "![Image](data:base64,{})\n", image.source).ok();
+                            }
+                        }
 
                         if let Some(output) = tool_result.output.as_ref() {
                             writeln!(

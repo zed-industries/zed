@@ -1,11 +1,14 @@
+use collections::FxHashMap;
 use std::{
     borrow::Cow,
     ops::Not,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
     usize,
 };
 
+use anyhow::Result;
 use dap::{
     DapRegistry, DebugRequest,
     adapters::{DebugAdapterName, DebugTaskDefinition},
@@ -13,25 +16,31 @@ use dap::{
 use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render,
-    Subscription, TextStyle, WeakEntity,
+    Animation, AnimationExt as _, App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, Render, Subscription, TextStyle, Transformation, WeakEntity, percentage,
 };
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
-use project::{TaskContexts, TaskSourceKind, task_store::TaskStore};
+use project::{ProjectPath, TaskContexts, TaskSourceKind, task_store::TaskStore};
 use settings::Settings;
 use task::{DebugScenario, LaunchRequest};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
-    ContextMenu, Disableable, DropdownMenu, FluentBuilder, Icon, IconName, InteractiveElement,
-    IntoElement, Label, LabelCommon as _, ListItem, ListItemSpacing, ParentElement, RenderOnce,
-    SharedString, Styled, StyledExt, ToggleButton, ToggleState, Toggleable, Window, div, h_flex,
-    relative, rems, v_flex,
+    ContextMenu, Disableable, DropdownMenu, FluentBuilder, Icon, IconButton, IconName, IconSize,
+    InteractiveElement, IntoElement, Label, LabelCommon as _, ListItem, ListItemSpacing,
+    ParentElement, RenderOnce, SharedString, Styled, StyledExt, ToggleButton, ToggleState,
+    Toggleable, Window, div, h_flex, relative, rems, v_flex,
 };
 use util::ResultExt;
 use workspace::{ModalView, Workspace, pane};
 
 use crate::{attach_modal::AttachModal, debugger_panel::DebugPanel};
+
+enum SaveScenarioState {
+    Saving,
+    Saved(ProjectPath),
+    Failed(SharedString),
+}
 
 pub(super) struct NewSessionModal {
     workspace: WeakEntity<Workspace>,
@@ -42,6 +51,7 @@ pub(super) struct NewSessionModal {
     custom_mode: Entity<CustomMode>,
     debugger: Option<DebugAdapterName>,
     task_contexts: Arc<TaskContexts>,
+    save_scenario_state: Option<SaveScenarioState>,
     _subscriptions: [Subscription; 2],
 }
 
@@ -114,7 +124,11 @@ impl NewSessionModal {
                         ),
                     ];
 
-                    let custom_mode = CustomMode::new(None, window, cx);
+                    let active_cwd = task_contexts
+                        .active_context()
+                        .and_then(|context| context.cwd.clone());
+
+                    let custom_mode = CustomMode::new(None, active_cwd, window, cx);
 
                     Self {
                         launch_picker,
@@ -125,6 +139,7 @@ impl NewSessionModal {
                         debug_panel: debug_panel.downgrade(),
                         workspace: workspace_handle,
                         task_contexts,
+                        save_scenario_state: None,
                         _subscriptions,
                     }
                 });
@@ -135,7 +150,7 @@ impl NewSessionModal {
         .detach();
     }
 
-    fn render_mode(&self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
+    fn render_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         let dap_menu = self.adapter_drop_down_menu(window, cx);
         match self.mode {
             NewSessionMode::Attach => self.attach_mode.update(cx, |this, cx| {
@@ -219,7 +234,7 @@ impl NewSessionModal {
                 cx.emit(DismissEvent);
             })
             .ok();
-            anyhow::Result::<_, anyhow::Error>::Ok(())
+            Result::<_, anyhow::Error>::Ok(())
         })
         .detach_and_log_err(cx);
     }
@@ -246,17 +261,12 @@ impl NewSessionModal {
         })
     }
     fn adapter_drop_down_menu(
-        &self,
+        &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ui::DropdownMenu {
         let workspace = self.workspace.clone();
         let weak = cx.weak_entity();
-        let label = self
-            .debugger
-            .as_ref()
-            .map(|d| d.0.clone())
-            .unwrap_or_else(|| SELECT_DEBUGGER_LABEL.clone());
         let active_buffer_language = self
             .task_contexts
             .active_item_context
@@ -268,10 +278,33 @@ impl NewSessionModal {
             })
             .cloned();
 
+        let mut available_adapters = workspace
+            .update(cx, |_, cx| DapRegistry::global(cx).enumerate_adapters())
+            .unwrap_or_default();
+        if let Some(language) = active_buffer_language {
+            available_adapters.sort_by_key(|adapter| {
+                language
+                    .config()
+                    .debuggers
+                    .get_index_of(adapter.0.as_ref())
+                    .unwrap_or(usize::MAX)
+            });
+        }
+
+        if self.debugger.is_none() {
+            self.debugger = available_adapters.first().cloned();
+        }
+
+        let label = self
+            .debugger
+            .as_ref()
+            .map(|d| d.0.clone())
+            .unwrap_or_else(|| SELECT_DEBUGGER_LABEL.clone());
+
         DropdownMenu::new(
             "dap-adapter-picker",
             label,
-            ContextMenu::build(window, cx, move |mut menu, _, cx| {
+            ContextMenu::build(window, cx, move |mut menu, _, _| {
                 let setter_for_name = |name: DebugAdapterName| {
                     let weak = weak.clone();
                     move |window: &mut Window, cx: &mut App| {
@@ -286,22 +319,10 @@ impl NewSessionModal {
                     }
                 };
 
-                let mut available_adapters = workspace
-                    .update(cx, |_, cx| DapRegistry::global(cx).enumerate_adapters())
-                    .unwrap_or_default();
-                if let Some(language) = active_buffer_language {
-                    available_adapters.sort_by_key(|adapter| {
-                        language
-                            .config()
-                            .debuggers
-                            .get_index_of(adapter.0.as_ref())
-                            .unwrap_or(usize::MAX)
-                    });
-                }
-
                 for adapter in available_adapters.into_iter() {
                     menu = menu.entry(adapter.0.clone(), None, setter_for_name(adapter.clone()));
                 }
+
                 menu
             }),
         )
@@ -379,6 +400,8 @@ impl Render for NewSessionModal {
         window: &mut ui::Window,
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
+        let this = cx.weak_entity().clone();
+
         v_flex()
             .size_full()
             .w(rems(34.))
@@ -484,42 +507,148 @@ impl Render for NewSessionModal {
                                 }
                             }),
                         ),
-                        NewSessionMode::Custom => div().child(
-                            Button::new("new-session-modal-back", "Save to .zed/debug.json...")
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    let Some(save_scenario_task) = this
-                                        .debugger
-                                        .as_ref()
-                                        .and_then(|debugger| this.debug_scenario(&debugger, cx))
-                                        .zip(this.task_contexts.worktree())
-                                        .and_then(|(scenario, worktree_id)| {
-                                            this.debug_panel
-                                                .update(cx, |panel, cx| {
-                                                    panel.save_scenario(
-                                                        &scenario,
-                                                        worktree_id,
-                                                        window,
-                                                        cx,
-                                                    )
-                                                })
-                                                .ok()
-                                        })
-                                    else {
-                                        return;
-                                    };
+                        NewSessionMode::Custom => h_flex()
+                            .child(
+                                Button::new("new-session-modal-back", "Save to .zed/debug.json...")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        let Some(save_scenario) = this
+                                            .debugger
+                                            .as_ref()
+                                            .and_then(|debugger| this.debug_scenario(&debugger, cx))
+                                            .zip(this.task_contexts.worktree())
+                                            .and_then(|(scenario, worktree_id)| {
+                                                this.debug_panel
+                                                    .update(cx, |panel, cx| {
+                                                        panel.save_scenario(
+                                                            &scenario,
+                                                            worktree_id,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    })
+                                                    .ok()
+                                            })
+                                        else {
+                                            return;
+                                        };
 
-                                    cx.spawn(async move |this, cx| {
-                                        if save_scenario_task.await.is_ok() {
-                                            this.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
-                                        }
-                                    })
-                                    .detach();
-                                }))
-                                .disabled(
-                                    self.debugger.is_none()
-                                        || self.custom_mode.read(cx).program.read(cx).is_empty(cx),
-                                ),
-                        ),
+                                        this.save_scenario_state = Some(SaveScenarioState::Saving);
+
+                                        cx.spawn(async move |this, cx| {
+                                            let res = save_scenario.await;
+
+                                            this.update(cx, |this, _| match res {
+                                                Ok(saved_file) => {
+                                                    this.save_scenario_state =
+                                                        Some(SaveScenarioState::Saved(saved_file))
+                                                }
+                                                Err(error) => {
+                                                    this.save_scenario_state =
+                                                        Some(SaveScenarioState::Failed(
+                                                            error.to_string().into(),
+                                                        ))
+                                                }
+                                            })
+                                            .ok();
+
+                                            cx.background_executor()
+                                                .timer(Duration::from_secs(2))
+                                                .await;
+                                            this.update(cx, |this, _| {
+                                                this.save_scenario_state.take()
+                                            })
+                                            .ok();
+                                        })
+                                        .detach();
+                                    }))
+                                    .disabled(
+                                        self.debugger.is_none()
+                                            || self
+                                                .custom_mode
+                                                .read(cx)
+                                                .program
+                                                .read(cx)
+                                                .is_empty(cx)
+                                            || self.save_scenario_state.is_some(),
+                                    ),
+                            )
+                            .when_some(self.save_scenario_state.as_ref(), {
+                                let this_entity = this.clone();
+
+                                move |this, save_state| match save_state {
+                                    SaveScenarioState::Saved(saved_path) => this.child(
+                                        IconButton::new(
+                                            "new-session-modal-go-to-file",
+                                            IconName::ArrowUpRight,
+                                        )
+                                        .icon_size(IconSize::Small)
+                                        .icon_color(Color::Muted)
+                                        .on_click({
+                                            let this_entity = this_entity.clone();
+                                            let saved_path = saved_path.clone();
+                                            move |_, window, cx| {
+                                                window
+                                                    .spawn(cx, {
+                                                        let this_entity = this_entity.clone();
+                                                        let saved_path = saved_path.clone();
+
+                                                        async move |cx| {
+                                                            this_entity
+                                                                .update_in(
+                                                                    cx,
+                                                                    |this, window, cx| {
+                                                                        this.workspace.update(
+                                                                            cx,
+                                                                            |workspace, cx| {
+                                                                                workspace.open_path(
+                                                                                    saved_path
+                                                                                        .clone(),
+                                                                                    None,
+                                                                                    true,
+                                                                                    window,
+                                                                                    cx,
+                                                                                )
+                                                                            },
+                                                                        )
+                                                                    },
+                                                                )??
+                                                                .await?;
+
+                                                            this_entity
+                                                                .update(cx, |_, cx| {
+                                                                    cx.emit(DismissEvent)
+                                                                })
+                                                                .ok();
+
+                                                            anyhow::Ok(())
+                                                        }
+                                                    })
+                                                    .detach();
+                                            }
+                                        }),
+                                    ),
+                                    SaveScenarioState::Saving => this.child(
+                                        Icon::new(IconName::Spinner)
+                                            .size(IconSize::Small)
+                                            .color(Color::Muted)
+                                            .with_animation(
+                                                "Spinner",
+                                                Animation::new(Duration::from_secs(3)).repeat(),
+                                                |icon, delta| {
+                                                    icon.transform(Transformation::rotate(
+                                                        percentage(delta),
+                                                    ))
+                                                },
+                                            ),
+                                    ),
+                                    SaveScenarioState::Failed(error_msg) => this.child(
+                                        IconButton::new("Failed Scenario Saved", IconName::X)
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(Color::Error)
+                                            .tooltip(ui::Tooltip::text(error_msg.clone())),
+                                    ),
+                                }
+                            }),
                     })
                     .child(
                         Button::new("debugger-spawn", "Start")
@@ -586,16 +715,17 @@ pub(super) struct CustomMode {
 impl CustomMode {
     pub(super) fn new(
         past_launch_config: Option<LaunchRequest>,
+        active_cwd: Option<PathBuf>,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
         let (past_program, past_cwd) = past_launch_config
             .map(|config| (Some(config.program), config.cwd))
-            .unwrap_or_else(|| (None, None));
+            .unwrap_or_else(|| (None, active_cwd));
 
         let program = cx.new(|cx| Editor::single_line(window, cx));
         program.update(cx, |this, cx| {
-            this.set_placeholder_text("Program path", cx);
+            this.set_placeholder_text("Run", cx);
 
             if let Some(past_program) = past_program {
                 this.set_text(past_program, window, cx);
@@ -617,11 +747,65 @@ impl CustomMode {
 
     pub(super) fn debug_request(&self, cx: &App) -> task::LaunchRequest {
         let path = self.cwd.read(cx).text(cx);
+        if cfg!(windows) {
+            return task::LaunchRequest {
+                program: self.program.read(cx).text(cx),
+                cwd: path.is_empty().not().then(|| PathBuf::from(path)),
+                args: Default::default(),
+                env: Default::default(),
+            };
+        }
+        let command = self.program.read(cx).text(cx);
+        let mut args = shlex::split(&command).into_iter().flatten().peekable();
+        let mut env = FxHashMap::default();
+        while args.peek().is_some_and(|arg| arg.contains('=')) {
+            let arg = args.next().unwrap();
+            let (lhs, rhs) = arg.split_once('=').unwrap();
+            env.insert(lhs.to_string(), rhs.to_string());
+        }
+
+        let program = if let Some(program) = args.next() {
+            program
+        } else {
+            env = FxHashMap::default();
+            command
+        };
+
+        let program = if let Some(program) = program.strip_prefix('~') {
+            format!(
+                "$ZED_WORKTREE_ROOT{}{}",
+                std::path::MAIN_SEPARATOR,
+                &program
+            )
+        } else if !program.starts_with(std::path::MAIN_SEPARATOR) {
+            format!(
+                "$ZED_WORKTREE_ROOT{}{}",
+                std::path::MAIN_SEPARATOR,
+                &program
+            )
+        } else {
+            program
+        };
+
+        let path = if path.starts_with('~') && !path.is_empty() {
+            format!(
+                "$ZED_WORKTREE_ROOT{}{}",
+                std::path::MAIN_SEPARATOR,
+                &path[1..]
+            )
+        } else if !path.starts_with(std::path::MAIN_SEPARATOR) && !path.is_empty() {
+            format!("$ZED_WORKTREE_ROOT{}{}", std::path::MAIN_SEPARATOR, &path)
+        } else {
+            path
+        };
+
+        let args = args.collect::<Vec<_>>();
+
         task::LaunchRequest {
-            program: self.program.read(cx).text(cx),
+            program,
             cwd: path.is_empty().not().then(|| PathBuf::from(path)),
-            args: Default::default(),
-            env: Default::default(),
+            args,
+            env,
         }
     }
 
@@ -637,14 +821,6 @@ impl CustomMode {
             .gap_3()
             .track_focus(&self.program.focus_handle(cx))
             .child(
-                div().child(
-                    Label::new("Program")
-                        .size(ui::LabelSize::Small)
-                        .color(Color::Muted),
-                ),
-            )
-            .child(render_editor(&self.program, window, cx))
-            .child(
                 h_flex()
                     .child(
                         Label::new("Debugger")
@@ -654,10 +830,14 @@ impl CustomMode {
                     .gap(ui::DynamicSpacing::Base08.rems(cx))
                     .child(adapter_menu),
             )
+            .child(render_editor(&self.program, window, cx))
+            .child(render_editor(&self.cwd, window, cx))
             .child(
                 CheckboxWithLabel::new(
                     "debugger-stop-on-entry",
-                    Label::new("Stop on Entry").size(ui::LabelSize::Small),
+                    Label::new("Stop on Entry")
+                        .size(ui::LabelSize::Small)
+                        .color(Color::Muted),
                     self.stop_on_entry,
                     {
                         let this = cx.weak_entity();
