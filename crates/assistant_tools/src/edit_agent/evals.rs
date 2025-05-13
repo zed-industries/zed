@@ -1243,7 +1243,6 @@ fn eval_create_test_module() {
             edit_description: edit_description.into(),
             assertion: EvalAssertion::new(async move |sample, _, _cx| {
                 let num_deleted_lines = sample.diff.matches("\n-").count();
-                dbg!(num_deleted_lines);
                 println!("{}", &sample.diff);
                 if num_deleted_lines < 30 {
                     Ok(EvalAssertionOutcome {

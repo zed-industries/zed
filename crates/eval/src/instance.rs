@@ -314,7 +314,7 @@ impl ExampleInstance {
             let thread =
                 thread_store.update(cx, |thread_store, cx| {
                     if let Some(json) = &meta.existing_thread_json {
-                        let serialized = SerializedThread::from_json(json.as_bytes()).expect("Can't read serialized thread from");
+                        let serialized = SerializedThread::from_json(json.as_bytes()).expect("Can't read serialized thread");
                         thread_store.create_thread_from_serialized(serialized, cx)
                     } else {
                         thread_store.create_thread(cx)
