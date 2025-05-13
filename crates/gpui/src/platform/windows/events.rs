@@ -515,10 +515,8 @@ fn handle_char_msg(
 
 fn handle_dead_char_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     let ch = char::from_u32(wparam.0 as u32)?.to_string();
-    let len = ch.len();
-    println!("dead char: ->{}<-, {}", ch, len);
     with_input_handler(&state_ptr, |input_handler| {
-        input_handler.replace_and_mark_text_in_range(None, &ch, Some(len..len));
+        input_handler.replace_and_mark_text_in_range(None, &ch, None);
     });
     None
 }
