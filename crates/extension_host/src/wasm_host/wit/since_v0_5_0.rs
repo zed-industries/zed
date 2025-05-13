@@ -1,27 +1,14 @@
-use super::latest;
-use crate::wasm_host::{WasmState, wit::ToWasmtimeResult};
-use ::http_client::{AsyncBody, HttpRequestExt};
-use ::settings::{Settings, WorktreeId};
-use anyhow::{Context, Result, anyhow, bail};
-use async_compression::futures::bufread::GzipDecoder;
-use async_tar::Archive;
-use async_trait::async_trait;
-use extension::{
-    ExtensionLanguageServerProxy, KeyValueStoreDelegate, ProjectDelegate, WorktreeDelegate,
-};
-use futures::{AsyncReadExt, lock::Mutex};
-use futures::{FutureExt as _, io::BufReader};
-use language::{BinaryStatus, LanguageName, language_settings::AllLanguageSettings};
-use project::project_settings::ProjectSettings;
+use crate::wasm_host::WasmState;
+use anyhow::Result;
+use extension::{KeyValueStoreDelegate, ProjectDelegate, WorktreeDelegate};
 use semantic_version::SemanticVersion;
-use std::{
-    env,
-    path::{Path, PathBuf},
-    sync::{Arc, OnceLock},
-};
-use util::maybe;
+use std::sync::{Arc, OnceLock};
 use wasmtime::component::{Linker, Resource};
+
+use super::latest;
+
 pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 5, 0);
+pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 5, 0);
 
 wasmtime::component::bindgen!({
     async: true,
@@ -39,6 +26,7 @@ wasmtime::component::bindgen!({
         "zed:extension/platform": latest::zed::extension::platform,
         "zed:extension/process": latest::zed::extension::process,
         "zed:extension/slash-command": latest::zed::extension::slash_command,
+        "zed:extension/context-server": latest::zed::extension::context_server,
     },
 });
 
@@ -60,7 +48,7 @@ impl From<CodeLabel> for latest::CodeLabel {
         Self {
             code: value.code,
             spans: value.spans.into_iter().map(Into::into).collect(),
-            filter_range: value.filter_range.into(),
+            filter_range: value.filter_range,
         }
     }
 }
@@ -68,7 +56,7 @@ impl From<CodeLabel> for latest::CodeLabel {
 impl From<CodeLabelSpan> for latest::CodeLabelSpan {
     fn from(value: CodeLabelSpan) -> Self {
         match value {
-            CodeLabelSpan::CodeRange(range) => Self::CodeRange(range.into()),
+            CodeLabelSpan::CodeRange(range) => Self::CodeRange(range),
             CodeLabelSpan::Literal(literal) => Self::Literal(literal.into()),
         }
     }
@@ -111,21 +99,6 @@ impl From<DownloadedFileType> for latest::DownloadedFileType {
             DownloadedFileType::Zip => Self::Zip,
             DownloadedFileType::Uncompressed => Self::Uncompressed,
         }
-    }
-}
-
-impl TryFrom<ContextServerConfiguration> for extension::ContextServerConfiguration {
-    type Error = anyhow::Error;
-
-    fn try_from(value: ContextServerConfiguration) -> Result<Self, Self::Error> {
-        let settings_schema: serde_json::Value = serde_json::from_str(&value.settings_schema)
-            .context("Failed to parse settings_schema")?;
-
-        Ok(Self {
-            installation_instructions: value.installation_instructions,
-            default_settings: value.default_settings,
-            settings_schema,
-        })
     }
 }
 
@@ -199,8 +172,6 @@ impl HostWorktree for WasmState {
         Ok(())
     }
 }
-
-impl zed::extension::context_server::Host for WasmState {}
 
 impl ExtensionImports for WasmState {
     async fn get_settings(

@@ -11,11 +11,11 @@ use extension::{KeyValueStoreDelegate, WorktreeDelegate};
 use language::LanguageName;
 use lsp::LanguageServerName;
 use release_channel::ReleaseChannel;
+use since_v0_6_0 as latest;
 
 use super::{WasmState, wasm_engine};
 use anyhow::{Context as _, Result, anyhow};
 use semantic_version::SemanticVersion;
-use since_v0_6_0 as latest;
 use std::{ops::RangeInclusive, sync::Arc};
 use wasmtime::{
     Store,
@@ -63,7 +63,7 @@ pub fn wasm_api_version_range(release_channel: ReleaseChannel) -> RangeInclusive
 
     let max_version = match release_channel {
         ReleaseChannel::Dev | ReleaseChannel::Nightly => latest::MAX_VERSION,
-        ReleaseChannel::Stable | ReleaseChannel::Preview => latest::MAX_VERSION,
+        ReleaseChannel::Stable | ReleaseChannel::Preview => since_v0_5_0::MAX_VERSION,
     };
 
     since_v0_0_1::MIN_VERSION..=max_version
@@ -116,16 +116,20 @@ impl Extension {
 
         if version >= latest::MIN_VERSION {
             authorize_access_to_unreleased_wasm_api_version(release_channel)?;
+
             let extension =
                 latest::Extension::instantiate_async(store, component, latest::linker())
                     .await
                     .context("failed to instantiate wasm extension")?;
             Ok(Self::V0_6_0(extension))
         } else if version >= since_v0_5_0::MIN_VERSION {
-            let extension =
-                since_v0_5_0::Extension::instantiate_async(store, component, latest::linker())
-                    .await
-                    .context("failed to instantiate wasm extension")?;
+            let extension = since_v0_5_0::Extension::instantiate_async(
+                store,
+                component,
+                since_v0_5_0::linker(),
+            )
+            .await
+            .context("failed to instantiate wasm extension")?;
             Ok(Self::V0_5_0(extension))
         } else if version >= since_v0_4_0::MIN_VERSION {
             let extension = since_v0_4_0::Extension::instantiate_async(
@@ -219,18 +223,18 @@ impl Extension {
                 ext.call_language_server_command(store, &language_server_id.0, resource)
                     .await
             }
-            Extension::V0_5_0(ext) => Ok(ext
-                .call_language_server_command(store, &language_server_id.0, resource)
-                .await?
-                .map(|command| command.into())),
-            Extension::V0_4_0(ext) => Ok(ext
-                .call_language_server_command(store, &language_server_id.0, resource)
-                .await?
-                .map(|command| command.into())),
-            Extension::V0_3_0(ext) => Ok(ext
-                .call_language_server_command(store, &language_server_id.0, resource)
-                .await?
-                .map(|command| command.into())),
+            Extension::V0_5_0(ext) => {
+                ext.call_language_server_command(store, &language_server_id.0, resource)
+                    .await
+            }
+            Extension::V0_4_0(ext) => {
+                ext.call_language_server_command(store, &language_server_id.0, resource)
+                    .await
+            }
+            Extension::V0_3_0(ext) => {
+                ext.call_language_server_command(store, &language_server_id.0, resource)
+                    .await
+            }
             Extension::V0_2_0(ext) => Ok(ext
                 .call_language_server_command(store, &language_server_id.0, resource)
                 .await?
@@ -619,7 +623,11 @@ impl Extension {
                     .await
             }
             Extension::V0_5_0(ext) => Ok(ext
-                .call_labels_for_symbols(store, &language_server_id.0, &symbols)
+                .call_labels_for_symbols(
+                    store,
+                    &language_server_id.0,
+                    &symbols.into_iter().collect::<Vec<_>>(),
+                )
                 .await?
                 .map(|labels| {
                     labels
@@ -819,9 +827,8 @@ impl Extension {
                     .await
             }
             Extension::V0_5_0(ext) => {
-                let x = ext
-                    .call_context_server_configuration(store, &context_server_id, project)
-                    .await?;
+                ext.call_context_server_configuration(store, &context_server_id, project)
+                    .await
             }
             Extension::V0_0_1(_)
             | Extension::V0_0_4(_)
@@ -890,17 +897,6 @@ impl Extension {
             }
         }
     }
-    pub async fn call_get_dap_binary(
-        &self,
-        store: &mut Store<WasmState>,
-        provider: &str,
-        package_name: &str,
-    ) -> Result<Result<(), String>> {
-        match self {
-            Extension::V0_6_0(ext) => ext.call_get_dap_binary(store, arg0, arg1, arg2),
-            _ => Err(anyhow!("`get_dap_binary` not available prior to v0.6.0")),
-        }
-    }
 }
 
 trait ToWasmtimeResult<T> {
@@ -909,6 +905,6 @@ trait ToWasmtimeResult<T> {
 
 impl<T> ToWasmtimeResult<T> for Result<T> {
     fn to_wasmtime_result(self) -> wasmtime::Result<Result<T, String>> {
-        Ok(self.map_err(|error| error.to_string()))
+        Ok(self.map_err(|error| format!("{error:?}")))
     }
 }

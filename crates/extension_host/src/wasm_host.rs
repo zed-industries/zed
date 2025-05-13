@@ -3,7 +3,6 @@ pub mod wit;
 use crate::ExtensionManifest;
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
-use dap::adapters::{DebugAdapterBinary, DebugTaskDefinition};
 use extension::{
     CodeLabel, Command, Completion, ContextServerConfiguration, ExtensionHostProxy,
     KeyValueStoreDelegate, ProjectDelegate, SlashCommand, SlashCommandArgumentCompletion,
@@ -374,15 +373,6 @@ impl extension::Extension for WasmExtension {
             .boxed()
         })
         .await
-    }
-
-    async fn get_dap_binary(
-        &self,
-        dap_name: Arc<str>,
-        config: DebugTaskDefinition,
-        user_installed_path: Option<PathBuf>,
-    ) -> Result<DebugAdapterBinary> {
-        self.call(|extension, _| async move { extension.call_ }.boxed())
     }
 }
 

@@ -41,7 +41,7 @@ wasmtime::component::bindgen!({
 pub use self::zed::extension::*;
 
 mod settings {
-    include!(concat!(env!("OUT_DIR"), "/since_v0.6.0/settings.rs"));
+    include!(concat!(env!("OUT_DIR"), "/since_v0.5.0/settings.rs"));
 }
 
 pub type ExtensionWorktree = Arc<dyn WorktreeDelegate>;
@@ -626,9 +626,6 @@ impl slash_command::Host for WasmState {}
 
 #[async_trait]
 impl context_server::Host for WasmState {}
-
-#[async_trait]
-impl dap::Host for WasmState {}
 
 impl ExtensionImports for WasmState {
     async fn get_settings(
