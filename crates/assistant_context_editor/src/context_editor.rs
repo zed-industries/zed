@@ -3262,9 +3262,77 @@ pub fn make_lsp_adapter_delegate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::App;
-    use language::Buffer;
+    use fs::FakeFs;
+    use gpui::{App, TestAppContext, VisualTestContext};
+    use language::{Buffer, LanguageRegistry};
+    use prompt_store::PromptBuilder;
     use unindent::Unindent;
+    use util::path;
+
+    #[gpui::test]
+    async fn test_copy_paste_no_selection(cx: &mut TestAppContext) {
+        cx.update(init_test);
+
+        let fs = FakeFs::new(cx.executor());
+        let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let context = cx.new(|cx| {
+            AssistantContext::local(
+                registry,
+                None,
+                None,
+                prompt_builder.clone(),
+                Arc::new(SlashCommandWorkingSet::default()),
+                cx,
+            )
+        });
+        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        let context_editor = window
+            .update(cx, |_, window, cx| {
+                cx.new(|cx| {
+                    ContextEditor::for_context(
+                        context,
+                        fs,
+                        workspace.downgrade(),
+                        project,
+                        None,
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .unwrap();
+
+        context_editor.update_in(cx, |context_editor, window, cx| {
+            context_editor.editor.update(cx, |editor, cx| {
+                editor.set_text("abc\ndef\nghi", window, cx);
+                editor.move_to_beginning(&Default::default(), window, cx);
+            })
+        });
+
+        context_editor.update_in(cx, |context_editor, window, cx| {
+            context_editor.editor.update(cx, |editor, cx| {
+                editor.copy(&Default::default(), window, cx);
+                editor.paste(&Default::default(), window, cx);
+
+                assert_eq!(editor.text(cx), "abc\nabc\ndef\nghi");
+            })
+        });
+
+        context_editor.update_in(cx, |context_editor, window, cx| {
+            context_editor.editor.update(cx, |editor, cx| {
+                editor.cut(&Default::default(), window, cx);
+                assert_eq!(editor.text(cx), "abc\ndef\nghi");
+
+                editor.paste(&Default::default(), window, cx);
+                assert_eq!(editor.text(cx), "abc\nabc\ndef\nghi");
+            })
+        });
+    }
 
     #[gpui::test]
     fn test_find_code_blocks(cx: &mut App) {
@@ -3338,5 +3406,18 @@ mod tests {
             let range = find_surrounding_code_block(&snapshot, offset);
             assert_eq!(range, expected, "unexpected result on row {:?}", row);
         }
+    }
+
+    fn init_test(cx: &mut App) {
+        let settings_store = SettingsStore::test(cx);
+        prompt_store::init(cx);
+        LanguageModelRegistry::test(cx);
+        cx.set_global(settings_store);
+        language::init(cx);
+        assistant_settings::init(cx);
+        Project::init_settings(cx);
+        theme::init(theme::LoadThemes::JustBase, cx);
+        workspace::init_settings(cx);
+        editor::init_settings(cx);
     }
 }
