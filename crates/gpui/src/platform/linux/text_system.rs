@@ -1,7 +1,7 @@
 use crate::{
     Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, FontStyle, FontWeight,
     GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams, SUBPIXEL_VARIANTS,
-    ShapedGlyph, SharedString, Size, point, size,
+    ShapedGlyph, ShapedRun, SharedString, Size, point, size,
 };
 use anyhow::{Context as _, Ok, Result, anyhow};
 use collections::HashMap;
@@ -16,7 +16,7 @@ use pathfinder_geometry::{
     rect::{RectF, RectI},
     vector::{Vector2F, Vector2I},
 };
-use smallvec::SmallVec;
+use smallvec::{SmallVec, smallvec};
 use std::{borrow::Cow, sync::Arc};
 
 pub(crate) struct CosmicTextSystem(RwLock<CosmicTextSystemState>);
@@ -413,7 +413,7 @@ impl CosmicTextSystemState {
         );
         let layout = layout_lines.first().unwrap();
 
-        let mut runs = Vec::new();
+        let mut runs: Vec<ShapedRun> = Vec::new();
         for glyph in &layout.glyphs {
             let mut font_id = FontId(glyph.metadata);
             let mut loaded_font = self.loaded_font(font_id);
@@ -428,16 +428,24 @@ impl CosmicTextSystemState {
                 continue;
             }
 
-            // todo(linux) this is definitely wrong, each glyph in glyphs from cosmic-text is a cluster with one glyph, ShapedRun takes a run of glyphs with the same font and direction
-            let mut glyphs = SmallVec::new();
-            glyphs.push(ShapedGlyph {
+            let shaped_glyph = ShapedGlyph {
                 id: GlyphId(glyph.glyph_id as u32),
                 position: point(glyph.x.into(), glyph.y.into()),
                 index: glyph.start,
                 is_emoji,
-            });
+            };
 
-            runs.push(crate::ShapedRun { font_id, glyphs });
+            if let Some(last_run) = runs
+                .last_mut()
+                .filter(|last_run| last_run.font_id == font_id)
+            {
+                last_run.glyphs.push(shaped_glyph);
+            } else {
+                runs.push(ShapedRun {
+                    font_id,
+                    glyphs: smallvec![shaped_glyph],
+                });
+            }
         }
 
         LineLayout {
