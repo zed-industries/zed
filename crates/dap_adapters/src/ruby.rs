@@ -6,7 +6,8 @@ use dap::{
         self, DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition,
     },
 };
-use gpui::AsyncApp;
+use gpui::{AsyncApp, SharedString};
+use language::LanguageName;
 use std::path::PathBuf;
 use util::command::new_smol_command;
 
@@ -23,6 +24,10 @@ impl RubyDebugAdapter {
 impl DebugAdapter for RubyDebugAdapter {
     fn name(&self) -> DebugAdapterName {
         DebugAdapterName(Self::ADAPTER_NAME.into())
+    }
+
+    fn adapter_language_name(&self) -> Option<LanguageName> {
+        Some(SharedString::new_static("Ruby").into())
     }
 
     async fn get_binary(
