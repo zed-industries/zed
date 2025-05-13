@@ -577,15 +577,15 @@ impl DapStore {
         let snapshot = buffer_handle.read(cx).snapshot();
         let all_variables = session.read(cx).variables_by_stack_frame_id(stack_frame_id);
 
-        fn format_value(value: String) -> String {
+        fn format_value(mut value: String) -> String {
             const LIMIT: usize = 100;
 
-            let mut value = format!(": {}", value);
             if value.len() > LIMIT {
                 value.truncate(LIMIT);
                 value.push_str("...");
             }
-            value
+
+            format!(": {}", value)
         }
 
         cx.spawn(async move |_, cx| {
