@@ -13,7 +13,7 @@ use std::{
     ops::{Add, Div, Mul, MulAssign, Neg, Sub},
 };
 
-use crate::{App, DisplayId};
+use crate::{App, DisplayId, Window};
 
 /// Axis in a 2D cartesian space.
 #[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
@@ -2823,6 +2823,12 @@ impl From<usize> for DevicePixels {
     fn from(device_pixels: usize) -> Self {
         DevicePixels(device_pixels as i32)
     }
+}
+
+/// Converts a value in logical pixels to scaled pixels based on
+/// the scale factor for the current window.
+pub fn scaled_px(value: f32, window: &Window) -> ScaledPixels {
+    px(value).scale(window.scale_factor())
 }
 
 /// Represents scaled pixels that take into account the device's scale factor.
