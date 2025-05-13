@@ -7,7 +7,7 @@ use crate::{
     KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers,
     ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
     Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
+    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Radians, Render, RenderGlyphParams,
     RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
     SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
     SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
@@ -2388,6 +2388,7 @@ impl Window {
             corner_radii: quad.corner_radii.scale(scale_factor),
             border_widths: quad.border_widths.scale(scale_factor),
             border_style: quad.border_style,
+            transformation: quad.transformation,
         });
     }
 
@@ -4196,6 +4197,8 @@ pub struct PaintQuad {
     pub border_color: Hsla,
     /// The style of the quad's borders.
     pub border_style: BorderStyle,
+    /// The transformation to apply to the quad.
+    pub transformation: TransformationMatrix,
 }
 
 impl PaintQuad {
@@ -4230,6 +4233,48 @@ impl PaintQuad {
             ..self
         }
     }
+
+    /// Sets the transformation matrix to apply to the quad.
+    pub fn transformation(self, transformation: impl Into<TransformationMatrix>) -> Self {
+        PaintQuad {
+            transformation: transformation.into(),
+            ..self
+        }
+    }
+
+    /// Rotates the quad around its origin by the given angle (in radians, clockwise).
+    pub fn rotate(self, angle: impl Into<Radians>) -> Self {
+        PaintQuad {
+            transformation: self.transformation.rotate(angle.into()),
+            ..self
+        }
+    }
+
+    /// Scales the quad around its origin by the given factor.
+    pub fn scale(self, scale: impl Into<Size<f32>>) -> Self {
+        PaintQuad {
+            transformation: self.transformation.scale(scale.into()),
+            ..self
+        }
+    }
+
+    /// Translates the quad by the given offset.
+    pub fn translate(self, offset: impl Into<Point<ScaledPixels>>) -> Self {
+        PaintQuad {
+            transformation: self.transformation.translate(offset.into()),
+            ..self
+        }
+    }
+
+    /// Applies multiple transformations in sequence: first rotation, then scaling, then translation.
+    pub fn transform(
+        self,
+        angle: impl Into<Radians>,
+        scale: impl Into<Size<f32>>,
+        offset: impl Into<Point<ScaledPixels>>,
+    ) -> Self {
+        self.rotate(angle).scale(scale).translate(offset)
+    }
 }
 
 /// Creates a quad with the given parameters.
@@ -4248,7 +4293,43 @@ pub fn quad(
         border_widths: border_widths.into(),
         border_color: border_color.into(),
         border_style,
+        transformation: TransformationMatrix::default(),
     }
+}
+
+/// Applies a transformation matrix to a quad.
+pub fn transform_quad(quad: PaintQuad, transformation: TransformationMatrix) -> PaintQuad {
+    PaintQuad {
+        transformation,
+        ..quad
+    }
+}
+
+/// Creates a filled quad that is rotated by the given angle.
+pub fn rotated_fill(
+    bounds: impl Into<Bounds<Pixels>>,
+    background: impl Into<Background>,
+    angle: impl Into<Radians>,
+) -> PaintQuad {
+    fill(bounds, background).rotate(angle)
+}
+
+/// Creates a filled quad that is scaled by the given factor.
+pub fn scaled_fill(
+    bounds: impl Into<Bounds<Pixels>>,
+    background: impl Into<Background>,
+    scale: impl Into<Size<f32>>,
+) -> PaintQuad {
+    fill(bounds, background).scale(scale)
+}
+
+/// Creates a filled quad that is translated by the given offset.
+pub fn translated_fill(
+    bounds: impl Into<Bounds<Pixels>>,
+    background: impl Into<Background>,
+    offset: impl Into<Point<ScaledPixels>>,
+) -> PaintQuad {
+    fill(bounds, background).translate(offset)
 }
 
 /// Creates a filled quad with the given bounds and background color.
@@ -4260,6 +4341,7 @@ pub fn fill(bounds: impl Into<Bounds<Pixels>>, background: impl Into<Background>
         border_widths: (0.).into(),
         border_color: transparent_black(),
         border_style: BorderStyle::default(),
+        transformation: TransformationMatrix::default(),
     }
 }
 
@@ -4276,5 +4358,6 @@ pub fn outline(
         border_widths: (1.).into(),
         border_color: border_color.into(),
         border_style,
+        transformation: TransformationMatrix::default(),
     }
 }

@@ -292,3 +292,7 @@ path = "examples/window_shadow.rs"
 [[example]]
 name = "on_window_close_quit"
 path = "examples/on_window_close_quit.rs"
+
+[[example]]
+name = "transform"
+path = "examples/transform.rs"
