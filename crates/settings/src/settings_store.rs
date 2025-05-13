@@ -2180,8 +2180,8 @@ mod tests {
             store.get::<UserSettings>(None),
             &UserSettings {
                 name: "Global User".to_string(), // Name from global settings
-                age: 40,                          // Age from user settings
-                staff: true,                      // Staff from global settings
+                age: 40,                         // Age from user settings
+                staff: true,                     // Staff from global settings
             }
         );
     }
