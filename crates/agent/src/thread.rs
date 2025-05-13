@@ -22,9 +22,9 @@ use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelKnownError, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
-    LanguageModelToolResultContent, LanguageModelToolUseId,
-    MessageContent, ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role,
-    SelectedModel, StopReason, TokenUsage,
+    LanguageModelToolResultContent, LanguageModelToolUseId, MessageContent,
+    ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role, SelectedModel,
+    StopReason, TokenUsage,
 };
 use postage::stream::Stream as _;
 use project::Project;
