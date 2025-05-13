@@ -979,8 +979,8 @@ pub struct InlayHintSettings {
     pub enabled: bool,
     /// Global switch to toggle inline values on and off.
     ///
-    /// Default: false
-    #[serde(default)]
+    /// Default: true
+    #[serde(default = "default_true")]
     pub show_value_hints: bool,
     /// Whether type hints should be shown.
     ///
