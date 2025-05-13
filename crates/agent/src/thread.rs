@@ -458,7 +458,7 @@ impl Thread {
         tools: Entity<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
         project_context: SharedProjectContext,
-        window: Option<&mut Window>, // None for headless mode
+        window: Option<&mut Window>, // None in headless mode
         cx: &mut Context<Self>,
     ) -> Self {
         let next_message_id = MessageId(

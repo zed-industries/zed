@@ -53,7 +53,7 @@ impl ToolUseState {
     ///
     /// Accepts a function to filter the tools that should be used to populate the state.
     ///
-    /// If `window` is `None` (typically in headless mode and when running evals),
+    /// If `window` is `None` (e.g., when in headless mode or when running evals),
     /// tool cards won't be deserialized
     pub fn from_serialized_messages(
         tools: Entity<ToolWorkingSet>,
