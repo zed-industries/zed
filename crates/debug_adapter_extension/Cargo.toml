@@ -1,6 +1,7 @@
 [package]
 name = "debug_adapter_extension"
 version = "0.1.0"
+license = "GPL-3.0-or-later"
 publish.workspace = true
 edition.workspace = true
 
