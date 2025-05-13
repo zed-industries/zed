@@ -33,8 +33,8 @@ use crate::{platform::blade::BladeContext, *};
 pub(crate) struct WindowsPlatform {
     state: RefCell<WindowsPlatformState>,
     raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
-    gpu_context: BladeContext,
     // The below members will never change throughout the entire lifecycle of the app.
+    gpu_context: BladeContext,
     icon: HICON,
     main_receiver: flume::Receiver<Runnable>,
     background_executor: BackgroundExecutor,
@@ -62,6 +62,7 @@ struct PlatformCallbacks {
     app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
     will_open_app_menu: Option<Box<dyn FnMut()>>,
     validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
+    keyboard_layout_change: Option<Box<dyn FnMut()>>,
 }
 
 impl WindowsPlatformState {
@@ -305,8 +306,8 @@ impl Platform for WindowsPlatform {
         )
     }
 
-    fn on_keyboard_layout_change(&self, _callback: Box<dyn FnMut()>) {
-        // todo(windows)
+    fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
+        self.state.borrow_mut().callbacks.keyboard_layout_change = Some(callback);
     }
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
