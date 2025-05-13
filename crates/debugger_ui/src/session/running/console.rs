@@ -45,6 +45,7 @@ impl Console {
             let mut editor = Editor::multi_line(window, cx);
             editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
             editor.set_read_only(true);
+            editor.disable_scrollbars_and_minimap(window, cx);
             editor.set_show_gutter(false, cx);
             editor.set_show_runnables(false, cx);
             editor.set_show_breakpoints(false, cx);
