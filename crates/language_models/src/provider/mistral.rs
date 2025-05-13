@@ -368,6 +368,10 @@ impl LanguageModel for MistralLanguageModel {
         }
     }
 
+    fn supports_images(&self) -> bool {
+        false
+    }
+
     fn telemetry_id(&self) -> String {
         format!("mistral/{}", self.model.id())
     }
