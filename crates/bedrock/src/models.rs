@@ -58,6 +58,7 @@ pub enum Model {
     // DeepSeek
     DeepSeekR1,
     // Meta models
+    // TODO: there are more meta models
     MetaLlama38BInstructV1,
     MetaLlama370BInstructV1,
     MetaLlama318BInstructV1_128k,
@@ -126,7 +127,7 @@ impl Model {
             Model::AmazonNovaMicro => "amazon.nova-micro-v1:0",
             Model::AmazonNovaPro => "amazon.nova-pro-v1:0",
             Model::AmazonNovaPremier => "amazon.nova-premier-v1:0",
-            Model::DeepSeekR1 => "us.deepseek.r1-v1:0",
+            Model::DeepSeekR1 => "deepseek.r1-v1:0",
             Model::AI21J2GrandeInstruct => "ai21.j2-grande-instruct",
             Model::AI21J2JumboInstruct => "ai21.j2-jumbo-instruct",
             Model::AI21J2Mid => "ai21.j2-mid",
@@ -318,55 +319,60 @@ impl Model {
             (Model::Custom { .. }, _) => Ok(self.id().into()),
 
             // Models with US Gov only
-            (Model::Claude3_5Sonnet, "us-gov") | (Model::Claude3Haiku, "us-gov") => {
+            (Model::Claude3_5Sonnet | Model::Claude3Haiku, "us-gov") => {
                 Ok(format!("{}.{}", region_group, model_id))
             }
 
-            // Models available only in US
-            (Model::Claude3Opus, "us")
-            | (Model::Claude3_5Haiku, "us")
-            | (Model::Claude3_7Sonnet, "us")
-            | (Model::Claude3_7SonnetThinking, "us")
-            | (Model::AmazonNovaPremier, "us")
-            | (Model::MistralPixtralLarge2502V1, "us") => {
+            // Available everywhere
+            (Model::AmazonNovaLite | Model::AmazonNovaMicro | Model::AmazonNovaPro, _) => {
                 Ok(format!("{}.{}", region_group, model_id))
             }
 
-            // Models available in US, EU, and APAC
-            (Model::Claude3_5SonnetV2, "us")
-            | (Model::Claude3_5SonnetV2, "apac")
-            | (Model::Claude3_5Sonnet, _)
-            | (Model::Claude3Haiku, _)
-            | (Model::Claude3Sonnet, _)
-            | (Model::AmazonNovaLite, _)
-            | (Model::AmazonNovaMicro, _)
-            | (Model::AmazonNovaPro, _) => Ok(format!("{}.{}", region_group, model_id)),
+            // Models in US
+            (
+                Model::AmazonNovaPremier
+                | Model::Claude3_5Haiku
+                | Model::Claude3_5Sonnet
+                | Model::Claude3_5SonnetV2
+                | Model::Claude3_7Sonnet
+                | Model::Claude3_7SonnetThinking
+                | Model::Claude3Haiku
+                | Model::Claude3Opus
+                | Model::Claude3Sonnet
+                | Model::DeepSeekR1
+                | Model::MetaLlama3170BInstructV1
+                | Model::MetaLlama318BInstructV1
+                | Model::MetaLlama3211BInstructV1
+                | Model::MetaLlama321BInstructV1
+                | Model::MetaLlama323BInstructV1
+                | Model::MetaLlama3290BInstructV1
+                | Model::MistralPixtralLarge2502V1
+                | Model::PalmyraWriterX4
+                | Model::PalmyraWriterX5,
+                "us",
+            ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            // Models with limited EU availability
-            (Model::MetaLlama321BInstructV1, "us")
-            | (Model::MetaLlama321BInstructV1, "eu")
-            | (Model::MetaLlama323BInstructV1, "us")
-            | (Model::MetaLlama323BInstructV1, "eu") => {
-                Ok(format!("{}.{}", region_group, model_id))
-            }
+            // Models available in EU
+            (
+                Model::Claude3_5Sonnet
+                | Model::Claude3_7Sonnet
+                | Model::Claude3_7SonnetThinking
+                | Model::Claude3Haiku
+                | Model::Claude3Sonnet
+                | Model::MetaLlama321BInstructV1
+                | Model::MetaLlama323BInstructV1
+                | Model::MistralPixtralLarge2502V1,
+                "eu",
+            ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            // US-only models (all remaining Meta models)
-            (Model::MetaLlama38BInstructV1, "us")
-            | (Model::MetaLlama370BInstructV1, "us")
-            | (Model::MetaLlama318BInstructV1, "us")
-            | (Model::MetaLlama318BInstructV1_128k, "us")
-            | (Model::MetaLlama3170BInstructV1, "us")
-            | (Model::MetaLlama3170BInstructV1_128k, "us")
-            | (Model::MetaLlama3211BInstructV1, "us")
-            | (Model::MetaLlama3290BInstructV1, "us") => {
-                Ok(format!("{}.{}", region_group, model_id))
-            }
-
-            // Writer models only available in the US
-            (Model::PalmyraWriterX4, "us") | (Model::PalmyraWriterX5, "us") => {
-                // They have some goofiness
-                Ok(format!("{}.{}", region_group, model_id))
-            }
+            // Models available in APAC
+            (
+                Model::Claude3_5Sonnet
+                | Model::Claude3_5SonnetV2
+                | Model::Claude3Haiku
+                | Model::Claude3Sonnet,
+                "apac",
+            ) => Ok(format!("{}.{}", region_group, model_id)),
 
             // Any other combination is not supported
             _ => Ok(self.id().into()),
@@ -442,8 +448,8 @@ mod tests {
     fn test_meta_models_inference_ids() -> anyhow::Result<()> {
         // Test Meta models
         assert_eq!(
-            Model::MetaLlama370BInstructV1.cross_region_inference_id("us-east-1")?,
-            "us.meta.llama3-70b-instruct-v1:0"
+            Model::MetaLlama318BInstructV1.cross_region_inference_id("us-east-1")?,
+            "us.meta.llama3-1-8b-instruct-v1:0"
         );
         assert_eq!(
             Model::MetaLlama321BInstructV1.cross_region_inference_id("eu-west-1")?,
