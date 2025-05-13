@@ -18,6 +18,7 @@ impl Example for FileSearchExample {
             language_server: None,
             max_assertions: Some(3),
             profile_id: AgentProfileId::default(),
+            existing_thread_json: Some(String::from("{}")),
         }
     }
 

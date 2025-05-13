@@ -1,4 +1,4 @@
-use agent::{Message, MessageSegment, ThreadStore};
+use agent::{Message, MessageSegment, SerializedThread, ThreadStore};
 use anyhow::{Context, Result, anyhow, bail};
 use assistant_tool::ToolWorkingSet;
 use client::proto::LspWorkProgress;
@@ -312,7 +312,14 @@ impl ExampleInstance {
             thread_store.update(cx, |thread_store, cx| thread_store.load_profile_by_id(profile_id, cx)).expect("Failed to load profile");
 
             let thread =
-                thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx))?;
+                thread_store.update(cx, |thread_store, cx| {
+                    if let Some(json) = &meta.existing_thread_json {
+                        let serialized = SerializedThread::from_json(json.as_bytes()).expect("Can't read serialized thread from");
+                        thread_store.create_thread_from_serialized(serialized, cx)
+                    } else {
+                        thread_store.create_thread(cx)
+                    }
+                })?;
 
 
             thread.update(cx, |thread, _cx| {
@@ -364,6 +371,7 @@ impl ExampleInstance {
             let result = this.thread.conversation(&mut example_cx).await;
 
             if let Err(err) = result {
+                dbg!(&err);
                 if !err.is::<FailedAssertion>() {
                     return Err(err);
                 }

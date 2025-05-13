@@ -16,6 +16,7 @@ impl Example for CommentTranslation {
             language_server: None,
             max_assertions: Some(1),
             profile_id: AgentProfileId::default(),
+            existing_thread_json: None,
         }
     }
 

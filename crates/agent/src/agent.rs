@@ -40,7 +40,6 @@ use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{Settings as _, SettingsStore};
-use thread::ThreadId;
 
 pub use crate::active_thread::ActiveThread;
 use crate::agent_configuration::{AddContextServerModal, ManageProfilesModal};
@@ -49,9 +48,10 @@ pub use crate::context::{ContextLoadResult, LoadedContext};
 pub use crate::inline_assistant::InlineAssistant;
 use crate::slash_command_settings::SlashCommandSettings;
 pub use crate::thread::{Message, MessageSegment, Thread, ThreadEvent};
-pub use crate::thread_store::{TextThreadStore, ThreadStore};
+pub use crate::thread_store::{SerializedThread, TextThreadStore, ThreadStore};
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
 pub use context_store::ContextStore;
+pub use thread::ThreadId;
 pub use ui::preview::{all_agent_previews, get_agent_preview};
 
 actions!(

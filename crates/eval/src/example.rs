@@ -48,6 +48,7 @@ pub struct ExampleMetadata {
     pub language_server: Option<LanguageServer>,
     pub max_assertions: Option<usize>,
     pub profile_id: AgentProfileId,
+    pub existing_thread_json: Option<String>,
 }
 
 #[derive(Clone, Debug)]
