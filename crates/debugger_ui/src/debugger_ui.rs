@@ -7,7 +7,7 @@ use new_session_modal::NewSessionModal;
 use project::debugger::{self, breakpoint_store::SourceBreakpoint};
 use session::DebugSession;
 use settings::Settings;
-use stack_frame_viewer::StackFrameViewer;
+use stack_frame_viewer::StackTraceView;
 use util::maybe;
 use workspace::{ItemHandle, ShutdownDebugAdapters, Workspace};
 
@@ -155,16 +155,24 @@ pub fn init(cx: &mut App) {
                             return;
                         };
 
-                        if let Some(existing) = workspace.item_of_type::<StackFrameViewer>(cx) {
+                        if let Some(existing) = workspace.item_of_type::<StackTraceView>(cx) {
                             let is_active = workspace
                                 .active_item(cx)
                                 .is_some_and(|item| item.item_id() == existing.item_id());
                             workspace.activate_item(&existing, true, !is_active, window, cx);
                         } else {
-                            let stack_frame_editor = debug_panel.read(cx).stack_frame_viewer();
+                            let Some(active_session) = debug_panel.read(cx).active_session() else {
+                                return;
+                            };
+
+                            let project = workspace.project();
+
+                            let stack_trace_view = active_session.update(cx, |session, cx| {
+                                session.stack_trace_view(project, window, cx).clone()
+                            });
 
                             workspace.add_item_to_active_pane(
-                                Box::new(stack_frame_editor),
+                                Box::new(stack_trace_view),
                                 None,
                                 true,
                                 window,

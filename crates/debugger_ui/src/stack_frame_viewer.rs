@@ -20,18 +20,15 @@ use workspace::{
     searchable::SearchableItemHandle,
 };
 
-use crate::session::{
-    DebugSession,
-    running::stack_frame_list::{StackFrameList, StackFrameListEvent},
-};
+use crate::session::running::stack_frame_list::{StackFrameList, StackFrameListEvent};
 use anyhow::Result;
 
-pub(crate) struct StackFrameViewer {
+pub(crate) struct StackTraceView {
     editor: Entity<Editor>,
     multibuffer: Entity<MultiBuffer>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
-    active_session: Option<Entity<DebugSession>>,
+    stack_frame_list: Entity<StackFrameList>,
     selected_stack_frame_id: Option<StackFrameId>,
     highlights: Vec<(StackFrameId, Anchor)>,
     excerpt_for_frames: collections::HashMap<ExcerptId, StackFrameId>,
@@ -39,10 +36,11 @@ pub(crate) struct StackFrameViewer {
     _subscription: Option<Subscription>,
 }
 
-impl StackFrameViewer {
+impl StackTraceView {
     pub(crate) fn new(
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
+        stack_frame_list: Entity<StackFrameList>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -66,52 +64,19 @@ impl StackFrameViewer {
                         .map(|excerpt| excerpt.id())
                 });
 
-                if let Some((stack_frame_id, session)) = excerpt_id
+                if let Some(stack_frame_id) = excerpt_id
                     .and_then(|id| this.excerpt_for_frames.get(&id))
                     .filter(|id| Some(**id) != this.selected_stack_frame_id)
-                    .zip(this.active_session.as_ref())
                 {
-                    session.update(cx, |session, cx| {
-                        session.running_state().update(cx, |state, cx| {
-                            state.stack_frame_list().update(cx, |list, cx| {
-                                list.select_stack_frame_id(*stack_frame_id, window, cx);
-                            });
-                        })
-                    })
+                    this.stack_frame_list.update(cx, |list, cx| {
+                        list.select_stack_frame_id(*stack_frame_id, window, cx);
+                    });
                 }
             }
         })
         .detach();
 
-        Self {
-            editor,
-            multibuffer,
-            workspace,
-            project,
-            excerpt_for_frames: HashMap::default(),
-            highlights: Vec::default(),
-            active_session: None,
-            selected_stack_frame_id: None,
-            refresh_task: None,
-            _subscription: None,
-        }
-    }
-
-    pub(crate) fn set_active_session(
-        &mut self,
-        session: Entity<DebugSession>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let stack_frame_list = session
-            .read(cx)
-            .running_state()
-            .read(cx)
-            .stack_frame_list()
-            .clone();
-
-        let stack_frame_id = stack_frame_list.read(cx).selected_stack_frame_id();
-        let subscription = cx.subscribe_in(
+        cx.subscribe_in(
             &stack_frame_list,
             window,
             |this, stack_frame_list, event, window, cx| match event {
@@ -155,14 +120,24 @@ impl StackFrameViewer {
                     }
                 }
             },
-        );
+        )
+        .detach();
 
-        self._subscription = Some(subscription);
-        self.active_session = Some(session);
-        self.selected_stack_frame_id = stack_frame_id;
-        self.excerpt_for_frames.clear();
-        self.highlights.clear();
-        self.update_excerpts(window, cx);
+        let mut this = Self {
+            editor,
+            multibuffer,
+            workspace,
+            project,
+            excerpt_for_frames: HashMap::default(),
+            highlights: Vec::default(),
+            stack_frame_list,
+            selected_stack_frame_id: None,
+            refresh_task: None,
+            _subscription: None,
+        };
+
+        this.update_excerpts(window, cx);
+        this
     }
 
     fn update_excerpts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -171,36 +146,17 @@ impl StackFrameViewer {
             editor.clear_highlights::<DebugStackFrameLine>(cx)
         });
 
-        let Some(session) = self.active_session.clone() else {
-            self.multibuffer.update(cx, |buffer, cx| buffer.clear(cx));
-            return;
-        };
-
-        let Some(thread_id) = session
-            .read(cx)
-            .running_state()
-            .read(cx)
-            .selected_thread_id()
-        else {
-            self.multibuffer.update(cx, |buffer, cx| buffer.clear(cx));
-            return;
-        };
-
-        let stack_frames = session.update(cx, |session, cx| {
-            session.running_state().update(cx, |state, cx| {
-                state
-                    .session()
-                    .update(cx, |session, cx| session.stack_frames(thread_id, cx))
-            })
-        });
+        let stack_frames = self
+            .stack_frame_list
+            .update(cx, |list, _| list.flatten_entries(false));
 
         let frames_to_open: Vec<_> = stack_frames
             .into_iter()
             .filter_map(|frame| {
                 Some((
-                    frame.dap.id,
-                    frame.dap.line as u32 - 1,
-                    StackFrameList::abs_path_from_stack_frame(&frame.dap)?,
+                    frame.id,
+                    frame.line as u32 - 1,
+                    StackFrameList::abs_path_from_stack_frame(&frame)?,
                 ))
             })
             .collect();
@@ -278,35 +234,18 @@ impl StackFrameViewer {
         self.editor.update(cx, |editor, _| {
             editor.clear_row_highlights::<DebugStackFrameLine>()
         });
-        let Some(session) = self.active_session.clone() else {
-            self.multibuffer.update(cx, |buffer, cx| buffer.clear(cx));
-            return;
-        };
 
-        let Some(thread_id) = session
-            .read(cx)
-            .running_state()
-            .read(cx)
-            .selected_thread_id()
-        else {
-            self.multibuffer.update(cx, |buffer, cx| buffer.clear(cx));
-            return;
-        };
-
-        let stack_frames = session.update(cx, |session, cx| {
-            session.running_state().update(cx, |state, cx| {
-                state
-                    .session()
-                    .update(cx, |session, cx| session.stack_frames(thread_id, cx))
-            })
-        });
+        let stack_frames = self
+            .stack_frame_list
+            .update(cx, |session, _| session.flatten_entries(false));
 
         let active_idx = self
             .selected_stack_frame_id
             .and_then(|id| {
-                stack_frames.iter().enumerate().find_map(|(idx, frame)| {
-                    if frame.dap.id == id { Some(idx) } else { None }
-                })
+                stack_frames
+                    .iter()
+                    .enumerate()
+                    .find_map(|(idx, frame)| if frame.id == id { Some(idx) } else { None })
             })
             .unwrap_or(0);
 
@@ -357,20 +296,20 @@ impl StackFrameViewer {
     }
 }
 
-impl Render for StackFrameViewer {
+impl Render for StackTraceView {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div().size_full().child(self.editor.clone())
     }
 }
 
-impl EventEmitter<EditorEvent> for StackFrameViewer {}
-impl Focusable for StackFrameViewer {
+impl EventEmitter<EditorEvent> for StackTraceView {}
+impl Focusable for StackTraceView {
     fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
         self.editor.focus_handle(cx)
     }
 }
 
-impl Item for StackFrameViewer {
+impl Item for StackTraceView {
     type Event = EditorEvent;
 
     fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {

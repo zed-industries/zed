@@ -17,7 +17,7 @@ use ui::{Scrollbar, ScrollbarState, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::{ItemHandle, Workspace};
 
-use crate::StackFrameViewer;
+use crate::StackTraceView;
 
 use super::RunningState;
 
@@ -104,13 +104,18 @@ impl StackFrameList {
         &self.entries
     }
 
-    #[cfg(test)]
-    pub(crate) fn flatten_entries(&self) -> Vec<dap::StackFrame> {
+    pub(crate) fn flatten_entries(&self, show_collapsed: bool) -> Vec<dap::StackFrame> {
         self.entries
             .iter()
             .flat_map(|frame| match frame {
                 StackFrameEntry::Normal(frame) => vec![frame.clone()],
-                StackFrameEntry::Collapsed(frames) => frames.clone(),
+                StackFrameEntry::Collapsed(frames) => {
+                    if show_collapsed {
+                        frames.clone()
+                    } else {
+                        vec![]
+                    }
+                }
             })
             .collect::<Vec<_>>()
     }
@@ -324,7 +329,7 @@ impl StackFrameList {
                     })?;
 
                     let open_preview = !workspace
-                        .item_of_type::<StackFrameViewer>(cx)
+                        .item_of_type::<StackTraceView>(cx)
                         .map(|viewer| {
                             workspace
                                 .active_item(cx)

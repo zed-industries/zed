@@ -1,6 +1,5 @@
 use crate::persistence::DebuggerPaneItem;
 use crate::session::DebugSession;
-use crate::stack_frame_viewer::StackFrameViewer;
 use crate::{
     ClearAllBreakpoints, Continue, Detach, ExpandStackFrames, FocusBreakpointList, FocusConsole,
     FocusFrames, FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, Pause, Restart,
@@ -64,22 +63,13 @@ pub struct DebugPanel {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
-    stack_frame_viewer: Entity<StackFrameViewer>,
     fs: Arc<dyn Fs>,
 }
 
 impl DebugPanel {
-    pub fn new(
-        workspace: &Workspace,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) -> Entity<Self> {
+    pub fn new(workspace: &Workspace, cx: &mut Context<Workspace>) -> Entity<Self> {
         cx.new(|cx| {
             let project = workspace.project().clone();
-
-            let stack_frame_viewer = cx.new(|cx| {
-                StackFrameViewer::new(workspace.weak_handle(), project.clone(), window, cx)
-            });
 
             let debug_panel = Self {
                 size: px(300.),
@@ -89,7 +79,6 @@ impl DebugPanel {
                 project,
                 workspace: workspace.weak_handle(),
                 context_menu: None,
-                stack_frame_viewer,
                 fs: workspace.app_state().fs.clone(),
             };
 
@@ -178,8 +167,8 @@ impl DebugPanel {
         cx: &mut AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(async move |cx| {
-            workspace.update_in(cx, |workspace, window, cx| {
-                let debug_panel = DebugPanel::new(workspace, window, cx);
+            workspace.update(cx, |workspace, cx| {
+                let debug_panel = DebugPanel::new(workspace, cx);
 
                 workspace.register_action(|workspace, _: &ClearAllBreakpoints, _, cx| {
                     workspace.project().read(cx).breakpoint_store().update(
@@ -416,10 +405,6 @@ impl DebugPanel {
 
     pub fn active_session(&self) -> Option<Entity<DebugSession>> {
         self.active_session.clone()
-    }
-
-    pub(crate) fn stack_frame_viewer(&self) -> Entity<StackFrameViewer> {
-        self.stack_frame_viewer.clone()
     }
 
     fn close_session(&mut self, entity_id: EntityId, window: &mut Window, cx: &mut Context<Self>) {
@@ -1001,9 +986,6 @@ impl DebugPanel {
             });
         });
         self.active_session = Some(session_item.clone());
-        self.stack_frame_viewer.update(cx, |viewer, cx| {
-            viewer.set_active_session(session_item, window, cx)
-        });
         cx.notify();
     }
 
