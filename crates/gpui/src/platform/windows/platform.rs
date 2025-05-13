@@ -202,6 +202,19 @@ impl WindowsPlatform {
         }
     }
 
+    fn handle_input_lang_change(&self) {
+        let mut lock = self.state.borrow_mut();
+        if let Some(mut callback) = lock.callbacks.keyboard_layout_change.take() {
+            drop(lock);
+            callback();
+            self.state
+                .borrow_mut()
+                .callbacks
+                .keyboard_layout_change
+                .get_or_insert(callback);
+        }
+    }
+
     // Returns true if the app should quit.
     fn handle_events(&self) -> bool {
         let mut msg = MSG::default();
@@ -209,7 +222,8 @@ impl WindowsPlatform {
             while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
                 match msg.message {
                     WM_QUIT => return true,
-                    WM_GPUI_CLOSE_ONE_WINDOW
+                    WM_INPUTLANGCHANGE
+                    | WM_GPUI_CLOSE_ONE_WINDOW
                     | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
                     | WM_GPUI_DOCK_MENU_ACTION => {
                         if self.handle_gpui_evnets(msg.message, msg.wParam, msg.lParam, &msg) {
@@ -248,6 +262,7 @@ impl WindowsPlatform {
             }
             WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
             WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
+            WM_INPUTLANGCHANGE => self.handle_input_lang_change(),
             _ => unreachable!(),
         }
         false
