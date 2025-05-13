@@ -19,7 +19,7 @@ use gpui::{
 };
 use heed::Database;
 use heed::types::SerdeBincode;
-use language_model::{LanguageModelToolUseId, Role, TokenUsage};
+use language_model::{LanguageModelToolResultContent, LanguageModelToolUseId, Role, TokenUsage};
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
@@ -775,7 +775,7 @@ pub struct SerializedToolUse {
 pub struct SerializedToolResult {
     pub tool_use_id: LanguageModelToolUseId,
     pub is_error: bool,
-    pub content: Arc<str>,
+    pub content: LanguageModelToolResultContent,
     pub output: Option<serde_json::Value>,
 }
 

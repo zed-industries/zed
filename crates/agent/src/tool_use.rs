@@ -1,14 +1,16 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use assistant_tool::{AnyToolCard, Tool, ToolResultOutput, ToolUseStatus, ToolWorkingSet};
+use assistant_tool::{
+    AnyToolCard, Tool, ToolResultContent, ToolResultOutput, ToolUseStatus, ToolWorkingSet,
+};
 use collections::HashMap;
 use futures::FutureExt as _;
 use futures::future::Shared;
 use gpui::{App, Entity, SharedString, Task};
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelRequest, LanguageModelToolResult,
-    LanguageModelToolUse, LanguageModelToolUseId, Role,
+    LanguageModelToolResultContent, LanguageModelToolUse, LanguageModelToolUseId, Role,
 };
 use project::Project;
 use ui::{IconName, Window};
@@ -165,10 +167,16 @@ impl ToolUseState {
 
             let status = (|| {
                 if let Some(tool_result) = tool_result {
+                    let content = tool_result
+                        .content
+                        .to_str()
+                        .map(|str| str.to_owned().into())
+                        .unwrap_or_default();
+
                     return if tool_result.is_error {
-                        ToolUseStatus::Error(tool_result.content.clone().into())
+                        ToolUseStatus::Error(content)
                     } else {
-                        ToolUseStatus::Finished(tool_result.content.clone().into())
+                        ToolUseStatus::Finished(content)
                     };
                 }
 
@@ -399,21 +407,44 @@ impl ToolUseState {
                 let tool_result = output.content;
                 const BYTES_PER_TOKEN_ESTIMATE: usize = 3;
 
-                // Protect from clearly large output
+                let old_use = self.pending_tool_uses_by_id.remove(&tool_use_id);
+
+                // Protect from overly large output
                 let tool_output_limit = configured_model
                     .map(|model| model.model.max_token_count() * BYTES_PER_TOKEN_ESTIMATE)
                     .unwrap_or(usize::MAX);
 
-                let tool_result = if tool_result.len() <= tool_output_limit {
-                    tool_result
-                } else {
-                    let truncated = truncate_lines_to_byte_limit(&tool_result, tool_output_limit);
+                let content = match tool_result {
+                    ToolResultContent::Text(text) => {
+                        let truncated = truncate_lines_to_byte_limit(&text, tool_output_limit);
 
-                    format!(
-                        "Tool result too long. The first {} bytes:\n\n{}",
-                        truncated.len(),
-                        truncated
-                    )
+                        LanguageModelToolResultContent::Text(
+                            format!(
+                                "Tool result too long. The first {} bytes:\n\n{}",
+                                truncated.len(),
+                                truncated
+                            )
+                            .into(),
+                        )
+                    }
+                    ToolResultContent::Image(language_model_image) => {
+                        if language_model_image.estimate_tokens() < tool_output_limit {
+                            LanguageModelToolResultContent::Image(language_model_image)
+                        } else {
+                            self.tool_results.insert(
+                                tool_use_id.clone(),
+                                LanguageModelToolResult {
+                                    tool_use_id: tool_use_id.clone(),
+                                    tool_name,
+                                    content: "Tool responded with an image that would exceeded the remaining tokens".into(),
+                                    is_error: true,
+                                    output: None,
+                                },
+                            );
+
+                            return old_use;
+                        }
+                    }
                 };
 
                 self.tool_results.insert(
@@ -421,12 +452,13 @@ impl ToolUseState {
                     LanguageModelToolResult {
                         tool_use_id: tool_use_id.clone(),
                         tool_name,
-                        content: tool_result.into(),
+                        content,
                         is_error: false,
                         output: output.output,
                     },
                 );
-                self.pending_tool_uses_by_id.remove(&tool_use_id)
+
+                old_use
             }
             Err(err) => {
                 self.tool_results.insert(
@@ -434,7 +466,7 @@ impl ToolUseState {
                     LanguageModelToolResult {
                         tool_use_id: tool_use_id.clone(),
                         tool_name,
-                        content: err.to_string().into(),
+                        content: LanguageModelToolResultContent::Text(err.to_string().into()),
                         is_error: true,
                         output: None,
                     },

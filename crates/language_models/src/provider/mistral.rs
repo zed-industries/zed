@@ -303,6 +303,10 @@ impl LanguageModel for MistralLanguageModel {
         false
     }
 
+    fn supports_images(&self) -> bool {
+        false
+    }
+
     fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
         false
     }

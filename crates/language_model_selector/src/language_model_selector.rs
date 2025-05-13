@@ -759,6 +759,10 @@ mod tests {
             false
         }
 
+        fn supports_images(&self) -> bool {
+            false
+        }
+
         fn telemetry_id(&self) -> String {
             format!("{}/{}", self.provider_id.0, self.name.0)
         }

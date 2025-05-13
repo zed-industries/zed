@@ -287,6 +287,10 @@ impl LanguageModel for DeepSeekLanguageModel {
         false
     }
 
+    fn supports_images(&self) -> bool {
+        false
+    }
+
     fn telemetry_id(&self) -> String {
         format!("deepseek/{}", self.model.id())
     }
