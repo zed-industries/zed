@@ -506,7 +506,11 @@ impl BreakpointStore {
             self.breakpoints.remove(&abs_path);
         }
         if let BreakpointStoreMode::Remote(remote) = &self.mode {
-            if let Some(breakpoint) = breakpoint.bp.to_proto(&abs_path, &breakpoint.position) {
+            if let Some(breakpoint) =
+                breakpoint
+                    .bp
+                    .to_proto(&abs_path, &breakpoint.position, &HashMap::default())
+            {
                 cx.background_spawn(remote.upstream_client.request(proto::ToggleBreakpoint {
                     project_id: remote._upstream_project_id,
                     path: abs_path.to_str().map(ToOwned::to_owned).unwrap(),
