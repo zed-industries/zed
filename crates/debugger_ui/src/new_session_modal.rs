@@ -1,8 +1,10 @@
 use collections::FxHashMap;
+use language::LanguageRegistry;
 use std::{
     borrow::Cow,
     ops::Not,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
     usize,
 };
@@ -81,6 +83,7 @@ impl NewSessionModal {
             return;
         };
         let task_store = workspace.project().read(cx).task_store().clone();
+        let languages = workspace.app_state().languages.clone();
 
         cx.spawn_in(window, async move |workspace, cx| {
             workspace.update_in(cx, |workspace, window, cx| {
@@ -131,9 +134,12 @@ impl NewSessionModal {
                                 }
 
                                 this.launch_picker.update(cx, |picker, cx| {
-                                    picker
-                                        .delegate
-                                        .task_contexts_loaded(task_contexts, window, cx);
+                                    picker.delegate.task_contexts_loaded(
+                                        task_contexts,
+                                        languages,
+                                        window,
+                                        cx,
+                                    );
                                     picker.refresh(window, cx);
                                     cx.notify();
                                 });
@@ -944,9 +950,49 @@ impl DebugScenarioDelegate {
         }
     }
 
+    fn get_scenario_kind(
+        languages: &Arc<LanguageRegistry>,
+        dap_registry: &DapRegistry,
+        scenario: DebugScenario,
+    ) -> (Option<TaskSourceKind>, DebugScenario) {
+        let language_names = languages.language_names();
+        let language = dap_registry
+            .adapter_language(&scenario.adapter)
+            .map(|language| TaskSourceKind::Language {
+                name: language.into(),
+            });
+
+        let language = language.or_else(|| {
+            scenario
+                .request
+                .as_ref()
+                .and_then(|request| match request {
+                    DebugRequest::Launch(launch) => launch
+                        .program
+                        .rsplit_once(".")
+                        .and_then(|split| languages.language_name_for_extension(split.1))
+                        .map(|name| TaskSourceKind::Language { name: name.into() }),
+                    _ => None,
+                })
+                .or_else(|| {
+                    scenario.label.split_whitespace().find_map(|word| {
+                        language_names
+                            .iter()
+                            .find(|name| name.eq_ignore_ascii_case(word))
+                            .map(|name| TaskSourceKind::Language {
+                                name: name.to_owned().into(),
+                            })
+                    })
+                })
+        });
+
+        (language, scenario)
+    }
+
     pub fn task_contexts_loaded(
         &mut self,
         task_contexts: TaskContexts,
+        languages: Arc<LanguageRegistry>,
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) {
@@ -967,14 +1013,16 @@ impl DebugScenarioDelegate {
             self.last_used_candidate_index = Some(recent.len() - 1);
         }
 
+        let dap_registry = cx.global::<DapRegistry>();
+
         self.candidates = recent
             .into_iter()
-            .map(|scenario| (None, scenario))
-            .chain(
-                scenarios
-                    .into_iter()
-                    .map(|(kind, scenario)| (Some(kind), scenario)),
-            )
+            .map(|scenario| Self::get_scenario_kind(&languages, &dap_registry, scenario))
+            .chain(scenarios.into_iter().map(|(kind, scenario)| {
+                let (language, scenario) =
+                    Self::get_scenario_kind(&languages, &dap_registry, scenario);
+                (language.or(Some(kind)), scenario)
+            }))
             .collect();
     }
 }
