@@ -135,12 +135,6 @@ pub struct Request {
     pub parallel_tool_calls: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
-    /// HTTP referer header for OpenRouter attribution
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub http_referer: Option<String>,
-    /// HTTP user-agent header for OpenRouter attribution
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub http_user_agent: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -310,8 +304,6 @@ pub async fn complete(
 
     let mut request_body = request;
     request_body.stream = false;
-    request_body.http_referer = Some("zed.dev".to_string());
-    request_body.http_user_agent = Some("Zed Editor".to_string());
 
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request_body)?))?;
     let mut response = client.send(request).await?;
@@ -373,11 +365,6 @@ pub async fn stream_completion(
         .header("Authorization", format!("Bearer {}", api_key))
         .header("HTTP-Referer", "zed.dev")
         .header("X-Title", "Zed Editor");
-
-    // Add OpenRouter-specific fields
-    let mut request = request;
-    request.http_referer = Some("zed.dev".to_string());
-    request.http_user_agent = Some("Zed Editor".to_string());
 
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
