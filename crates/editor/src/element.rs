@@ -4330,7 +4330,7 @@ impl EditorElement {
         let target_y = selection_row.as_f32() * line_height - scroll_pixel_position.y;
         let target_point = content_origin + point(target_x, target_y);
 
-        let actual_size = element.layout_as_root(max_size.into(), window, cx);
+        let actual_size = element.layout_as_root(Size::<AvailableSpace>::default(), window, cx);
         let overall_height = actual_size.height + HOVER_POPOVER_GAP;
 
         let popover_origin = if target_point.y > overall_height {
