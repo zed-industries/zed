@@ -297,7 +297,7 @@ impl LanguageModel for OpenAiLanguageModel {
     }
 
     fn supports_images(&self) -> bool {
-        false
+        self.model.supports_vision()
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
@@ -364,15 +364,31 @@ pub fn into_open_ai(
             match content {
                 MessageContent::Text(text) | MessageContent::Thinking { text, .. } => messages
                     .push(match message.role {
-                        Role::User => open_ai::RequestMessage::User { content: text },
+                        Role::User => open_ai::RequestMessage::User {
+                            content: open_ai::MessageContent::OnlyText(text),
+                        },
                         Role::Assistant => open_ai::RequestMessage::Assistant {
-                            content: Some(text),
+                            content: open_ai::MessageContent::OnlyText(text),
                             tool_calls: Vec::new(),
                         },
                         Role::System => open_ai::RequestMessage::System { content: text },
                     }),
                 MessageContent::RedactedThinking(_) => {}
-                MessageContent::Image(_) => {}
+                MessageContent::Image(image) => {
+                    // Only send images for User role and if the model supports vision
+                    if message.role == Role::User && model.supports_vision() {
+                        messages.push(open_ai::RequestMessage::User {
+                            content: open_ai::MessageContent::Multipart(vec![
+                                open_ai::MessagePart::Image {
+                                    image_url: open_ai::ImageUrl {
+                                        url: image.to_base64_url(),
+                                    },
+                                },
+                            ]),
+                        });
+                    }
+                    // Skip images for non-User roles or if model doesn't support vision
+                }
                 MessageContent::ToolUse(tool_use) => {
                     let tool_call = open_ai::ToolCall {
                         id: tool_use.id.to_string(),
@@ -391,24 +407,27 @@ pub fn into_open_ai(
                         tool_calls.push(tool_call);
                     } else {
                         messages.push(open_ai::RequestMessage::Assistant {
-                            content: None,
+                            content: open_ai::MessageContent::empty(),
                             tool_calls: vec![tool_call],
                         });
                     }
                 }
                 MessageContent::ToolResult(tool_result) => {
-                    let content = match &tool_result.content {
-                        LanguageModelToolResultContent::Text(text) => text.to_string(),
+                    match &tool_result.content {
+                        LanguageModelToolResultContent::Text(text) => {
+                            messages.push(open_ai::RequestMessage::Tool {
+                                content: open_ai::MessageContent::OnlyText(text.to_string()),
+                                tool_call_id: tool_result.tool_use_id.to_string(),
+                            });
+                        }
                         LanguageModelToolResultContent::Image(_) => {
                             // TODO: Open AI image support
-                            "[Tool responded with an image, but Zed doesn't support these in Open AI models yet]".to_string()
+                            messages.push(open_ai::RequestMessage::Tool {
+                                content: open_ai::MessageContent::OnlyText("[Tool responded with an image, but Zed doesn't support these in Open AI models yet]".to_string()),
+                                tool_call_id: tool_result.tool_use_id.to_string(),
+                            });
                         }
                     };
-
-                    messages.push(open_ai::RequestMessage::Tool {
-                        content,
-                        tool_call_id: tool_result.tool_use_id.to_string(),
-                    });
                 }
             }
         }

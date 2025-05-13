@@ -212,6 +212,22 @@ impl Model {
             _ => false,
         }
     }
+
+    // Return true for models listed with vision support: https://platform.openai.com/docs/models
+    pub fn supports_vision(&self) -> bool {
+        match self {
+            Self::FourTurbo
+            | Self::FourOmni
+            | Self::FourOmniMini
+            | Self::FourPointOne
+            | Self::FourPointOneMini
+            | Self::FourPointOneNano
+            | Self::O1Mini
+            | Self::O3
+            | Self::O4Mini => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -274,24 +290,67 @@ pub struct FunctionDefinition {
     pub parameters: Option<Value>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum RequestMessage {
     Assistant {
-        content: Option<String>,
+        content: MessageContent,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
     },
     User {
-        content: String,
+        content: MessageContent,
     },
     System {
         content: String,
     },
     Tool {
-        content: String,
+        content: MessageContent,
         tool_call_id: String,
     },
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
+#[serde(tag = "type")]
+pub enum MessagePart {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image_url")]
+    Image { image_url: ImageUrl },
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
+pub struct ImageUrl {
+    pub url: String,
+}
+
+impl From<Vec<MessagePart>> for MessageContent {
+    fn from(mut parts: Vec<MessagePart>) -> Self {
+        if let [MessagePart::Text { text }] = parts.as_mut_slice() {
+            MessageContent::OnlyText(std::mem::take(text))
+        } else {
+            MessageContent::Multipart(parts)
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum MessageContent {
+    OnlyText(String),
+    Multipart(Vec<MessagePart>),
+}
+
+impl From<String> for MessageContent {
+    fn from(text: String) -> Self {
+        MessageContent::OnlyText(text)
+    }
+}
+
+impl MessageContent {
+    pub fn empty() -> Self {
+        MessageContent::Multipart(vec![])
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -519,10 +578,19 @@ fn adapt_response_to_stream(response: Response) -> ResponseStreamEvent {
                         RequestMessage::Tool { .. } => Role::Tool,
                     }),
                     content: match choice.message {
-                        RequestMessage::Assistant { content, .. } => content,
-                        RequestMessage::User { content } => Some(content),
+                        RequestMessage::Assistant { content, .. } => match content {
+                            MessageContent::OnlyText(text) => Some(text),
+                            MessageContent::Multipart(_) => Some(String::new()),
+                        },
+                        RequestMessage::User { content } => match content {
+                            MessageContent::OnlyText(text) => Some(text),
+                            MessageContent::Multipart(_) => Some(String::new()),
+                        },
                         RequestMessage::System { content } => Some(content),
-                        RequestMessage::Tool { content, .. } => Some(content),
+                        RequestMessage::Tool { content, .. } => match content {
+                            MessageContent::OnlyText(text) => Some(text),
+                            MessageContent::Multipart(_) => Some(String::new()),
+                        },
                     },
                     tool_calls: None,
                 },
