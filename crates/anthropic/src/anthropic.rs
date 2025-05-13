@@ -543,7 +543,7 @@ pub enum RequestContent {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ToolResultContent {
-    JustText(String),
+    Plain(String),
     Multipart(Vec<ToolResultPart>),
 }
 
