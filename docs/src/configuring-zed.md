@@ -1751,7 +1751,6 @@ Example:
 
 `integer` values representing milliseconds
 
-
 ## Icon Theme
 
 - Description: The icon theme setting can be specified in two forms - either as the name of an icon theme or as an object containing the `mode`, `dark`, and `light` icon themes for files/folders inside Zed.
