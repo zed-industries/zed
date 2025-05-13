@@ -11,7 +11,8 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason,
+    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
+    RateLimiter, Role, StopReason,
 };
 
 use futures::stream::BoxStream;
@@ -482,8 +483,16 @@ pub fn into_mistral(
                     }
                 }
                 MessageContent::ToolResult(tool_result) => {
+                    let content = match &tool_result.content {
+                        LanguageModelToolResultContent::Text(text) => text.to_string(),
+                        LanguageModelToolResultContent::Image(_) => {
+                            // TODO: Mistral image support
+                            "[Tool responded with an image, but Zed doesn't support these in Mistral models yet]".to_string()
+                        }
+                    };
+
                     messages.push(mistral::RequestMessage::Tool {
-                        content: tool_result.content.to_string(),
+                        content,
                         tool_call_id: tool_result.tool_use_id.to_string(),
                     });
                 }
