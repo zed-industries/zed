@@ -371,7 +371,6 @@ impl ExampleInstance {
             let result = this.thread.conversation(&mut example_cx).await;
 
             if let Err(err) = result {
-                dbg!(&err);
                 if !err.is::<FailedAssertion>() {
                     return Err(err);
                 }

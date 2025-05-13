@@ -8,9 +8,9 @@ use crate::example::{Example, ExampleContext, ExampleMetadata};
 pub struct FileOverwriteExample;
 
 /*
-This eval is a test for a fix of a destructive behavoior of `edit_file`.
-It used to rewrite existing files too aggressively, leading to
-a content loss.
+This eval tests a fix for a destructive behavior of the `edit_file` tool.
+Previously, it would rewrite existing files too aggressively, which often
+resulted in content loss.
 
 Pass rate before the fix: 10%
 Pass rate after the fix:  100%
