@@ -16,7 +16,7 @@ use pathfinder_geometry::{
     rect::{RectF, RectI},
     vector::{Vector2F, Vector2I},
 };
-use smallvec::{SmallVec, smallvec};
+use smallvec::SmallVec;
 use std::{borrow::Cow, sync::Arc};
 
 pub(crate) struct CosmicTextSystem(RwLock<CosmicTextSystemState>);
@@ -443,7 +443,7 @@ impl CosmicTextSystemState {
             } else {
                 runs.push(ShapedRun {
                     font_id,
-                    glyphs: smallvec![shaped_glyph],
+                    glyphs: vec![shaped_glyph],
                 });
             }
         }
