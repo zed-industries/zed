@@ -83,7 +83,7 @@ impl From<extension::LaunchRequest> for LaunchRequest {
     fn from(value: extension::LaunchRequest) -> Self {
         Self {
             program: value.program,
-            cwd: value.cwd,
+            cwd: value.cwd.map(|path| path.to_string_lossy().into_owned()),
             envs: value.env.into_iter().collect(),
             args: value.args,
         }
@@ -150,8 +150,8 @@ impl TryFrom<extension::DebugTaskDefinition> for DebugTaskDefinition {
     fn try_from(value: extension::DebugTaskDefinition) -> Result<Self, Self::Error> {
         let initialize_args = value.initialize_args.map(|s| s.to_string());
         Ok(Self {
-            label: value.label,
-            adapter: value.adapter,
+            label: value.label.to_string(),
+            adapter: value.adapter.to_string(),
             request: value.request.into(),
             initialize_args,
             stop_on_entry: value.stop_on_entry,

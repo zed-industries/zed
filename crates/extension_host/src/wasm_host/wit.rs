@@ -223,18 +223,18 @@ impl Extension {
                 ext.call_language_server_command(store, &language_server_id.0, resource)
                     .await
             }
-            Extension::V0_5_0(ext) => Ok(ext
-                .call_language_server_command(store, &language_server_id.0, resource)
-                .await?
-                .map(|command| command.into())),
-            Extension::V0_4_0(ext) => Ok(ext
-                .call_language_server_command(store, &language_server_id.0, resource)
-                .await?
-                .map(|command| command.into())),
-            Extension::V0_3_0(ext) => Ok(ext
-                .call_language_server_command(store, &language_server_id.0, resource)
-                .await?
-                .map(|command| command.into())),
+            Extension::V0_5_0(ext) => {
+                ext.call_language_server_command(store, &language_server_id.0, resource)
+                    .await
+            }
+            Extension::V0_4_0(ext) => {
+                ext.call_language_server_command(store, &language_server_id.0, resource)
+                    .await
+            }
+            Extension::V0_3_0(ext) => {
+                ext.call_language_server_command(store, &language_server_id.0, resource)
+                    .await
+            }
             Extension::V0_2_0(ext) => Ok(ext
                 .call_language_server_command(store, &language_server_id.0, resource)
                 .await?

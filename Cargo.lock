@@ -4139,8 +4139,10 @@ name = "debug_adapter_extension"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "dap",
  "extension",
+ "gpui",
 ]
 
 [[package]]
@@ -5061,6 +5063,7 @@ dependencies = [
  "semantic_version",
  "serde",
  "serde_json",
+ "task",
  "toml 0.8.20",
  "util",
  "wasm-encoder 0.221.3",

@@ -2,7 +2,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
-use dap::adapters::DebugAdapter;
 use fs::Fs;
 use gpui::{App, Global, ReadGlobal, SharedString, Task};
 use language::{BinaryStatus, LanguageMatcher, LanguageName, LoadedLanguage};
@@ -412,19 +411,15 @@ impl ExtensionIndexedDocsProviderProxy for ExtensionHostProxy {
 }
 
 pub trait ExtensionDebugAdapterProviderProxy: Send + Sync + 'static {
-    fn register_debug_adapter(&self, extension: Arc<dyn Extension>, adapter: Arc<dyn DebugAdapter>);
+    fn register_debug_adapter(&self, extension: Arc<dyn Extension>, debug_adapter_name: Arc<str>);
 }
 
 impl ExtensionDebugAdapterProviderProxy for ExtensionHostProxy {
-    fn register_debug_adapter(
-        &self,
-        extension: Arc<dyn Extension>,
-        adapter: Arc<dyn DebugAdapter>,
-    ) {
+    fn register_debug_adapter(&self, extension: Arc<dyn Extension>, debug_adapter_name: Arc<str>) {
         let Some(proxy) = self.debug_adapter_provider_proxy.read().clone() else {
             return;
         };
 
-        proxy.register_debug_adapter(extension, adapter)
+        proxy.register_debug_adapter(extension, debug_adapter_name)
     }
 }
