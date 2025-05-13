@@ -62,7 +62,6 @@ impl Console {
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
             editor
         });
-        let focus_handle = cx.focus_handle();
 
         let this = cx.weak_entity();
         let query_bar = cx.new(|cx| {
@@ -76,6 +75,8 @@ impl Console {
 
             editor
         });
+
+        let focus_handle = query_bar.focus_handle(cx);
 
         let _subscriptions =
             vec![cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events)];
@@ -110,6 +111,7 @@ impl Console {
     ) {
         match event {
             StackFrameListEvent::SelectedStackFrameChanged(_) => cx.notify(),
+            StackFrameListEvent::BuiltEntries => {}
         }
     }
 

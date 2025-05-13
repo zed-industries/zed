@@ -1235,8 +1235,7 @@ impl RunningState {
         self.stack_frame_list.read(cx).selected_stack_frame_id()
     }
 
-    #[cfg(test)]
-    pub fn stack_frame_list(&self) -> &Entity<StackFrameList> {
+    pub(crate) fn stack_frame_list(&self) -> &Entity<StackFrameList> {
         &self.stack_frame_list
     }
 
