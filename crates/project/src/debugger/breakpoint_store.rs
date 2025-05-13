@@ -4,7 +4,7 @@
 use anyhow::{Result, anyhow};
 pub use breakpoints_in_file::{BreakpointSessionState, BreakpointWithPosition};
 use breakpoints_in_file::{BreakpointsInFile, StatefulBreakpoint};
-use collections::BTreeMap;
+use collections::{BTreeMap, HashMap};
 use dap::{StackFrameId, client::SessionId};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, Subscription, Task};
 use itertools::Itertools;
@@ -232,16 +232,24 @@ impl BreakpointStore {
                 .filter_map(|breakpoint| {
                     let position =
                         language::proto::deserialize_anchor(breakpoint.position.clone()?)?;
+                    let session_state = breakpoint
+                        .session_state
+                        .iter()
+                        .map(|(session_id, state)| {
+                            let state = BreakpointSessionState {
+                                id: state.id,
+                                verified: state.verified,
+                            };
+                            (SessionId::from_proto(*session_id), state)
+                        })
+                        .collect();
                     let breakpoint = Breakpoint::from_proto(breakpoint)?;
                     let bp = BreakpointWithPosition {
                         position,
                         bp: breakpoint,
                     };
 
-                    Some(StatefulBreakpoint {
-                        bp,
-                        session_state: todo!(),
-                    })
+                    Some(StatefulBreakpoint { bp, session_state })
                 })
                 .collect();
 
@@ -305,7 +313,11 @@ impl BreakpointStore {
                         .breakpoints
                         .iter()
                         .filter_map(|breakpoint| {
-                            breakpoint.bp.bp.to_proto(&path, &breakpoint.position())
+                            breakpoint.bp.bp.to_proto(
+                                &path,
+                                &breakpoint.position(),
+                                &breakpoint.session_state,
+                            )
                         })
                         .collect(),
                 });
@@ -510,7 +522,11 @@ impl BreakpointStore {
                     breakpoint_set
                         .breakpoints
                         .iter()
-                        .filter_map(|bp| bp.bp.bp.to_proto(&abs_path, bp.position()))
+                        .filter_map(|bp| {
+                            bp.bp
+                                .bp
+                                .to_proto(&abs_path, bp.position(), &bp.session_state)
+                        })
                         .collect()
                 })
                 .unwrap_or_default();
@@ -895,7 +911,12 @@ impl Breakpoint {
         }
     }
 
-    fn to_proto(&self, _path: &Path, position: &text::Anchor) -> Option<client::proto::Breakpoint> {
+    fn to_proto(
+        &self,
+        _path: &Path,
+        position: &text::Anchor,
+        session_states: &HashMap<SessionId, BreakpointSessionState>,
+    ) -> Option<client::proto::Breakpoint> {
         Some(client::proto::Breakpoint {
             position: Some(serialize_text_anchor(position)),
             state: match self.state {
@@ -908,6 +929,18 @@ impl Breakpoint {
                 .hit_condition
                 .as_ref()
                 .map(|s| String::from(s.as_ref())),
+            session_state: session_states
+                .iter()
+                .map(|(session_id, state)| {
+                    (
+                        session_id.to_proto(),
+                        proto::BreakpointSessionState {
+                            id: state.id,
+                            verified: state.verified,
+                        },
+                    )
+                })
+                .collect(),
         })
     }
 
