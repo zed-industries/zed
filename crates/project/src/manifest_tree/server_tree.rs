@@ -22,6 +22,7 @@ use language::{
 use lsp::LanguageServerName;
 use settings::{Settings, SettingsLocation, WorktreeId};
 use std::sync::OnceLock;
+use worktree::Worktree;
 
 use crate::{LanguageServerId, ProjectPath, project_settings::LspSettings};
 
@@ -324,8 +325,8 @@ impl LanguageServerTree {
     // Rebasing a tree:
     // - Clears it out
     // - Provides you with the indirect access to the old tree while you're reinitializing a new one (by querying it).
-    pub(crate) fn rebase(&mut self) -> ServerTreeRebase<'_> {
-        ServerTreeRebase::new(self)
+    pub(crate) fn rebase(&mut self, preserve_old: bool) -> ServerTreeRebase<'_> {
+        ServerTreeRebase::new(self, preserve_old)
     }
 
     /// Remove nodes with a given ID from the tree.
@@ -349,8 +350,12 @@ pub(crate) struct ServerTreeRebase<'a> {
 }
 
 impl<'tree> ServerTreeRebase<'tree> {
-    fn new(new_tree: &'tree mut LanguageServerTree) -> Self {
-        let old_contents = std::mem::take(&mut new_tree.instances);
+    fn new(new_tree: &'tree mut LanguageServerTree, preserve_old: bool) -> Self {
+        let old_contents = if preserve_old {
+            BTreeMap::new()
+        } else {
+            std::mem::take(&mut new_tree.instances)
+        };
         new_tree.attach_kind_cache.clear();
         let all_server_ids = old_contents
             .values()
@@ -372,6 +377,32 @@ impl<'tree> ServerTreeRebase<'tree> {
             new_tree,
             all_server_ids,
             rebased_server_ids: BTreeSet::new(),
+        }
+    }
+
+    pub(crate) fn register_reused(
+        &mut self,
+        worktree: &Entity<Worktree>,
+        language_name: LanguageName,
+        reused: LanguageServerTreeNode,
+        cx: &mut App,
+    ) {
+        debug_assert!(
+            !worktree.read(cx).is_visible(),
+            "The current code does not reuse visible worktrees"
+        );
+        if let Some(node) = reused.0.upgrade() {
+            self.new_tree
+                .instances
+                .entry(worktree.read(cx).id())
+                .or_default()
+                .roots
+                .entry(Arc::from(Path::new("")))
+                .or_default()
+                .entry(node.name.clone())
+                .or_insert_with(|| (node, BTreeSet::new()))
+                .1
+                .insert(language_name);
         }
     }
 

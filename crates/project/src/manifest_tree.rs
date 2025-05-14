@@ -28,7 +28,7 @@ use crate::{
 };
 
 pub(crate) use server_tree::{
-    AdapterQuery, LanguageServerTree, LanguageServerTreeNode, LaunchDisposition,
+    AdapterQuery, LanguageServerTree, LanguageServerTreeNode, LaunchDisposition, ServerTreeRebase,
 };
 
 struct WorktreeRoots {
