@@ -8,7 +8,6 @@ use project::{
     ProjectItem as _, ProjectPath,
     debugger::session::{Session, SessionEvent},
 };
-use std::time::Duration;
 use std::{path::Path, sync::Arc};
 use ui::{Scrollbar, ScrollbarState, prelude::*};
 use workspace::Workspace;
@@ -58,10 +57,7 @@ impl ModuleList {
     }
 
     fn schedule_rebuild(&mut self, cx: &mut Context<Self>) {
-        const DEBOUNCE: Duration = Duration::from_millis(50);
-
         self._rebuild_task = cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(DEBOUNCE).await;
             this.update(cx, |this, cx| {
                 let modules = this
                     .session

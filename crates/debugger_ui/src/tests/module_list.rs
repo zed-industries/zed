@@ -114,8 +114,6 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
         cx.refresh_windows();
     });
 
-    cx.executor()
-        .advance_clock(std::time::Duration::from_millis(100));
     cx.run_until_parked();
 
     assert!(
