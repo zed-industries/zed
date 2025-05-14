@@ -67,10 +67,10 @@ impl ModuleList {
                     .session
                     .update(cx, |session, cx| session.modules(cx).to_owned());
                 this.entries = modules;
+                cx.notify();
             })
             .ok();
         });
-        cx.notify();
     }
 
     fn open_module(&mut self, path: Arc<Path>, window: &mut Window, cx: &mut Context<Self>) {
@@ -140,10 +140,11 @@ impl ModuleList {
                         .as_deref()
                         .map(|path| Arc::<Path>::from(Path::new(path)));
                     cx.listener(move |this, _, window, cx| {
-                        this.select_ix(ix, cx);
+                        this.selected_ix = Some(ix);
                         if let Some(path) = path.as_ref() {
                             this.open_module(path.clone(), window, cx);
                         }
+                        cx.notify();
                     })
                 })
             })
