@@ -212,10 +212,12 @@ impl ModuleList {
         self.open_module(path, window, cx);
     }
 
-    fn select_ix(&mut self, ix: usize, cx: &mut Context<Self>) {
-        self.selected_ix = Some(ix);
-        self.scroll_handle
-            .scroll_to_item(ix, ScrollStrategy::Center);
+    fn select_ix(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
+        self.selected_ix = ix;
+        if let Some(ix) = ix {
+            self.scroll_handle
+                .scroll_to_item(ix, ScrollStrategy::Center);
+        }
         cx.notify();
     }
 
@@ -231,9 +233,7 @@ impl ModuleList {
                 }
             }
         };
-        if let Some(ix) = ix {
-            self.select_ix(ix, cx);
-        }
+        self.select_ix(ix, cx);
     }
 
     fn select_previous(
@@ -253,9 +253,7 @@ impl ModuleList {
                 }
             }
         };
-        if let Some(ix) = ix {
-            self.select_ix(ix, cx);
-        }
+        self.select_ix(ix, cx);
     }
 
     fn select_first(
@@ -264,15 +262,21 @@ impl ModuleList {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.entries.len() > 0 {
-            self.select_ix(0, cx);
-        }
+        let ix = if self.entries.len() > 0 {
+            Some(0)
+        } else {
+            None
+        };
+        self.select_ix(ix, cx);
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.entries.len() > 0 {
-            self.select_ix(self.entries.len() - 1, cx);
-        }
+        let ix = if self.entries.len() > 0 {
+            Some(self.entries.len() - 1)
+        } else {
+            None
+        };
+        self.select_ix(ix, cx);
     }
 
     fn render_list(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

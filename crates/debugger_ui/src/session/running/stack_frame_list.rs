@@ -546,11 +546,13 @@ impl StackFrameList {
             .children(Scrollbar::vertical(self.scrollbar_state.clone()))
     }
 
-    fn scroll_to_selected_ix(&mut self) {
+    fn select_ix(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
+        self.selected_ix = ix;
         if let Some(ix) = self.selected_ix {
             self.scroll_handle
                 .scroll_to_item(ix, ScrollStrategy::Center);
         }
+        cx.notify();
     }
 
     fn select_next(&mut self, _: &menu::SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
@@ -565,9 +567,7 @@ impl StackFrameList {
                 }
             }
         };
-        self.selected_ix = ix;
-        self.scroll_to_selected_ix();
-        cx.notify();
+        self.select_ix(ix, cx);
     }
 
     fn select_previous(
@@ -587,9 +587,7 @@ impl StackFrameList {
                 }
             }
         };
-        self.selected_ix = ix;
-        self.scroll_to_selected_ix();
-        cx.notify();
+        self.select_ix(ix, cx);
     }
 
     fn select_first(
@@ -603,9 +601,7 @@ impl StackFrameList {
         } else {
             None
         };
-        self.selected_ix = ix;
-        self.scroll_to_selected_ix();
-        cx.notify();
+        self.select_ix(ix, cx);
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
@@ -614,9 +610,7 @@ impl StackFrameList {
         } else {
             None
         };
-        self.selected_ix = ix;
-        self.scroll_to_selected_ix();
-        cx.notify();
+        self.select_ix(ix, cx);
     }
 
     fn activate_selected_entry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
