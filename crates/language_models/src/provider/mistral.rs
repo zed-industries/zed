@@ -352,11 +352,8 @@ impl LanguageModel for MistralLanguageModel {
         self.model.supports_tools()
     }
 
-    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
-        match choice {
-            LanguageModelToolChoice::Auto | LanguageModelToolChoice::None => true,
-            LanguageModelToolChoice::Any => false,
-        }
+    fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
+        true
     }
 
     fn supports_images(&self) -> bool {
