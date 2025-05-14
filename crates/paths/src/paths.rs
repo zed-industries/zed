@@ -27,6 +27,12 @@ static CURRENT_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 /// On Windows, this is `%APPDATA%\Zed`.
 static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
+/// Returns the path to the global configuration directory used by Zed.
+/// On macOS/Linux/FreeBSD, this is `/etc/zed`
+/// On Windows, this is `%PROGRAMDATA%\Zed`.
+/// This directory is likely to be read-only for most users
+static GLOBAL_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
+
 /// Returns the relative path to the zed_server directory on the ssh host.
 pub fn remote_server_dir_relative() -> &'static Path {
     Path::new(".zed_server")
@@ -83,6 +89,21 @@ pub fn config_dir() -> &'static PathBuf {
     })
 }
 
+/// Returns the path to the global (all users) config directory used by Zed.
+pub fn global_config_dir() -> &'static PathBuf {
+    GLOBAL_CONFIG_DIR.get_or_init(|| {
+        if cfg!(target_os = "windows") {
+            if let Ok(program_data) = std::env::var("ProgramData") {
+                PathBuf::from(program_data).join("Zed")
+            } else {
+                PathBuf::from("C:\\ProgramData\\Zed")
+            }
+        } else {
+            PathBuf::from("/etc/zed")
+        }
+    })
+}
+
 /// Returns the path to the data directory used by Zed.
 pub fn data_dir() -> &'static PathBuf {
     CURRENT_DATA_DIR.get_or_init(|| {
@@ -106,6 +127,7 @@ pub fn data_dir() -> &'static PathBuf {
         }
     })
 }
+
 /// Returns the path to the temp directory used by Zed.
 pub fn temp_dir() -> &'static PathBuf {
     static TEMP_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -185,16 +207,16 @@ pub fn crashes_retired_dir() -> &'static Option<PathBuf> {
     CRASHES_RETIRED_DIR.get_or_init(|| crashes_dir().as_ref().map(|dir| dir.join("Retired")))
 }
 
-/// Returns the path to the `settings.json` file.
+/// Returns the path to the user `settings.json` file.
 pub fn settings_file() -> &'static PathBuf {
     static SETTINGS_FILE: OnceLock<PathBuf> = OnceLock::new();
     SETTINGS_FILE.get_or_init(|| config_dir().join("settings.json"))
 }
 
-/// Returns the path to the global settings file.
+/// Returns the path to the global `settings.json` file.
 pub fn global_settings_file() -> &'static PathBuf {
     static GLOBAL_SETTINGS_FILE: OnceLock<PathBuf> = OnceLock::new();
-    GLOBAL_SETTINGS_FILE.get_or_init(|| config_dir().join("global_settings.json"))
+    GLOBAL_SETTINGS_FILE.get_or_init(|| config_dir().join("settings.json"))
 }
 
 /// Returns the path to the `settings_backup.json` file.
