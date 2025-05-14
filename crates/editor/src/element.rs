@@ -613,6 +613,8 @@ impl EditorElement {
 
         let text_hitbox = &position_map.text_hitbox;
         let gutter_hitbox = &position_map.gutter_hitbox;
+        let point_for_position = position_map.point_for_position(event.position);
+        let display_point = &point_for_position.previous_valid;
         let mut click_count = event.click_count;
         let mut modifiers = event.modifiers;
 
@@ -623,6 +625,10 @@ impl EditorElement {
         } else if gutter_hitbox.is_hovered(window) {
             click_count = 3; // Simulate triple-click when clicking the gutter to select lines
         } else if !text_hitbox.is_hovered(window) {
+            return;
+        }
+
+        if click_count == 1 && editor.is_intersect_drag_selection(*display_point, window, cx) {
             return;
         }
 
@@ -814,13 +820,43 @@ impl EditorElement {
         let text_hitbox = &position_map.text_hitbox;
         let end_selection = editor.has_pending_selection();
         let pending_nonempty_selections = editor.has_pending_nonempty_selection();
+        let point_for_position = position_map.point_for_position(event.position);
+        let display_point = &point_for_position.previous_valid;
 
-        if end_selection {
+        if !end_selection {
+            if editor.is_intersect_drag_selection(*display_point, window, cx) {
+                if editor.dragging {
+                    editor.dragging = false;
+                } else {
+                    editor.reset_drag_selection();
+                    editor.select(
+                        SelectPhase::Begin {
+                            position: display_point.clone(),
+                            add: false,
+                            click_count: 1,
+                        },
+                        window,
+                        cx,
+                    );
+                    editor.select(SelectPhase::End, window, cx);
+                }
+            } else {
+                if editor.dragging && text_hitbox.is_hovered(window) {
+                    let is_cut = !event.modifiers.control;
+                    editor.drop_selection(*display_point, is_cut, window, cx);
+                } else {
+                    editor.cancel_dragging();
+                }
+            }
+            cx.stop_propagation();
+            return;
+        } else {
             editor.select(SelectPhase::End, window, cx);
         }
 
         if end_selection && pending_nonempty_selections {
             cx.stop_propagation();
+            editor.drag_selection = Some(editor.selections.disjoint[0].clone());
         } else if cfg!(any(target_os = "linux", target_os = "freebsd"))
             && event.button == MouseButton::Middle
         {
@@ -881,12 +917,13 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        if !editor.has_pending_selection() {
+        if !editor.has_pending_selection() && editor.drag_selection.is_none() {
             return;
         }
 
         let text_bounds = position_map.text_hitbox.bounds;
         let point_for_position = position_map.point_for_position(event.position);
+
         let mut scroll_delta = gpui::Point::<f32>::default();
         let vertical_margin = position_map.line_height.min(text_bounds.size.height / 3.0);
         let top = text_bounds.origin.y + vertical_margin;
@@ -918,15 +955,24 @@ impl EditorElement {
             scroll_delta.x = scale_horizontal_mouse_autoscroll_delta(event.position.x - right);
         }
 
-        editor.select(
-            SelectPhase::Update {
-                position: point_for_position.previous_valid,
-                goal_column: point_for_position.exact_unclipped.column(),
+        if !editor.has_pending_selection() {
+            editor.update_drag_selection_head(
+                Some(point_for_position.previous_valid),
                 scroll_delta,
-            },
-            window,
-            cx,
-        );
+                window,
+                cx,
+            );
+        } else {
+            editor.select(
+                SelectPhase::Update {
+                    position: point_for_position.previous_valid,
+                    goal_column: point_for_position.exact_unclipped.column(),
+                    scroll_delta,
+                },
+                window,
+                cx,
+            );
+        }
     }
 
     fn mouse_moved(
@@ -936,6 +982,9 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
+        if editor.dragging {
+            return;
+        }
         let text_hitbox = &position_map.text_hitbox;
         let gutter_hitbox = &position_map.gutter_hitbox;
         let modifiers = event.modifiers;
@@ -1436,6 +1485,47 @@ impl EditorElement {
                     });
                     cursor.layout(content_origin, cursor_name, window, cx);
                     cursors.push(cursor);
+                }
+            }
+
+            if let Some(head) = editor.drag_selection_head.as_ref() {
+                let cursor_position = head;
+                let in_range = visible_display_row_range.contains(&cursor_position.row());
+                if let Some(selection_range) = editor.drag_selection.as_ref() {
+                    if in_range
+                        && (cursor_position < &selection_range.start.to_display_point(&snapshot)
+                            || cursor_position > &selection_range.end.to_display_point(&snapshot))
+                    {
+                        let cursor_row_layout = &line_layouts
+                            [cursor_position.row().minus(visible_display_row_range.start) as usize];
+                        let cursor_column = cursor_position.column() as usize;
+
+                        let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
+                        let mut block_width =
+                            cursor_row_layout.x_for_index(cursor_column + 1) - cursor_character_x;
+                        if block_width == Pixels::ZERO {
+                            block_width = em_advance;
+                        }
+
+                        let x = cursor_character_x - scroll_pixel_position.x;
+                        let y = (cursor_position.row().as_f32()
+                            - scroll_pixel_position.y / line_height)
+                            * line_height;
+
+                        let color = cx.theme().players().absent().cursor;
+                        let mut cursor = CursorLayout {
+                            color,
+                            block_width,
+                            origin: point(x, y),
+                            line_height,
+                            shape: CursorShape::Bar,
+                            block_text: None,
+                            cursor_name: None,
+                        };
+
+                        cursor.layout(content_origin, None, window, cx);
+                        cursors.push(cursor);
+                    }
                 }
             }
 
