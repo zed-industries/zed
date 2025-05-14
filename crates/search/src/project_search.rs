@@ -1028,6 +1028,12 @@ impl ProjectSearchView {
                     .update(cx, |editor, cx| editor.set_text(included_files, window, cx));
                 search.filters_enabled = true;
             }
+            if let Some(excluded_files) = action.excluded_files.as_deref() {
+                search
+                    .excluded_files_editor
+                    .update(cx, |editor, cx| editor.set_text(excluded_files, window, cx));
+                search.filters_enabled = true;
+            }
             search.focus_query_editor(window, cx)
         });
     }

@@ -156,6 +156,8 @@ pub struct DeploySearch {
     pub replace_enabled: bool,
     #[serde(default)]
     pub included_files: Option<String>,
+    #[serde(default)]
+    pub excluded_files: Option<String>,
 }
 
 impl_actions!(
@@ -203,6 +205,7 @@ impl DeploySearch {
         Self {
             replace_enabled: false,
             included_files: None,
+            excluded_files: None,
         }
     }
 }
@@ -3116,6 +3119,7 @@ fn default_render_tab_bar_buttons(
                                 DeploySearch {
                                     replace_enabled: false,
                                     included_files: None,
+                                    excluded_files: None,
                                 }
                                 .boxed_clone(),
                             )
