@@ -260,10 +260,7 @@ impl ThreadHistory {
             }
         });
 
-        self.search_state = SearchState::Searching {
-            query: query.clone(),
-            _task: task,
-        };
+        self.search_state = SearchState::Searching { query, _task: task };
         cx.notify();
     }
 

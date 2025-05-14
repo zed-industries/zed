@@ -365,7 +365,7 @@ impl ConsoleQueryBarCompletionProvider {
                             new_text: string_match.string.clone(),
                             label: CodeLabel {
                                 filter_range: 0..string_match.string.len(),
-                                text: format!("{} {}", string_match.string.clone(), variable_value),
+                                text: format!("{} {}", string_match.string, variable_value),
                                 runs: Vec::new(),
                             },
                             icon_path: None,
