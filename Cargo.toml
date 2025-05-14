@@ -795,7 +795,6 @@ ignored = [
     "prost_build",
     "serde",
     "component",
-    "linkme",
     "documented",
     "workspace-hack",
 ]
