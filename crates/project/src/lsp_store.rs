@@ -75,7 +75,7 @@ use std::{
     any::Any,
     borrow::Cow,
     cell::RefCell,
-    cmp::Ordering,
+    cmp::{Ordering, Reverse},
     convert::TryInto,
     ffi::OsStr,
     iter, mem,
@@ -2286,8 +2286,9 @@ impl LocalLspStore {
         else {
             return;
         };
-        let (delegate, servers) = self
+        let (reused, delegate, servers) = self
             .reuse_existing_language_server(&worktree, &language, cx)
+            .map(|(delegate, servers)| (true, delegate, servers))
             .unwrap_or_else(|| {
                 let delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
                 let servers = self
@@ -2303,12 +2304,15 @@ impl LocalLspStore {
                             )
                             .collect::<Vec<_>>()
                     });
-                (delegate, servers)
+                (false, delegate, servers)
             });
         let servers = servers
             .into_iter()
             .filter_map(|server_node| {
-                // TODO kb this is invoked on restart for both kinds of worktrees, bad
+                if reused && server_node.server_id().is_none() {
+                    return None;
+                }
+
                 let server_id = server_node.server_id_or_init(
                     |LaunchDisposition {
                          server_name,
@@ -2459,7 +2463,7 @@ impl LocalLspStore {
         let language_name = language.name();
         let instances = &self.lsp_tree.read(cx).instances;
         let worktree_store = self.worktree_store.read(cx);
-        let (worktree_id, servers) = instances
+        let servers = instances
             .iter()
             .filter(|(worktree_id, _)| {
                 worktree_store
@@ -2490,7 +2494,8 @@ impl LocalLspStore {
                 acc
             })
             .into_iter()
-            .max_by_key(|(_, servers)| servers.len())?;
+            .map(|(_, servers)| servers)
+            .max_by_key(|servers| servers.len())?;
 
         let delegate = LocalLspAdapterDelegate::from_local_lsp(self, worktree, cx);
         Some((delegate, servers))
@@ -4079,6 +4084,16 @@ impl LspStore {
                                 buffers_with_unknown_injections.push(handle);
                             }
                         }
+
+                        // Deprioritize the invisible worktrees so main worktrees' language servers can be started first,
+                        // and reused later in the invisible worktrees.
+                        plain_text_buffers.sort_by_key(|buffer| {
+                            Reverse(
+                                crate::File::from_dyn(buffer.read(cx).file())
+                                    .map(|file| file.worktree.read(cx).is_visible()),
+                            )
+                        });
+
                         for buffer in plain_text_buffers {
                             this.detect_language_for_buffer(&buffer, cx);
                             if let Some(local) = this.as_local_mut() {
