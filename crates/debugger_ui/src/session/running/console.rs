@@ -150,8 +150,9 @@ impl Console {
     pub fn evaluate(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
         let expression = self.query_bar.update(cx, |editor, cx| {
             let expression = editor.text(cx);
-
-            editor.clear(window, cx);
+            cx.defer_in(window, |editor, window, cx| {
+                editor.clear(window, cx);
+            });
 
             expression
         });
