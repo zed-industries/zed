@@ -3580,7 +3580,9 @@ impl Project {
 
         let snapshot = buffer_handle.read(cx).snapshot();
 
-        let root_node = snapshot.syntax_root_ancestor(range.end).unwrap();
+        let Some(root_node) = snapshot.syntax_root_ancestor(range.end) else {
+            return Task::ready(Ok(vec![]));
+        };
 
         let row = snapshot
             .summary_for_anchor::<text::PointUtf16>(&range.end)
