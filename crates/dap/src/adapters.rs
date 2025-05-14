@@ -423,6 +423,10 @@ pub trait DebugAdapter: 'static + Send + Sync {
     fn adapter_language_name(&self) -> Option<LanguageName> {
         None
     }
+
+    fn dap_schema(&self) -> serde_json::Value {
+        serde_json::Value::Null
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]

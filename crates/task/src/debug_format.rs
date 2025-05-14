@@ -1,12 +1,16 @@
 use anyhow::Result;
 use collections::FxHashMap;
 use gpui::SharedString;
-use schemars::{JsonSchema, r#gen::SchemaSettings};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::path::PathBuf;
 use std::{net::Ipv4Addr, path::Path};
 
-use crate::TaskTemplate;
+use crate::{
+    TaskTemplate,
+    adapter_schema::{AdapterSchema, AdapterSchemas},
+};
 
 /// Represents the host information of the debug adapter
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
@@ -241,12 +245,33 @@ pub struct DebugTaskFile(pub Vec<DebugScenario>);
 impl DebugTaskFile {
     /// Generates JSON schema of Tasks JSON template format.
     pub fn generate_json_schema() -> serde_json_lenient::Value {
-        let schema = SchemaSettings::draft07()
-            .with(|settings| settings.option_add_null_type = false)
-            .into_generator()
-            .into_root_schema_for::<Self>();
+        let adapter_schemas = AdapterSchemas(vec![
+            AdapterSchema {
+                adapter: "CodeLLDB".into(),
+                schema: json!({
+                    "properties": {
+                        "program": { "type": "string" },
+                        "args": { "type": "array", "items": { "type": "string" } }
+                    },
+                    "required": ["program"]
+                }),
+            },
+            AdapterSchema {
+                adapter: "JavaScript".into(),
+                schema: json!({
+                    "properties": {
+                        "url": { "type": "string" },
+                        "webRoot": { "type": "string" }
+                    },
+                    "required": ["url"]
+                }),
+            },
+        ]);
 
-        serde_json_lenient::to_value(schema).unwrap()
+        let schema = adapter_schemas.generate_json_schema();
+
+        // todo!() add error handling
+        schema.unwrap()
     }
 }
 

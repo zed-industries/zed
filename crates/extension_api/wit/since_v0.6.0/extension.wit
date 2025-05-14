@@ -134,6 +134,7 @@ world extension {
     export labels-for-completions: func(language-server-id: string, completions: list<completion>) -> result<list<option<code-label>>, string>;
     export labels-for-symbols: func(language-server-id: string, symbols: list<symbol>) -> result<list<option<code-label>>, string>;
 
+
     /// Returns the completions that should be shown when completing the provided slash command with the given query.
     export complete-slash-command-argument: func(command: slash-command, args: list<string>) -> result<list<slash-command-argument-completion>, string>;
 
@@ -158,4 +159,6 @@ world extension {
 
     /// Returns a configured debug adapter binary for a given debug task.
     export get-dap-binary: func(adapter-name: string, config: debug-task-definition, user-installed-path: option<string>) -> result<debug-adapter-binary, string>;
+    /// Get a debug adapter's configuration schema
+    export dap-schema: func() -> string;
 }
