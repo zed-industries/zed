@@ -3177,7 +3177,7 @@ version = "0.1.0"
 dependencies = [
  "collections",
  "gpui",
- "linkme",
+ "inventory",
  "parking_lot",
  "strum 0.27.1",
  "theme",
