@@ -13,6 +13,7 @@ use workspace::{ItemHandle, ShutdownDebugAdapters, Workspace};
 
 pub mod attach_modal;
 pub mod debugger_panel;
+mod dropdown_menus;
 mod new_session_modal;
 mod persistence;
 pub(crate) mod session;
