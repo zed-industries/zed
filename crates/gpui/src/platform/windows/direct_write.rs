@@ -5,7 +5,6 @@ use anyhow::{Result, anyhow};
 use collections::HashMap;
 use itertools::Itertools;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
-use smallvec::SmallVec;
 use windows::{
     Win32::{
         Foundation::*,
