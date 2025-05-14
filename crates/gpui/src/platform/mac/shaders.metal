@@ -25,6 +25,7 @@ float dash_alpha(float t, float period, float length, float dash_velocity,
 float quarter_ellipse_sdf(float2 point, float2 radii);
 float pick_corner_radius(float2 center_to_point,
                          Corners_ScaledPixels corner_radii);
+float improved_aa_alpha(float sdf, float threshold, float gradient);
 float quad_sdf(float2 point, Bounds_ScaledPixels bounds,
                Corners_ScaledPixels corner_radii);
 float quad_sdf_impl(float2 center_to_point, float corner_radius);
@@ -155,9 +156,17 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
       transformed_position - float2(quad.bounds.origin.x, quad.bounds.origin.y);
   float2 center_to_point = point - half_size;
 
-  // Signed distance field threshold for inclusion of pixels. 0.5 is the
-  // minimum distance between the center of the pixel and the edge.
-  const float antialias_threshold = 0.5;
+  // Base antialiasing threshold
+  float base_antialias_threshold = 0.5;
+  
+  // Calculate rotation magnitude from transformation matrix
+  float rotation_factor = max(
+    abs(transformation.rotation_scale[0][1]), 
+    abs(transformation.rotation_scale[1][0])
+  );
+  
+  // Increase threshold when rotation is present (up to 1.5x for 45-degree rotations)
+  float antialias_threshold = base_antialias_threshold * (1.0 + rotation_factor);
 
   // Radius of the nearest corner
   float corner_radius = pick_corner_radius(center_to_point, quad.corner_radii);
@@ -417,12 +426,44 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
     // Blend the border on top of the background and then linearly interpolate
     // between the two as we slide inside the background.
     float4 blended_border = over(background_color, border_color);
+    
+    // Calculate analytical derivatives for better border antialiasing
+    float ddx_inner = dfdx(inner_sdf);
+    float ddy_inner = dfdy(inner_sdf);
+    float grad_inner = sqrt(ddx_inner * ddx_inner + ddy_inner * ddy_inner);
+    
+    // Adjust inner antialiasing based on the gradient
+    float adjusted_inner_aa = max(antialias_threshold, grad_inner * 0.5);
+    
     color = mix(background_color, blended_border,
-                saturate(antialias_threshold - inner_sdf));
+                improved_aa_alpha(inner_sdf, adjusted_inner_aa, grad_inner));
   }
 
-  return color *
-         float4(1.0, 1.0, 1.0, saturate(antialias_threshold - outer_sdf));
+  // Calculate analytical derivatives for the outer edge
+  float ddx_outer = dfdx(outer_sdf);
+  float ddy_outer = dfdy(outer_sdf);
+  float grad_outer = sqrt(ddx_outer * ddx_outer + ddy_outer * ddy_outer);
+  
+  // Adjust outer antialiasing based on gradient and rotation
+  float adjusted_outer_aa = max(antialias_threshold, grad_outer * 0.5);
+  
+  // Apply antialiasing to the outer edge with improved quality
+  float alpha = improved_aa_alpha(outer_sdf, adjusted_outer_aa, grad_outer);
+  return color * float4(1.0, 1.0, 1.0, alpha);
+}
+
+// Improved antialiasing alpha calculation that adapts to edge gradients
+// For better quality on transformed and rotated shapes
+float improved_aa_alpha(float sdf, float threshold, float gradient) {
+  // Use smoothstep for a more natural falloff at the edges
+  // Scale by gradient to adapt to edge angle and transformation
+  float scale = max(1.0, gradient * 0.5);
+  
+  // Prevent division by zero with an epsilon
+  float safe_scale = max(scale, 0.001);
+  
+  // Apply smoothstep with gradient-aware scaling for better antialiasing on rotated shapes
+  return smoothstep(0.0, threshold, threshold - sdf) / safe_scale;
 }
 
 // Returns the dash velocity of a corner given the dash velocity of the two
