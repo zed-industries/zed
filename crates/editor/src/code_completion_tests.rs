@@ -1998,3 +1998,80 @@ fn test_sort_matches_for_rust_into(_cx: &mut TestAppContext) {
         "Match order not expected"
     );
 }
+
+#[gpui::test]
+fn test_sort_matches_for_variable_over_function(_cx: &mut TestAppContext) {
+    // Case 1: "serial"
+    let query: Option<&str> = Some("serial");
+    let mut matches: Vec<SortableMatch<'_>> = vec![
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 33,
+                score: 0.6666666666666666,
+                positions: vec![],
+                string: "serialize".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("80000000"),
+            sort_key: (3, "serialize"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 32,
+                score: 0.6666666666666666,
+                positions: vec![],
+                string: "serialize".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("80000000"),
+            sort_key: (3, "serialize"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 103,
+                score: 0.3529411764705882,
+                positions: vec![],
+                string: "serialization_key".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("7ffffffe"),
+            sort_key: (1, "serialization_key"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 18,
+                score: 0.3529411764705882,
+                positions: vec![],
+                string: "serialize_version".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("80000000"),
+            sort_key: (3, "serialize_version"),
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 65,
+                score: 0.32727272727272727,
+                positions: vec![],
+                string: "deserialize".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("80000000"),
+            sort_key: (3, "deserialize"),
+        },
+    ];
+    CompletionsMenu::sort_matches(&mut matches, query, SnippetSortOrder::default());
+    assert_eq!(
+        matches
+            .iter()
+            .map(|m| m.string_match.string.as_str())
+            .collect::<Vec<&str>>(),
+        vec![
+            "serialization_key",
+            "serialize",
+            "serialize",
+            "serialize_version",
+            "deserialize"
+        ]
+    );
+}
