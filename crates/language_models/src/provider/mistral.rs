@@ -178,14 +178,6 @@ impl MistralLanguageModelProvider {
             }),
         });
 
-        if let Ok(env_api_key) = std::env::var(MISTRAL_API_KEY_VAR) {
-            state.update(cx, |state, cx| {
-                state.api_key = Some(env_api_key);
-                state.api_key_from_env = true;
-                cx.notify();
-            });
-        }
-
         Self { http_client, state }
     }
 
