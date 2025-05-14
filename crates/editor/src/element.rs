@@ -1343,7 +1343,7 @@ impl EditorElement {
                                     None
                                 }
                             })
-                            .and_then(|text| {
+                            .map(|text| {
                                 let len = text.len();
 
                                 let font = cursor_row_layout
@@ -1369,7 +1369,7 @@ impl EditorElement {
                                     cx.theme().colors().editor_background
                                 };
 
-                                Some(window.text_system().shape_line(
+                                window.text_system().shape_line(
                                     text,
                                     cursor_row_layout.font_size,
                                     &[TextRun {
@@ -1380,7 +1380,7 @@ impl EditorElement {
                                         strikethrough: None,
                                         underline: None,
                                     }],
-                                ))
+                                )
                             })
                     } else {
                         None
