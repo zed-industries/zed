@@ -296,14 +296,7 @@ fn load_shell_from_passwd() -> Result<()> {
     );
 
     let shell = unsafe { std::ffi::CStr::from_ptr(entry.pw_shell).to_str().unwrap() };
-    if env::var("SHELL").map_or(true, |shell_env| shell_env != shell) {
-        log::info!(
-            "updating SHELL environment variable to value from passwd entry: {:?}",
-            shell,
-        );
-        unsafe { env::set_var("SHELL", shell) };
-    }
-
+    SHELL_FROM_PASSWD.set(shell.to_string()).ok();
     Ok(())
 }
 
@@ -312,9 +305,7 @@ pub fn load_login_shell_environment() -> Result<()> {
     load_shell_from_passwd().log_err();
 
     let marker = "ZED_LOGIN_SHELL_START";
-    let shell = env::var("SHELL").context(
-        "SHELL environment variable is not assigned so we can't source login environment variables",
-    )?;
+    let shell = get_system_shell();
 
     // If possible, we want to `cd` in the user's `$HOME` to trigger programs
     // such as direnv, asdf, mise, ... to adjust the PATH. These tools often hook
@@ -1013,6 +1004,8 @@ pub fn default<D: Default>() -> D {
     Default::default()
 }
 
+static SHELL_FROM_PASSWD: OnceLock<String> = OnceLock::new();
+
 pub fn get_system_shell() -> String {
     #[cfg(target_os = "windows")]
     {
@@ -1021,7 +1014,10 @@ pub fn get_system_shell() -> String {
 
     #[cfg(not(target_os = "windows"))]
     {
-        std::env::var("SHELL").unwrap_or("/bin/sh".to_string())
+        std::env::var("SHELL")
+            .ok()
+            .or_else(|| SHELL_FROM_PASSWD.get().cloned())
+            .unwrap_or("/bin/sh".to_string())
     }
 }
 

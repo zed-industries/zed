@@ -401,7 +401,7 @@ impl ShellBuilder {
     }
 
     fn system_shell() -> String {
-        std::env::var("SHELL").unwrap_or("/bin/sh".to_string())
+        util::get_system_shell()
     }
 }
 

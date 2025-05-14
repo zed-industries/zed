@@ -23,7 +23,7 @@ use std::sync::Arc;
 use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
 use terminal_view::TerminalView;
 use ui::prelude::*;
-use util::ResultExt;
+use util::{ResultExt, get_system_shell};
 use workspace::{Toast, Workspace, notifications::NotificationId};
 
 pub fn init(
@@ -230,7 +230,7 @@ impl TerminalInlineAssistant {
     ) -> Result<Task<LanguageModelRequest>> {
         let assist = self.assists.get(&assist_id).context("invalid assist")?;
 
-        let shell = std::env::var("SHELL").ok();
+        let shell = get_system_shell();
         let (latest_output, working_directory) = assist
             .terminal
             .update(cx, |terminal, cx| {
@@ -251,7 +251,7 @@ impl TerminalInlineAssistant {
                 .context("invalid assist")?
                 .read(cx)
                 .prompt(cx),
-            shell.as_deref(),
+            Some(&shell),
             working_directory.as_deref(),
             &latest_output,
         )?;

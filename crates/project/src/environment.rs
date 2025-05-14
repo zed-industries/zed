@@ -255,9 +255,7 @@ async fn load_shell_environment(
     }
 
     const MARKER: &str = "ZED_SHELL_START";
-    let Some(shell) = std::env::var("SHELL").log_err() else {
-        return message("Failed to get login environment. SHELL environment variable is not set");
-    };
+    let shell = util::get_system_shell();
     let shell_path = PathBuf::from(&shell);
     let shell_name = shell_path.file_name().and_then(|f| f.to_str());
 
