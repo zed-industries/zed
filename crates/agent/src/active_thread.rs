@@ -383,18 +383,25 @@ fn render_markdown_code_block(
                 )
             } else {
                 let content = if let Some(parent) = path_range.path.parent() {
+                    let file_name = file_name.to_string_lossy().to_string();
+                    let path = parent.to_string_lossy().to_string();
+                    let path_and_file = format!("{}/{}", path, file_name);
+
                     h_flex()
+                        .id(("code-block-header-label", ix))
                         .ml_1()
                         .gap_1()
-                        .child(
-                            Label::new(file_name.to_string_lossy().to_string())
-                                .size(LabelSize::Small),
-                        )
-                        .child(
-                            Label::new(parent.to_string_lossy().to_string())
-                                .color(Color::Muted)
-                                .size(LabelSize::Small),
-                        )
+                        .child(Label::new(file_name).size(LabelSize::Small))
+                        .child(Label::new(path).color(Color::Muted).size(LabelSize::Small))
+                        .tooltip(move |window, cx| {
+                            Tooltip::with_meta(
+                                "Jump to File",
+                                None,
+                                path_and_file.clone(),
+                                window,
+                                cx,
+                            )
+                        })
                         .into_any_element()
                 } else {
                     Label::new(path_range.path.to_string_lossy().to_string())
@@ -404,7 +411,7 @@ fn render_markdown_code_block(
                 };
 
                 h_flex()
-                    .id(("code-block-header-label", ix))
+                    .id(("code-block-header-button", ix))
                     .w_full()
                     .max_w_full()
                     .px_1()
@@ -412,7 +419,6 @@ fn render_markdown_code_block(
                     .cursor_pointer()
                     .rounded_sm()
                     .hover(|item| item.bg(cx.theme().colors().element_hover.opacity(0.5)))
-                    .tooltip(Tooltip::text("Jump to File"))
                     .child(
                         h_flex()
                             .gap_0p5()
@@ -462,10 +468,87 @@ fn render_markdown_code_block(
         .element_background
         .blend(cx.theme().colors().editor_foreground.opacity(0.01));
 
+    let control_buttons = h_flex()
+        .visible_on_hover(CODEBLOCK_CONTAINER_GROUP)
+        .absolute()
+        .top_0()
+        .right_0()
+        .h_full()
+        .bg(codeblock_header_bg)
+        .rounded_tr_md()
+        .px_1()
+        .gap_1()
+        .child(
+            IconButton::new(
+                ("copy-markdown-code", ix),
+                if codeblock_was_copied {
+                    IconName::Check
+                } else {
+                    IconName::Copy
+                },
+            )
+            .icon_color(Color::Muted)
+            .shape(ui::IconButtonShape::Square)
+            .tooltip(Tooltip::text("Copy Code"))
+            .on_click({
+                let active_thread = active_thread.clone();
+                let parsed_markdown = parsed_markdown.clone();
+                let code_block_range = metadata.content_range.clone();
+                move |_event, _window, cx| {
+                    active_thread.update(cx, |this, cx| {
+                        this.copied_code_block_ids.insert((message_id, ix));
+
+                        let code = parsed_markdown.source()[code_block_range.clone()].to_string();
+                        cx.write_to_clipboard(ClipboardItem::new_string(code));
+
+                        cx.spawn(async move |this, cx| {
+                            cx.background_executor().timer(Duration::from_secs(2)).await;
+
+                            cx.update(|cx| {
+                                this.update(cx, |this, cx| {
+                                    this.copied_code_block_ids.remove(&(message_id, ix));
+                                    cx.notify();
+                                })
+                            })
+                            .ok();
+                        })
+                        .detach();
+                    });
+                }
+            }),
+        )
+        .when(can_expand, |header| {
+            header.child(
+                IconButton::new(
+                    ("expand-collapse-code", ix),
+                    if is_expanded {
+                        IconName::ChevronUp
+                    } else {
+                        IconName::ChevronDown
+                    },
+                )
+                .icon_color(Color::Muted)
+                .shape(ui::IconButtonShape::Square)
+                .tooltip(Tooltip::text(if is_expanded {
+                    "Collapse Code"
+                } else {
+                    "Expand Code"
+                }))
+                .on_click({
+                    let active_thread = active_thread.clone();
+                    move |_event, _window, cx| {
+                        active_thread.update(cx, |this, cx| {
+                            this.toggle_codeblock_expanded(message_id, ix);
+                            cx.notify();
+                        });
+                    }
+                }),
+            )
+        });
+
     let codeblock_header = h_flex()
-        .py_1()
-        .pl_1p5()
-        .pr_1()
+        .relative()
+        .p_1()
         .gap_1()
         .justify_between()
         .border_b_1()
@@ -473,79 +556,7 @@ fn render_markdown_code_block(
         .bg(codeblock_header_bg)
         .rounded_t_md()
         .children(label)
-        .child(
-            h_flex()
-                .visible_on_hover(CODEBLOCK_CONTAINER_GROUP)
-                .gap_1()
-                .child(
-                    IconButton::new(
-                        ("copy-markdown-code", ix),
-                        if codeblock_was_copied {
-                            IconName::Check
-                        } else {
-                            IconName::Copy
-                        },
-                    )
-                    .icon_color(Color::Muted)
-                    .shape(ui::IconButtonShape::Square)
-                    .tooltip(Tooltip::text("Copy Code"))
-                    .on_click({
-                        let active_thread = active_thread.clone();
-                        let parsed_markdown = parsed_markdown.clone();
-                        let code_block_range = metadata.content_range.clone();
-                        move |_event, _window, cx| {
-                            active_thread.update(cx, |this, cx| {
-                                this.copied_code_block_ids.insert((message_id, ix));
-
-                                let code =
-                                    parsed_markdown.source()[code_block_range.clone()].to_string();
-                                cx.write_to_clipboard(ClipboardItem::new_string(code));
-
-                                cx.spawn(async move |this, cx| {
-                                    cx.background_executor().timer(Duration::from_secs(2)).await;
-
-                                    cx.update(|cx| {
-                                        this.update(cx, |this, cx| {
-                                            this.copied_code_block_ids.remove(&(message_id, ix));
-                                            cx.notify();
-                                        })
-                                    })
-                                    .ok();
-                                })
-                                .detach();
-                            });
-                        }
-                    }),
-                )
-                .when(can_expand, |header| {
-                    header.child(
-                        IconButton::new(
-                            ("expand-collapse-code", ix),
-                            if is_expanded {
-                                IconName::ChevronUp
-                            } else {
-                                IconName::ChevronDown
-                            },
-                        )
-                        .icon_color(Color::Muted)
-                        .shape(ui::IconButtonShape::Square)
-                        .tooltip(Tooltip::text(if is_expanded {
-                            "Collapse Code"
-                        } else {
-                            "Expand Code"
-                        }))
-                        .on_click({
-                            let active_thread = active_thread.clone();
-                            move |_event, _window, cx| {
-                                active_thread.update(cx, |this, cx| {
-                                    this.toggle_codeblock_expanded(message_id, ix);
-                                    cx.notify();
-                                });
-                            }
-                        }),
-                    )
-                }),
-        );
+        .child(control_buttons);
 
     v_flex()
         .group(CODEBLOCK_CONTAINER_GROUP)
