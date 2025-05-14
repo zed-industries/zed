@@ -757,11 +757,7 @@ fn handle_ime_composition_inner(
     if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
         let (comp_string, string_len) = parse_ime_compostion_string(ctx)?;
         with_input_handler(&state_ptr, |input_handler| {
-            input_handler.replace_and_mark_text_in_range(
-                None,
-                &comp_string,
-                Some(string_len..string_len),
-            );
+            input_handler.replace_and_mark_text_in_range(None, &comp_string, None);
         })?;
         ime_input = Some(comp_string);
     }
