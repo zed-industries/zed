@@ -2221,3 +2221,162 @@ fn test_sort_matches_for_variable_over_function(_cx: &mut TestAppContext) {
         ]
     );
 }
+
+#[gpui::test]
+fn test_sort_matches_for_local_methods_over_library(_cx: &mut TestAppContext) {
+    // Case 1: "setis"
+    let query: Option<&str> = Some("setis");
+    let mut matches: Vec<SortableMatch<'_>> = vec![
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 1200,
+                score: 0.5555555555555556,
+                positions: vec![],
+                string: "setISODay".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("16"),
+            sort_kind: 1,
+            sort_label: "setISODay",
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 1216,
+                score: 0.5,
+                positions: vec![],
+                string: "setISOWeek".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("16"),
+            sort_kind: 1,
+            sort_label: "setISOWeek",
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 1232,
+                score: 0.3571428571428571,
+                positions: vec![],
+                string: "setISOWeekYear".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("16"),
+            sort_kind: 1,
+            sort_label: "setISOWeekYear",
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 1217,
+                score: 0.3571428571428571,
+                positions: vec![],
+                string: "setISOWeekYear".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("16"),
+            sort_kind: 3,
+            sort_label: "setISOWeekYear",
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 53,
+                score: 0.3333333333333333,
+                positions: vec![],
+                string: "setIsRefreshing".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("11"),
+            sort_kind: 1,
+            sort_label: "setIsRefreshing",
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 1180,
+                score: 0.2571428571428571,
+                positions: vec![],
+                string: "setFips".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("16"),
+            sort_kind: 3,
+            sort_label: "setFips",
+        },
+    ];
+    CompletionsMenu::sort_matches(&mut matches, query, SnippetSortOrder::default());
+    assert_eq!(
+        matches
+            .iter()
+            .map(|m| m.string_match.string.as_str())
+            .collect::<Vec<&str>>(),
+        vec![
+            "setIsRefreshing",
+            "setISODay",
+            "setISOWeek",
+            "setISOWeekYear",
+            "setISOWeekYear",
+            "setFips"
+        ]
+    );
+}
+
+#[gpui::test]
+fn test_sort_matches_for_priotize_not_exact_match(_cx: &mut TestAppContext) {
+    // Case 1: "item"
+    let query: Option<&str> = Some("item");
+    let mut matches: Vec<SortableMatch<'_>> = vec![
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 1115,
+                score: 1.0,
+                positions: vec![],
+                string: "Item".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("16"),
+            sort_kind: 3,
+            sort_label: "Item",
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 1108,
+                score: 1.0,
+                positions: vec![],
+                string: "Item".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("16"),
+            sort_kind: 1,
+            sort_label: "Item",
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 26,
+                score: 0.8,
+                positions: vec![],
+                string: "items".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("11"),
+            sort_kind: 1,
+            sort_label: "items",
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 1138,
+                score: 0.5,
+                positions: vec![],
+                string: "ItemText".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("16"),
+            sort_kind: 3,
+            sort_label: "ItemText",
+        },
+    ];
+    CompletionsMenu::sort_matches(&mut matches, query, SnippetSortOrder::default());
+    assert_eq!(
+        matches
+            .iter()
+            .map(|m| m.string_match.string.as_str())
+            .collect::<Vec<&str>>(),
+        vec!["items", "Item", "Item", "ItemText"]
+    );
+}
