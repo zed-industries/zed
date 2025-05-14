@@ -72,7 +72,7 @@ fn get_key_from_vkey(vkey: VIRTUAL_KEY) -> Option<(String, bool)> {
     let is_dead_key = (key_data >> 16) > 0;
     let key = char::from_u32(key_data & 0xFFFF)?;
 
-    Some((key.to_ascii_lowercase().to_string(), is_dead_key))
+    Some((key.to_ascii_lowercase().to_string(), !is_dead_key))
 }
 
 #[inline]

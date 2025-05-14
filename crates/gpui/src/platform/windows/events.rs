@@ -1420,7 +1420,7 @@ where
     F: FnOnce(Keystroke) -> PlatformInput,
 {
     let virtual_key = VIRTUAL_KEY(wparam.loword());
-    let modifiers = current_modifiers();
+    let mut modifiers = current_modifiers();
 
     match virtual_key {
         VK_PROCESSKEY => {
@@ -1439,19 +1439,9 @@ where
                 modifiers,
             }))
         }
-        _ => {
-            let mut may_have_char = false;
-            let key = parse_immutable(virtual_key).or_else(|| {
-                let (key, is_dead_key) = get_key_from_vkey(virtual_key)?;
-                may_have_char = !is_dead_key;
-                Some(key)
-            })?;
-            let key_char = None;
-            Some(f(Keystroke {
-                modifiers,
-                key,
-                key_char,
-            }))
+        vkey => {
+            let keystroke = parse_normal_key(vkey, lparam, modifiers)?;
+            Some(f(keystroke))
         }
     }
 }
@@ -1505,6 +1495,26 @@ fn parse_immutable(vkey: VIRTUAL_KEY) -> Option<String> {
         }
         .to_string(),
     )
+}
+
+fn parse_normal_key(
+    vkey: VIRTUAL_KEY,
+    lparam: LPARAM,
+    mut modifiers: Modifiers,
+) -> Option<Keystroke> {
+    let mut may_have_char = false;
+    let key = parse_immutable(vkey).or_else(|| {
+        let scan_code = lparam.hiword() & 0xFF;
+        let (key, key_may_have_char) = get_keystroke_key(vkey, scan_code as u32, &mut modifiers)?;
+        may_have_char = key_may_have_char;
+        Some(key)
+    })?;
+    let key_char = None;
+    Some(Keystroke {
+        modifiers,
+        key,
+        key_char,
+    })
 }
 
 fn parse_ime_compostion_string(ctx: HIMC) -> Option<String> {
