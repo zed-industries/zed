@@ -604,7 +604,7 @@ pub struct CallToolResponse {
 pub enum ToolResponseContent {
     #[serde(rename = "text")]
     Text { text: String },
-    #[serde(rename = "image")]
+    #[serde(rename = "image", rename_all = "camelCase")]
     Image { data: String, mime_type: String },
     #[serde(rename = "resource")]
     Resource { resource: ResourceContents },
