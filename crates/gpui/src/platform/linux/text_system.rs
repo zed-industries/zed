@@ -1,7 +1,7 @@
 use crate::{
     Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, FontStyle, FontWeight,
     GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams, SUBPIXEL_VARIANTS,
-    ShapedGlyph, SharedString, Size, point, size,
+    ShapedGlyph, ShapedRun, SharedString, Size, point, size,
 };
 use anyhow::{Context as _, Ok, Result, anyhow};
 use collections::HashMap;
@@ -47,7 +47,7 @@ struct CosmicTextSystemState {
 struct LoadedFont {
     font: Arc<CosmicTextFont>,
     features: CosmicFontFeatures,
-    postscript_name: String,
+    is_known_emoji_font: bool,
 }
 
 impl CosmicTextSystem {
@@ -219,7 +219,6 @@ impl CosmicTextSystemState {
             name
         };
 
-        let mut font_ids = SmallVec::new();
         let families = self
             .font_system
             .db()
@@ -228,6 +227,7 @@ impl CosmicTextSystemState {
             .map(|face| (face.id, face.post_script_name.clone()))
             .collect::<SmallVec<[_; 4]>>();
 
+        let mut loaded_font_ids = SmallVec::new();
         for (font_id, postscript_name) in families {
             let font = self
                 .font_system
@@ -248,15 +248,15 @@ impl CosmicTextSystemState {
             };
 
             let font_id = FontId(self.loaded_fonts.len());
-            font_ids.push(font_id);
+            loaded_font_ids.push(font_id);
             self.loaded_fonts.push(LoadedFont {
                 font,
                 features: features.try_into()?,
-                postscript_name,
+                is_known_emoji_font: check_is_known_emoji_font(&postscript_name),
             });
         }
 
-        Ok(font_ids)
+        Ok(loaded_font_ids)
     }
 
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
@@ -274,11 +274,6 @@ impl CosmicTextSystemState {
         } else {
             Some(GlyphId(glyph_id.into()))
         }
-    }
-
-    fn is_emoji(&self, font_id: FontId) -> bool {
-        // TODO: Include other common emoji fonts
-        self.loaded_font(font_id).postscript_name == "NotoColorEmoji"
     }
 
     fn raster_bounds(&mut self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
@@ -348,6 +343,14 @@ impl CosmicTextSystemState {
         }
     }
 
+    /// This is used when cosmic_text has chosen a fallback font instead of using the requested
+    /// font, typically to handle some unicode characters. When this happens, `loaded_fonts` may not
+    /// yet have an entry for this fallback font, and so one is added.
+    ///
+    /// Note that callers shouldn't use this `FontId` somewhere that will retrieve the corresponding
+    /// `LoadedFont.features`, as it will have an arbitrarily chosen or empty value. The only
+    /// current use of this field is for the *input* of `layout_line`, and so it's fine to use
+    /// `font_id_for_cosmic_id` when computing the *output* of `layout_line`.
     fn font_id_for_cosmic_id(&mut self, id: cosmic_text::fontdb::ID) -> FontId {
         if let Some(ix) = self
             .loaded_fonts
@@ -356,20 +359,14 @@ impl CosmicTextSystemState {
         {
             FontId(ix)
         } else {
-            // This matches the behavior of the mac text system
             let font = self.font_system.get_font(id).unwrap();
-            let face = self
-                .font_system
-                .db()
-                .faces()
-                .find(|info| info.id == id)
-                .unwrap();
+            let face = self.font_system.db().face(id).unwrap();
 
             let font_id = FontId(self.loaded_fonts.len());
             self.loaded_fonts.push(LoadedFont {
-                font: font,
+                font,
                 features: CosmicFontFeatures::new(),
-                postscript_name: face.post_script_name.clone(),
+                is_known_emoji_font: check_is_known_emoji_font(&face.post_script_name),
             });
 
             font_id
@@ -387,6 +384,7 @@ impl CosmicTextSystemState {
             attrs_list.add_span(
                 offs..(offs + run.len),
                 &Attrs::new()
+                    .metadata(run.font_id.0)
                     .family(Family::Name(&font.families.first().unwrap().0))
                     .stretch(font.stretch)
                     .style(font.style)
@@ -395,46 +393,59 @@ impl CosmicTextSystemState {
             );
             offs += run.len;
         }
-        let mut line = ShapeLine::new(
+
+        let line = ShapeLine::new(
             &mut self.font_system,
             text,
             &attrs_list,
             cosmic_text::Shaping::Advanced,
             4,
         );
-        let mut layout = Vec::with_capacity(1);
+        let mut layout_lines = Vec::with_capacity(1);
         line.layout_to_buffer(
             &mut self.scratch,
             font_size.0,
             None, // We do our own wrapping
             cosmic_text::Wrap::None,
             None,
-            &mut layout,
+            &mut layout_lines,
             None,
         );
+        let layout = layout_lines.first().unwrap();
 
-        let mut runs = Vec::new();
-        let layout = layout.first().unwrap();
+        let mut runs: Vec<ShapedRun> = Vec::new();
         for glyph in &layout.glyphs {
-            let font_id = glyph.font_id;
-            let font_id = self.font_id_for_cosmic_id(font_id);
-            let is_emoji = self.is_emoji(font_id);
-            let mut glyphs = SmallVec::new();
+            let mut font_id = FontId(glyph.metadata);
+            let mut loaded_font = self.loaded_font(font_id);
+            if loaded_font.font.id() != glyph.font_id {
+                font_id = self.font_id_for_cosmic_id(glyph.font_id);
+                loaded_font = self.loaded_font(font_id);
+            }
+            let is_emoji = loaded_font.is_known_emoji_font;
 
             // HACK: Prevent crash caused by variation selectors.
             if glyph.glyph_id == 3 && is_emoji {
                 continue;
             }
 
-            // todo(linux) this is definitely wrong, each glyph in glyphs from cosmic-text is a cluster with one glyph, ShapedRun takes a run of glyphs with the same font and direction
-            glyphs.push(ShapedGlyph {
+            let shaped_glyph = ShapedGlyph {
                 id: GlyphId(glyph.glyph_id as u32),
                 position: point(glyph.x.into(), glyph.y.into()),
                 index: glyph.start,
                 is_emoji,
-            });
+            };
 
-            runs.push(crate::ShapedRun { font_id, glyphs });
+            if let Some(last_run) = runs
+                .last_mut()
+                .filter(|last_run| last_run.font_id == font_id)
+            {
+                last_run.glyphs.push(shaped_glyph);
+            } else {
+                runs.push(ShapedRun {
+                    font_id,
+                    glyphs: vec![shaped_glyph],
+                });
+            }
         }
 
         LineLayout {
@@ -564,4 +575,9 @@ fn face_info_into_properties(
             cosmic_text::Stretch::UltraExpanded => font_kit::properties::Stretch::ULTRA_EXPANDED,
         },
     }
+}
+
+fn check_is_known_emoji_font(postscript_name: &str) -> bool {
+    // TODO: Include other common emoji fonts
+    postscript_name == "NotoColorEmoji"
 }

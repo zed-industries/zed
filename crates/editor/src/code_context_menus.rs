@@ -664,12 +664,13 @@ impl CompletionsMenu {
         #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
         enum MatchTier<'a> {
             WordStartMatch {
-                sort_prefix: Reverse<usize>,
-                sort_fuzzy_bracket: Reverse<usize>,
+                sort_mixed_case_prefix_length: Reverse<usize>,
                 sort_snippet: Reverse<i32>,
+                sort_kind: usize,
+                sort_fuzzy_bracket: Reverse<usize>,
                 sort_text: Option<&'a str>,
                 sort_score: Reverse<OrderedFloat<f64>>,
-                sort_key: (usize, &'a str),
+                sort_label: &'a str,
             },
             OtherMatch {
                 sort_score: Reverse<OrderedFloat<f64>>,
@@ -680,12 +681,12 @@ impl CompletionsMenu {
         // balance the raw fuzzy match score with hints from the language server
 
         // In a fuzzy bracket, matches with a score of 1.0 are prioritized.
-        // The remaining matches are partitioned into two groups at 2/3 of the max_score.
+        // The remaining matches are partitioned into two groups at 3/5 of the max_score.
         let max_score = matches
             .iter()
             .map(|mat| mat.string_match.score)
             .fold(0.0, f64::max);
-        let second_bracket_threshold = max_score * (2.0 / 3.0);
+        let fuzzy_bracket_threshold = max_score * (3.0 / 5.0);
 
         let query_start_lower = query
             .and_then(|q| q.chars().next())
@@ -709,9 +710,7 @@ impl CompletionsMenu {
             if query_start_doesnt_match_split_words {
                 MatchTier::OtherMatch { sort_score }
             } else {
-                let sort_fuzzy_bracket = Reverse(if score == 1.0 {
-                    2
-                } else if score >= second_bracket_threshold {
+                let sort_fuzzy_bracket = Reverse(if score >= fuzzy_bracket_threshold {
                     1
                 } else {
                     0
@@ -721,7 +720,7 @@ impl CompletionsMenu {
                     SnippetSortOrder::Bottom => Reverse(if mat.is_snippet { 0 } else { 1 }),
                     SnippetSortOrder::Inline => Reverse(0),
                 };
-                let mixed_case_prefix_length = Reverse(
+                let sort_mixed_case_prefix_length = Reverse(
                     query
                         .map(|q| {
                             q.chars()
@@ -741,12 +740,13 @@ impl CompletionsMenu {
                         .unwrap_or(0),
                 );
                 MatchTier::WordStartMatch {
-                    sort_prefix: mixed_case_prefix_length,
-                    sort_fuzzy_bracket,
+                    sort_mixed_case_prefix_length,
                     sort_snippet,
+                    sort_kind: mat.sort_kind,
+                    sort_fuzzy_bracket,
                     sort_text: mat.sort_text,
                     sort_score,
-                    sort_key: mat.sort_key,
+                    sort_label: mat.sort_label,
                 }
             }
         });
@@ -797,13 +797,14 @@ impl CompletionsMenu {
                             None
                         };
 
-                    let sort_key = completion.sort_key();
+                    let (sort_kind, sort_label) = completion.sort_key();
 
                     SortableMatch {
                         string_match,
                         is_snippet,
                         sort_text,
-                        sort_key,
+                        sort_kind,
+                        sort_label,
                     }
                 })
                 .collect();
@@ -828,7 +829,8 @@ pub struct SortableMatch<'a> {
     pub string_match: StringMatch,
     pub is_snippet: bool,
     pub sort_text: Option<&'a str>,
-    pub sort_key: (usize, &'a str),
+    pub sort_kind: usize,
+    pub sort_label: &'a str,
 }
 
 #[derive(Clone)]
@@ -1103,6 +1105,7 @@ impl CodeActionsMenu {
                                     this.child(
                                         h_flex()
                                             .overflow_hidden()
+                                            .child("debug: ")
                                             .child(scenario.label.clone())
                                             .when(selected, |this| {
                                                 this.text_color(colors.text_accent)
@@ -1138,7 +1141,9 @@ impl CodeActionsMenu {
                     CodeActionsItem::CodeAction { action, .. } => {
                         action.lsp_action.title().chars().count()
                     }
-                    CodeActionsItem::DebugScenario(scenario) => scenario.label.chars().count(),
+                    CodeActionsItem::DebugScenario(scenario) => {
+                        format!("debug: {}", scenario.label).chars().count()
+                    }
                 })
                 .map(|(ix, _)| ix),
         )

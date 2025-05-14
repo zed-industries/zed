@@ -201,7 +201,7 @@ pub(crate) struct LogMenuItem {
     pub server_kind: LanguageServerKind,
 }
 
-actions!(debug, [OpenLanguageServerLogs]);
+actions!(dev, [OpenLanguageServerLogs]);
 
 pub fn init(cx: &mut App) {
     let log_store = cx.new(LogStore::new);
