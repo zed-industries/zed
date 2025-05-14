@@ -427,9 +427,8 @@ impl Telemetry {
 
         if state.flush_events_task.is_none() {
             let this = self.clone();
-            let executor = self.executor.clone();
             state.flush_events_task = Some(self.executor.spawn(async move {
-                executor.timer(FLUSH_INTERVAL).await;
+                this.executor.timer(FLUSH_INTERVAL).await;
                 this.flush_events().detach();
             }));
         }
