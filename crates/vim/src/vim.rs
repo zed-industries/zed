@@ -431,6 +431,7 @@ impl Vim {
     }
 
     fn activate(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
+        editor.selections.vim_mode = true;
         let vim = Vim::new(window, cx);
 
         editor.register_addon(VimAddon {
@@ -717,6 +718,7 @@ impl Vim {
     }
 
     fn deactivate(editor: &mut Editor, cx: &mut Context<Editor>) {
+        editor.selections.vim_mode = false;
         editor.set_cursor_shape(CursorShape::Bar, cx);
         editor.set_clip_at_line_ends(false, cx);
         editor.set_collapse_matches(false);

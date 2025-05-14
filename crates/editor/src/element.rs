@@ -116,6 +116,7 @@ impl SelectionLayout {
         is_newest: bool,
         is_local: bool,
         user_name: Option<SharedString>,
+        vim_mode: bool,
     ) -> Self {
         let point_selection = selection.map(|p| p.to_point(&map.buffer_snapshot));
         let display_selection = point_selection.map(|p| p.to_display_point(map));
@@ -131,7 +132,8 @@ impl SelectionLayout {
         }
 
         // any vim visual mode (including line mode)
-        if (cursor_shape == CursorShape::Block || cursor_shape == CursorShape::Hollow)
+        if vim_mode
+            && (cursor_shape == CursorShape::Block || cursor_shape == CursorShape::Hollow)
             && !range.is_empty()
             && !selection.reversed
         {
@@ -1137,6 +1139,7 @@ impl EditorElement {
                         is_newest,
                         editor.leader_id.is_none(),
                         None,
+                        editor.selections.vim_mode,
                     );
                     if is_newest {
                         newest_selection_head = Some(layout.head);
@@ -1218,11 +1221,13 @@ impl EditorElement {
                             false,
                             false,
                             if is_shown { selection.user_name } else { None },
+                            editor.selections.vim_mode,
                         ));
                 }
 
                 selections.extend(remote_selections.into_values());
             } else if !editor.is_focused(window) && editor.show_cursor_when_unfocused {
+                let vim_mode = editor.selections.vim_mode;
                 let layouts = snapshot
                     .buffer_snapshot
                     .selections_in_range(&(start_anchor..end_anchor), true)
@@ -1235,6 +1240,7 @@ impl EditorElement {
                             false,
                             false,
                             None,
+                            vim_mode,
                         )
                     })
                     .collect::<Vec<_>>();
@@ -2648,6 +2654,7 @@ impl EditorElement {
                     true,
                     true,
                     None,
+                    editor.selections.vim_mode,
                 )
                 .head
             });
@@ -9325,6 +9332,9 @@ mod tests {
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
+        editor.update(cx, |editor, _| {
+            editor.selections.vim_mode = true;
+        });
         let style = cx.update(|_, cx| editor.read(cx).style().unwrap().clone());
 
         window
