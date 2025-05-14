@@ -131,6 +131,8 @@ impl NewSessionModal {
                                     this.custom_mode.update(cx, |custom, cx| {
                                         custom.load(active_cwd, window, cx);
                                     });
+
+                                    this.debugger = None;
                                 }
 
                                 this.launch_picker.update(cx, |picker, cx| {
@@ -802,35 +804,9 @@ impl CustomMode {
             command
         };
 
-        let program = if let Some(program) = program.strip_prefix('~') {
-            format!(
-                "$ZED_WORKTREE_ROOT{}{}",
-                std::path::MAIN_SEPARATOR,
-                &program
-            )
-        } else if !program.starts_with(std::path::MAIN_SEPARATOR) {
-            format!(
-                "$ZED_WORKTREE_ROOT{}{}",
-                std::path::MAIN_SEPARATOR,
-                &program
-            )
-        } else {
-            program
-        };
-
-        let path = if path.starts_with('~') && !path.is_empty() {
-            format!(
-                "$ZED_WORKTREE_ROOT{}{}",
-                std::path::MAIN_SEPARATOR,
-                &path[1..]
-            )
-        } else if !path.starts_with(std::path::MAIN_SEPARATOR) && !path.is_empty() {
-            format!("$ZED_WORKTREE_ROOT{}{}", std::path::MAIN_SEPARATOR, &path)
-        } else {
-            path
-        };
-
         let args = args.collect::<Vec<_>>();
+
+        let (program, path) = resolve_paths(program, path);
 
         task::LaunchRequest {
             program,
@@ -1117,7 +1093,7 @@ impl PickerDelegate for DebugScenarioDelegate {
             .get(self.selected_index())
             .and_then(|match_candidate| self.candidates.get(match_candidate.candidate_id).cloned());
 
-        let Some((_, debug_scenario)) = debug_scenario else {
+        let Some((_, mut debug_scenario)) = debug_scenario else {
             return;
         };
 
@@ -1131,6 +1107,19 @@ impl PickerDelegate for DebugScenarioDelegate {
                 ))
             })
             .unwrap_or_default();
+
+        if let Some(launch_config) =
+            debug_scenario
+                .request
+                .as_mut()
+                .and_then(|request| match request {
+                    DebugRequest::Launch(launch) => Some(launch),
+                    _ => None,
+                })
+        {
+            let (program, _) = resolve_paths(launch_config.program.clone(), String::new());
+            launch_config.program = program;
+        }
 
         self.debug_panel
             .update(cx, |panel, cx| {
@@ -1183,4 +1172,36 @@ impl PickerDelegate for DebugScenarioDelegate {
                 .child(highlighted_location.render(window, cx)),
         )
     }
+}
+
+fn resolve_paths(program: String, path: String) -> (String, String) {
+    let program = if let Some(program) = program.strip_prefix('~') {
+        format!(
+            "$ZED_WORKTREE_ROOT{}{}",
+            std::path::MAIN_SEPARATOR,
+            &program
+        )
+    } else if !program.starts_with(std::path::MAIN_SEPARATOR) {
+        format!(
+            "$ZED_WORKTREE_ROOT{}{}",
+            std::path::MAIN_SEPARATOR,
+            &program
+        )
+    } else {
+        program
+    };
+
+    let path = if path.starts_with('~') && !path.is_empty() {
+        format!(
+            "$ZED_WORKTREE_ROOT{}{}",
+            std::path::MAIN_SEPARATOR,
+            &path[1..]
+        )
+    } else if !path.starts_with(std::path::MAIN_SEPARATOR) && !path.is_empty() {
+        format!("$ZED_WORKTREE_ROOT{}{}", std::path::MAIN_SEPARATOR, &path)
+    } else {
+        path
+    };
+
+    (program, path)
 }
