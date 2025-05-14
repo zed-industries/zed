@@ -71,7 +71,7 @@ pub struct RunningState {
     console: Entity<Console>,
     breakpoint_list: Entity<BreakpointList>,
     panes: PaneGroup,
-    active_pane: Option<Entity<Pane>>,
+    pub(crate) active_pane: Option<Entity<Pane>>,
     pane_close_subscriptions: HashMap<EntityId, Subscription>,
     dock_axis: Axis,
     _schedule_serialize: Option<Task<()>>,
