@@ -131,6 +131,8 @@ impl NewSessionModal {
                                     this.custom_mode.update(cx, |custom, cx| {
                                         custom.load(active_cwd, window, cx);
                                     });
+
+                                    this.debugger = None;
                                 }
 
                                 this.launch_picker.update(cx, |picker, cx| {
