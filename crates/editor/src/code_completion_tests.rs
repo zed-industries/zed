@@ -550,8 +550,8 @@ fn test_sort_matches_for_unreachable(_cx: &mut TestAppContext) {
     CompletionsMenu::sort_matches(&mut matches, query, SnippetSortOrder::default());
     assert_eq!(
         matches[0].string_match.string.as_str(),
-        "unreachable",
-        "Perfect fuzzy match should be preferred over others"
+        "unreachable!(…)",
+        "LSP should take over even when fuzzy perfect matches"
     );
 }
 
@@ -1541,13 +1541,13 @@ fn test_sort_matches_for_await(_cx: &mut TestAppContext) {
         vec![
             "await",
             "await.or",
+            "await.eq",
+            "await.ne",
             "await.xor",
             "await.take",
             "await.and",
             "await.map",
-            "await.zip",
-            "await.eq",
-            "await.ne"
+            "await.zip"
         ]
     );
     // Case 2: "await"
@@ -1671,13 +1671,13 @@ fn test_sort_matches_for_await(_cx: &mut TestAppContext) {
         vec![
             "await",
             "await.or",
+            "await.eq",
+            "await.ne",
             "await.xor",
             "await.take",
             "await.and",
             "await.map",
-            "await.zip",
-            "await.eq",
-            "await.ne"
+            "await.zip"
         ]
     );
 }

@@ -664,7 +664,6 @@ impl CompletionsMenu {
         #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
         enum MatchTier<'a> {
             WordStartMatch {
-                sort_perfect_score: Reverse<usize>,
                 sort_mixed_case_prefix_length: Reverse<usize>,
                 sort_snippet: Reverse<i32>,
                 sort_kind: usize,
@@ -682,12 +681,12 @@ impl CompletionsMenu {
         // balance the raw fuzzy match score with hints from the language server
 
         // In a fuzzy bracket, matches with a score of 1.0 are prioritized.
-        // The remaining matches are partitioned into two groups at 2/3 of the max_score.
+        // The remaining matches are partitioned into two groups at 3/5 of the max_score.
         let max_score = matches
             .iter()
             .map(|mat| mat.string_match.score)
             .fold(0.0, f64::max);
-        let fuzzy_bracket_threshold = max_score * (2.0 / 3.0);
+        let fuzzy_bracket_threshold = max_score * (3.0 / 5.0);
 
         let query_start_lower = query
             .and_then(|q| q.chars().next())
@@ -711,7 +710,6 @@ impl CompletionsMenu {
             if query_start_doesnt_match_split_words {
                 MatchTier::OtherMatch { sort_score }
             } else {
-                let sort_perfect_score = Reverse(if score == 1.0 { 1 } else { 0 });
                 let sort_fuzzy_bracket = Reverse(if score >= fuzzy_bracket_threshold {
                     1
                 } else {
@@ -742,7 +740,6 @@ impl CompletionsMenu {
                         .unwrap_or(0),
                 );
                 MatchTier::WordStartMatch {
-                    sort_perfect_score,
                     sort_mixed_case_prefix_length,
                     sort_snippet,
                     sort_kind: mat.sort_kind,
