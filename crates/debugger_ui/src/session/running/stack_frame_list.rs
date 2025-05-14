@@ -203,7 +203,7 @@ impl StackFrameList {
         std::mem::swap(&mut self.entries, &mut entries);
 
         if let Some(ix) = first_stack_frame.filter(|_| open_first_stack_frame) {
-            self.selected_ix = Some(ix);
+            self.select_ix(Some(ix), cx);
             self.activate_selected_entry(window, cx);
         } else if let Some(old_selected_frame_id) = old_selected_frame_id {
             let ix = self.entries.iter().position(|entry| match entry {
