@@ -158,10 +158,11 @@ impl DebugPanel {
             .map(|(thread, _)| thread.name.clone());
 
         if let Some(selected_thread_name) = selected_thread_name {
+            let trigger = DebugPanel::dropdown_label(selected_thread_name).into_any_element();
             Some(
-                DropdownMenu::new(
+                DropdownMenu::new_with_element(
                     ("thread-list", session_id.0),
-                    selected_thread_name,
+                    trigger,
                     ContextMenu::build_eager(window, cx, move |mut this, _, _| {
                         for (thread, _) in threads {
                             let running_state = running_state.clone();
