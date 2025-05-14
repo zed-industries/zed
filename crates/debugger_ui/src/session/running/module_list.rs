@@ -275,7 +275,7 @@ impl ModuleList {
         }
     }
 
-    fn render_list(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_list(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         uniform_list(
             cx.entity(),
             "module-list",

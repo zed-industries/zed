@@ -1217,7 +1217,12 @@ impl RunningState {
     pub(crate) fn go_to_selected_stack_frame(&self, window: &mut Window, cx: &mut Context<Self>) {
         if self.thread_id.is_some() {
             self.stack_frame_list
-                .update(cx, |list, cx| list.go_to_selected_stack_frame(window, cx))
+                .update(cx, |list, cx| {
+                    let Some(stack_frame_id) = list.opened_stack_frame_id() else {
+                        return Task::ready(Ok(()));
+                    };
+                    list.go_to_stack_frame(stack_frame_id, window, cx)
+                })
                 .detach();
         }
     }
@@ -1235,7 +1240,7 @@ impl RunningState {
     }
 
     pub(crate) fn selected_stack_frame_id(&self, cx: &App) -> Option<dap::StackFrameId> {
-        self.stack_frame_list.read(cx).selected_stack_frame_id()
+        self.stack_frame_list.read(cx).opened_stack_frame_id()
     }
 
     pub(crate) fn stack_frame_list(&self) -> &Entity<StackFrameList> {
