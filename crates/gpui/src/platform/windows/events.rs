@@ -755,7 +755,7 @@ fn handle_ime_composition_inner(
 ) -> Option<isize> {
     let mut ime_input = None;
     if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
-        let (comp_string, string_len) = parse_ime_compostion_string(ctx)?;
+        let comp_string = parse_ime_compostion_string(ctx)?;
         with_input_handler(&state_ptr, |input_handler| {
             input_handler.replace_and_mark_text_in_range(None, &comp_string, None);
         })?;
@@ -1444,7 +1444,7 @@ fn parse_char_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
     }
 }
 
-fn parse_ime_compostion_string(ctx: HIMC) -> Option<(String, usize)> {
+fn parse_ime_compostion_string(ctx: HIMC) -> Option<String> {
     unsafe {
         let string_len = ImmGetCompositionStringW(ctx, GCS_COMPSTR, None, 0);
         if string_len >= 0 {
@@ -1459,8 +1459,7 @@ fn parse_ime_compostion_string(ctx: HIMC) -> Option<(String, usize)> {
                 buffer.as_mut_ptr().cast::<u16>(),
                 string_len as usize / 2,
             );
-            let string = String::from_utf16_lossy(wstring);
-            Some((string, string_len as usize / 2))
+            Some(String::from_utf16_lossy(wstring))
         } else {
             None
         }
