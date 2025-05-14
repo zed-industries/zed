@@ -23,7 +23,7 @@ They both have an overlapping feature set of autocomplete, diagnostics, code act
 
 In addition to these two language servers, Zed also supports [rubocop](https://github.com/rubocop/rubocop) which is a static code analyzer and linter for Ruby. Under the hood, it's also used by Zed as a language server, but its functionality is complimentary to that of solargraph and ruby-lsp.
 
-When configuring a language server, it helps to open the LSP Logs window using the 'debug: open language server logs' command. You can then choose the corresponding language instance to see any logged information.
+When configuring a language server, it helps to open the LSP Logs window using the 'dev: Open Language Server Logs' command. You can then choose the corresponding language instance to see any logged information.
 
 ## Configuring a language server
 

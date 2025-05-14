@@ -1741,6 +1741,16 @@ Example:
 
 `boolean` values
 
+## Hover Popover Delay
+
+- Description: Time to wait in milliseconds before showing the informational hover box.
+- Setting: `hover_popover_delay`
+- Default: `300`
+
+**Options**
+
+`integer` values representing milliseconds
+
 ## Icon Theme
 
 - Description: The icon theme setting can be specified in two forms - either as the name of an icon theme or as an object containing the `mode`, `dark`, and `light` icon themes for files/folders inside Zed.

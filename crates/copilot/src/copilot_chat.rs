@@ -113,7 +113,7 @@ pub enum ModelVendor {
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 #[serde(tag = "type")]
-pub enum ChatMessageContent {
+pub enum ChatMessagePart {
     #[serde(rename = "text")]
     Text { text: String },
     #[serde(rename = "image_url")]
@@ -194,24 +194,53 @@ pub enum ToolChoice {
     None,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum ChatMessage {
     Assistant {
-        content: Option<String>,
+        content: ChatMessageContent,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
     },
     User {
-        content: Vec<ChatMessageContent>,
+        content: ChatMessageContent,
     },
     System {
         content: String,
     },
     Tool {
-        content: String,
+        content: ChatMessageContent,
         tool_call_id: String,
     },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ChatMessageContent {
+    Plain(String),
+    Multipart(Vec<ChatMessagePart>),
+}
+
+impl ChatMessageContent {
+    pub fn empty() -> Self {
+        ChatMessageContent::Multipart(vec![])
+    }
+}
+
+impl From<Vec<ChatMessagePart>> for ChatMessageContent {
+    fn from(mut parts: Vec<ChatMessagePart>) -> Self {
+        if let [ChatMessagePart::Text { text }] = parts.as_mut_slice() {
+            ChatMessageContent::Plain(std::mem::take(text))
+        } else {
+            ChatMessageContent::Multipart(parts)
+        }
+    }
+}
+
+impl From<String> for ChatMessageContent {
+    fn from(text: String) -> Self {
+        ChatMessageContent::Plain(text)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]

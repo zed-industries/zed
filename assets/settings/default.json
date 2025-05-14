@@ -113,8 +113,8 @@
   // Whether to show the informational hover box when moving the mouse
   // over symbols in the editor.
   "hover_popover_enabled": true,
-  // Time to wait before showing the informational hover box
-  "hover_popover_delay": 350,
+  // Time to wait in milliseconds before showing the informational hover box.
+  "hover_popover_delay": 300,
   // Whether to confirm before quitting Zed.
   "confirm_quit": false,
   // Whether to restore last closed project when fresh Zed instance is opened.
@@ -758,6 +758,8 @@
     "stream_edits": false,
     // When enabled, agent edits will be displayed in single-file editors for review
     "single_file_review": true,
+    // When enabled, show voting thumbs for feedback on agent edits.
+    "enable_feedback": true,
     "default_profile": "write",
     "profiles": {
       "write": {

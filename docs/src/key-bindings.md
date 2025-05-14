@@ -47,7 +47,7 @@ For example:
 
 You can see all of Zed's default bindings in the default keymaps for [MacOS](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-macos.json) or [Linux](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-linux.json).
 
-If you want to debug problems with custom keymaps you can use `debug: Open Key Context View` from the command palette. Please file [an issue](https://github.com/zed-industries/zed) if you run into something you think should work but isn't.
+If you want to debug problems with custom keymaps you can use `dev: Open Key Context View` from the command palette. Please file [an issue](https://github.com/zed-industries/zed) if you run into something you think should work but isn't.
 
 ### Keybinding syntax
 
@@ -85,7 +85,7 @@ It is possible to match against typing a modifier key on its own. For example `s
 
 If a binding group has a `"context"` key it will be matched against the currently active contexts in Zed.
 
-Zed's contexts make up a tree, with the root being `Workspace`. Workspaces contain Panes and Panels, and Panes contain Editors, etc. The easiest way to see what contexts are active at a given moment is the key context view, which you can get to with `debug: Open Key Context View` in the command palette.
+Zed's contexts make up a tree, with the root being `Workspace`. Workspaces contain Panes and Panels, and Panes contain Editors, etc. The easiest way to see what contexts are active at a given moment is the key context view, which you can get to with `dev: Open Key Context View` in the command palette.
 
 Contexts can contain extra attributes in addition to the name, so that you can (for example) match only in markdown files with `"context": "Editor && extension==md"`. It's worth noting that you can only use attributes at the level they are defined.
 

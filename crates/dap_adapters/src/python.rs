@@ -1,6 +1,7 @@
 use crate::*;
 use dap::{DebugRequest, StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
-use gpui::AsyncApp;
+use gpui::{AsyncApp, SharedString};
+use language::LanguageName;
 use std::{collections::HashMap, ffi::OsStr, path::PathBuf, sync::OnceLock};
 use util::ResultExt;
 
@@ -163,6 +164,10 @@ impl PythonDebugAdapter {
 impl DebugAdapter for PythonDebugAdapter {
     fn name(&self) -> DebugAdapterName {
         DebugAdapterName(Self::ADAPTER_NAME.into())
+    }
+
+    fn adapter_language_name(&self) -> Option<LanguageName> {
+        Some(SharedString::new_static("Python").into())
     }
 
     async fn get_binary(
