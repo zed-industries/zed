@@ -1,5 +1,6 @@
 use crate::persistence::DebuggerPaneItem;
 use crate::session::DebugSession;
+use crate::session::running::RunningState;
 use crate::{
     ClearAllBreakpoints, Continue, Detach, FocusBreakpointList, FocusConsole, FocusFrames,
     FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, Pause, Restart,
@@ -93,6 +94,11 @@ impl DebugPanel {
 
     pub fn active_session(&self) -> Option<Entity<DebugSession>> {
         self.active_session.clone()
+    }
+
+    pub(crate) fn running_state(&self, cx: &mut App) -> Option<Entity<RunningState>> {
+        self.active_session()
+            .map(|session| session.read(cx).running_state().clone())
     }
 
     pub(crate) fn filter_action_types(&self, cx: &mut App) {
@@ -544,6 +550,7 @@ impl DebugPanel {
         let focus_handle = self.focus_handle.clone();
         let is_side = self.position(window, cx).axis() == gpui::Axis::Horizontal;
         let div = if is_side { v_flex() } else { h_flex() };
+        let running_state = self.running_state(cx).clone();
 
         let new_session_button = || {
             IconButton::new("debug-new-session", IconName::Plus)
@@ -579,12 +586,12 @@ impl DebugPanel {
                                 active_session
                                     .as_ref()
                                     .map(|session| session.read(cx).running_state()),
-                                |this, running_session| {
+                                |this, running_state| {
                                     let thread_status =
-                                        running_session.read(cx).thread_status(cx).unwrap_or(
+                                        running_state.read(cx).thread_status(cx).unwrap_or(
                                             project::debugger::session::ThreadStatus::Exited,
                                         );
-                                    let capabilities = running_session.read(cx).capabilities(cx);
+                                    let capabilities = running_state.read(cx).capabilities(cx);
                                     this.map(|this| {
                                         if thread_status == ThreadStatus::Running {
                                             this.child(
@@ -595,7 +602,7 @@ impl DebugPanel {
                                                 .icon_size(IconSize::XSmall)
                                                 .shape(ui::IconButtonShape::Square)
                                                 .on_click(window.listener_for(
-                                                    &running_session,
+                                                    &running_state,
                                                     |this, _, _window, cx| {
                                                         this.pause_thread(cx);
                                                     },
@@ -622,7 +629,7 @@ impl DebugPanel {
                                                 .icon_size(IconSize::XSmall)
                                                 .shape(ui::IconButtonShape::Square)
                                                 .on_click(window.listener_for(
-                                                    &running_session,
+                                                    &running_state,
                                                     |this, _, _window, cx| this.continue_thread(cx),
                                                 ))
                                                 .disabled(thread_status != ThreadStatus::Stopped)
@@ -646,7 +653,7 @@ impl DebugPanel {
                                             .icon_size(IconSize::XSmall)
                                             .shape(ui::IconButtonShape::Square)
                                             .on_click(window.listener_for(
-                                                &running_session,
+                                                &running_state,
                                                 |this, _, _window, cx| {
                                                     this.step_over(cx);
                                                 },
@@ -670,7 +677,7 @@ impl DebugPanel {
                                             .icon_size(IconSize::XSmall)
                                             .shape(ui::IconButtonShape::Square)
                                             .on_click(window.listener_for(
-                                                &running_session,
+                                                &running_state,
                                                 |this, _, _window, cx| {
                                                     this.step_out(cx);
                                                 },
@@ -697,7 +704,7 @@ impl DebugPanel {
                                         .icon_size(IconSize::XSmall)
                                         .shape(ui::IconButtonShape::Square)
                                         .on_click(window.listener_for(
-                                            &running_session,
+                                            &running_state,
                                             |this, _, _window, cx| {
                                                 this.step_in(cx);
                                             },
@@ -747,7 +754,7 @@ impl DebugPanel {
                                                 || thread_status == ThreadStatus::Ended,
                                         )
                                         .on_click(window.listener_for(
-                                            &running_session,
+                                            &running_state,
                                             |this, _, _window, cx| {
                                                 this.toggle_ignore_breakpoints(cx);
                                             },
@@ -770,7 +777,7 @@ impl DebugPanel {
                                         IconButton::new("debug-restart", IconName::DebugRestart)
                                             .icon_size(IconSize::XSmall)
                                             .on_click(window.listener_for(
-                                                &running_session,
+                                                &running_state,
                                                 |this, _, _window, cx| {
                                                     this.restart_session(cx);
                                                 },
@@ -792,7 +799,7 @@ impl DebugPanel {
                                         IconButton::new("debug-stop", IconName::Power)
                                             .icon_size(IconSize::XSmall)
                                             .on_click(window.listener_for(
-                                                &running_session,
+                                                &running_state,
                                                 |this, _, _window, cx| {
                                                     this.stop_thread(cx);
                                                 },
@@ -826,7 +833,7 @@ impl DebugPanel {
                                         IconButton::new("debug-disconnect", IconName::DebugDetach)
                                             .icon_size(IconSize::XSmall)
                                             .on_click(window.listener_for(
-                                                &running_session,
+                                                &running_state,
                                                 |this, _, _, cx| {
                                                     this.detach_client(cx);
                                                 },
@@ -861,7 +868,7 @@ impl DebugPanel {
                                     .map(|session| session.read(cx).running_state())
                                     .cloned(),
                                 |this, running_state| {
-                                    this.child({
+                                    this.children({
                                         let running_state = running_state.clone();
                                         let threads =
                                             running_state.update(cx, |running_state, cx| {
@@ -883,11 +890,12 @@ impl DebugPanel {
                         )
                         .child(
                             h_flex()
-                                .when_some(active_session.as_ref(), move |this, session| {
-                                    let context_menu =
-                                        self.render_session_menu(session, window, cx);
-                                    this.child(context_menu).gap_2().child(Divider::vertical())
-                                })
+                                .children(self.render_session_menu(
+                                    self.active_session(),
+                                    self.running_state(cx),
+                                    window,
+                                    cx,
+                                ))
                                 .when(!is_side, |this| this.child(new_session_button())),
                         ),
                 ),
