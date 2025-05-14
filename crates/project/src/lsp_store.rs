@@ -9897,6 +9897,11 @@ pub enum CompletionDocumentation {
     MultiLinePlainText(SharedString),
     /// Markdown documentation.
     MultiLineMarkdown(SharedString),
+    /// Both single line and multiple lines of plain text documentation.
+    SingleLineAndMultiLinePlainText {
+        single_line: SharedString,
+        plain_text: Option<SharedString>,
+    },
 }
 
 impl From<lsp::Documentation> for CompletionDocumentation {
