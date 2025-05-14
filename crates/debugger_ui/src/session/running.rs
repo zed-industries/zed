@@ -43,11 +43,10 @@ use task::{
 };
 use terminal_view::TerminalView;
 use ui::{
-    ActiveTheme, AnyElement, App, ButtonCommon as _, Clickable as _, Context, ContextMenu,
-    Disableable, DropdownMenu, FluentBuilder, IconButton, IconName, IconSize, InteractiveElement,
-    IntoElement, Label, LabelCommon as _, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, Tab, Tooltip, VisibleOnHover, VisualContext, Window, div,
-    h_flex, v_flex,
+    ActiveTheme, AnyElement, App, ButtonCommon as _, Clickable as _, Context, FluentBuilder,
+    IconButton, IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon as _,
+    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Tab, Tooltip,
+    VisibleOnHover, VisualContext, Window, div, h_flex, v_flex,
 };
 use util::ResultExt;
 use variable_list::VariableList;
@@ -521,7 +520,7 @@ impl Focusable for DebugTerminal {
 }
 
 impl RunningState {
-    pub fn new(
+    pub(crate) fn new(
         session: Entity<Session>,
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,

@@ -31,7 +31,7 @@ use settings::Settings;
 use std::any::TypeId;
 use std::sync::Arc;
 use task::{DebugScenario, TaskContext};
-use ui::{ContextMenu, Divider, DropdownMenu, Tooltip, prelude::*};
+use ui::{ContextMenu, Divider, Tooltip, prelude::*};
 use workspace::SplitDirection;
 use workspace::{
     Pane, Workspace,
@@ -550,7 +550,6 @@ impl DebugPanel {
         let focus_handle = self.focus_handle.clone();
         let is_side = self.position(window, cx).axis() == gpui::Axis::Horizontal;
         let div = if is_side { v_flex() } else { h_flex() };
-        let running_state = self.running_state(cx).clone();
 
         let new_session_button = || {
             IconButton::new("debug-new-session", IconName::Plus)
