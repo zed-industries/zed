@@ -7,6 +7,7 @@ pub mod settings;
 use core::fmt;
 
 use wit::*;
+pub use wit::{DebugAdapterBinary, DebugTaskDefinition};
 
 pub use serde_json;
 
