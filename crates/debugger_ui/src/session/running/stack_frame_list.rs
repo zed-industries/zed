@@ -233,24 +233,25 @@ impl StackFrameList {
                 StackFrameEntry::Collapsed(stack_frames) => stack_frames.as_slice(),
             })
             .find(|stack_frame| stack_frame.id == stack_frame_id)
+            .cloned()
         else {
             return Task::ready(Err(anyhow!("No stack frame for ID")));
         };
-        self.opened_stack_frame_id = Some(stack_frame_id);
-        let Some(abs_path) = Self::abs_path_from_stack_frame(stack_frame) else {
-            return Task::ready(Err(anyhow!("Project path not found")));
-        };
-        let row = stack_frame.line.saturating_sub(1) as u32;
-        Self::go_to_stack_frame_inner(stack_frame.id, abs_path, row, window, cx)
+        self.go_to_stack_frame_inner(stack_frame, window, cx)
     }
 
     fn go_to_stack_frame_inner(
-        stack_frame_id: StackFrameId,
-        abs_path: Arc<Path>,
-        row: u32,
+        &mut self,
+        stack_frame: dap::StackFrame,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        let stack_frame_id = stack_frame.id;
+        self.opened_stack_frame_id = Some(stack_frame_id);
+        let Some(abs_path) = Self::abs_path_from_stack_frame(&stack_frame) else {
+            return Task::ready(Err(anyhow!("Project path not found")));
+        };
+        let row = stack_frame.line.saturating_sub(1) as u32;
         cx.emit(StackFrameListEvent::SelectedStackFrameChanged(
             stack_frame_id,
         ));
@@ -334,25 +335,6 @@ impl StackFrameList {
                 })
             })?
         })
-    }
-
-    fn open_stack_frame_entry(
-        &mut self,
-        ix: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let Some(StackFrameEntry::Normal(stack_frame)) = self.entries.get(ix) else {
-            return Task::ready(Ok(()));
-        };
-        self.opened_stack_frame_id = Some(stack_frame.id);
-        let row = (stack_frame.line.saturating_sub(1)) as u32;
-
-        let Some(abs_path) = Self::abs_path_from_stack_frame(&stack_frame) else {
-            return Task::ready(Err(anyhow!("Project path not found")));
-        };
-
-        Self::go_to_stack_frame_inner(stack_frame.id, abs_path, row, window, cx)
     }
 
     pub(crate) fn abs_path_from_stack_frame(stack_frame: &dap::StackFrame) -> Option<Arc<Path>> {
@@ -642,7 +624,11 @@ impl StackFrameList {
             return;
         };
         match entry {
-            StackFrameEntry::Normal(_) => self.open_stack_frame_entry(ix, window, cx).detach(),
+            StackFrameEntry::Normal(stack_frame) => {
+                let stack_frame = stack_frame.clone();
+                self.go_to_stack_frame_inner(stack_frame, window, cx)
+                    .detach_and_log_err(cx)
+            }
             StackFrameEntry::Collapsed(_) => self.expand_collapsed_entry(ix),
         }
         cx.notify();
