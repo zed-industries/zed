@@ -119,7 +119,7 @@ impl Render for RunningState {
 
 pub(crate) struct SubView {
     inner: AnyView,
-    pane_focus_handle: FocusHandle,
+    item_focus_handle: FocusHandle,
     kind: DebuggerPaneItem,
     show_indicator: Box<dyn Fn(&App) -> bool>,
     hovered: bool,
@@ -127,7 +127,7 @@ pub(crate) struct SubView {
 
 impl SubView {
     pub(crate) fn new(
-        pane_focus_handle: FocusHandle,
+        item_focus_handle: FocusHandle,
         view: AnyView,
         kind: DebuggerPaneItem,
         show_indicator: Option<Box<dyn Fn(&App) -> bool>>,
@@ -136,7 +136,7 @@ impl SubView {
         cx.new(|_| Self {
             kind,
             inner: view,
-            pane_focus_handle,
+            item_focus_handle,
             show_indicator: show_indicator.unwrap_or(Box::new(|_| false)),
             hovered: false,
         })
@@ -148,7 +148,7 @@ impl SubView {
 }
 impl Focusable for SubView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.pane_focus_handle.clone()
+        self.item_focus_handle.clone()
     }
 }
 impl EventEmitter<()> for SubView {}
@@ -199,7 +199,7 @@ impl Render for SubView {
             .size_full()
             // Add border unconditionally to prevent layout shifts on focus changes.
             .border_1()
-            .when(self.pane_focus_handle.contains_focused(window, cx), |el| {
+            .when(self.item_focus_handle.contains_focused(window, cx), |el| {
                 el.border_color(cx.theme().colors().pane_focused_border)
             })
             .child(self.inner.clone())
@@ -1202,7 +1202,9 @@ impl RunningState {
             .as_ref()
             .and_then(|pane| self.panes.find_pane_in_direction(pane, direction, cx))
         {
-            window.focus(&pane.focus_handle(cx));
+            pane.update(cx, |pane, cx| {
+                pane.focus_active_item(window, cx);
+            })
         } else {
             self.workspace
                 .update(cx, |workspace, cx| {
@@ -1236,8 +1238,7 @@ impl RunningState {
         self.stack_frame_list.read(cx).selected_stack_frame_id()
     }
 
-    #[cfg(test)]
-    pub fn stack_frame_list(&self) -> &Entity<StackFrameList> {
+    pub(crate) fn stack_frame_list(&self) -> &Entity<StackFrameList> {
         &self.stack_frame_list
     }
 

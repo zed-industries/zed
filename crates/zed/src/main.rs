@@ -294,6 +294,11 @@ fn main() {
         fs.clone(),
         paths::settings_file().clone(),
     );
+    let global_settings_file_rx = watch_config_file(
+        &app.background_executor(),
+        fs.clone(),
+        paths::global_settings_file().clone(),
+    );
     let user_keymap_file_rx = watch_config_file(
         &app.background_executor(),
         fs.clone(),
@@ -309,6 +314,8 @@ fn main() {
                 shell_env_loaded_tx.send(()).ok();
             })
             .detach()
+    } else {
+        drop(shell_env_loaded_tx)
     }
 
     app.on_open_urls({
@@ -338,7 +345,12 @@ fn main() {
         }
         settings::init(cx);
         zlog_settings::init(cx);
-        handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
+        handle_settings_file_changes(
+            user_settings_file_rx,
+            global_settings_file_rx,
+            cx,
+            handle_settings_changed,
+        );
         handle_keymap_file_changes(user_keymap_file_rx, cx);
         client::init_settings(cx);
         let user_agent = format!(

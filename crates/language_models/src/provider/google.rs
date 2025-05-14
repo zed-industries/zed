@@ -313,6 +313,10 @@ impl LanguageModel for GoogleLanguageModel {
         true
     }
 
+    fn supports_images(&self) -> bool {
+        true
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto
@@ -394,43 +398,68 @@ pub fn into_google(
     fn map_content(content: Vec<MessageContent>) -> Vec<Part> {
         content
             .into_iter()
-            .filter_map(|content| match content {
+            .flat_map(|content| match content {
                 language_model::MessageContent::Text(text)
                 | language_model::MessageContent::Thinking { text, .. } => {
                     if !text.is_empty() {
-                        Some(Part::TextPart(google_ai::TextPart { text }))
+                        vec![Part::TextPart(google_ai::TextPart { text })]
                     } else {
-                        None
+                        vec![]
                     }
                 }
-                language_model::MessageContent::RedactedThinking(_) => None,
+                language_model::MessageContent::RedactedThinking(_) => vec![],
                 language_model::MessageContent::Image(image) => {
-                    Some(Part::InlineDataPart(google_ai::InlineDataPart {
+                    vec![Part::InlineDataPart(google_ai::InlineDataPart {
                         inline_data: google_ai::GenerativeContentBlob {
                             mime_type: "image/png".to_string(),
                             data: image.source.to_string(),
                         },
-                    }))
+                    })]
                 }
                 language_model::MessageContent::ToolUse(tool_use) => {
-                    Some(Part::FunctionCallPart(google_ai::FunctionCallPart {
+                    vec![Part::FunctionCallPart(google_ai::FunctionCallPart {
                         function_call: google_ai::FunctionCall {
                             name: tool_use.name.to_string(),
                             args: tool_use.input,
                         },
-                    }))
+                    })]
                 }
-                language_model::MessageContent::ToolResult(tool_result) => Some(
-                    Part::FunctionResponsePart(google_ai::FunctionResponsePart {
-                        function_response: google_ai::FunctionResponse {
-                            name: tool_result.tool_name.to_string(),
-                            // The API expects a valid JSON object
-                            response: serde_json::json!({
-                                "output": tool_result.content
-                            }),
-                        },
-                    }),
-                ),
+                language_model::MessageContent::ToolResult(tool_result) => {
+                    match tool_result.content {
+                        language_model::LanguageModelToolResultContent::Text(txt) => {
+                            vec![Part::FunctionResponsePart(
+                                google_ai::FunctionResponsePart {
+                                    function_response: google_ai::FunctionResponse {
+                                        name: tool_result.tool_name.to_string(),
+                                        // The API expects a valid JSON object
+                                        response: serde_json::json!({
+                                            "output": txt
+                                        }),
+                                    },
+                                },
+                            )]
+                        }
+                        language_model::LanguageModelToolResultContent::Image(image) => {
+                            vec![
+                                Part::FunctionResponsePart(google_ai::FunctionResponsePart {
+                                    function_response: google_ai::FunctionResponse {
+                                        name: tool_result.tool_name.to_string(),
+                                        // The API expects a valid JSON object
+                                        response: serde_json::json!({
+                                            "output": "Tool responded with an image"
+                                        }),
+                                    },
+                                }),
+                                Part::InlineDataPart(google_ai::InlineDataPart {
+                                    inline_data: google_ai::GenerativeContentBlob {
+                                        mime_type: "image/png".to_string(),
+                                        data: image.source.to_string(),
+                                    },
+                                }),
+                            ]
+                        }
+                    }
+                }
             })
             .collect()
     }

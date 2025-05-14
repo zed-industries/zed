@@ -3309,6 +3309,7 @@ dependencies = [
  "http_client",
  "indoc",
  "inline_completion",
+ "itertools 0.14.0",
  "language",
  "log",
  "lsp",
@@ -3318,11 +3319,9 @@ dependencies = [
  "paths",
  "project",
  "rpc",
- "schemars",
  "serde",
  "serde_json",
  "settings",
- "strum 0.27.1",
  "task",
  "theme",
  "ui",
@@ -4136,6 +4135,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "debug_adapter_extension"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "dap",
+ "extension",
+ "gpui",
+ "workspace-hack",
+]
+
+[[package]]
 name = "debugger_tools"
 version = "0.1.0"
 dependencies = [
@@ -4168,6 +4179,7 @@ dependencies = [
  "editor",
  "env_logger 0.11.8",
  "feature_flags",
+ "file_icons",
  "futures 0.3.31",
  "fuzzy",
  "gpui",
@@ -4183,6 +4195,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "shlex",
  "sysinfo",
  "task",
  "tasks_ui",
@@ -5038,6 +5051,7 @@ dependencies = [
  "async-tar",
  "async-trait",
  "collections",
+ "dap",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -5050,6 +5064,7 @@ dependencies = [
  "semantic_version",
  "serde",
  "serde_json",
+ "task",
  "toml 0.8.20",
  "util",
  "wasm-encoder 0.221.3",
@@ -5093,6 +5108,7 @@ dependencies = [
  "client",
  "collections",
  "ctor",
+ "dap",
  "env_logger 0.11.8",
  "extension",
  "fs",
@@ -7225,7 +7241,6 @@ dependencies = [
  "lsp",
  "paths",
  "project",
- "proto",
  "regex",
  "serde_json",
  "settings",
@@ -7233,7 +7248,6 @@ dependencies = [
  "telemetry",
  "theme",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
  "zed_actions",
@@ -10039,7 +10053,7 @@ name = "perplexity"
 version = "0.1.0"
 dependencies = [
  "serde",
- "zed_extension_api 0.5.0",
+ "zed_extension_api 0.6.0",
 ]
 
 [[package]]
@@ -18019,7 +18033,6 @@ dependencies = [
  "aho-corasick",
  "anstream",
  "arrayvec",
- "async-compression",
  "async-std",
  "async-tungstenite",
  "aws-config",
@@ -18697,7 +18710,7 @@ dependencies = [
 
 [[package]]
 name = "zed_extension_api"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -18757,7 +18770,7 @@ dependencies = [
 name = "zed_test_extension"
 version = "0.1.0"
 dependencies = [
- "zed_extension_api 0.5.0",
+ "zed_extension_api 0.6.0",
 ]
 
 [[package]]

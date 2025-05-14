@@ -711,9 +711,9 @@ fn print_report(
         .values()
         .flat_map(|results| {
             results.iter().map(|(example, _)| {
-                let absolute_path = example.run_directory.join("last.messages.json");
-                pathdiff::diff_paths(&absolute_path, run_dir)
-                    .unwrap_or_else(|| absolute_path.clone())
+                let absolute_path = run_dir.join(example.run_directory.join("last.messages.json"));
+                let cwd = std::env::current_dir().expect("Can't get current dir");
+                pathdiff::diff_paths(&absolute_path, cwd).unwrap_or_else(|| absolute_path.clone())
             })
         })
         .collect::<Vec<_>>();

@@ -5,23 +5,24 @@ use std::time::Duration;
 use anyhow::{Result, anyhow};
 use dap::StackFrameId;
 use gpui::{
-    AnyElement, Entity, EventEmitter, FocusHandle, Focusable, ListState, MouseButton,
-    ScrollStrategy, Stateful, Subscription, Task, UniformListScrollHandle, WeakEntity,
-    uniform_list,
+    AnyElement, Entity, EventEmitter, FocusHandle, Focusable, MouseButton, ScrollStrategy,
+    Stateful, Subscription, Task, UniformListScrollHandle, WeakEntity, uniform_list,
 };
 
+use crate::StackTraceView;
 use language::PointUtf16;
 use project::debugger::breakpoint_store::ActiveStackFrame;
 use project::debugger::session::{Session, SessionEvent, StackFrame};
 use project::{ProjectItem, ProjectPath};
 use ui::{Scrollbar, ScrollbarState, Tooltip, prelude::*};
-use workspace::Workspace;
+use workspace::{ItemHandle, Workspace};
 
 use super::RunningState;
 
 #[derive(Debug)]
 pub enum StackFrameListEvent {
     SelectedStackFrameChanged(StackFrameId),
+    BuiltEntries,
 }
 
 pub struct StackFrameList {
@@ -87,13 +88,18 @@ impl StackFrameList {
         &self.entries
     }
 
-    #[cfg(test)]
-    pub(crate) fn flatten_entries(&self) -> Vec<dap::StackFrame> {
+    pub(crate) fn flatten_entries(&self, show_collapsed: bool) -> Vec<dap::StackFrame> {
         self.entries
             .iter()
             .flat_map(|frame| match frame {
                 StackFrameEntry::Normal(frame) => vec![frame.clone()],
-                StackFrameEntry::Collapsed(frames) => frames.clone(),
+                StackFrameEntry::Collapsed(frames) => {
+                    if show_collapsed {
+                        frames.clone()
+                    } else {
+                        vec![]
+                    }
+                }
             })
             .collect::<Vec<_>>()
     }
@@ -123,6 +129,23 @@ impl StackFrameList {
             Some(StackFrameEntry::Normal(frame)) => Some(frame.id),
             _ => None,
         })
+    }
+
+    pub(crate) fn select_stack_frame_id(
+        &mut self,
+        id: StackFrameId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ix = self.entries.iter().position(|entry| match entry {
+            StackFrameEntry::Normal(frame) => frame.id == id,
+            StackFrameEntry::Collapsed(frames) => frames.iter().any(|frame| frame.id == id),
+        });
+
+        if let Some(ix) = ix {
+            self.select_ix(ix, cx);
+            self.go_to_selected_stack_frame(window, cx).detach();
+        }
     }
 
     pub(super) fn schedule_refresh(
@@ -196,6 +219,7 @@ impl StackFrameList {
                 .detach();
         }
 
+        cx.emit(StackFrameListEvent::BuiltEntries);
         cx.notify();
     }
 
@@ -228,8 +252,8 @@ impl StackFrameList {
     ) -> Task<Result<()>> {
         let row = (stack_frame.line.saturating_sub(1)) as u32;
 
-        let Some(abs_path) = self.abs_path_from_stack_frame(&stack_frame) else {
-            return Task::ready(Ok(()));
+        let Some(abs_path) = Self::abs_path_from_stack_frame(&stack_frame) else {
+            return Task::ready(Err(anyhow!("Project path not found")));
         };
 
         let stack_frame_id = stack_frame.id;
@@ -267,12 +291,22 @@ impl StackFrameList {
                     let project_path = buffer.read(cx).project_path(cx).ok_or_else(|| {
                         anyhow!("Could not select a stack frame for unnamed buffer")
                     })?;
+
+                    let open_preview = !workspace
+                        .item_of_type::<StackTraceView>(cx)
+                        .map(|viewer| {
+                            workspace
+                                .active_item(cx)
+                                .is_some_and(|item| item.item_id() == viewer.item_id())
+                        })
+                        .unwrap_or_default();
+
                     anyhow::Ok(workspace.open_path_preview(
                         project_path,
                         None,
-                        false,
                         true,
                         true,
+                        open_preview,
                         window,
                         cx,
                     ))
@@ -305,7 +339,7 @@ impl StackFrameList {
         })
     }
 
-    fn abs_path_from_stack_frame(&self, stack_frame: &dap::StackFrame) -> Option<Arc<Path>> {
+    pub(crate) fn abs_path_from_stack_frame(stack_frame: &dap::StackFrame) -> Option<Arc<Path>> {
         stack_frame.source.as_ref().and_then(|s| {
             s.path
                 .as_deref()

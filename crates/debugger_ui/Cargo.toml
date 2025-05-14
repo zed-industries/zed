@@ -36,6 +36,7 @@ dap_adapters = { workspace = true, optional = true }
 db.workspace = true
 editor.workspace = true
 feature_flags.workspace = true
+file_icons.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
@@ -51,6 +52,7 @@ rpc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+shlex.workspace = true
 sysinfo.workspace = true
 task.workspace = true
 tasks_ui.workspace = true
