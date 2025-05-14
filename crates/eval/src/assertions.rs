@@ -28,6 +28,17 @@ impl AssertionsReport {
         }
     }
 
+    pub fn error(msg: String) -> Self {
+        let assert = RanAssertion {
+            id: "no-unhandled-errors".into(),
+            result: Err(msg),
+        };
+        AssertionsReport {
+            ran: vec![assert],
+            max: Some(1),
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.ran.is_empty()
     }
