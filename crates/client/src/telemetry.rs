@@ -365,7 +365,7 @@ impl Telemetry {
             telemetry::event!(
                 "Editor Edited",
                 duration = duration,
-                environment = environment.to_string(),
+                environment = environment,
                 is_via_ssh = is_via_ssh
             );
         }
