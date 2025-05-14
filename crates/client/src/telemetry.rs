@@ -427,9 +427,8 @@ impl Telemetry {
 
         if state.flush_events_task.is_none() {
             let this = self.clone();
-            let executor = self.executor.clone();
             state.flush_events_task = Some(self.executor.spawn(async move {
-                executor.timer(FLUSH_INTERVAL).await;
+                this.executor.timer(FLUSH_INTERVAL).await;
                 this.flush_events().detach();
             }));
         }
@@ -478,14 +477,10 @@ impl Telemetry {
 
     fn build_request(
         self: &Arc<Self>,
-        // We take in the JSON bytes buffer so we can reuse the existing allocation.
-        mut json_bytes: Vec<u8>,
-        event_request: EventRequestBody,
+        event_request: &EventRequestBody,
     ) -> Result<Request<AsyncBody>> {
-        json_bytes.clear();
-        serde_json::to_writer(&mut json_bytes, &event_request)?;
-
-        let checksum = calculate_json_checksum(&json_bytes).unwrap_or("".to_string());
+        let json_bytes = serde_json::to_vec(event_request)?;
+        let checksum = calculate_json_checksum(&json_bytes).unwrap_or_default();
 
         Ok(Request::builder()
             .method(Method::POST)
@@ -512,13 +507,9 @@ impl Telemetry {
         let this = self.clone();
         self.executor.spawn(
             async move {
-                let mut json_bytes = Vec::new();
-
                 if let Some(file) = &mut this.state.lock().log_file {
                     for event in &mut events {
-                        json_bytes.clear();
-                        serde_json::to_writer(&mut json_bytes, event)?;
-                        file.write_all(&json_bytes)?;
+                        serde_json::to_writer(&mut *file, event)?;
                         file.write_all(b"\n")?;
                     }
                 }
@@ -542,7 +533,7 @@ impl Telemetry {
                     }
                 };
 
-                let request = this.build_request(json_bytes, request_body)?;
+                let request = this.build_request(&request_body)?;
                 let response = this.http_client.send(request).await?;
                 if response.status() != 200 {
                     log::error!("Failed to send events: HTTP {:?}", response.status());
