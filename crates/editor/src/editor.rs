@@ -3413,6 +3413,11 @@ impl Editor {
     pub fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
         self.selection_mark_mode = false;
 
+        if self.dragging {
+            self.reset_drag_selection();
+            return;
+        }
+
         if self.clear_expanded_diff_hunks(cx) {
             cx.notify();
             return;

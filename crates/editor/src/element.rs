@@ -844,11 +844,11 @@ impl EditorElement {
                 if editor.dragging && text_hitbox.is_hovered(window) {
                     let is_cut = !event.modifiers.control;
                     editor.drop_selection(*display_point, is_cut, window, cx);
+                    cx.stop_propagation();
                 } else {
                     editor.cancel_dragging();
                 }
             }
-            cx.stop_propagation();
             return;
         } else {
             editor.select(SelectPhase::End, window, cx);
