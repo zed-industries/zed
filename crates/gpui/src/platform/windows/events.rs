@@ -84,7 +84,7 @@ pub(crate) fn handle_msg(
         WM_MOUSEWHEEL => handle_mouse_wheel_msg(handle, wparam, lparam, state_ptr),
         WM_MOUSEHWHEEL => handle_mouse_horizontal_wheel_msg(handle, wparam, lparam, state_ptr),
         WM_SYSKEYDOWN => handle_syskeydown_msg(wparam, lparam, state_ptr),
-        WM_SYSKEYUP => handle_syskeyup_msg(wparam, state_ptr),
+        WM_SYSKEYUP => handle_syskeyup_msg(wparam, lparam, state_ptr),
         WM_SYSCOMMAND => handle_system_command(wparam, state_ptr),
         WM_KEYDOWN => handle_keydown_msg(wparam, lparam, state_ptr),
         WM_KEYUP => handle_keyup_msg(wparam, lparam, state_ptr),
@@ -344,23 +344,12 @@ fn handle_syskeydown_msg(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
-    let vkey = wparam.loword();
-    let input = if is_modifier(VIRTUAL_KEY(vkey)) {
-        let modifiers = current_modifiers();
-        if let Some(prev_modifiers) = lock.last_reported_modifiers {
-            if prev_modifiers == modifiers {
-                return Some(0);
-            }
-        }
-        lock.last_reported_modifiers = Some(modifiers);
-        PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers })
-    } else {
-        let keystroke = parse_syskeydown_msg_keystroke(wparam)?;
+    let input = handle_key_event(wparam, lparam, &mut lock, |keystroke| {
         PlatformInput::KeyDown(KeyDownEvent {
             keystroke,
             is_held: lparam.0 & (0x1 << 30) > 0,
         })
-    };
+    })?;
     println!("\nsys key down: {:#?}", input);
     let mut func = lock.callbacks.input.take()?;
     drop(lock);
@@ -377,35 +366,23 @@ fn handle_syskeydown_msg(
     result
 }
 
-fn handle_syskeyup_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+fn handle_syskeyup_msg(
+    wparam: WPARAM,
+    lparam: LPARAM,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
-    let vkey = wparam.loword();
-    let input = if is_modifier(VIRTUAL_KEY(vkey)) {
-        let modifiers = current_modifiers();
-        if let Some(prev_modifiers) = lock.last_reported_modifiers {
-            if prev_modifiers == modifiers {
-                return Some(0);
-            }
-        }
-        lock.last_reported_modifiers = Some(modifiers);
-        PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers })
-    } else {
-        let keystroke = parse_syskeydown_msg_keystroke(wparam)?;
+    let input = handle_key_event(wparam, lparam, &mut lock, |keystroke| {
         PlatformInput::KeyUp(KeyUpEvent { keystroke })
-    };
+    })?;
     println!("\nsys key up: {:#?}", input);
     let mut func = lock.callbacks.input.take()?;
     drop(lock);
-    let result = if !func(input).propagate {
-        Some(0)
-    } else {
-        // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
-        // shortcuts.
-        None
-    };
+    func(input);
     state_ptr.state.borrow_mut().callbacks.input = Some(func);
 
-    result
+    // Always return 0 to indicate that the message was handled, so we could properly handle `ModifiersChanged` event.
+    Some(0)
 }
 
 fn handle_keydown_msg(
@@ -1451,7 +1428,6 @@ where
             None
         }
         VK_SHIFT | VK_CONTROL | VK_MENU | VK_LWIN | VK_RWIN => {
-            println!("Last reported modifiers: {:?}, {:?}", state.last_reported_modifiers, modifiers);
             if state
                 .last_reported_modifiers
                 .is_some_and(|prev_modifiers| prev_modifiers == modifiers)
