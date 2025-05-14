@@ -1271,7 +1271,9 @@ impl Session {
                 self.output_token.0 += 1;
                 cx.notify();
             }
-            Events::Breakpoint(_) => {}
+            Events::Breakpoint(event) => self.breakpoint_store.update(cx, |store, _| {
+                store.update_session_breakpoint(self.session_id(), event.reason, event.breakpoint);
+            }),
             Events::Module(event) => {
                 match event.reason {
                     dap::ModuleEventReason::New => {

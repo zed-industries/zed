@@ -325,6 +325,38 @@ impl BreakpointStore {
         }
     }
 
+    pub(crate) fn update_session_breakpoint(
+        &mut self,
+        session_id: SessionId,
+        _: dap::BreakpointEventReason,
+        breakpoint: dap::Breakpoint,
+    ) {
+        maybe!({
+            let event_id = breakpoint.id?;
+
+            let state = self
+                .breakpoints
+                .values_mut()
+                .find_map(|breakpoints_in_file| {
+                    breakpoints_in_file
+                        .breakpoints
+                        .iter_mut()
+                        .find_map(|state| {
+                            let state = state.session_state.get_mut(&session_id)?;
+
+                            if state.id == event_id {
+                                Some(state)
+                            } else {
+                                None
+                            }
+                        })
+                })?;
+
+            state.verified = breakpoint.verified;
+            Some(())
+        });
+    }
+
     pub(super) fn mark_breakpoints_verified(
         &mut self,
         session_id: SessionId,
