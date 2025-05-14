@@ -538,7 +538,6 @@
       "ctrl-alt-b": "workspace::ToggleRightDock",
       "ctrl-b": "workspace::ToggleLeftDock",
       "ctrl-j": "workspace::ToggleBottomDock",
-      "ctrl-w": "workspace::CloseActiveDock",
       "ctrl-alt-y": "workspace::CloseAllDocks",
       "shift-find": "pane::DeploySearch",
       "ctrl-shift-f": "pane::DeploySearch",
@@ -580,6 +579,13 @@
       // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
       // or by tag:
       // "foo-bar": ["task::Spawn", { "task_tag": "MyTag" }],
+    }
+  },
+  {
+    "context": "Workspace && !Pane",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-w": "workspace::CloseActiveDock"
     }
   },
   {
