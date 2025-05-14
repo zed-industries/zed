@@ -6479,27 +6479,30 @@ impl LspStore {
         let Some(local) = self.as_local_mut() else {
             return;
         };
-        let worktree_id = worktree.read(cx).id();
-        let path = ProjectPath {
-            worktree_id,
-            path: Arc::from("".as_ref()),
-        };
-        let delegate = LocalLspAdapterDelegate::from_local_lsp(local, &worktree, cx);
-        local.lsp_tree.update(cx, |language_server_tree, cx| {
-            for node in language_server_tree.get(
-                path,
-                AdapterQuery::Adapter(&language_server_name),
-                delegate,
-                cx,
-            ) {
-                // TODO kb unfixed
-                node.server_id_or_init(|disposition| {
-                    assert_eq!(disposition.server_name, &language_server_name);
 
-                    language_server_id
-                });
-            }
-        });
+        let worktree_id = worktree.read(cx).id();
+        if worktree.read(cx).is_visible() {
+            let path = ProjectPath {
+                worktree_id,
+                path: Arc::from("".as_ref()),
+            };
+            let delegate = LocalLspAdapterDelegate::from_local_lsp(local, &worktree, cx);
+            local.lsp_tree.update(cx, |language_server_tree, cx| {
+                for node in language_server_tree.get(
+                    path,
+                    AdapterQuery::Adapter(&language_server_name),
+                    delegate,
+                    cx,
+                ) {
+                    node.server_id_or_init(|disposition| {
+                        assert_eq!(disposition.server_name, &language_server_name);
+
+                        language_server_id
+                    });
+                }
+            });
+        }
+
         local
             .language_server_ids
             .entry((worktree_id, language_server_name))
