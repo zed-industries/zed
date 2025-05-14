@@ -33,9 +33,6 @@ use std::pin::Pin;
 const PROVIDER_ID: &str = "mistral";
 const PROVIDER_NAME: &str = "Mistral";
 
-const FINISH_REASON_STOP: &str = "stop";
-const FINISH_REASON_TOOL_CALLS: &str = "tool_calls";
-
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct MistralSettings {
     pub api_url: String,
@@ -147,15 +144,11 @@ impl State {
         let settings = &AllLanguageModelSettings::get_global(cx).mistral;
         let http_client = self.http_client.clone();
         let api_url = settings.api_url.clone();
-        let api_key_result = self
-            .api_key
-            .clone()
-            .ok_or_else(|| anyhow!("API key not set. Please authenticate before fetching models."));
+        let Some(api_key) = self.api_key.clone() else {
+            return Task::ready(Err(anyhow!("Mistral API key not set.")));
+        };
 
-        // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(async move |this, cx| {
-            let api_key = api_key_result?;
-            // This now uses the optimized get_models function that performs parallel API requests
             let models = mistral::fetch_models(http_client.as_ref(), &api_url, &api_key).await?;
 
             this.update(cx, |this, cx| {
@@ -180,7 +173,6 @@ impl MistralLanguageModelProvider {
             models: None,
             fetch_models_task: None,
             _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
-                // Restart the fetch_models task when settings change
                 this.restart_fetch_models_task(cx);
                 cx.notify();
             }),
@@ -253,7 +245,6 @@ impl LanguageModelProvider for MistralLanguageModelProvider {
             );
         }
 
-        // Add custom models defined in settings
         for model_info in &AllLanguageModelSettings::get_global(cx)
             .mistral
             .available_models
@@ -363,9 +354,8 @@ impl LanguageModel for MistralLanguageModel {
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
-            LanguageModelToolChoice::Auto => true,
+            LanguageModelToolChoice::Auto | LanguageModelToolChoice::None => true,
             LanguageModelToolChoice::Any => false,
-            LanguageModelToolChoice::None => false,
         }
     }
 
@@ -523,7 +513,6 @@ pub fn into_mistral(
         } else {
             None
         },
-        // Convert tools to Mistral format
         tools: request
             .tools
             .into_iter()
@@ -599,11 +588,10 @@ impl MistralEventMapper {
 
         if let Some(finish_reason) = choice.finish_reason.as_deref() {
             match finish_reason {
-                FINISH_REASON_STOP => {
+                "stop" => {
                     events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
                 }
-                FINISH_REASON_TOOL_CALLS => {
-                    // Process tool calls and add events for each one
+                "tool_calls" => {
                     events.extend(self.process_tool_calls());
                     events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
                 }
@@ -622,9 +610,7 @@ impl MistralEventMapper {
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
         let mut results = Vec::new();
 
-        // Use drain to process and remove all tool calls
         for (_, tool_call) in self.tool_calls_by_index.drain() {
-            // Validate the tool call has required fields
             if tool_call.id.is_empty() || tool_call.name.is_empty() {
                 results.push(Err(LanguageModelCompletionError::Other(anyhow!(
                     "Received incomplete tool call: missing id or name"

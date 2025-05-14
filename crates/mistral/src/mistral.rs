@@ -162,15 +162,6 @@ impl Model {
     pub fn supports_parallel_tool_calls(&self) -> bool {
         false
     }
-
-    pub fn from_id(id: &str) -> Result<Self> {
-        // This is a fallback for when we can't fetch models
-        match id {
-            "codestral-latest" => Ok(Self::default()),
-            "mistral-small-latest" => Ok(Self::default_fast()),
-            _ => Err(anyhow!("Invalid model ID: {}", id)),
-        }
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -234,13 +225,9 @@ pub enum Prediction {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolChoice {
-    #[serde(rename = "auto")]
     Auto,
-    #[serde(rename = "required")]
     Required,
-    #[serde(rename = "none")]
     None,
-    #[serde(rename = "any")]
     Any,
     Function(ToolDefinition),
 }
@@ -422,7 +409,6 @@ pub async fn fetch_models(
         let body_str = std::str::from_utf8(&body)?;
         let model_response: ModelResponse = serde_json::from_str(body_str)?;
 
-        // Filter models that support chat completion and convert ModelData to Model
         let models = model_response
             .data
             .into_iter()
@@ -442,7 +428,7 @@ pub async fn fetch_models(
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
         Err(anyhow!(
-            "Failed to fetch models: {} {}",
+            "Failed to fetch mistral models: {} {}",
             response.status(),
             body
         ))
@@ -816,7 +802,6 @@ mod tests {
 
         let json = serde_json::to_string(&request).unwrap();
 
-        // Check for key elements in the serialized JSON
         assert!(json.contains("\"model\":\"mistral-medium-latest\""));
         assert!(json.contains("\"stream\":true"));
         assert!(json.contains("\"max_tokens\":100"));
@@ -846,11 +831,9 @@ mod tests {
         assert!(json.contains("\"name\":\"get_weather\""));
         assert!(json.contains("\"arguments\":\"{\\\"location\\\":\\\"New York\\\"}\""));
 
-        // Test round-trip serialization/deserialization
         let deserialized: ToolCall = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.id, "call_12345");
 
-        // ToolCallContent is currently only Function, so we don't need if let
         let ToolCallContent::Function { function } = &deserialized.content;
         assert_eq!(function.name, "get_weather");
         assert_eq!(function.arguments, r#"{"location":"New York"}"#);
