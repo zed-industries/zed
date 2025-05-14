@@ -5161,6 +5161,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "language",
+ "log",
  "num-format",
  "picker",
  "project",
