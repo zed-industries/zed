@@ -473,7 +473,7 @@ impl TitleBar {
                 .label_size(LabelSize::Small)
                 .tooltip(Tooltip::text(format!(
                     "{} is sharing this project. Click to follow.",
-                    host_user.github_login.clone()
+                    host_user.github_login
                 )))
                 .on_click({
                     let host_peer_id = host.peer_id;
