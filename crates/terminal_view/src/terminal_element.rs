@@ -978,41 +978,24 @@ impl Element for TerminalElement {
                                     wavy: false,
                                 });
 
-                                match window.text_system().shape_line(
-                                    text_to_mark.clone().into(),
-                                    ime_style.font_size.to_pixels(window.rem_size()),
-                                    &[TextRun {
-                                        len: text_to_mark.len(),
-                                        font: ime_style.font(),
-                                        color: ime_style.color,
-                                        background_color: None,
-                                        underline: ime_style.underline,
-                                        strikethrough: None,
-                                    }],
-                                ) {
-                                    Ok(shaped_line) => {
-                                        shaped_line
-                                            .paint(
-                                                ime_position,
-                                                layout.dimensions.line_height,
-                                                window,
-                                                cx,
-                                            )
-                                            .log_err();
-                                        if log::log_enabled!(log::Level::Debug) {
-                                            log::debug!(
-                                                "Painted marked text '{}' at {:?}",
-                                                text_to_mark,
-                                                ime_position
-                                            );
-                                        }
-                                    }
-                                    Err(err) => {
-                                        log::error!("Failed to shape marked text: {}", err);
-                                    }
-                                }
-                            } else {
-                                log::warn!("Cannot draw marked text: cursor layout is None");
+                                let shaped_line = window
+                                    .text_system()
+                                    .shape_line(
+                                        text_to_mark.clone().into(),
+                                        ime_style.font_size.to_pixels(window.rem_size()),
+                                        &[TextRun {
+                                            len: text_to_mark.len(),
+                                            font: ime_style.font(),
+                                            color: ime_style.color,
+                                            background_color: None,
+                                            underline: ime_style.underline,
+                                            strikethrough: None,
+                                        }],
+                                    )
+                                    .unwrap();
+                                shaped_line
+                                    .paint(ime_position, layout.dimensions.line_height, window, cx)
+                                    .log_err();
                             }
                         }
                     }
@@ -1079,7 +1062,7 @@ impl InputHandler for TerminalInputHandler {
         _window: &mut Window,
         cx: &mut App,
     ) -> Option<std::ops::Range<usize>> {
-        self.terminal_view.read(cx).get_marked_range()
+        self.terminal_view.read(cx).marked_text_range()
     }
 
     fn text_for_range(
@@ -1141,23 +1124,9 @@ impl InputHandler for TerminalInputHandler {
         _window: &mut Window,
         cx: &mut App,
     ) -> Option<Bounds<Pixels>> {
-        let (term_bounds, _cursor_point, _display_offset) =
-            match self.terminal_view.read(cx).get_layout_info_for_ime(cx) {
-                Some(data) => data,
-                None => {
-                    log::error!("bounds_for_range: failed to get IME layout info");
-                    return None;
-                }
-            };
+        let term_bounds = self.terminal_view.read(cx).terminal_bounds(cx);
 
-        let mut bounds = match self.cursor_bounds {
-            Some(b) => b,
-            None => {
-                log::warn!("bounds_for_range: cursor_bounds is None");
-                return None;
-            }
-        };
-
+        let mut bounds = self.cursor_bounds?;
         let offset_x = term_bounds.cell_width * range_utf16.start as f32;
         bounds.origin.x += offset_x;
 

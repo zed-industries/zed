@@ -235,13 +235,12 @@ impl TerminalView {
     }
 
     /// Gets the current marked range (UTF-16).
-    pub(crate) fn get_marked_range(&self) -> Option<Range<usize>> {
+    pub(crate) fn marked_text_range(&self) -> Option<Range<usize>> {
         self.marked_range_utf16.clone()
     }
 
     /// Clears the marked (pre-edit) text state.
     pub(crate) fn clear_marked_text(&mut self, cx: &mut Context<Self>) {
-        log::debug!("TerminalView::clear_marked_text");
         if self.marked_text.is_some() {
             self.marked_text = None;
             self.marked_range_utf16 = None;
@@ -251,8 +250,6 @@ impl TerminalView {
 
     /// Commits (sends) the given text to the PTY. Called by InputHandler::replace_text_in_range.
     pub(crate) fn commit_text(&mut self, text: &str, cx: &mut Context<Self>) {
-        self.clear_marked_text(cx);
-
         if !text.is_empty() {
             self.terminal.update(cx, |term, _| {
                 term.input(text.to_string());
@@ -260,17 +257,8 @@ impl TerminalView {
         }
     }
 
-    /// Gets layout information needed for IME bounds calculation.
-    pub(crate) fn get_layout_info_for_ime(
-        &self,
-        cx: &App,
-    ) -> Option<(TerminalBounds, Point, usize)> {
-        let content = self.terminal.read(cx).last_content(); // read takes &App
-        Some((
-            content.terminal_bounds,
-            content.cursor.point,
-            content.display_offset,
-        ))
+    pub(crate) fn terminal_bounds(&self, cx: &App) -> TerminalBounds {
+        self.terminal.read(cx).last_content().terminal_bounds
     }
 
     pub fn entity(&self) -> &Entity<Terminal> {
