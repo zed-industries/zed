@@ -26,6 +26,10 @@ pub struct TitleBarSettings {
     ///
     /// Default: true
     pub show_project_items: bool,
+    /// Whether to show the sign in button in the title bar.
+    ///
+    /// Default: true
+    pub show_sign_in: bool,
 }
 
 impl Default for TitleBarSettings {
@@ -36,6 +40,7 @@ impl Default for TitleBarSettings {
             show_user_picture: true,
             show_branch_name: true,
             show_project_items: true,
+            show_sign_in: true,
         }
     }
 }
