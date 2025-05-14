@@ -479,10 +479,10 @@ impl Telemetry {
         self: &Arc<Self>,
         // We take in the JSON bytes buffer so we can reuse the existing allocation.
         mut json_bytes: Vec<u8>,
-        event_request: EventRequestBody,
+        event_request: &EventRequestBody,
     ) -> Result<Request<AsyncBody>> {
         json_bytes.clear();
-        serde_json::to_writer(&mut json_bytes, &event_request)?;
+        serde_json::to_writer(&mut json_bytes, event_request)?;
 
         let checksum = calculate_json_checksum(&json_bytes).unwrap_or("".to_string());
 
@@ -541,7 +541,7 @@ impl Telemetry {
                     }
                 };
 
-                let request = this.build_request(json_bytes, request_body)?;
+                let request = this.build_request(json_bytes, &request_body)?;
                 let response = this.http_client.send(request).await?;
                 if response.status() != 200 {
                     log::error!("Failed to send events: HTTP {:?}", response.status());
