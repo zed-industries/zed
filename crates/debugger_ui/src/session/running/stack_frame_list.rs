@@ -574,7 +574,7 @@ impl StackFrameList {
         &mut self,
         _: &menu::SelectPrevious,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         let ix = match self.selected_ix {
             _ if self.entries.len() == 0 => None,
@@ -589,13 +589,14 @@ impl StackFrameList {
         };
         self.selected_ix = ix;
         self.scroll_to_selected_ix();
+        cx.notify();
     }
 
     fn select_first(
         &mut self,
         _: &menu::SelectFirst,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         let ix = if self.entries.len() > 0 {
             Some(0)
@@ -604,9 +605,10 @@ impl StackFrameList {
         };
         self.selected_ix = ix;
         self.scroll_to_selected_ix();
+        cx.notify();
     }
 
-    fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, _cx: &mut Context<Self>) {
+    fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
         let ix = if self.entries.len() > 0 {
             Some(self.entries.len() - 1)
         } else {
@@ -614,6 +616,7 @@ impl StackFrameList {
         };
         self.selected_ix = ix;
         self.scroll_to_selected_ix();
+        cx.notify();
     }
 
     fn activate_selected_entry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
