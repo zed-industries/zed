@@ -1850,7 +1850,8 @@ impl ActiveThread {
                         .child(open_as_markdown),
                 )
                 .into_any_element(),
-            None => feedback_container
+            None if AssistantSettings::get_global(cx).enable_feedback =>
+                feedback_container
                 .child(
                     div().visible_on_hover("feedback_container").child(
                         Label::new(
@@ -1892,6 +1893,9 @@ impl ActiveThread {
                         )
                         .child(open_as_markdown),
                 )
+                .into_any_element(),
+            None => feedback_container
+                .child(h_flex().child(open_as_markdown))
                 .into_any_element(),
         };
 
