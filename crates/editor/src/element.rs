@@ -831,7 +831,7 @@ impl EditorElement {
                     editor.reset_drag_selection();
                     editor.select(
                         SelectPhase::Begin {
-                            position: display_point.clone(),
+                            position: *display_point,
                             add: false,
                             click_count: 1,
                         },
