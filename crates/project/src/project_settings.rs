@@ -118,22 +118,19 @@ pub enum DirenvSettings {
     Direct,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct DiagnosticsSettings {
     /// Whether to show the project diagnostics button in the status bar.
-    #[serde(default = "default_true")]
     pub button: bool,
 
     /// Whether or not to include warning diagnostics.
-    #[serde(default = "default_true")]
     pub include_warnings: bool,
 
     /// Settings for showing inline diagnostics.
-    #[serde(default)]
     pub inline: InlineDiagnosticsSettings,
 
     /// Configuration, related to Rust language diagnostics.
-    #[serde(default)]
     pub cargo: Option<CargoDiagnosticsSettings>,
 }
 
@@ -207,6 +204,17 @@ impl DiagnosticSeverity {
             DiagnosticSeverity::Warning => Some(lsp::DiagnosticSeverity::WARNING),
             DiagnosticSeverity::Info => Some(lsp::DiagnosticSeverity::INFORMATION),
             DiagnosticSeverity::Hint => Some(lsp::DiagnosticSeverity::HINT),
+        }
+    }
+}
+
+impl Default for DiagnosticsSettings {
+    fn default() -> Self {
+        Self {
+            button: true,
+            include_warnings: true,
+            inline: Default::default(),
+            cargo: Default::default(),
         }
     }
 }
