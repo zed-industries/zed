@@ -684,7 +684,7 @@ impl Render for DapLogView {
     }
 }
 
-actions!(dev, [OpenDebuggerAdapterLogs]);
+actions!(dev, [OpenDebugAdapterLogs]);
 
 pub fn init(cx: &mut App) {
     let log_store = cx.new(|cx| LogStore::new(cx));
@@ -702,7 +702,7 @@ pub fn init(cx: &mut App) {
         }
 
         let log_store = log_store.clone();
-        workspace.register_action(move |workspace, _: &OpenDebuggerAdapterLogs, window, cx| {
+        workspace.register_action(move |workspace, _: &OpenDebugAdapterLogs, window, cx| {
             let project = workspace.project().read(cx);
             if project.is_local() {
                 workspace.add_item_to_active_pane(
