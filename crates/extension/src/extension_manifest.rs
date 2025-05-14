@@ -304,6 +304,7 @@ mod tests {
             indexed_docs_providers: BTreeMap::default(),
             snippets: None,
             capabilities: vec![],
+            debug_adapters: Default::default(),
         }
     }
 
