@@ -684,7 +684,7 @@ impl Render for DapLogView {
     }
 }
 
-actions!(debug, [OpenDebuggerAdapterLogs]);
+actions!(dev, [OpenDebuggerAdapterLogs]);
 
 pub fn init(cx: &mut App) {
     let log_store = cx.new(|cx| LogStore::new(cx));
