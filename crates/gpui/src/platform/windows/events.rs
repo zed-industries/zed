@@ -1444,6 +1444,91 @@ fn parse_char_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
     }
 }
 
+fn handle_key_event<F>(wparam: WPARAM, lparam: LPARAM, f: F) -> Option<PlatformInput>
+where
+    F: FnOnce(Keystroke) -> PlatformInput,
+{
+    let virtual_key = VIRTUAL_KEY(wparam.loword());
+    let modifiers = current_modifiers();
+
+    match virtual_key {
+        VK_PROCESSKEY => {
+            // IME composition
+            None
+        }
+        VK_SHIFT | VK_CONTROL | VK_MENU | VK_LWIN | VK_RWIN => {
+            Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                modifiers,
+            }))
+        }
+        _ => {
+            let mut may_have_char = false;
+            let key = parse_immutable(virtual_key).or_else(|| {
+                let (key, is_dead_key) = get_key_from_vkey(virtual_key)?;
+                may_have_char = !is_dead_key;
+                Some(key)
+            })?;
+            let key_char = None;
+            Some(f(Keystroke {
+                modifiers,
+                key,
+                key_char,
+            }))
+        }
+    }
+}
+
+fn parse_immutable(vkey: VIRTUAL_KEY) -> Option<String> {
+    Some(
+        match vkey {
+            VK_SPACE => "space",
+            VK_BACK => "backspace",
+            VK_RETURN => "enter",
+            VK_TAB => "tab",
+            VK_UP => "up",
+            VK_DOWN => "down",
+            VK_RIGHT => "right",
+            VK_LEFT => "left",
+            VK_HOME => "home",
+            VK_END => "end",
+            VK_PRIOR => "pageup",
+            VK_NEXT => "pagedown",
+            VK_BROWSER_BACK => "back",
+            VK_BROWSER_FORWARD => "forward",
+            VK_ESCAPE => "escape",
+            VK_INSERT => "insert",
+            VK_DELETE => "delete",
+            VK_APPS => "menu",
+            VK_F1 => "f1",
+            VK_F2 => "f2",
+            VK_F3 => "f3",
+            VK_F4 => "f4",
+            VK_F5 => "f5",
+            VK_F6 => "f6",
+            VK_F7 => "f7",
+            VK_F8 => "f8",
+            VK_F9 => "f9",
+            VK_F10 => "f10",
+            VK_F11 => "f11",
+            VK_F12 => "f12",
+            VK_F13 => "f13",
+            VK_F14 => "f14",
+            VK_F15 => "f15",
+            VK_F16 => "f16",
+            VK_F17 => "f17",
+            VK_F18 => "f18",
+            VK_F19 => "f19",
+            VK_F20 => "f20",
+            VK_F21 => "f21",
+            VK_F22 => "f22",
+            VK_F23 => "f23",
+            VK_F24 => "f24",
+            _ => return None,
+        }
+        .to_string(),
+    )
+}
+
 fn parse_ime_compostion_string(ctx: HIMC) -> Option<String> {
     unsafe {
         let string_len = ImmGetCompositionStringW(ctx, GCS_COMPSTR, None, 0);

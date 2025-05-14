@@ -1,6 +1,9 @@
 use anyhow::Result;
 use windows::Win32::UI::{
-    Input::KeyboardAndMouse::GetKeyboardLayoutNameW, WindowsAndMessaging::KL_NAMELENGTH,
+    Input::KeyboardAndMouse::{
+        GetKeyboardLayoutNameW, MAPVK_VK_TO_CHAR, MapVirtualKeyW, VIRTUAL_KEY,
+    },
+    WindowsAndMessaging::KL_NAMELENGTH,
 };
 use windows_core::HSTRING;
 
@@ -40,4 +43,17 @@ impl WindowsKeyboardLayout {
             name: "unknown".to_string(),
         }
     }
+}
+
+pub(crate) fn get_key_from_vkey(vkey: VIRTUAL_KEY) -> Option<(String, bool)> {
+    let key_data = unsafe { MapVirtualKeyW(vkey.0 as u32, MAPVK_VK_TO_CHAR) };
+    if key_data == 0 {
+        return None;
+    }
+
+    // The high word contains dead key flag, the low word contains the character
+    let is_dead_key = (key_data >> 16) > 0;
+    let key = char::from_u32(key_data & 0xFFFF)?;
+
+    Some((key.to_ascii_lowercase().to_string(), is_dead_key))
 }
