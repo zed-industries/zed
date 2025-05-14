@@ -411,32 +411,22 @@ fn handle_keydown_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let Some(keystroke_or_modifier) = parse_keystroke_from_vkey(wparam, false) else {
-        return Some(1);
-    };
     let mut lock = state_ptr.state.borrow_mut();
-
-    let event = match keystroke_or_modifier {
-        KeystrokeOrModifier::Keystroke(keystroke) => PlatformInput::KeyDown(KeyDownEvent {
+    let Some(input) = handle_key_event(wparam, lparam, &mut lock, |keystroke| {
+        PlatformInput::KeyDown(KeyDownEvent {
             keystroke,
             is_held: lparam.0 & (0x1 << 30) > 0,
-        }),
-        KeystrokeOrModifier::Modifier(modifiers) => {
-            if let Some(prev_modifiers) = lock.last_reported_modifiers {
-                if prev_modifiers == modifiers {
-                    return Some(0);
-                }
-            }
-            lock.last_reported_modifiers = Some(modifiers);
-            PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers })
-        }
+        })
+    }) else {
+        return Some(1);
     };
+
     let Some(mut func) = lock.callbacks.input.take() else {
         return Some(1);
     };
     drop(lock);
 
-    let result = if func(event).default_prevented {
+    let result = if !func(input).propagate {
         Some(0)
     } else {
         Some(1)
@@ -1444,7 +1434,12 @@ fn parse_char_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
     }
 }
 
-fn handle_key_event<F>(wparam: WPARAM, lparam: LPARAM, f: F) -> Option<PlatformInput>
+fn handle_key_event<F>(
+    wparam: WPARAM,
+    lparam: LPARAM,
+    state: &mut WindowsWindowState,
+    f: F,
+) -> Option<PlatformInput>
 where
     F: FnOnce(Keystroke) -> PlatformInput,
 {
@@ -1457,6 +1452,12 @@ where
             None
         }
         VK_SHIFT | VK_CONTROL | VK_MENU | VK_LWIN | VK_RWIN => {
+            if let Some(prev_modifiers) = state.last_reported_modifiers {
+                if prev_modifiers == modifiers {
+                    return None;
+                }
+                state.last_reported_modifiers = Some(modifiers);
+            }
             Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                 modifiers,
             }))
