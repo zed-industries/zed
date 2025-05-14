@@ -5515,15 +5515,15 @@ checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
 name = "font-kit"
-version = "0.14.1"
-source = "git+https://github.com/zed-industries/font-kit?rev=5474cfad4b719a72ec8ed2cb7327b2b01fd10568#5474cfad4b719a72ec8ed2cb7327b2b01fd10568"
+version = "0.14.2"
+source = "git+https://github.com/zed-industries/font-kit?rev=13dd2eae3b07045d0f51df9a3ff93070b92e2693#13dd2eae3b07045d0f51df9a3ff93070b92e2693"
 dependencies = [
  "bitflags 2.9.0",
  "byteorder",
  "core-foundation 0.10.0",
  "core-graphics 0.24.0",
  "core-text",
- "dirs 5.0.1",
+ "dirs 6.0.0",
  "dwrote",
  "float-ord",
  "freetype-sys",
