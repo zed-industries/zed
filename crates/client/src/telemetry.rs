@@ -137,18 +137,14 @@ pub fn os_version() -> String {
             log::error!("Failed to load /etc/os-release, /usr/lib/os-release");
             "".to_string()
         };
-        let mut name = "unknown".to_string();
-        let mut version = "unknown".to_string();
+        let mut name = "unknown";
+        let mut version = "unknown";
 
         for line in content.lines() {
-            if line.starts_with("ID=") {
-                name = line.trim_start_matches("ID=").trim_matches('"').to_string();
-            }
-            if line.starts_with("VERSION_ID=") {
-                version = line
-                    .trim_start_matches("VERSION_ID=")
-                    .trim_matches('"')
-                    .to_string();
+            match line.split_once('=') {
+                Some(("ID", val)) => name = val.trim_matches('"'),
+                Some(("VERSION_ID", val)) => version = val.trim_matches('"'),
+                _ => {}
             }
         }
 
@@ -222,7 +218,7 @@ impl Telemetry {
         cx.background_spawn({
             let state = state.clone();
             let os_version = os_version();
-            state.lock().os_version = Some(os_version.clone());
+            state.lock().os_version = Some(os_version);
             async move {
                 if let Some(tempfile) = File::create(Self::log_file_path()).log_err() {
                     state.lock().log_file = Some(tempfile);
