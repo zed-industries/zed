@@ -628,6 +628,7 @@ impl GoogleEventMapper {
         // responds with `finish_reason: STOP`
         if wants_to_use_tool {
             self.stop_reason = StopReason::ToolUse;
+            events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
         }
         events
     }
