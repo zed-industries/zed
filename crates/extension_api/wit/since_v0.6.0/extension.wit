@@ -157,5 +157,5 @@ world extension {
     export index-docs: func(provider-name: string, package-name: string, database: borrow<key-value-store>) -> result<_, string>;
 
     /// Returns a configured debug adapter binary for a given debug task.
-    export get-dap-binary: func(adapter-name: string, config: debug-task-definition, user-installed-path: option<string>) -> result<debug-adapter-binary, string>;
+    export get-dap-binary: func(adapter-name: string, config: debug-task-definition, user-installed-path: option<string>, worktree: borrow<worktree>) -> result<debug-adapter-binary, string>;
 }

@@ -1,11 +1,13 @@
 //! The Zed Rust Extension API allows you write extensions for [Zed](https://zed.dev/) in Rust.
 
+pub mod debug;
 pub mod http_client;
 pub mod process;
 pub mod settings;
 
 use core::fmt;
 
+use debug::{DebugAdapterBinary, DebugTaskDefinition};
 use wit::*;
 
 pub use serde_json;
@@ -194,7 +196,8 @@ pub trait Extension: Send + Sync {
         _adapter_name: String,
         _config: DebugTaskDefinition,
         _user_provided_path: Option<String>,
-    ) -> Result<DebugAdapterBinary, String> {
+        _worktree: &Worktree,
+    ) -> Result<debug::DebugAdapterBinary, String> {
         Err("`get_dap_binary` not implemented".to_string())
     }
 }
@@ -386,8 +389,9 @@ impl wit::Guest for Component {
         adapter_name: String,
         config: DebugTaskDefinition,
         user_installed_path: Option<String>,
-    ) -> Result<DebugAdapterBinary, String> {
-        extension().get_dap_binary(adapter_name, config, user_installed_path)
+        worktree: &Worktree,
+    ) -> Result<debug::DebugAdapterBinary, String> {
+        extension().get_dap_binary(adapter_name, config, user_installed_path, worktree)
     }
 }
 

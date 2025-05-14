@@ -1329,6 +1329,7 @@ impl ExtensionStore {
                         this.proxy
                             .register_indexed_docs_provider(extension.clone(), provider_id.clone());
                     }
+                    dbg!(&manifest.debug_adapters);
                     for debug_adapter in &manifest.debug_adapters {
                         this.proxy
                             .register_debug_adapter(extension.clone(), debug_adapter.clone());

@@ -903,6 +903,7 @@ impl Extension {
         adapter_name: Arc<str>,
         task: DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
+        resource: Resource<Arc<dyn WorktreeDelegate>>,
     ) -> Result<Result<DebugAdapterBinary, String>> {
         match self {
             Extension::V0_6_0(ext) => {
@@ -912,6 +913,7 @@ impl Extension {
                         &adapter_name,
                         &task.try_into()?,
                         user_installed_path.as_ref().and_then(|p| p.to_str()),
+                        resource,
                     )
                     .await?
                     .map_err(|e| anyhow!("{e:?}"))?;
