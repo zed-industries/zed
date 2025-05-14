@@ -143,33 +143,29 @@ impl DiagnosticsSettings {
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct InlineDiagnosticsSettings {
     /// Whether or not to show inline diagnostics
     ///
     /// Default: false
-    #[serde(default)]
     pub enabled: bool,
     /// Whether to only show the inline diagnostics after a delay after the
     /// last editor event.
     ///
     /// Default: 150
-    #[serde(default = "default_inline_diagnostics_debounce_ms")]
     pub update_debounce_ms: u64,
     /// The amount of padding between the end of the source line and the start
     /// of the inline diagnostic in units of columns.
     ///
     /// Default: 4
-    #[serde(default = "default_inline_diagnostics_padding")]
     pub padding: u32,
     /// The minimum column to display inline diagnostics. This setting can be
     /// used to horizontally align inline diagnostics at some position. Lines
     /// longer than this value will still push diagnostics further to the right.
     ///
     /// Default: 0
-    #[serde(default)]
     pub min_column: u32,
 
-    #[serde(default)]
     pub max_severity: Option<DiagnosticSeverity>,
 }
 
@@ -223,20 +219,12 @@ impl Default for InlineDiagnosticsSettings {
     fn default() -> Self {
         Self {
             enabled: false,
-            update_debounce_ms: default_inline_diagnostics_debounce_ms(),
-            padding: default_inline_diagnostics_padding(),
+            update_debounce_ms: 150,
+            padding: 4,
             min_column: 0,
             max_severity: None,
         }
     }
-}
-
-fn default_inline_diagnostics_debounce_ms() -> u64 {
-    150
-}
-
-fn default_inline_diagnostics_padding() -> u32 {
-    4
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
