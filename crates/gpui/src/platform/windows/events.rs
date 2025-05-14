@@ -385,6 +385,8 @@ fn handle_syskeyup_msg(
     Some(0)
 }
 
+// It's a known bug that you can't trigger `ctrl-shift-0`. See:
+// https://superuser.com/questions/1455762/ctrl-shift-number-key-combination-has-stopped-working-for-a-few-numbers
 fn handle_keydown_msg(
     wparam: WPARAM,
     lparam: LPARAM,
