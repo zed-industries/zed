@@ -13,7 +13,7 @@ use settings::{Settings, SettingsStore};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::sync::LazyLock;
 use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
@@ -508,9 +508,10 @@ impl Telemetry {
         self.executor.spawn(
             async move {
                 if let Some(file) = &mut this.state.lock().log_file {
+                    let mut writer = BufWriter::new(file);
                     for event in &mut events {
-                        serde_json::to_writer(&mut *file, event)?;
-                        file.write_all(b"\n")?;
+                        serde_json::to_writer(&mut writer, event)?;
+                        writer.write_all(b"\n")?;
                     }
                 }
 
