@@ -501,7 +501,7 @@ impl Telemetry {
     pub fn flush_events(self: &Arc<Self>) -> Task<()> {
         let mut state = self.state.lock();
         state.first_event_date_time = None;
-        let mut events = mem::take(&mut state.events_queue);
+        let events = mem::take(&mut state.events_queue);
         state.flush_events_task.take();
         drop(state);
         if events.is_empty() {
@@ -514,7 +514,7 @@ impl Telemetry {
                 let mut json_bytes = Vec::new();
 
                 if let Some(file) = &mut this.state.lock().log_file {
-                    for event in &mut events {
+                    for event in &events {
                         json_bytes.clear();
                         serde_json::to_writer(&mut json_bytes, event)?;
                         file.write_all(&json_bytes)?;
