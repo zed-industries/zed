@@ -441,4 +441,8 @@ impl<'tree> ServerTreeRebase<'tree> {
             .filter(|(id, _)| !self.rebased_server_ids.contains(id))
             .collect()
     }
+
+    pub(crate) fn server_tree(&mut self) -> &mut LanguageServerTree {
+        &mut self.new_tree
+    }
 }
