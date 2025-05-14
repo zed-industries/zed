@@ -484,7 +484,7 @@ impl Telemetry {
         json_bytes.clear();
         serde_json::to_writer(&mut json_bytes, event_request)?;
 
-        let checksum = calculate_json_checksum(&json_bytes).unwrap_or("".to_string());
+        let checksum = calculate_json_checksum(&json_bytes).unwrap_or_default();
 
         Ok(Request::builder()
             .method(Method::POST)
