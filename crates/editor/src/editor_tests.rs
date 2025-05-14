@@ -52,7 +52,7 @@ use util::{
     uri,
 };
 use workspace::{
-    CloseAllItems, CloseInactiveItems, NavigationEntry, ViewId,
+    CloseActiveItem, CloseAllItems, CloseInactiveItems, NavigationEntry, OpenOptions, ViewId,
     item::{FollowEvent, FollowableItem, Item, ItemHandle},
 };
 
@@ -19865,6 +19865,156 @@ async fn test_html_linked_edits_on_completion(cx: &mut TestAppContext) {
     editor.update(cx, |editor, cx| {
         assert_eq!(editor.text(cx), "<head></head>");
     });
+}
+
+#[gpui::test]
+async fn test_invisible_worktree_servers(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "a": {
+                "main.rs": "fn main() {}",
+            },
+            "foo": {
+                "bar": {
+                    "external_file.rs": "pub mod external {}",
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/root/a").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let _fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            ..FakeLspAdapter::default()
+        },
+    );
+    let (workspace, cx) =
+        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let worktree_id = workspace.update(cx, |workspace, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let assert_language_servers_count =
+        |expected: usize, context: &str, cx: &mut VisualTestContext| {
+            project.update(cx, |project, cx| {
+                let current = project
+                    .lsp_store()
+                    .read(cx)
+                    .as_local()
+                    .unwrap()
+                    .language_servers
+                    .len();
+                assert_eq!(expected, current, "{context}");
+            });
+        };
+
+    assert_language_servers_count(
+        0,
+        "No servers should be running before any file is open",
+        cx,
+    );
+    let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    let main_editor = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, "main.rs"),
+                Some(pane.downgrade()),
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+    pane.update(cx, |pane, cx| {
+        let open_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+        open_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                "fn main() {}",
+                "Original main.rs text on initial open",
+            );
+        });
+        assert_eq!(open_editor, main_editor);
+    });
+    assert_language_servers_count(1, "First *.rs file starts a language server", cx);
+
+    let external_editor = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from("/root/foo/bar/external_file.rs"),
+                OpenOptions::default(),
+                window,
+                cx,
+            )
+        })
+        .await
+        .expect("opening external file")
+        .downcast::<Editor>()
+        .expect("downcasted external file's open element to editor");
+    pane.update(cx, |pane, cx| {
+        let open_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+        open_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                "pub mod external {}",
+                "External file is open now",
+            );
+        });
+        assert_eq!(open_editor, external_editor);
+    });
+    assert_language_servers_count(
+        1,
+        "Second, external, *.rs file should join the existing server",
+        cx,
+    );
+
+    pane.update_in(cx, |pane, window, cx| {
+        pane.close_active_item(&CloseActiveItem::default(), window, cx)
+    })
+    .unwrap()
+    .await
+    .unwrap();
+    pane.update_in(cx, |pane, window, cx| {
+        pane.navigate_backward(window, cx);
+    });
+    cx.run_until_parked();
+    pane.update(cx, |pane, cx| {
+        let open_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+        open_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                "pub mod external {}",
+                "External file is open now",
+            );
+        });
+    });
+    assert_language_servers_count(
+        1,
+        "After closing and reopening (with navigate back) of an external file, no extra language servers should appear",
+        cx,
+    );
+
+    cx.update(|_, cx| {
+        workspace::reload(&workspace::Reload::default(), cx);
+    });
+    assert_language_servers_count(
+        1,
+        "After reloading the worktree with local and external files opened, only one project should be started",
+        cx,
+    );
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
