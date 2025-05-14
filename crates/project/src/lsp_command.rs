@@ -3,8 +3,8 @@ mod signature_help;
 use crate::{
     CodeAction, CompletionSource, CoreCompletion, DocumentHighlight, DocumentSymbol, Hover,
     HoverBlock, HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart,
-    InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink, LspAction, MarkupContent,
-    PrepareRenameResponse, ProjectTransaction, ResolveState,
+    InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink, LspAction, LspDiagnostics,
+    MarkupContent, PrepareRenameResponse, ProjectTransaction, ResolveState,
     lsp_store::{LocalLspStore, LspStore},
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -30,7 +30,7 @@ use lsp::{
 };
 use serde_json::Value;
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
-use std::{cmp::Reverse, mem, ops::Range, path::Path, sync::Arc};
+use std::{cmp::Reverse, mem, ops::Range, path::Path, str::FromStr, sync::Arc};
 use text::{BufferId, LineEnding};
 
 pub use signature_help::SignatureHelp;

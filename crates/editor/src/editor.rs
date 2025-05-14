@@ -160,8 +160,8 @@ use multi_buffer::{
 use parking_lot::Mutex;
 use project::{
     CodeAction, Completion, CompletionIntent, CompletionSource, DocumentHighlight, InlayHint,
-    Location, LocationLink, LspDiagnostics, LspStore, PrepareRenameResponse, Project, ProjectItem, ProjectTransaction,
-    TaskSourceKind,
+    Location, LocationLink, LspDiagnostics, PrepareRenameResponse, Project, ProjectItem,
+    ProjectTransaction, TaskSourceKind,
     debugger::breakpoint_store::Breakpoint,
     lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
     project_settings::{GitGutterSetting, ProjectSettings},
@@ -15474,8 +15474,10 @@ impl Editor {
         let project = self.project.as_ref()?.downgrade();
         let buffers = self.buffer.read(cx).all_buffers();
 
-        self.tasks_pull_diagnostics_task = cx.spawn(|this, mut cx| async move {
-            cx.background_executor()
+        let background_executor = cx.background_executor().clone();
+
+        self.tasks_pull_diagnostics_task = cx.background_spawn(async move {
+            background_executor
                 .timer(DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT)
                 .await;
 
