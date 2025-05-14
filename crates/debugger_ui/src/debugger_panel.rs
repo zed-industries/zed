@@ -535,7 +535,11 @@ impl DebugPanel {
         }
     }
 
-    pub(crate) fn top_controls_strip(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
+    pub(crate) fn top_controls_strip(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Div> {
         let active_session = self.active_session.clone();
         let focus_handle = self.focus_handle.clone();
         let is_side = self.position(window, cx).axis() == gpui::Axis::Horizontal;
@@ -856,12 +860,23 @@ impl DebugPanel {
                                     .as_ref()
                                     .map(|session| session.read(cx).running_state())
                                     .cloned(),
-                                |this, session| {
-                                    this.child(
-                                        session.update(cx, |this, cx| {
-                                            this.thread_dropdown(window, cx)
-                                        }),
-                                    )
+                                |this, running_state| {
+                                    this.child({
+                                        let running_state = running_state.clone();
+                                        let threads =
+                                            running_state.update(cx, |running_state, cx| {
+                                                let session = running_state.session();
+                                                session
+                                                    .update(cx, |session, cx| session.threads(cx))
+                                            });
+
+                                        self.render_thread_dropdown(
+                                            &running_state,
+                                            threads,
+                                            window,
+                                            cx,
+                                        )
+                                    })
                                     .when(!is_side, |this| this.gap_2().child(Divider::vertical()))
                                 },
                             ),

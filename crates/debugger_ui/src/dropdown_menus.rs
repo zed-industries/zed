@@ -1,7 +1,11 @@
 use gpui::Entity;
+use project::debugger::session::{ThreadId, ThreadStatus};
 use ui::{ContextMenu, DropdownMenu, DropdownStyle, prelude::*};
 
-use crate::{debugger_panel::DebugPanel, session::DebugSession};
+use crate::{
+    debugger_panel::DebugPanel,
+    session::{DebugSession, running::RunningState},
+};
 
 impl DebugPanel {
     pub fn render_session_menu(
@@ -88,6 +92,44 @@ impl DebugPanel {
                 this
             }),
         )
+        .style(DropdownStyle::Ghost)
+    }
+
+    pub(crate) fn render_thread_dropdown(
+        &self,
+        running_state: &Entity<RunningState>,
+        threads: Vec<(dap::Thread, ThreadStatus)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> DropdownMenu {
+        let running_state = running_state.clone();
+        let running_state_read = running_state.read(cx);
+        let thread_id = running_state_read.thread_id();
+        let session = running_state_read.session();
+        let session_id = session.read(cx).session_id();
+        let session_terminated = session.read(cx).is_terminated();
+        let selected_thread_name = threads
+            .iter()
+            .find(|(thread, _)| thread_id.map(|id| id.0) == Some(thread.id))
+            .map(|(thread, _)| thread.name.clone())
+            .unwrap_or("Threads".to_owned());
+        DropdownMenu::new(
+            ("thread-list", session_id.0),
+            selected_thread_name,
+            ContextMenu::build_eager(window, cx, move |mut this, _, _| {
+                for (thread, _) in threads {
+                    let running_state = running_state.clone();
+                    let thread_id = thread.id;
+                    this = this.entry(thread.name, None, move |window, cx| {
+                        running_state.update(cx, |running_state, cx| {
+                            running_state.select_thread(ThreadId(thread_id), window, cx);
+                        });
+                    });
+                }
+                this
+            }),
+        )
+        .disabled(session_terminated)
         .style(DropdownStyle::Ghost)
     }
 }

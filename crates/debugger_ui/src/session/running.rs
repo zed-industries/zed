@@ -78,6 +78,12 @@ pub struct RunningState {
     _schedule_serialize: Option<Task<()>>,
 }
 
+impl RunningState {
+    pub(crate) fn thread_id(&self) -> Option<ThreadId> {
+        self.thread_id
+    }
+}
+
 impl Render for RunningState {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let zoomed_pane = self
@@ -1311,7 +1317,12 @@ impl RunningState {
             .map(|id| self.session().read(cx).thread_status(id))
     }
 
-    fn select_thread(&mut self, thread_id: ThreadId, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn select_thread(
+        &mut self,
+        thread_id: ThreadId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.thread_id.is_some_and(|id| id == thread_id) {
             return;
         }
@@ -1446,38 +1457,6 @@ impl RunningState {
         self.session.update(cx, |session, cx| {
             session.toggle_ignore_breakpoints(cx).detach();
         });
-    }
-
-    pub(crate) fn thread_dropdown(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<'_, RunningState>,
-    ) -> DropdownMenu {
-        let state = cx.entity();
-        let session_terminated = self.session.read(cx).is_terminated();
-        let threads = self.session.update(cx, |this, cx| this.threads(cx));
-        let selected_thread_name = threads
-            .iter()
-            .find(|(thread, _)| self.thread_id.map(|id| id.0) == Some(thread.id))
-            .map(|(thread, _)| thread.name.clone())
-            .unwrap_or("Threads".to_owned());
-        DropdownMenu::new(
-            ("thread-list", self.session_id.0),
-            selected_thread_name,
-            ContextMenu::build_eager(window, cx, move |mut this, _, _| {
-                for (thread, _) in threads {
-                    let state = state.clone();
-                    let thread_id = thread.id;
-                    this = this.entry(thread.name, None, move |window, cx| {
-                        state.update(cx, |state, cx| {
-                            state.select_thread(ThreadId(thread_id), window, cx);
-                        });
-                    });
-                }
-                this
-            }),
-        )
-        .disabled(session_terminated)
     }
 
     fn default_pane_layout(
