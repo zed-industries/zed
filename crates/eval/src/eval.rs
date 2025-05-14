@@ -467,11 +467,12 @@ pub fn find_model(
     match matching_models.as_slice() {
         [model] => Ok(model.clone()),
         [] => Err(anyhow!(
-            "No language model with ID {} was available. Available models: {}",
+            "No language model with ID {}/{} was available. Available models: {}",
+            provider_id,
             model_id,
             model_registry
                 .available_models(cx)
-                .map(|model| model.id().0.clone())
+                .map(|model| format!("{}/{}", model.provider_id().0, model.id().0))
                 .collect::<Vec<_>>()
                 .join(", ")
         )),
