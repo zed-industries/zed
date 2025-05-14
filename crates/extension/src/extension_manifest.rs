@@ -87,6 +87,8 @@ pub struct ExtensionManifest {
     pub snippets: Option<PathBuf>,
     #[serde(default)]
     pub capabilities: Vec<ExtensionCapability>,
+    #[serde(default)]
+    pub debug_adapters: Vec<Arc<str>>,
 }
 
 impl ExtensionManifest {
@@ -274,6 +276,7 @@ fn manifest_from_old_manifest(
         indexed_docs_providers: BTreeMap::default(),
         snippets: None,
         capabilities: Vec::new(),
+        debug_adapters: vec![],
     }
 }
 

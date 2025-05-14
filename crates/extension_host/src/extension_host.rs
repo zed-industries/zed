@@ -14,9 +14,10 @@ use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
 pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
-    ExtensionContextServerProxy, ExtensionEvents, ExtensionGrammarProxy, ExtensionHostProxy,
-    ExtensionIndexedDocsProviderProxy, ExtensionLanguageProxy, ExtensionLanguageServerProxy,
-    ExtensionSlashCommandProxy, ExtensionSnippetProxy, ExtensionThemeProxy,
+    ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy, ExtensionEvents,
+    ExtensionGrammarProxy, ExtensionHostProxy, ExtensionIndexedDocsProviderProxy,
+    ExtensionLanguageProxy, ExtensionLanguageServerProxy, ExtensionSlashCommandProxy,
+    ExtensionSnippetProxy, ExtensionThemeProxy,
 };
 use fs::{Fs, RemoveOptions};
 use futures::{
@@ -1327,6 +1328,10 @@ impl ExtensionStore {
                     for (provider_id, _provider) in &manifest.indexed_docs_providers {
                         this.proxy
                             .register_indexed_docs_provider(extension.clone(), provider_id.clone());
+                    }
+                    for debug_adapter in &manifest.debug_adapters {
+                        this.proxy
+                            .register_debug_adapter(extension.clone(), debug_adapter.clone());
                     }
                 }
 
