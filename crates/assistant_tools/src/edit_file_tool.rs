@@ -76,12 +76,22 @@ pub struct EditFileToolInput {
     /// </example>
     pub path: PathBuf,
 
-    /// If true, this tool will recreate the file from scratch.
-    /// If false, this tool will produce granular edits to an existing file.
+    /// The mode of operation on the file. Possible values:
+    /// - 'edit': Make granular edits to an existing file.
+    /// - 'create': Create a new file if it doesn't exist.
+    /// - 'overwrite': Replace the entire contents of an existing file.
     ///
-    /// When a file already exists or you just created it, always prefer editing
+    /// When a file already exists or you just created it, prefer editing
     /// it as opposed to recreating it from scratch.
-    pub create_or_overwrite: bool,
+    pub mode: EditFileMode,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum EditFileMode {
+    Edit,
+    Create,
+    Overwrite,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -195,7 +205,11 @@ impl Tool for EditFileTool {
                     .as_ref()
                     .map_or(false, |file| file.disk_state().exists())
             })?;
-            if !input.create_or_overwrite && !exists {
+            let create_or_overwrite = match input.mode {
+                EditFileMode::Create | EditFileMode::Overwrite => true,
+                _ => false,
+            };
+            if !create_or_overwrite && !exists {
                 return Err(anyhow!("{} not found", input.path.display()));
             }
 
@@ -207,7 +221,7 @@ impl Tool for EditFileTool {
                 })
                 .await;
 
-            let (output, mut events) = if input.create_or_overwrite {
+            let (output, mut events) = if create_or_overwrite {
                 edit_agent.overwrite(
                     buffer.clone(),
                     input.display_description.clone(),
@@ -876,7 +890,7 @@ mod tests {
                 let input = serde_json::to_value(EditFileToolInput {
                     display_description: "Some edit".into(),
                     path: "root/nonexistent_file.txt".into(),
-                    create_or_overwrite: false,
+                    mode: EditFileMode::Edit,
                 })
                 .unwrap();
                 Arc::new(EditFileTool)
