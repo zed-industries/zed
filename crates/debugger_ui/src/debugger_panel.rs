@@ -87,7 +87,15 @@ impl DebugPanel {
         })
     }
 
-    fn filter_action_types(&self, cx: &mut App) {
+    pub(crate) fn sessions(&self) -> Vec<Entity<DebugSession>> {
+        self.sessions.clone()
+    }
+
+    pub fn active_session(&self) -> Option<Entity<DebugSession>> {
+        self.active_session.clone()
+    }
+
+    pub(crate) fn filter_action_types(&self, cx: &mut App) {
         let (has_active_session, supports_restart, support_step_back, status) = self
             .active_session()
             .map(|item| {
@@ -273,7 +281,7 @@ impl DebugPanel {
         .detach_and_log_err(cx);
     }
 
-    async fn register_session(
+    pub(crate) async fn register_session(
         this: WeakEntity<Self>,
         session: Entity<Session>,
         cx: &mut AsyncWindowContext,
@@ -342,7 +350,7 @@ impl DebugPanel {
         Ok(debug_session)
     }
 
-    fn handle_restart_request(
+    pub(crate) fn handle_restart_request(
         &mut self,
         mut curr_session: Entity<Session>,
         window: &mut Window,
@@ -416,11 +424,12 @@ impl DebugPanel {
         .detach_and_log_err(cx);
     }
 
-    pub fn active_session(&self) -> Option<Entity<DebugSession>> {
-        self.active_session.clone()
-    }
-
-    fn close_session(&mut self, entity_id: EntityId, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn close_session(
+        &mut self,
+        entity_id: EntityId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(session) = self
             .sessions
             .iter()
@@ -474,93 +483,8 @@ impl DebugPanel {
         })
         .detach();
     }
-    fn sessions_drop_down_menu(
-        &self,
-        active_session: &Entity<DebugSession>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> DropdownMenu {
-        let sessions = self.sessions.clone();
-        let weak = cx.weak_entity();
-        let label = active_session.read(cx).label_element(cx);
 
-        DropdownMenu::new_with_element(
-            "debugger-session-list",
-            label,
-            ContextMenu::build(window, cx, move |mut this, _, cx| {
-                let context_menu = cx.weak_entity();
-                for session in sessions.into_iter() {
-                    let weak_session = session.downgrade();
-                    let weak_session_id = weak_session.entity_id();
-
-                    this = this.custom_entry(
-                        {
-                            let weak = weak.clone();
-                            let context_menu = context_menu.clone();
-                            move |_, cx| {
-                                weak_session
-                                    .read_with(cx, |session, cx| {
-                                        let context_menu = context_menu.clone();
-                                        let id: SharedString =
-                                            format!("debug-session-{}", session.session_id(cx).0)
-                                                .into();
-                                        h_flex()
-                                            .w_full()
-                                            .group(id.clone())
-                                            .justify_between()
-                                            .child(session.label_element(cx))
-                                            .child(
-                                                IconButton::new(
-                                                    "close-debug-session",
-                                                    IconName::Close,
-                                                )
-                                                .visible_on_hover(id.clone())
-                                                .icon_size(IconSize::Small)
-                                                .on_click({
-                                                    let weak = weak.clone();
-                                                    move |_, window, cx| {
-                                                        weak.update(cx, |panel, cx| {
-                                                            panel.close_session(
-                                                                weak_session_id,
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        })
-                                                        .ok();
-                                                        context_menu
-                                                            .update(cx, |this, cx| {
-                                                                this.cancel(
-                                                                    &Default::default(),
-                                                                    window,
-                                                                    cx,
-                                                                );
-                                                            })
-                                                            .ok();
-                                                    }
-                                                }),
-                                            )
-                                            .into_any_element()
-                                    })
-                                    .unwrap_or_else(|_| div().into_any_element())
-                            }
-                        },
-                        {
-                            let weak = weak.clone();
-                            move |window, cx| {
-                                weak.update(cx, |panel, cx| {
-                                    panel.activate_session(session.clone(), window, cx);
-                                })
-                                .ok();
-                            }
-                        },
-                    );
-                }
-                this
-            }),
-        )
-    }
-
-    fn deploy_context_menu(
+    pub(crate) fn deploy_context_menu(
         &mut self,
         position: Point<Pixels>,
         window: &mut Window,
@@ -611,7 +535,7 @@ impl DebugPanel {
         }
     }
 
-    fn top_controls_strip(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
+    pub(crate) fn top_controls_strip(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
         let active_session = self.active_session.clone();
         let focus_handle = self.focus_handle.clone();
         let is_side = self.position(window, cx).axis() == gpui::Axis::Horizontal;
@@ -944,9 +868,9 @@ impl DebugPanel {
                         )
                         .child(
                             h_flex()
-                                .when_some(active_session.as_ref(), |this, session| {
+                                .when_some(active_session.as_ref(), move |this, session| {
                                     let context_menu =
-                                        self.sessions_drop_down_menu(session, window, cx);
+                                        self.render_session_menu(session, window, cx);
                                     this.child(context_menu).gap_2().child(Divider::vertical())
                                 })
                                 .when(!is_side, |this| this.child(new_session_button())),
@@ -955,7 +879,7 @@ impl DebugPanel {
         )
     }
 
-    fn activate_pane_in_direction(
+    pub(crate) fn activate_pane_in_direction(
         &mut self,
         direction: SplitDirection,
         window: &mut Window,
@@ -970,7 +894,7 @@ impl DebugPanel {
         }
     }
 
-    fn activate_item(
+    pub(crate) fn activate_item(
         &mut self,
         item: DebuggerPaneItem,
         window: &mut Window,
@@ -985,7 +909,7 @@ impl DebugPanel {
         }
     }
 
-    fn activate_session(
+    pub(crate) fn activate_session(
         &mut self,
         session_item: Entity<DebugSession>,
         window: &mut Window,
