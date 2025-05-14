@@ -326,8 +326,14 @@ struct GroupedModels {
 
 impl GroupedModels {
     pub fn new(other: Vec<ModelInfo>, recommended: Vec<ModelInfo>) -> Self {
+        let recommended_ids: HashSet<_> = recommended.iter().map(|info| info.model.id()).collect();
+
         let mut other_by_provider: IndexMap<_, Vec<ModelInfo>> = IndexMap::default();
         for model in other {
+            if recommended_ids.contains(&model.model.id()) {
+                continue;
+            }
+
             let provider = model.model.provider_id();
             if let Some(models) = other_by_provider.get_mut(&provider) {
                 models.push(model);
@@ -884,5 +890,27 @@ mod tests {
         // Fuzzy search
         let results = matcher.fuzzy_search("z4n");
         assert_models_eq(results, vec!["zed/gpt-4.1-nano"]);
+    }
+
+    #[gpui::test]
+    fn test_exclude_recommended_models(_cx: &mut TestAppContext) {
+        let recommended_models = create_models(vec![("zed", "claude")]);
+        let all_models = create_models(vec![
+            ("zed", "claude"), // Should be filtered out from "other"
+            ("zed", "gemini"),
+            ("copilot", "o3"),
+        ]);
+
+        let grouped_models = GroupedModels::new(all_models, recommended_models);
+
+        let actual_other_models = grouped_models
+            .other
+            .values()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
+
+        // Recommended models should not appear in "other"
+        assert_models_eq(actual_other_models, vec!["zed/gemini", "copilot/o3"]);
     }
 }
