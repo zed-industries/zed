@@ -135,12 +135,14 @@ impl ModuleList {
             .id(("module-list", ix))
             .when(module.path.is_some(), |this| {
                 this.on_click({
-                    let path = module.path.as_deref().map(|path| Arc::<Path>::from(Path::new(path)));
+                    let path = module
+                        .path
+                        .as_deref()
+                        .map(|path| Arc::<Path>::from(Path::new(path)));
                     cx.listener(move |this, _, window, cx| {
+                        this.select_ix(ix, cx);
                         if let Some(path) = path.as_ref() {
                             this.open_module(path.clone(), window, cx);
-                        } else {
-                            log::error!("Wasn't able to find module path, but was still able to click on module list entry");
                         }
                     })
                 })
