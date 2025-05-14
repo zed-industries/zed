@@ -955,7 +955,7 @@ impl ExtensionsPage {
                 .disabled(true),
                 configure: is_configurable.then(|| {
                     Button::new(
-                        SharedString::from(format!("configure-{}", extension.id.clone())),
+                        SharedString::from(format!("configure-{}", extension.id)),
                         "Configure",
                     )
                     .disabled(true)
@@ -980,7 +980,7 @@ impl ExtensionsPage {
                 }),
                 configure: is_configurable.then(|| {
                     Button::new(
-                        SharedString::from(format!("configure-{}", extension.id.clone())),
+                        SharedString::from(format!("configure-{}", extension.id)),
                         "Configure",
                     )
                     .on_click({
@@ -1049,7 +1049,7 @@ impl ExtensionsPage {
                 .disabled(true),
                 configure: is_configurable.then(|| {
                     Button::new(
-                        SharedString::from(format!("configure-{}", extension.id.clone())),
+                        SharedString::from(format!("configure-{}", extension.id)),
                         "Configure",
                     )
                     .disabled(true)

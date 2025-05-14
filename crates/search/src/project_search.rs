@@ -1946,9 +1946,9 @@ impl Render for ProjectSearchBar {
                 if match_quantity > 0 {
                     debug_assert!(match_quantity >= index);
                     if limit_reached {
-                        Some(format!("{index}/{match_quantity}+").to_string())
+                        Some(format!("{index}/{match_quantity}+"))
                     } else {
-                        Some(format!("{index}/{match_quantity}").to_string())
+                        Some(format!("{index}/{match_quantity}"))
                     }
                 } else {
                     None
