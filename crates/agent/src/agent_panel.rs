@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use anyhow::{Result, anyhow};
 use assistant_context_editor::{
     AgentPanelDelegate, AssistantContext, ConfigurationError, ContextEditor, ContextEvent,
-    SlashCommandCompletionProvider, humanize_token_count, make_lsp_adapter_delegate,
-    render_remaining_tokens,
+    ContextSummary, SlashCommandCompletionProvider, humanize_token_count,
+    make_lsp_adapter_delegate, render_remaining_tokens,
 };
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
@@ -46,7 +46,9 @@ use ui::{
 };
 use util::{ResultExt as _, maybe};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
-use workspace::{CollaboratorId, DraggedSelection, DraggedTab, ToolbarItemView, Workspace};
+use workspace::{
+    CollaboratorId, DraggedSelection, DraggedTab, ToggleZoom, ToolbarItemView, Workspace,
+};
 use zed_actions::agent::{OpenConfiguration, OpenOnboardingModal, ResetOnboarding};
 use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
@@ -55,10 +57,10 @@ use zed_llm_client::UsageLimit;
 use crate::active_thread::{self, ActiveThread, ActiveThreadEvent};
 use crate::agent_configuration::{AgentConfiguration, AssistantConfigurationEvent};
 use crate::agent_diff::AgentDiff;
-use crate::history_store::{HistoryEntry, HistoryStore, RecentEntry};
+use crate::history_store::{HistoryStore, RecentEntry};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
-use crate::thread::{Thread, ThreadError, ThreadId, TokenUsageRatio};
-use crate::thread_history::{EntryTimeFormat, PastContext, PastThread, ThreadHistory};
+use crate::thread::{Thread, ThreadError, ThreadId, ThreadSummary, TokenUsageRatio};
+use crate::thread_history::{HistoryEntryElement, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::ui::AgentOnboardingModal;
 use crate::{
@@ -194,7 +196,7 @@ impl ActiveView {
     }
 
     pub fn thread(thread: Entity<Thread>, window: &mut Window, cx: &mut App) -> Self {
-        let summary = thread.read(cx).summary_or_default();
+        let summary = thread.read(cx).summary().or_default();
 
         let editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
@@ -216,7 +218,7 @@ impl ActiveView {
                         }
                         EditorEvent::Blurred => {
                             if editor.read(cx).text(cx).is_empty() {
-                                let summary = thread.read(cx).summary_or_default();
+                                let summary = thread.read(cx).summary().or_default();
 
                                 editor.update(cx, |editor, cx| {
                                     editor.set_text(summary, window, cx);
@@ -231,7 +233,7 @@ impl ActiveView {
                 let editor = editor.clone();
                 move |thread, event, window, cx| match event {
                     ThreadEvent::SummaryGenerated => {
-                        let summary = thread.read(cx).summary_or_default();
+                        let summary = thread.read(cx).summary().or_default();
 
                         editor.update(cx, |editor, cx| {
                             editor.set_text(summary, window, cx);
@@ -294,7 +296,8 @@ impl ActiveView {
                                     .read(cx)
                                     .context()
                                     .read(cx)
-                                    .summary_or_default();
+                                    .summary()
+                                    .or_default();
 
                                 editor.update(cx, |editor, cx| {
                                     editor.set_text(summary, window, cx);
@@ -309,7 +312,7 @@ impl ActiveView {
                 let editor = editor.clone();
                 move |assistant_context, event, window, cx| match event {
                     ContextEvent::SummaryGenerated => {
-                        let summary = assistant_context.read(cx).summary_or_default();
+                        let summary = assistant_context.read(cx).summary().or_default();
 
                         editor.update(cx, |editor, cx| {
                             editor.set_text(summary, window, cx);
@@ -356,11 +359,13 @@ pub struct AgentPanel {
     previous_view: Option<ActiveView>,
     history_store: Entity<HistoryStore>,
     history: Entity<ThreadHistory>,
+    hovered_recent_history_item: Option<usize>,
     assistant_dropdown_menu_handle: PopoverMenuHandle<ContextMenu>,
     assistant_navigation_menu_handle: PopoverMenuHandle<ContextMenu>,
     assistant_navigation_menu: Option<Entity<ContextMenu>>,
     width: Option<Pixels>,
     height: Option<Pixels>,
+    zoomed: bool,
     pending_serialization: Option<Task<Result<()>>>,
     hide_trial_upsell: bool,
     _trial_markdown: Entity<Markdown>,
@@ -696,11 +701,13 @@ impl AgentPanel {
             previous_view: None,
             history_store: history_store.clone(),
             history: cx.new(|cx| ThreadHistory::new(weak_self, history_store, window, cx)),
+            hovered_recent_history_item: None,
             assistant_dropdown_menu_handle: PopoverMenuHandle::default(),
             assistant_navigation_menu_handle: PopoverMenuHandle::default(),
             assistant_navigation_menu: None,
             width: None,
             height: None,
+            zoomed: false,
             pending_serialization: None,
             hide_trial_upsell: false,
             _trial_markdown: trial_markdown,
@@ -1142,6 +1149,17 @@ impl AgentPanel {
         }
     }
 
+    pub fn toggle_zoom(&mut self, _: &ToggleZoom, window: &mut Window, cx: &mut Context<Self>) {
+        if self.zoomed {
+            cx.emit(PanelEvent::ZoomOut);
+        } else {
+            if !self.focus_handle(cx).contains_focused(window, cx) {
+                cx.focus_self(window);
+            }
+            cx.emit(PanelEvent::ZoomIn);
+        }
+    }
+
     pub fn open_agent_diff(
         &mut self,
         _: &OpenAgentDiff,
@@ -1414,6 +1432,15 @@ impl Panel for AgentPanel {
     fn enabled(&self, cx: &App) -> bool {
         AssistantSettings::get_global(cx).enabled
     }
+
+    fn is_zoomed(&self, _window: &Window, _cx: &App) -> bool {
+        self.zoomed
+    }
+
+    fn set_zoomed(&mut self, zoomed: bool, _window: &mut Window, cx: &mut Context<Self>) {
+        self.zoomed = zoomed;
+        cx.notify();
+    }
 }
 
 impl AgentPanel {
@@ -1426,23 +1453,45 @@ impl AgentPanel {
                 ..
             } => {
                 let active_thread = self.thread.read(cx);
-                let is_empty = active_thread.is_empty();
-
-                let summary = active_thread.summary(cx);
-
-                if is_empty {
-                    Label::new(Thread::DEFAULT_SUMMARY.clone())
-                        .truncate()
-                        .into_any_element()
-                } else if summary.is_none() {
-                    Label::new(LOADING_SUMMARY_PLACEHOLDER)
-                        .truncate()
-                        .into_any_element()
+                let state = if active_thread.is_empty() {
+                    &ThreadSummary::Pending
                 } else {
-                    div()
+                    active_thread.summary(cx)
+                };
+
+                match state {
+                    ThreadSummary::Pending => Label::new(ThreadSummary::DEFAULT.clone())
+                        .truncate()
+                        .into_any_element(),
+                    ThreadSummary::Generating => Label::new(LOADING_SUMMARY_PLACEHOLDER)
+                        .truncate()
+                        .into_any_element(),
+                    ThreadSummary::Ready(_) => div()
                         .w_full()
                         .child(change_title_editor.clone())
-                        .into_any_element()
+                        .into_any_element(),
+                    ThreadSummary::Error => h_flex()
+                        .w_full()
+                        .child(change_title_editor.clone())
+                        .child(
+                            ui::IconButton::new("retry-summary-generation", IconName::RotateCcw)
+                                .on_click({
+                                    let active_thread = self.thread.clone();
+                                    move |_, _window, cx| {
+                                        active_thread.update(cx, |thread, cx| {
+                                            thread.regenerate_summary(cx);
+                                        });
+                                    }
+                                })
+                                .tooltip(move |_window, cx| {
+                                    cx.new(|_| {
+                                        Tooltip::new("Failed to generate title")
+                                            .meta("Click to try again")
+                                    })
+                                    .into()
+                                }),
+                        )
+                        .into_any_element(),
                 }
             }
             ActiveView::PromptEditor {
@@ -1450,14 +1499,13 @@ impl AgentPanel {
                 context_editor,
                 ..
             } => {
-                let context_editor = context_editor.read(cx);
-                let summary = context_editor.context().read(cx).summary();
+                let summary = context_editor.read(cx).context().read(cx).summary();
 
                 match summary {
-                    None => Label::new(AssistantContext::DEFAULT_SUMMARY.clone())
+                    ContextSummary::Pending => Label::new(ContextSummary::DEFAULT)
                         .truncate()
                         .into_any_element(),
-                    Some(summary) => {
+                    ContextSummary::Content(summary) => {
                         if summary.done {
                             div()
                                 .w_full()
@@ -1469,6 +1517,28 @@ impl AgentPanel {
                                 .into_any_element()
                         }
                     }
+                    ContextSummary::Error => h_flex()
+                        .w_full()
+                        .child(title_editor.clone())
+                        .child(
+                            ui::IconButton::new("retry-summary-generation", IconName::RotateCcw)
+                                .on_click({
+                                    let context_editor = context_editor.clone();
+                                    move |_, _window, cx| {
+                                        context_editor.update(cx, |context_editor, cx| {
+                                            context_editor.regenerate_summary(cx);
+                                        });
+                                    }
+                                })
+                                .tooltip(move |_window, cx| {
+                                    cx.new(|_| {
+                                        Tooltip::new("Failed to generate title")
+                                            .meta("Click to try again")
+                                    })
+                                    .into()
+                                }),
+                        )
+                        .into_any_element(),
                 }
             }
             ActiveView::History => Label::new("History").truncate().into_any_element(),
@@ -1578,6 +1648,12 @@ impl AgentPanel {
                 }),
         );
 
+        let zoom_in_label = if self.is_zoomed(window, cx) {
+            "Zoom Out"
+        } else {
+            "Zoom In"
+        };
+
         let agent_extra_menu = PopoverMenu::new("agent-options-menu")
             .trigger_with_tooltip(
                 IconButton::new("agent-options-menu", IconName::Ellipsis)
@@ -1664,7 +1740,8 @@ impl AgentPanel {
 
                     menu = menu
                         .action("Rules…", Box::new(OpenRulesLibrary::default()))
-                        .action("Settings", Box::new(OpenConfiguration));
+                        .action("Settings", Box::new(OpenConfiguration))
+                        .action(zoom_in_label, Box::new(ToggleZoom));
                     menu
                 }))
             });
@@ -2212,7 +2289,7 @@ impl AgentPanel {
                             .border_b_1()
                             .border_color(cx.theme().colors().border_variant)
                             .child(
-                                Label::new("Past Interactions")
+                                Label::new("Recent")
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
                             )
@@ -2237,18 +2314,20 @@ impl AgentPanel {
                         v_flex()
                             .gap_1()
                             .children(
-                                recent_history.into_iter().map(|entry| {
+                                recent_history.into_iter().enumerate().map(|(index, entry)| {
                                     // TODO: Add keyboard navigation.
-                                    match entry {
-                                        HistoryEntry::Thread(thread) => {
-                                            PastThread::new(thread, cx.entity().downgrade(), false, vec![], EntryTimeFormat::DateAndTime)
-                                                .into_any_element()
-                                        }
-                                        HistoryEntry::Context(context) => {
-                                            PastContext::new(context, cx.entity().downgrade(), false, vec![], EntryTimeFormat::DateAndTime)
-                                                .into_any_element()
-                                        }
-                                    }
+                                    let is_hovered = self.hovered_recent_history_item == Some(index);
+                                    HistoryEntryElement::new(entry.clone(), cx.entity().downgrade())
+                                        .hovered(is_hovered)
+                                        .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
+                                            if *is_hovered {
+                                                this.hovered_recent_history_item = Some(index);
+                                            } else if this.hovered_recent_history_item == Some(index) {
+                                                this.hovered_recent_history_item = None;
+                                            }
+                                            cx.notify();
+                                        }))
+                                        .into_any_element()
                                 }),
                             )
                     )
@@ -2360,9 +2439,6 @@ impl AgentPanel {
                 .occlude()
                 .child(match last_error {
                     ThreadError::PaymentRequired => self.render_payment_required_error(cx),
-                    ThreadError::MaxMonthlySpendReached => {
-                        self.render_max_monthly_spend_reached_error(cx)
-                    }
                     ThreadError::ModelRequestLimitReached { plan } => {
                         self.render_model_request_limit_reached_error(plan, cx)
                     }
@@ -2409,56 +2485,6 @@ impl AgentPanel {
                             cx.notify();
                         },
                     )))
-                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
-                        |this, _, _, cx| {
-                            this.thread.update(cx, |this, _cx| {
-                                this.clear_last_error();
-                            });
-
-                            cx.notify();
-                        },
-                    ))),
-            )
-            .into_any()
-    }
-
-    fn render_max_monthly_spend_reached_error(&self, cx: &mut Context<Self>) -> AnyElement {
-        const ERROR_MESSAGE: &str = "You have reached your maximum monthly spend. Increase your spend limit to continue using Zed LLMs.";
-
-        v_flex()
-            .gap_0p5()
-            .child(
-                h_flex()
-                    .gap_1p5()
-                    .items_center()
-                    .child(Icon::new(IconName::XCircle).color(Color::Error))
-                    .child(Label::new("Max Monthly Spend Reached").weight(FontWeight::MEDIUM)),
-            )
-            .child(
-                div()
-                    .id("error-message")
-                    .max_h_24()
-                    .overflow_y_scroll()
-                    .child(Label::new(ERROR_MESSAGE)),
-            )
-            .child(
-                h_flex()
-                    .justify_end()
-                    .mt_1()
-                    .gap_1()
-                    .child(self.create_copy_button(ERROR_MESSAGE))
-                    .child(
-                        Button::new("subscribe", "Update Monthly Spend Limit").on_click(
-                            cx.listener(|this, _, _, cx| {
-                                this.thread.update(cx, |this, _cx| {
-                                    this.clear_last_error();
-                                });
-
-                                cx.open_url(&zed_urls::account_url(cx));
-                                cx.notify();
-                            }),
-                        ),
-                    )
                     .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
                         |this, _, _, cx| {
                             this.thread.update(cx, |this, _cx| {
@@ -2776,6 +2802,7 @@ impl Render for AgentPanel {
             .on_action(cx.listener(Self::increase_font_size))
             .on_action(cx.listener(Self::decrease_font_size))
             .on_action(cx.listener(Self::reset_font_size))
+            .on_action(cx.listener(Self::toggle_zoom))
             .child(self.render_toolbar(window, cx))
             .children(self.render_trial_upsell(window, cx))
             .map(|parent| match &self.active_view {

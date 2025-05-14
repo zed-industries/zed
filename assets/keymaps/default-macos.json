@@ -290,7 +290,7 @@
       "cmd-shift-a": "agent::ToggleContextPicker",
       "cmd-shift-o": "agent::ToggleNavigationMenu",
       "cmd-shift-i": "agent::ToggleOptionsMenu",
-      "shift-escape": "agent::ExpandMessageEditor",
+      "shift-alt-escape": "agent::ExpandMessageEditor",
       "cmd-alt-e": "agent::RemoveAllContext",
       "cmd-shift-e": "project_panel::ToggleFocus"
     }
@@ -1083,6 +1083,13 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-r": "diagnostics::ToggleDiagnosticsRefresh"
+    }
+  },
+  {
+    "context": "DebugConsole > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "menu::Confirm"
     }
   }
 ]

@@ -68,6 +68,12 @@ impl From<LanguageName> for SharedString {
     }
 }
 
+impl From<SharedString> for LanguageName {
+    fn from(value: SharedString) -> Self {
+        LanguageName(value)
+    }
+}
+
 impl AsRef<str> for LanguageName {
     fn as_ref(&self) -> &str {
         self.0.as_ref()
@@ -625,6 +631,22 @@ impl LanguageRegistry {
                 .then_some(LanguageMatchPrecedence::PathOrContent)
         });
         async move { rx.await? }
+    }
+
+    pub fn language_name_for_extension(self: &Arc<Self>, extension: &str) -> Option<LanguageName> {
+        self.state.try_read().and_then(|state| {
+            state
+                .available_languages
+                .iter()
+                .find(|language| {
+                    language
+                        .matcher()
+                        .path_suffixes
+                        .iter()
+                        .any(|suffix| *suffix == extension)
+                })
+                .map(|language| language.name.clone())
+        })
     }
 
     pub fn language_for_name_or_extension(

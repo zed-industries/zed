@@ -1051,8 +1051,8 @@ impl GitPanel {
                     repo.checkout_files(
                         "HEAD",
                         entries
-                            .iter()
-                            .map(|entries| entries.repo_path.clone())
+                            .into_iter()
+                            .map(|entries| entries.repo_path)
                             .collect(),
                         cx,
                     )
@@ -2765,9 +2765,9 @@ impl GitPanel {
         let potential_co_authors = self.potential_co_authors(cx);
 
         let (tooltip_label, icon) = if self.add_coauthors {
-            ("Add co-authored-by", IconName::UserCheck)
-        } else {
             ("Remove co-authored-by", IconName::Person)
+        } else {
+            ("Add co-authored-by", IconName::UserCheck)
         };
 
         if potential_co_authors.is_empty() {

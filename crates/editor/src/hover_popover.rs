@@ -884,6 +884,7 @@ impl InfoPopover {
                 *keyboard_grace = false;
                 cx.stop_propagation();
             })
+            .p_2()
             .when_some(self.parsed_content.clone(), |this, markdown| {
                 this.child(
                     div()
@@ -891,12 +892,12 @@ impl InfoPopover {
                         .overflow_y_scroll()
                         .max_w(max_size.width)
                         .max_h(max_size.height)
-                        .p_2()
                         .track_scroll(&self.scroll_handle)
                         .child(
                             MarkdownElement::new(markdown, hover_markdown_style(window, cx))
                                 .code_block_renderer(markdown::CodeBlockRenderer::Default {
                                     copy_button: false,
+                                    copy_button_on_hover: false,
                                     border: false,
                                 })
                                 .on_url_click(open_markdown_url),

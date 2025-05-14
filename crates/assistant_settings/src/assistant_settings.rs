@@ -41,6 +41,7 @@ pub enum NotifyWhenAgentWaiting {
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(tag = "name", rename_all = "snake_case")]
+#[schemars(deny_unknown_fields)]
 pub enum AssistantProviderContentV1 {
     #[serde(rename = "zed.dev")]
     ZedDotDev { default_model: Option<CloudModel> },
@@ -93,6 +94,7 @@ pub struct AssistantSettings {
     pub single_file_review: bool,
     pub model_parameters: Vec<LanguageModelParameters>,
     pub preferred_completion_mode: CompletionMode,
+    pub enable_feedback: bool,
 }
 
 impl AssistantSettings {
@@ -260,6 +262,7 @@ impl AssistantSettingsContent {
                     single_file_review: None,
                     model_parameters: Vec::new(),
                     preferred_completion_mode: None,
+                    enable_feedback: None,
                 },
                 VersionedAssistantSettingsContent::V2(ref settings) => settings.clone(),
             },
@@ -290,6 +293,7 @@ impl AssistantSettingsContent {
                 single_file_review: None,
                 model_parameters: Vec::new(),
                 preferred_completion_mode: None,
+                enable_feedback: None,
             },
             None => AssistantSettingsContentV2::default(),
         }
@@ -543,6 +547,7 @@ impl AssistantSettingsContent {
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
 #[serde(tag = "version")]
+#[schemars(deny_unknown_fields)]
 pub enum VersionedAssistantSettingsContent {
     #[serde(rename = "1")]
     V1(AssistantSettingsContentV1),
@@ -571,11 +576,13 @@ impl Default for VersionedAssistantSettingsContent {
             single_file_review: None,
             model_parameters: Vec::new(),
             preferred_completion_mode: None,
+            enable_feedback: None,
         })
     }
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug, Default)]
+#[schemars(deny_unknown_fields)]
 pub struct AssistantSettingsContentV2 {
     /// Whether the Assistant is enabled.
     ///
@@ -644,6 +651,10 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: normal
     preferred_completion_mode: Option<CompletionMode>,
+    /// Whether to show thumb buttons for feedback in the agent panel.
+    ///
+    /// Default: true
+    enable_feedback: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
@@ -734,6 +745,7 @@ pub struct ContextServerPresetContent {
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
+#[schemars(deny_unknown_fields)]
 pub struct AssistantSettingsContentV1 {
     /// Whether the Assistant is enabled.
     ///
@@ -763,6 +775,7 @@ pub struct AssistantSettingsContentV1 {
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
+#[schemars(deny_unknown_fields)]
 pub struct LegacyAssistantSettingsContent {
     /// Whether to show the assistant panel button in the status bar.
     ///
@@ -848,6 +861,7 @@ impl Settings for AssistantSettings {
                 &mut settings.preferred_completion_mode,
                 value.preferred_completion_mode,
             );
+            merge(&mut settings.enable_feedback, value.enable_feedback);
 
             settings
                 .model_parameters
@@ -984,6 +998,7 @@ mod tests {
                                 notify_when_agent_waiting: None,
                                 stream_edits: None,
                                 single_file_review: None,
+                                enable_feedback: None,
                                 model_parameters: Vec::new(),
                                 preferred_completion_mode: None,
                             },
