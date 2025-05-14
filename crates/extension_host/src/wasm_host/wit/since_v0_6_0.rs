@@ -1,4 +1,10 @@
-use crate::wasm_host::wit::since_v0_6_0::slash_command::SlashCommandOutputSection;
+use crate::wasm_host::wit::since_v0_6_0::{
+    dap::{
+        AttachRequest, DebugRequest, LaunchRequest, StartDebuggingRequestArguments,
+        StartDebuggingRequestArgumentsRequest, TcpArguments, TcpArgumentsTemplate,
+    },
+    slash_command::SlashCommandOutputSection,
+};
 use crate::wasm_host::wit::{CompletionKind, CompletionLabelDetails, InsertTextFormat, SymbolKind};
 use crate::wasm_host::{WasmState, wit::ToWasmtimeResult};
 use ::http_client::{AsyncBody, HttpRequestExt};
@@ -17,6 +23,7 @@ use project::project_settings::ProjectSettings;
 use semantic_version::SemanticVersion;
 use std::{
     env,
+    net::Ipv4Addr,
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
@@ -69,6 +76,101 @@ impl From<Command> for extension::Command {
             args: value.args,
             env: value.env,
         }
+    }
+}
+
+impl From<extension::LaunchRequest> for LaunchRequest {
+    fn from(value: extension::LaunchRequest) -> Self {
+        Self {
+            program: value.program,
+            cwd: value.cwd.map(|path| path.to_string_lossy().into_owned()),
+            envs: value.env.into_iter().collect(),
+            args: value.args,
+        }
+    }
+}
+
+impl From<StartDebuggingRequestArgumentsRequest>
+    for extension::StartDebuggingRequestArgumentsRequest
+{
+    fn from(value: StartDebuggingRequestArgumentsRequest) -> Self {
+        match value {
+            StartDebuggingRequestArgumentsRequest::Launch => Self::Launch,
+            StartDebuggingRequestArgumentsRequest::Attach => Self::Attach,
+        }
+    }
+}
+impl TryFrom<StartDebuggingRequestArguments> for extension::StartDebuggingRequestArguments {
+    type Error = anyhow::Error;
+
+    fn try_from(value: StartDebuggingRequestArguments) -> Result<Self, Self::Error> {
+        Ok(Self {
+            configuration: serde_json::from_str(&value.configuration)?,
+            request: value.request.into(),
+        })
+    }
+}
+impl From<TcpArguments> for extension::TcpArguments {
+    fn from(value: TcpArguments) -> Self {
+        Self {
+            host: value.host.into(),
+            port: value.port,
+            timeout: value.timeout,
+        }
+    }
+}
+
+impl From<extension::TcpArgumentsTemplate> for TcpArgumentsTemplate {
+    fn from(value: extension::TcpArgumentsTemplate) -> Self {
+        Self {
+            host: value.host.map(Ipv4Addr::to_bits),
+            port: value.port,
+            timeout: value.timeout,
+        }
+    }
+}
+impl From<extension::AttachRequest> for AttachRequest {
+    fn from(value: extension::AttachRequest) -> Self {
+        Self {
+            process_id: value.process_id,
+        }
+    }
+}
+impl From<extension::DebugRequest> for DebugRequest {
+    fn from(value: extension::DebugRequest) -> Self {
+        match value {
+            extension::DebugRequest::Launch(launch_request) => Self::Launch(launch_request.into()),
+            extension::DebugRequest::Attach(attach_request) => Self::Attach(attach_request.into()),
+        }
+    }
+}
+
+impl TryFrom<extension::DebugTaskDefinition> for DebugTaskDefinition {
+    type Error = anyhow::Error;
+    fn try_from(value: extension::DebugTaskDefinition) -> Result<Self, Self::Error> {
+        let initialize_args = value.initialize_args.map(|s| s.to_string());
+        Ok(Self {
+            label: value.label.to_string(),
+            adapter: value.adapter.to_string(),
+            request: value.request.into(),
+            initialize_args,
+            stop_on_entry: value.stop_on_entry,
+            tcp_connection: value.tcp_connection.map(Into::into),
+        })
+    }
+}
+
+impl TryFrom<DebugAdapterBinary> for extension::DebugAdapterBinary {
+    type Error = anyhow::Error;
+    fn try_from(value: DebugAdapterBinary) -> Result<Self, Self::Error> {
+        Ok(Self {
+            command: value.command,
+            arguments: value.arguments,
+            envs: value.envs.into_iter().collect(),
+            cwd: value.cwd.map(|s| s.into()),
+            connection: value.connection.map(Into::into),
+            request_args: value.request_args.try_into()?,
+        })
     }
 }
 
@@ -626,6 +728,9 @@ impl slash_command::Host for WasmState {}
 
 #[async_trait]
 impl context_server::Host for WasmState {}
+
+#[async_trait]
+impl dap::Host for WasmState {}
 
 impl ExtensionImports for WasmState {
     async fn get_settings(

@@ -7,16 +7,16 @@ mod since_v0_3_0;
 mod since_v0_4_0;
 mod since_v0_5_0;
 mod since_v0_6_0;
-use extension::{KeyValueStoreDelegate, WorktreeDelegate};
+use extension::{DebugTaskDefinition, KeyValueStoreDelegate, WorktreeDelegate};
 use language::LanguageName;
 use lsp::LanguageServerName;
 use release_channel::ReleaseChannel;
-use since_v0_6_0 as latest;
 
 use super::{WasmState, wasm_engine};
 use anyhow::{Context as _, Result, anyhow};
 use semantic_version::SemanticVersion;
-use std::{ops::RangeInclusive, sync::Arc};
+use since_v0_6_0 as latest;
+use std::{ops::RangeInclusive, path::PathBuf, sync::Arc};
 use wasmtime::{
     Store,
     component::{Component, Linker, Resource},
@@ -25,7 +25,7 @@ use wasmtime::{
 #[cfg(test)]
 pub use latest::CodeLabelSpanLiteral;
 pub use latest::{
-    CodeLabel, CodeLabelSpan, Command, ExtensionProject, Range, SlashCommand,
+    CodeLabel, CodeLabelSpan, Command, DebugAdapterBinary, ExtensionProject, Range, SlashCommand,
     zed::extension::context_server::ContextServerConfiguration,
     zed::extension::lsp::{
         Completion, CompletionKind, CompletionLabelDetails, InsertTextFormat, Symbol, SymbolKind,
@@ -895,6 +895,30 @@ impl Extension {
             Extension::V0_0_1(_) | Extension::V0_0_4(_) | Extension::V0_0_6(_) => {
                 Err(anyhow!("`index_docs` not available prior to v0.1.0"))
             }
+        }
+    }
+    pub async fn call_get_dap_binary(
+        &self,
+        store: &mut Store<WasmState>,
+        adapter_name: Arc<str>,
+        task: DebugTaskDefinition,
+        user_installed_path: Option<PathBuf>,
+    ) -> Result<Result<DebugAdapterBinary, String>> {
+        match self {
+            Extension::V0_6_0(ext) => {
+                let dap_binary = ext
+                    .call_get_dap_binary(
+                        store,
+                        &adapter_name,
+                        &task.try_into()?,
+                        user_installed_path.as_ref().and_then(|p| p.to_str()),
+                    )
+                    .await?
+                    .map_err(|e| anyhow!("{e:?}"))?;
+
+                Ok(Ok(dap_binary))
+            }
+            _ => Err(anyhow!("`get_dap_binary` not available prior to v0.6.0")),
         }
     }
 }

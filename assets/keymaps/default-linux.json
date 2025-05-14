@@ -538,7 +538,6 @@
       "ctrl-alt-b": "workspace::ToggleRightDock",
       "ctrl-b": "workspace::ToggleLeftDock",
       "ctrl-j": "workspace::ToggleBottomDock",
-      "ctrl-w": "workspace::CloseActiveDock",
       "ctrl-alt-y": "workspace::CloseAllDocks",
       "shift-find": "pane::DeploySearch",
       "ctrl-shift-f": "pane::DeploySearch",
@@ -978,6 +977,13 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-r": "diagnostics::ToggleDiagnosticsRefresh"
+    }
+  },
+  {
+    "context": "DebugConsole > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "menu::Confirm"
     }
   }
 ]

@@ -21,8 +21,8 @@ use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, P
 use language_model::{
     LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
     LanguageModelImage, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
-    Role, StopReason, report_assistant_event,
+    LanguageModelToolUseId, MessageContent, PaymentRequiredError, Role, StopReason,
+    report_assistant_event,
 };
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
@@ -447,7 +447,6 @@ impl ContextOperation {
 pub enum ContextEvent {
     ShowAssistError(SharedString),
     ShowPaymentRequiredError,
-    ShowMaxMonthlySpendReachedError,
     MessagesEdited,
     SummaryChanged,
     SummaryGenerated,
@@ -2151,12 +2150,6 @@ impl AssistantContext {
                     let error_message = if let Some(error) = result.as_ref().err() {
                         if error.is::<PaymentRequiredError>() {
                             cx.emit(ContextEvent::ShowPaymentRequiredError);
-                            this.update_metadata(assistant_message_id, cx, |metadata| {
-                                metadata.status = MessageStatus::Canceled;
-                            });
-                            Some(error.to_string())
-                        } else if error.is::<MaxMonthlySpendReachedError>() {
-                            cx.emit(ContextEvent::ShowMaxMonthlySpendReachedError);
                             this.update_metadata(assistant_message_id, cx, |metadata| {
                                 metadata.status = MessageStatus::Canceled;
                             });

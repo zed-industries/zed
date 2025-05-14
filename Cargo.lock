@@ -4135,6 +4135,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "debug_adapter_extension"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "dap",
+ "extension",
+ "gpui",
+ "workspace-hack",
+]
+
+[[package]]
 name = "debugger_tools"
 version = "0.1.0"
 dependencies = [
@@ -4167,6 +4179,7 @@ dependencies = [
  "editor",
  "env_logger 0.11.8",
  "feature_flags",
+ "file_icons",
  "futures 0.3.31",
  "fuzzy",
  "gpui",
@@ -5038,6 +5051,7 @@ dependencies = [
  "async-tar",
  "async-trait",
  "collections",
+ "dap",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -5050,6 +5064,7 @@ dependencies = [
  "semantic_version",
  "serde",
  "serde_json",
+ "task",
  "toml 0.8.20",
  "util",
  "wasm-encoder 0.221.3",
@@ -5093,6 +5108,7 @@ dependencies = [
  "client",
  "collections",
  "ctor",
+ "dap",
  "env_logger 0.11.8",
  "extension",
  "fs",
@@ -18031,7 +18047,6 @@ dependencies = [
  "aho-corasick",
  "anstream",
  "arrayvec",
- "async-compression",
  "async-std",
  "async-tungstenite",
  "aws-config",
@@ -18539,7 +18554,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.187.0"
+version = "0.188.0"
 dependencies = [
  "activity_indicator",
  "agent",
