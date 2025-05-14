@@ -48,6 +48,7 @@ pub struct ExampleMetadata {
     pub language_server: Option<LanguageServer>,
     pub max_assertions: Option<usize>,
     pub profile_id: AgentProfileId,
+    pub existing_thread_json: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -477,12 +478,16 @@ impl Response {
         tool_name: &'static str,
         cx: &mut ExampleContext,
     ) -> Result<&ToolUse> {
-        let result = self.messages.iter().find_map(|msg| {
+        let result = self.find_tool_call(tool_name);
+        cx.assert_some(result, format!("called `{}`", tool_name))
+    }
+
+    pub fn find_tool_call(&self, tool_name: &str) -> Option<&ToolUse> {
+        self.messages.iter().rev().find_map(|msg| {
             msg.tool_use
                 .iter()
                 .find(|tool_use| tool_use.name == tool_name)
-        });
-        cx.assert_some(result, format!("called `{}`", tool_name))
+        })
     }
 
     #[allow(dead_code)]

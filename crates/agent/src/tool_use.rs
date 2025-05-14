@@ -52,15 +52,19 @@ impl ToolUseState {
     /// Constructs a [`ToolUseState`] from the given list of [`SerializedMessage`]s.
     ///
     /// Accepts a function to filter the tools that should be used to populate the state.
+    ///
+    /// If `window` is `None` (e.g., when in headless mode or when running evals),
+    /// tool cards won't be deserialized
     pub fn from_serialized_messages(
         tools: Entity<ToolWorkingSet>,
         messages: &[SerializedMessage],
         project: Entity<Project>,
-        window: &mut Window,
+        window: Option<&mut Window>, // None in headless mode
         cx: &mut App,
     ) -> Self {
         let mut this = Self::new(tools);
         let mut tool_names_by_id = HashMap::default();
+        let mut window = window;
 
         for message in messages {
             match message.role {
@@ -105,12 +109,17 @@ impl ToolUseState {
                                 },
                             );
 
-                            if let Some(tool) = this.tools.read(cx).tool(tool_use, cx) {
-                                if let Some(output) = tool_result.output.clone() {
-                                    if let Some(card) =
-                                        tool.deserialize_card(output, project.clone(), window, cx)
-                                    {
-                                        this.tool_result_cards.insert(tool_use_id, card);
+                            if let Some(window) = &mut window {
+                                if let Some(tool) = this.tools.read(cx).tool(tool_use, cx) {
+                                    if let Some(output) = tool_result.output.clone() {
+                                        if let Some(card) = tool.deserialize_card(
+                                            output,
+                                            project.clone(),
+                                            window,
+                                            cx,
+                                        ) {
+                                            this.tool_result_cards.insert(tool_use_id, card);
+                                        }
                                     }
                                 }
                             }
