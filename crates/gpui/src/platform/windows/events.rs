@@ -1451,12 +1451,14 @@ where
             None
         }
         VK_SHIFT | VK_CONTROL | VK_MENU | VK_LWIN | VK_RWIN => {
-            if let Some(prev_modifiers) = state.last_reported_modifiers {
-                if prev_modifiers == modifiers {
-                    return None;
-                }
-                state.last_reported_modifiers = Some(modifiers);
+            println!("Last reported modifiers: {:?}, {:?}", state.last_reported_modifiers, modifiers);
+            if state
+                .last_reported_modifiers
+                .is_some_and(|prev_modifiers| prev_modifiers == modifiers)
+            {
+                return None;
             }
+            state.last_reported_modifiers = Some(modifiers);
             Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                 modifiers,
             }))
