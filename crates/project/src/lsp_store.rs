@@ -11,7 +11,6 @@ use crate::{
     lsp_store,
     manifest_tree::{
         AdapterQuery, LanguageServerTree, LanguageServerTreeNode, LaunchDisposition, ManifestTree,
-        ServerTreeRebase,
     },
     prettier_store::{self, PrettierStore, PrettierStoreEvent},
     project_settings::{LspSettings, ProjectSettings},
@@ -2291,11 +2290,7 @@ impl LocalLspStore {
         let (reused, delegate, servers) = self
             .lsp_tree
             .update(cx, |lsp_tree, cx| {
-                let mut rebase = lsp_tree.rebase(true);
-                let reused =
-                    self.reuse_existing_language_server(&mut rebase, &worktree, &language_name, cx);
-                rebase.finish();
-                reused
+                self.reuse_existing_language_server(lsp_tree, &worktree, &language_name, cx)
             })
             .map(|(delegate, servers)| (true, delegate, servers))
             .unwrap_or_else(|| {
@@ -2462,7 +2457,7 @@ impl LocalLspStore {
 
     fn reuse_existing_language_server(
         &self,
-        rebase: &mut ServerTreeRebase<'_>,
+        server_tree: &mut LanguageServerTree,
         worktree: &Entity<Worktree>,
         language_name: &LanguageName,
         cx: &mut App,
@@ -2470,16 +2465,17 @@ impl LocalLspStore {
         if worktree.read(cx).is_visible() {
             return None;
         }
-        let instances = &rebase.server_tree().instances;
+
         let worktree_store = self.worktree_store.read(cx);
-        let servers = instances
+        let servers = server_tree
+            .instances
             .iter()
             .filter(|(worktree_id, _)| {
                 worktree_store
                     .worktree_for_id(**worktree_id, cx)
                     .is_some_and(|worktree| worktree.read(cx).is_visible())
             })
-            .map(|(worktree_id, servers)| {
+            .flat_map(|(worktree_id, servers)| {
                 servers
                     .roots
                     .iter()
@@ -2495,19 +2491,21 @@ impl LocalLspStore {
                         )
                     })
             })
-            .flatten()
             .fold(HashMap::default(), |mut acc, (worktree_id, server_node)| {
                 acc.entry(worktree_id)
                     .or_insert_with(Vec::new)
                     .push(server_node);
                 acc
             })
-            .into_iter()
-            .map(|(_, servers)| servers)
+            .into_values()
             .max_by_key(|servers| servers.len())?;
 
         for server_node in &servers {
-            rebase.register_reused(worktree, language_name.clone(), server_node.clone(), cx);
+            server_tree.register_reused(
+                worktree.read(cx).id(),
+                language_name.clone(),
+                server_node.clone(),
+            );
         }
 
         let delegate = LocalLspAdapterDelegate::from_local_lsp(self, worktree, cx);
@@ -4443,7 +4441,7 @@ impl LspStore {
                     }
                 };
 
-                let mut rebase = lsp_tree.rebase(false);
+                let mut rebase = lsp_tree.rebase();
                 for buffer_handle in buffer_store.read(cx).buffers().sorted_by_key(|buffer| {
                     Reverse(
                         crate::File::from_dyn(buffer.read(cx).file())
@@ -4468,7 +4466,12 @@ impl LspStore {
                         };
 
                         let Some((reused, delegate, nodes)) = local
-                            .reuse_existing_language_server(&mut rebase, &worktree, &language, cx)
+                            .reuse_existing_language_server(
+                                rebase.server_tree(),
+                                &worktree,
+                                &language,
+                                cx,
+                            )
                             .map(|(delegate, servers)| (true, delegate, servers))
                             .or_else(|| {
                                 let delegate = adapters
