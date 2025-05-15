@@ -68,7 +68,9 @@ pub enum Model {
     MetaLlama32_11BMultiModal,
     MetaLlama32_90BMultiModal,
     MetaLlama33_70BInstruct,
+    #[allow(non_camel_case_types)]
     MetaLlama4Scout_17BInstruct,
+    #[allow(non_camel_case_types)]
     MetaLlama4Maverick_17BInstruct,
     // Mistral models
     MistralMistral7BInstructV0,
