@@ -3998,30 +3998,24 @@ impl Editor {
                                     let (snapshot, range) = buffer
                                         .buffer_line_for_row(MultiBufferRow(start_point.row))?;
 
-                                    let mut index_of_first_non_whitespace = 0;
+                                    let index_of_first_non_whitespace = snapshot
+                                        .chars_for_range(range.clone())
+                                        .take_while(|c| c.is_whitespace())
+                                        .count();
+
                                     let doc_line_candidate = snapshot
                                         .chars_for_range(range.clone())
-                                        .skip_while(|c| {
-                                            let should_skip = c.is_whitespace();
-                                            if should_skip {
-                                                index_of_first_non_whitespace += 1;
-                                            }
-                                            should_skip
-                                        })
+                                        .skip(index_of_first_non_whitespace)
                                         .take(max_len_of_delimiter)
                                         .collect::<String>();
 
-                                    let existing_comment_prefix = if doc_line_candidate
-                                        .starts_with(doc_block_prefix.as_ref())
-                                    {
-                                        Some(doc_block_prefix)
-                                    } else if doc_line_candidate
-                                        .starts_with(doc_comment_prefix.as_ref())
-                                    {
-                                        Some(doc_comment_prefix)
-                                    } else {
-                                        None
-                                    }?;
+                                    let existing_comment_prefix =
+                                        [&doc_block_prefix, &doc_comment_prefix]
+                                            .iter()
+                                            .find(|&prefix| {
+                                                doc_line_candidate.starts_with(prefix.as_ref())
+                                            })
+                                            .cloned()?;
 
                                     let cursor_is_placed_after_comment_marker =
                                         index_of_first_non_whitespace
