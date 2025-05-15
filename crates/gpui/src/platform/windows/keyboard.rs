@@ -54,9 +54,9 @@ pub(crate) fn get_keystroke_key(
     modifiers: &mut Modifiers,
 ) -> Option<String> {
     if modifiers.shift && need_to_convert_to_shifted_key(vkey) {
-        get_shifted_key(vkey, scan_code).and_then(|key| {
+        get_shifted_key(vkey, scan_code).map(|key| {
             modifiers.shift = false;
-            Some(key)
+            key
         })
     } else {
         get_key_from_vkey(vkey)
