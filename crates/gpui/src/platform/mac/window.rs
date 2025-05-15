@@ -844,6 +844,9 @@ impl PlatformWindow for MacWindow {
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         unsafe {
             let screen = self.0.lock().native_window.screen();
+            if screen.is_null() {
+                return None;
+            }
             let device_description: id = msg_send![screen, deviceDescription];
             let screen_number: id = NSDictionary::valueForKey_(
                 device_description,
@@ -1193,6 +1196,9 @@ impl rwh::HasDisplayHandle for MacWindow {
 fn get_scale_factor(native_window: id) -> f32 {
     let factor = unsafe {
         let screen: id = msg_send![native_window, screen];
+        if screen.is_null() {
+            return 1.0;
+        }
         NSScreen::backingScaleFactor(screen) as f32
     };
 
