@@ -450,8 +450,9 @@ fn handle_keyup_msg(
 }
 
 fn handle_char_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let Some(input) =
-        char::from_u32(wparam.0 as u32).and_then(|c| (!c.is_control()).then_some(c.to_string()))
+    let Some(input) = char::from_u32(wparam.0 as u32)
+        .filter(|c| !c.is_control())
+        .map(String::from)
     else {
         return Some(1);
     };
