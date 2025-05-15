@@ -3988,52 +3988,76 @@ impl Editor {
 
                                     let doc_block = language.documentation_block();
                                     let doc_block_prefix = doc_block.first()?;
+                                    let doc_block_prefix_len = doc_block_prefix.len();
                                     let doc_comment_prefix =
                                         language.documentation_comment_prefix()?;
                                     let max_len_of_delimiter = std::cmp::max(
                                         doc_comment_prefix.len(),
-                                        doc_block_prefix.len(),
+                                        doc_block_prefix_len,
                                     );
 
                                     let (snapshot, range) = buffer
                                         .buffer_line_for_row(MultiBufferRow(start_point.row))?;
 
+                                    let mut add_prefix_comment = false;
+
                                     let index_of_first_non_whitespace = snapshot
                                         .chars_for_range(range.clone())
                                         .take_while(|c| c.is_whitespace())
                                         .count();
-
                                     let doc_line_candidate = snapshot
                                         .chars_for_range(range.clone())
                                         .skip(index_of_first_non_whitespace)
                                         .take(max_len_of_delimiter)
                                         .collect::<String>();
-
-                                    let existing_comment_prefix =
-                                        [&doc_block_prefix, &doc_comment_prefix]
-                                            .iter()
-                                            .find(|&prefix| {
-                                                doc_line_candidate.starts_with(prefix.as_ref())
-                                            })
-                                            .cloned()?;
-
-                                    let cursor_is_placed_after_comment_marker =
-                                        index_of_first_non_whitespace
-                                            + existing_comment_prefix.len()
+                                    if doc_line_candidate.starts_with(doc_block_prefix.as_ref()) {
+                                        let cursor_after_doc_prefix = index_of_first_non_whitespace
+                                            + doc_block_prefix_len
                                             <= start_point.column as usize;
-                                    if cursor_is_placed_after_comment_marker {
-                                        if let Some(doc_block_last) = doc_block.last() {
-                                            let mut line_rev_iter = snapshot
-                                                .reversed_chars_for_range(range)
-                                                .skip_while(|c| c.is_whitespace());
-                                            let matches_doc_suffix = doc_block_last
-                                                .chars()
-                                                .rev()
-                                                .all(|char| line_rev_iter.next() == Some(char));
-                                            if matches_doc_suffix {
-                                                insert_extra_newline = true;
+                                        if cursor_after_doc_prefix {
+                                            if let Some(doc_block_last) = doc_block.last() {
+                                                let whitespace_char_from_last = snapshot
+                                                    .reversed_chars_for_range(range.clone())
+                                                    .take_while(|c| c.is_whitespace())
+                                                    .count();
+                                                let mut line_rev_iter = snapshot
+                                                    .reversed_chars_for_range(range)
+                                                    .skip(whitespace_char_from_last);
+                                                let suffix_matches = doc_block_last
+                                                    .chars()
+                                                    .rev()
+                                                    .all(|char| line_rev_iter.next() == Some(char));
+                                                if suffix_matches {
+                                                    let max_point =
+                                                        snapshot.line_len(start_point.row) as usize;
+                                                    let cursor_before_doc_suffix =
+                                                        whitespace_char_from_last
+                                                            + doc_block_last.len()
+                                                            + start_point.column as usize
+                                                            <= max_point;
+                                                    if cursor_before_doc_suffix {
+                                                        insert_extra_newline = true;
+                                                        add_prefix_comment = true;
+                                                    }
+                                                } else {
+                                                    add_prefix_comment = true;
+                                                }
+                                            } else {
+                                                add_prefix_comment = true;
                                             }
                                         }
+                                    } else if doc_line_candidate
+                                        .starts_with(doc_comment_prefix.as_ref())
+                                    {
+                                        let cursor_after_prefix = index_of_first_non_whitespace
+                                            + doc_comment_prefix.len()
+                                            <= start_point.column as usize;
+                                        if cursor_after_prefix {
+                                            add_prefix_comment = true;
+                                        }
+                                    }
+
+                                    if add_prefix_comment {
                                         Some(doc_comment_prefix.clone())
                                     } else {
                                         None
