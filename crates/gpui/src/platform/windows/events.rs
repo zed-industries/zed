@@ -88,7 +88,7 @@ pub(crate) fn handle_msg(
         WM_SYSCOMMAND => handle_system_command(wparam, state_ptr),
         WM_KEYDOWN => handle_keydown_msg(wparam, lparam, state_ptr),
         WM_KEYUP => handle_keyup_msg(wparam, lparam, state_ptr),
-        WM_CHAR => handle_char_msg(wparam, lparam, state_ptr),
+        WM_CHAR => handle_char_msg(wparam, state_ptr),
         WM_DEADCHAR => handle_dead_char_msg(wparam, state_ptr),
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
@@ -449,11 +449,7 @@ fn handle_keyup_msg(
     result
 }
 
-fn handle_char_msg(
-    wparam: WPARAM,
-    lparam: LPARAM,
-    state_ptr: Rc<WindowsWindowStatePtr>,
-) -> Option<isize> {
+fn handle_char_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     let Some(input) =
         char::from_u32(wparam.0 as u32).and_then(|c| (!c.is_control()).then_some(c.to_string()))
     else {
