@@ -84,11 +84,11 @@ pub(crate) fn handle_msg(
         WM_MOUSEWHEEL => handle_mouse_wheel_msg(handle, wparam, lparam, state_ptr),
         WM_MOUSEHWHEEL => handle_mouse_horizontal_wheel_msg(handle, wparam, lparam, state_ptr),
         WM_SYSKEYDOWN => handle_syskeydown_msg(wparam, lparam, state_ptr),
-        WM_SYSKEYUP => handle_syskeyup_msg(wparam, state_ptr),
+        WM_SYSKEYUP => handle_syskeyup_msg(wparam, lparam, state_ptr),
         WM_SYSCOMMAND => handle_system_command(wparam, state_ptr),
         WM_KEYDOWN => handle_keydown_msg(wparam, lparam, state_ptr),
-        WM_KEYUP => handle_keyup_msg(wparam, state_ptr),
-        WM_CHAR => handle_char_msg(wparam, lparam, state_ptr),
+        WM_KEYUP => handle_keyup_msg(wparam, lparam, state_ptr),
+        WM_CHAR => handle_char_msg(wparam, state_ptr),
         WM_DEADCHAR => handle_dead_char_msg(wparam, state_ptr),
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
@@ -344,170 +344,120 @@ fn handle_syskeydown_msg(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
-    let vkey = wparam.loword();
-    let input = if is_modifier(VIRTUAL_KEY(vkey)) {
-        let modifiers = current_modifiers();
-        if let Some(prev_modifiers) = lock.last_reported_modifiers {
-            if prev_modifiers == modifiers {
-                return Some(0);
-            }
-        }
-        lock.last_reported_modifiers = Some(modifiers);
-        PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers })
-    } else {
-        let keystroke = parse_syskeydown_msg_keystroke(wparam)?;
+    let input = handle_key_event(wparam, lparam, &mut lock, |keystroke| {
         PlatformInput::KeyDown(KeyDownEvent {
             keystroke,
             is_held: lparam.0 & (0x1 << 30) > 0,
         })
-    };
+    })?;
     let mut func = lock.callbacks.input.take()?;
     drop(lock);
-    let result = if !func(input).propagate {
-        state_ptr.state.borrow_mut().system_key_handled = true;
-        Some(0)
-    } else {
-        // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
-        // shortcuts.
-        None
-    };
-    state_ptr.state.borrow_mut().callbacks.input = Some(func);
 
-    result
-}
+    let handled = !func(input).propagate;
 
-fn handle_syskeyup_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
-    let vkey = wparam.loword();
-    let input = if is_modifier(VIRTUAL_KEY(vkey)) {
-        let modifiers = current_modifiers();
-        if let Some(prev_modifiers) = lock.last_reported_modifiers {
-            if prev_modifiers == modifiers {
-                return Some(0);
-            }
-        }
-        lock.last_reported_modifiers = Some(modifiers);
-        PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers })
-    } else {
-        let keystroke = parse_syskeydown_msg_keystroke(wparam)?;
-        PlatformInput::KeyUp(KeyUpEvent { keystroke })
-    };
-    let mut func = lock.callbacks.input.take()?;
-    drop(lock);
-    let result = if !func(input).propagate {
+    lock.callbacks.input = Some(func);
+
+    if handled {
+        lock.system_key_handled = true;
+        lock.suppress_next_char_msg = true;
         Some(0)
     } else {
         // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
         // shortcuts.
         None
-    };
-    state_ptr.state.borrow_mut().callbacks.input = Some(func);
-
-    result
+    }
 }
 
+fn handle_syskeyup_msg(
+    wparam: WPARAM,
+    lparam: LPARAM,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
+    let mut lock = state_ptr.state.borrow_mut();
+    let input = handle_key_event(wparam, lparam, &mut lock, |keystroke| {
+        PlatformInput::KeyUp(KeyUpEvent { keystroke })
+    })?;
+    let mut func = lock.callbacks.input.take()?;
+    drop(lock);
+    func(input);
+    state_ptr.state.borrow_mut().callbacks.input = Some(func);
+
+    // Always return 0 to indicate that the message was handled, so we could properly handle `ModifiersChanged` event.
+    Some(0)
+}
+
+// It's a known bug that you can't trigger `ctrl-shift-0`. See:
+// https://superuser.com/questions/1455762/ctrl-shift-number-key-combination-has-stopped-working-for-a-few-numbers
 fn handle_keydown_msg(
     wparam: WPARAM,
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let Some(keystroke_or_modifier) = parse_keystroke_from_vkey(wparam, false) else {
-        return Some(1);
-    };
     let mut lock = state_ptr.state.borrow_mut();
-
-    let event = match keystroke_or_modifier {
-        KeystrokeOrModifier::Keystroke(keystroke) => PlatformInput::KeyDown(KeyDownEvent {
+    let Some(input) = handle_key_event(wparam, lparam, &mut lock, |keystroke| {
+        PlatformInput::KeyDown(KeyDownEvent {
             keystroke,
             is_held: lparam.0 & (0x1 << 30) > 0,
-        }),
-        KeystrokeOrModifier::Modifier(modifiers) => {
-            if let Some(prev_modifiers) = lock.last_reported_modifiers {
-                if prev_modifiers == modifiers {
-                    return Some(0);
-                }
-            }
-            lock.last_reported_modifiers = Some(modifiers);
-            PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers })
-        }
+        })
+    }) else {
+        return Some(1);
     };
+
     let Some(mut func) = lock.callbacks.input.take() else {
         return Some(1);
     };
     drop(lock);
 
-    let result = if func(event).default_prevented {
-        Some(0)
-    } else {
-        Some(1)
-    };
-    state_ptr.state.borrow_mut().callbacks.input = Some(func);
+    let handled = !func(input).propagate;
 
-    result
-}
-
-fn handle_keyup_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let Some(keystroke_or_modifier) = parse_keystroke_from_vkey(wparam, true) else {
-        return Some(1);
-    };
     let mut lock = state_ptr.state.borrow_mut();
+    lock.callbacks.input = Some(func);
 
-    let event = match keystroke_or_modifier {
-        KeystrokeOrModifier::Keystroke(keystroke) => PlatformInput::KeyUp(KeyUpEvent { keystroke }),
-        KeystrokeOrModifier::Modifier(modifiers) => {
-            if let Some(prev_modifiers) = lock.last_reported_modifiers {
-                if prev_modifiers == modifiers {
-                    return Some(0);
-                }
-            }
-            lock.last_reported_modifiers = Some(modifiers);
-            PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers })
-        }
-    };
-    let Some(mut func) = lock.callbacks.input.take() else {
-        return Some(1);
-    };
-    drop(lock);
-
-    let result = if func(event).default_prevented {
+    if handled {
+        lock.suppress_next_char_msg = true;
         Some(0)
     } else {
         Some(1)
-    };
-    state_ptr.state.borrow_mut().callbacks.input = Some(func);
-
-    result
+    }
 }
 
-fn handle_char_msg(
+fn handle_keyup_msg(
     wparam: WPARAM,
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let Some(keystroke) = parse_char_msg_keystroke(wparam) else {
+    let mut lock = state_ptr.state.borrow_mut();
+    let Some(input) = handle_key_event(wparam, lparam, &mut lock, |keystroke| {
+        PlatformInput::KeyUp(KeyUpEvent { keystroke })
+    }) else {
         return Some(1);
     };
-    let mut lock = state_ptr.state.borrow_mut();
+
     let Some(mut func) = lock.callbacks.input.take() else {
         return Some(1);
     };
     drop(lock);
-    let key_char = keystroke.key_char.clone();
-    let event = KeyDownEvent {
-        keystroke,
-        is_held: lparam.0 & (0x1 << 30) > 0,
+
+    let result = if func(input).default_prevented {
+        Some(0)
+    } else {
+        Some(1)
     };
-    let dispatch_event_result = func(PlatformInput::KeyDown(event));
     state_ptr.state.borrow_mut().callbacks.input = Some(func);
 
-    if dispatch_event_result.default_prevented || !dispatch_event_result.propagate {
-        return Some(0);
-    }
-    let Some(ime_char) = key_char else {
+    result
+}
+
+fn handle_char_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+    let Some(input) = char::from_u32(wparam.0 as u32)
+        .filter(|c| !c.is_control())
+        .map(String::from)
+    else {
         return Some(1);
     };
     with_input_handler(&state_ptr, |input_handler| {
-        input_handler.replace_text_in_range(None, &ime_char);
+        input_handler.replace_text_in_range(None, &input);
     });
 
     Some(0)
@@ -1297,151 +1247,116 @@ fn handle_input_language_changed(
     Some(0)
 }
 
-fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
-    let modifiers = current_modifiers();
-    let vk_code = wparam.loword();
+fn handle_key_event<F>(
+    wparam: WPARAM,
+    lparam: LPARAM,
+    state: &mut WindowsWindowState,
+    f: F,
+) -> Option<PlatformInput>
+where
+    F: FnOnce(Keystroke) -> PlatformInput,
+{
+    state.suppress_next_char_msg = false;
+    let virtual_key = VIRTUAL_KEY(wparam.loword());
+    let mut modifiers = current_modifiers();
 
-    // on Windows, F10 can trigger this event, not just the alt key,
-    // so when F10 was pressed, handle only it
-    if !modifiers.alt {
-        if vk_code == VK_F10.0 {
-            let offset = vk_code - VK_F1.0;
-            return Some(Keystroke {
-                modifiers,
-                key: format!("f{}", offset + 1),
-                key_char: None,
-            });
-        } else {
-            return None;
+    match virtual_key {
+        VK_PROCESSKEY => {
+            // IME composition
+            None
         }
-    }
-
-    let key = match VIRTUAL_KEY(vk_code) {
-        VK_BACK => "backspace",
-        VK_RETURN => "enter",
-        VK_TAB => "tab",
-        VK_UP => "up",
-        VK_DOWN => "down",
-        VK_RIGHT => "right",
-        VK_LEFT => "left",
-        VK_HOME => "home",
-        VK_END => "end",
-        VK_PRIOR => "pageup",
-        VK_NEXT => "pagedown",
-        VK_BROWSER_BACK => "back",
-        VK_BROWSER_FORWARD => "forward",
-        VK_ESCAPE => "escape",
-        VK_INSERT => "insert",
-        VK_DELETE => "delete",
-        VK_APPS => "menu",
-        _ => {
-            let basic_key = basic_vkcode_to_string(vk_code, modifiers);
-            if basic_key.is_some() {
-                return basic_key;
-            } else {
-                if vk_code >= VK_F1.0 && vk_code <= VK_F24.0 {
-                    let offset = vk_code - VK_F1.0;
-                    return Some(Keystroke {
-                        modifiers,
-                        key: format!("f{}", offset + 1),
-                        key_char: None,
-                    });
-                } else {
-                    return None;
-                }
+        VK_SHIFT | VK_CONTROL | VK_MENU | VK_LWIN | VK_RWIN => {
+            if state
+                .last_reported_modifiers
+                .is_some_and(|prev_modifiers| prev_modifiers == modifiers)
+            {
+                return None;
             }
+            state.last_reported_modifiers = Some(modifiers);
+            Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                modifiers,
+            }))
+        }
+        vkey => {
+            let keystroke = parse_normal_key(vkey, lparam, modifiers)?;
+            Some(f(keystroke))
         }
     }
-    .to_owned();
+}
 
+fn parse_immutable(vkey: VIRTUAL_KEY) -> Option<String> {
+    Some(
+        match vkey {
+            VK_SPACE => "space",
+            VK_BACK => "backspace",
+            VK_RETURN => "enter",
+            VK_TAB => "tab",
+            VK_UP => "up",
+            VK_DOWN => "down",
+            VK_RIGHT => "right",
+            VK_LEFT => "left",
+            VK_HOME => "home",
+            VK_END => "end",
+            VK_PRIOR => "pageup",
+            VK_NEXT => "pagedown",
+            VK_BROWSER_BACK => "back",
+            VK_BROWSER_FORWARD => "forward",
+            VK_ESCAPE => "escape",
+            VK_INSERT => "insert",
+            VK_DELETE => "delete",
+            VK_APPS => "menu",
+            VK_F1 => "f1",
+            VK_F2 => "f2",
+            VK_F3 => "f3",
+            VK_F4 => "f4",
+            VK_F5 => "f5",
+            VK_F6 => "f6",
+            VK_F7 => "f7",
+            VK_F8 => "f8",
+            VK_F9 => "f9",
+            VK_F10 => "f10",
+            VK_F11 => "f11",
+            VK_F12 => "f12",
+            VK_F13 => "f13",
+            VK_F14 => "f14",
+            VK_F15 => "f15",
+            VK_F16 => "f16",
+            VK_F17 => "f17",
+            VK_F18 => "f18",
+            VK_F19 => "f19",
+            VK_F20 => "f20",
+            VK_F21 => "f21",
+            VK_F22 => "f22",
+            VK_F23 => "f23",
+            VK_F24 => "f24",
+            _ => return None,
+        }
+        .to_string(),
+    )
+}
+
+fn parse_normal_key(
+    vkey: VIRTUAL_KEY,
+    lparam: LPARAM,
+    mut modifiers: Modifiers,
+) -> Option<Keystroke> {
+    let mut key_char = None;
+    let key = parse_immutable(vkey).or_else(|| {
+        let scan_code = lparam.hiword() & 0xFF;
+        key_char = generate_key_char(
+            vkey,
+            scan_code as u32,
+            modifiers.control,
+            modifiers.shift,
+            modifiers.alt,
+        );
+        get_keystroke_key(vkey, scan_code as u32, &mut modifiers)
+    })?;
     Some(Keystroke {
         modifiers,
         key,
-        key_char: None,
+        key_char,
     })
-}
-
-enum KeystrokeOrModifier {
-    Keystroke(Keystroke),
-    Modifier(Modifiers),
-}
-
-fn parse_keystroke_from_vkey(wparam: WPARAM, is_keyup: bool) -> Option<KeystrokeOrModifier> {
-    let vk_code = wparam.loword();
-
-    let modifiers = current_modifiers();
-
-    let key = match VIRTUAL_KEY(vk_code) {
-        VK_BACK => "backspace",
-        VK_RETURN => "enter",
-        VK_TAB => "tab",
-        VK_UP => "up",
-        VK_DOWN => "down",
-        VK_RIGHT => "right",
-        VK_LEFT => "left",
-        VK_HOME => "home",
-        VK_END => "end",
-        VK_PRIOR => "pageup",
-        VK_NEXT => "pagedown",
-        VK_BROWSER_BACK => "back",
-        VK_BROWSER_FORWARD => "forward",
-        VK_ESCAPE => "escape",
-        VK_INSERT => "insert",
-        VK_DELETE => "delete",
-        VK_APPS => "menu",
-        _ => {
-            if is_modifier(VIRTUAL_KEY(vk_code)) {
-                return Some(KeystrokeOrModifier::Modifier(modifiers));
-            }
-
-            if modifiers.control || modifiers.alt || is_keyup {
-                let basic_key = basic_vkcode_to_string(vk_code, modifiers);
-                if let Some(basic_key) = basic_key {
-                    return Some(KeystrokeOrModifier::Keystroke(basic_key));
-                }
-            }
-
-            if vk_code >= VK_F1.0 && vk_code <= VK_F24.0 {
-                let offset = vk_code - VK_F1.0;
-                return Some(KeystrokeOrModifier::Keystroke(Keystroke {
-                    modifiers,
-                    key: format!("f{}", offset + 1),
-                    key_char: None,
-                }));
-            };
-            return None;
-        }
-    }
-    .to_owned();
-
-    Some(KeystrokeOrModifier::Keystroke(Keystroke {
-        modifiers,
-        key,
-        key_char: None,
-    }))
-}
-
-fn parse_char_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
-    let first_char = char::from_u32((wparam.0 as u16).into())?;
-    if first_char.is_control() {
-        None
-    } else {
-        let mut modifiers = current_modifiers();
-        // for characters that use 'shift' to type it is expected that the
-        // shift is not reported if the uppercase/lowercase are the same and instead only the key is reported
-        if first_char.to_ascii_uppercase() == first_char.to_ascii_lowercase() {
-            modifiers.shift = false;
-        }
-        let key = match first_char {
-            ' ' => "space".to_string(),
-            first_char => first_char.to_lowercase().to_string(),
-        };
-        Some(Keystroke {
-            modifiers,
-            key,
-            key_char: Some(first_char.to_string()),
-        })
-    }
 }
 
 fn parse_ime_compostion_string(ctx: HIMC) -> Option<String> {
@@ -1494,38 +1409,9 @@ fn parse_ime_compostion_result(ctx: HIMC) -> Option<String> {
     }
 }
 
-fn basic_vkcode_to_string(code: u16, modifiers: Modifiers) -> Option<Keystroke> {
-    let mapped_code = unsafe { MapVirtualKeyW(code as u32, MAPVK_VK_TO_CHAR) };
-
-    let key = match mapped_code {
-        0 => None,
-        raw_code => char::from_u32(raw_code),
-    }?
-    .to_ascii_lowercase();
-
-    let key = if matches!(code as u32, 112..=135) {
-        format!("f{key}")
-    } else {
-        key.to_string()
-    };
-
-    Some(Keystroke {
-        modifiers,
-        key,
-        key_char: None,
-    })
-}
-
 #[inline]
 fn is_virtual_key_pressed(vkey: VIRTUAL_KEY) -> bool {
     unsafe { GetKeyState(vkey.0 as i32) < 0 }
-}
-
-fn is_modifier(virtual_key: VIRTUAL_KEY) -> bool {
-    matches!(
-        virtual_key,
-        VK_CONTROL | VK_MENU | VK_SHIFT | VK_LWIN | VK_RWIN
-    )
 }
 
 #[inline]
@@ -1639,7 +1525,12 @@ fn with_input_handler<F, R>(state_ptr: &Rc<WindowsWindowStatePtr>, f: F) -> Opti
 where
     F: FnOnce(&mut PlatformInputHandler) -> R,
 {
-    let mut input_handler = state_ptr.state.borrow_mut().input_handler.take()?;
+    let mut lock = state_ptr.state.borrow_mut();
+    if lock.suppress_next_char_msg {
+        return None;
+    }
+    let mut input_handler = lock.input_handler.take()?;
+    drop(lock);
     let result = f(&mut input_handler);
     state_ptr.state.borrow_mut().input_handler = Some(input_handler);
     Some(result)
@@ -1653,6 +1544,9 @@ where
     F: FnOnce(&mut PlatformInputHandler, f32) -> Option<R>,
 {
     let mut lock = state_ptr.state.borrow_mut();
+    if lock.suppress_next_char_msg {
+        return None;
+    }
     let mut input_handler = lock.input_handler.take()?;
     let scale_factor = lock.scale_factor;
     drop(lock);

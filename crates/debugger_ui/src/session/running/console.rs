@@ -162,7 +162,7 @@ impl Console {
                 .evaluate(
                     expression,
                     Some(dap::EvaluateArgumentsContext::Repl),
-                    self.stack_frame_list.read(cx).selected_stack_frame_id(),
+                    self.stack_frame_list.read(cx).opened_stack_frame_id(),
                     None,
                     cx,
                 )
@@ -365,7 +365,7 @@ impl ConsoleQueryBarCompletionProvider {
                             new_text: string_match.string.clone(),
                             label: CodeLabel {
                                 filter_range: 0..string_match.string.len(),
-                                text: format!("{} {}", string_match.string.clone(), variable_value),
+                                text: format!("{} {}", string_match.string, variable_value),
                                 runs: Vec::new(),
                             },
                             icon_path: None,
@@ -389,7 +389,7 @@ impl ConsoleQueryBarCompletionProvider {
     ) -> Task<Result<Option<Vec<Completion>>>> {
         let completion_task = console.update(cx, |console, cx| {
             console.session.update(cx, |state, cx| {
-                let frame_id = console.stack_frame_list.read(cx).selected_stack_frame_id();
+                let frame_id = console.stack_frame_list.read(cx).opened_stack_frame_id();
 
                 state.completions(
                     CompletionsQuery::new(buffer.read(cx), buffer_position, frame_id),
