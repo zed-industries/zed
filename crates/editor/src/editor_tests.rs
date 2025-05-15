@@ -2806,7 +2806,7 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
     let language = Arc::new(Language::new(
         LanguageConfig {
             documentation_block: Some(vec!["/**".into(), "*/".into()]),
-            documentation_comment_prefix: Some("*".into()),
+            documentation_comment_prefix: Some("* ".into()),
             ..LanguageConfig::default()
         },
         None,
@@ -2821,7 +2821,7 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
         cx.assert_editor_state(indoc! {"
         /**
-        *ˇ
+         * ˇ
     "});
         // Ensure that if cursor is before the comment start, we do not actually insert a comment prefix.
         cx.set_state(indoc! {"
@@ -2848,8 +2848,8 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
         cx.assert_editor_state(indoc! {"
         /**
-        *ˇ
-        */
+         * ˇ
+         */
     "});
         // Ensure that it detects suffix after existing prefix.
         cx.set_state(indoc! {"
@@ -2872,14 +2872,14 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         // Ensure that if suffix exists on same line before cursor it does not add comment prefix.
         cx.set_state(indoc! {"
         /**
-        *
-        */ˇ
+         *
+         */ˇ
     "});
         cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
         cx.assert_editor_state(indoc! {"
         /**
-        *
-        */
+         *
+         */
         ˇ
     "});
     }
