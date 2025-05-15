@@ -81,12 +81,12 @@ dependencies = [
  "http_client",
  "indexed_docs",
  "indoc",
+ "inventory",
  "itertools 0.14.0",
  "jsonschema",
  "language",
  "language_model",
  "language_model_selector",
- "linkme",
  "log",
  "lsp",
  "markdown",
@@ -675,7 +675,6 @@ dependencies = [
  "language",
  "language_model",
  "language_models",
- "linkme",
  "log",
  "markdown",
  "open",
@@ -3178,7 +3177,7 @@ version = "0.1.0"
 dependencies = [
  "collections",
  "gpui",
- "linkme",
+ "inventory",
  "parking_lot",
  "strum 0.27.1",
  "theme",
@@ -4328,7 +4327,6 @@ dependencies = [
  "gpui",
  "indoc",
  "language",
- "linkme",
  "log",
  "lsp",
  "markdown",
@@ -5162,6 +5160,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "language",
+ "log",
  "num-format",
  "picker",
  "project",
@@ -6026,7 +6025,6 @@ dependencies = [
  "language",
  "language_model",
  "linkify",
- "linkme",
  "log",
  "markdown",
  "menu",
@@ -8164,26 +8162,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "linkme"
-version = "0.3.32"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22d227772b5999ddc0690e733f734f95ca05387e329c4084fe65678c51198ffe"
-dependencies = [
- "linkme-impl",
-]
-
-[[package]]
-name = "linkme-impl"
-version = "0.3.32"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71a98813fa0073a317ed6a8055dcd4722a49d9b862af828ee68449adb799b6be"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.100",
-]
-
-[[package]]
 name = "linux-raw-sys"
 version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9105,7 +9083,6 @@ dependencies = [
  "component",
  "db",
  "gpui",
- "linkme",
  "rpc",
  "settings",
  "sum_tree",
@@ -15686,7 +15663,6 @@ dependencies = [
  "gpui",
  "icons",
  "itertools 0.14.0",
- "linkme",
  "menu",
  "serde",
  "settings",
@@ -15707,7 +15683,6 @@ dependencies = [
  "component",
  "editor",
  "gpui",
- "linkme",
  "settings",
  "theme",
  "ui",
@@ -15719,7 +15694,6 @@ name = "ui_macros"
 version = "0.1.0"
 dependencies = [
  "convert_case 0.8.0",
- "linkme",
  "proc-macro2",
  "quote",
  "syn 1.0.109",
@@ -16940,7 +16914,6 @@ dependencies = [
  "gpui",
  "install_cli",
  "language",
- "linkme",
  "picker",
  "project",
  "schemars",

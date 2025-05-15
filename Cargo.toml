@@ -465,7 +465,6 @@ jupyter-websocket-client = {  git = "https://github.com/ConradIrwin/runtimed" ,r
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
-linkme = "0.3.31"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "c9c189f1c5dd53c624a419ce35bc77ad6a908d18" }
 markup5ever_rcdom = "0.3.0"
@@ -795,7 +794,6 @@ ignored = [
     "prost_build",
     "serde",
     "component",
-    "linkme",
     "documented",
     "workspace-hack",
 ]
