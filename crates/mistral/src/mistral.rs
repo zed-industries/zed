@@ -67,6 +67,7 @@ pub enum Model {
         max_tokens: usize,
         max_output_tokens: Option<u32>,
         max_completion_tokens: Option<u32>,
+        supports_tools: Option<bool>,
     },
 }
 
@@ -131,6 +132,18 @@ impl Model {
                 max_output_tokens, ..
             } => *max_output_tokens,
             _ => None,
+        }
+    }
+
+    pub fn supports_tools(&self) -> bool {
+        match self {
+            Self::CodestralLatest
+            | Self::MistralLargeLatest
+            | Self::MistralMediumLatest
+            | Self::MistralSmallLatest
+            | Self::OpenMistralNemo
+            | Self::OpenCodestralMamba => true,
+            Self::Custom { supports_tools, .. } => supports_tools.unwrap_or(false),
         }
     }
 }

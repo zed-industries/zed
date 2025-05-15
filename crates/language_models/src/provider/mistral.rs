@@ -47,9 +47,9 @@ pub struct AvailableModel {
     pub max_tokens: usize,
     pub max_output_tokens: Option<u32>,
     pub max_completion_tokens: Option<u32>,
+    pub supports_tools: Option<bool>,
 }
 
-#[derive(Clone)]
 pub struct MistralLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
     state: gpui::Entity<State>,
@@ -214,6 +214,7 @@ impl LanguageModelProvider for MistralLanguageModelProvider {
                     max_tokens: model.max_tokens,
                     max_output_tokens: model.max_output_tokens,
                     max_completion_tokens: model.max_completion_tokens,
+                    supports_tools: model.supports_tools,
                 },
             );
         }
@@ -305,15 +306,7 @@ impl LanguageModel for MistralLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        match self.model {
-            mistral::Model::CodestralLatest
-            | mistral::Model::MistralLargeLatest
-            | mistral::Model::MistralMediumLatest
-            | mistral::Model::MistralSmallLatest
-            | mistral::Model::OpenCodestralMamba
-            | mistral::Model::OpenMistralNemo => true,
-            _ => false,
-        }
+        self.model.supports_tools()
     }
 
     fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
