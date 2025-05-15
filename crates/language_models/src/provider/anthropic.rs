@@ -750,12 +750,9 @@ impl AnthropicEventMapper {
                     if let Some(tool_use) = self.tool_uses_by_index.get_mut(&index) {
                         tool_use.input_json.push_str(&partial_json);
 
-                        // Try to convert invalid (incomplete) JSON into
-                        // valid JSON that serde can accept, e.g. by closing
-                        // unclosed delimiters. This way, we can update the
-                        // UI with whatever has been streamed back so far.
+                        // Try to parse the arguments using a JSON fixer if they're invalid
                         if let Ok(input) = serde_json::Value::from_str(
-                            &partial_json_fixer::fix_json(&tool_use.input_json),
+                            &tool_use.input_json,
                         ) {
                             return vec![Ok(LanguageModelCompletionEvent::ToolUse(
                                 LanguageModelToolUse {
@@ -766,6 +763,18 @@ impl AnthropicEventMapper {
                                     input,
                                 },
                             ))];
+                        } else if let Ok(fixed_json) = partial_json_fixer::fix_json(&tool_use.input_json) {
+                            if let Ok(input) = serde_json::Value::from_str(&fixed_json) {
+                                return vec![Ok(LanguageModelCompletionEvent::ToolUse(
+                                    LanguageModelToolUse {
+                                        id: tool_use.id.clone().into(),
+                                        name: tool_use.name.clone().into(),
+                                        is_input_complete: false,
+                                        raw_input: tool_use.input_json.clone(),
+                                        input,
+                                    },
+                                ))];
+                            }
                         }
                     }
                     return vec![];

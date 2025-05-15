@@ -7845,6 +7845,7 @@ dependencies = [
  "mistral",
  "ollama",
  "open_ai",
+ "parking_lot",
  "partial-json-fixer",
  "project",
  "proto",
@@ -7861,6 +7862,7 @@ dependencies = [
  "tokio",
  "ui",
  "util",
+ "uuid",
  "workspace-hack",
  "zed_llm_client",
 ]
@@ -8340,11 +8342,14 @@ name = "lmstudio"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes 1.10.1",
  "futures 0.3.31",
  "http_client",
+ "log",
  "schemars",
  "serde",
  "serde_json",
+ "uuid",
  "workspace-hack",
 ]
 
@@ -9898,9 +9903,9 @@ dependencies = [
 
 [[package]]
 name = "partial-json-fixer"
-version = "0.5.3"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35ffd90b3f3b6477db7478016b9efb1b7e9d38eafd095f0542fe0ec2ea884a13"
+checksum = "8e077a7ef5cb9e56cc15724604dd38a0ec319716e7afd33b25666eea065cbd2e"
 
 [[package]]
 name = "password-hash"

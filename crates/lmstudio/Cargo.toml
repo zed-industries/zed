@@ -17,9 +17,12 @@ schemars = ["dep:schemars"]
 
 [dependencies]
 anyhow.workspace = true
+bytes.workspace = true
 futures.workspace = true
 http_client.workspace = true
+log.workspace = true
 schemars = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
+uuid = { workspace = true, features = ["v4"] }
 workspace-hack.workspace = true

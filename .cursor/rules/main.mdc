@@ -1,0 +1,9 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+CursorAI Rules
+1. Dont change things not related to a task
+2. Always compile after change iteration completes to ensure you a moving right way, without accumulation errors
+3. Commit changes to git after compilation have no errors

@@ -283,8 +283,6 @@ Example configuration for using X.ai Grok with Zed:
 
 ### LM Studio {#lmstudio}
 
-> 🚫 Does not support tool use 🚫
-
 1. Download and install the latest version of LM Studio from https://lmstudio.ai/download
 2. In the app press ⌘/Ctrl + Shift + M and download at least one model, e.g. qwen2.5-coder-7b
 
@@ -294,10 +292,30 @@ Example configuration for using X.ai Grok with Zed:
    lms get qwen2.5-coder-7b
    ```
 
-3. Make sure the LM Studio API server by running:
+3. Make sure the LM Studio API server is running:
 
    ```sh
    lms server start
+   ```
+
+4. Configure LM Studio in Zed settings:
+
+   ```json
+   {
+     "language_models": {
+       "lmstudio": {
+         "api_url": "http://localhost:1234/v1",
+         "available_models": [
+           {
+             "name": "qwen2.5-coder-7b",
+             "display_name": "Qwen 2.5 Coder 7B",
+             "max_tokens": 32768,
+             "supports_tools": true
+           }
+         ]
+       }
+     }
+   }
    ```
 
 Tip: Set [LM Studio as a login item](https://lmstudio.ai/docs/advanced/headless#run-the-llm-service-on-machine-login) to automate running the LM Studio server.

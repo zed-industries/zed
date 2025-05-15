@@ -47,6 +47,8 @@ pub struct CopilotChatLanguageModelProvider {
 pub struct State {
     _copilot_chat_subscription: Option<Subscription>,
     _settings_subscription: Subscription,
+    in_thinking_block: bool,
+    thinking_buffer: String,
 }
 
 impl State {
@@ -67,6 +69,8 @@ impl CopilotChatLanguageModelProvider {
                 _settings_subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                     cx.notify();
                 }),
+                in_thinking_block: false,
+                thinking_buffer: String::new(),
             }
         });
 
@@ -308,12 +312,16 @@ pub fn map_to_language_model_completion_events(
     struct State {
         events: Pin<Box<dyn Send + Stream<Item = Result<ResponseEvent>>>>,
         tool_calls_by_index: HashMap<usize, RawToolCall>,
+        in_thinking_block: bool,
+        thinking_buffer: String,
     }
 
     futures::stream::unfold(
         State {
             events,
             tool_calls_by_index: HashMap::default(),
+            in_thinking_block: false,
+            thinking_buffer: String::new(),
         },
         move |mut state| async move {
             if let Some(event) = state.events.next().await {
@@ -367,9 +375,14 @@ pub fn map_to_language_model_completion_events(
 
                         match choice.finish_reason.as_deref() {
                             Some("stop") => {
+                                // Reset thinking state directly
                                 events.push(Ok(LanguageModelCompletionEvent::Stop(
                                     StopReason::EndTurn,
                                 )));
+                                
+                                // Reset thinking state for any future messages to ensure we don't continue thinking
+                                state.thinking_buffer.clear();
+                                state.in_thinking_block = false;
                             }
                             Some("tool_calls") => {
                                 events.extend(state.tool_calls_by_index.drain().map(
@@ -408,12 +421,20 @@ pub fn map_to_language_model_completion_events(
                                 events.push(Ok(LanguageModelCompletionEvent::Stop(
                                     StopReason::ToolUse,
                                 )));
+                                
+                                // Reset thinking state for any future messages
+                                state.thinking_buffer.clear();
+                                state.in_thinking_block = false;
                             }
                             Some(stop_reason) => {
                                 log::error!("Unexpected Copilot Chat stop_reason: {stop_reason:?}");
                                 events.push(Ok(LanguageModelCompletionEvent::Stop(
                                     StopReason::EndTurn,
                                 )));
+                                
+                                // Reset thinking state for any future messages
+                                state.thinking_buffer.clear();
+                                state.in_thinking_block = false;
                             }
                             None => {}
                         }

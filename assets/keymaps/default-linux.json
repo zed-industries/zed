@@ -986,5 +986,21 @@
     "bindings": {
       "enter": "menu::Confirm"
     }
+  },
+  {
+    "context": "ActiveThread",
+    "bindings": {
+      "escape": "editor::Cancel",
+      "tab": "editor::Tab",
+      "shift-tab": "editor::Backtab",
+      "mod+/": "agent::ToggleContextPicker",
+      "mod+shift+backspace": "agent::RemoveAllContext",
+      "mod+shift+p": "workspace::ToggleZoom",
+      "mod+k": "menu::SelectPrevious",
+      "mod+j": "menu::SelectNext",
+      "mod+shift+j": "menu::SelectFirst",
+      "mod+shift+k": "menu::SelectLast",
+      "mod+shift+m": "agent::OpenActiveThreadAsMarkdown"
+    }
   }
 ]

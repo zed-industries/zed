@@ -40,7 +40,8 @@ menu.workspace = true
 mistral = { workspace = true, features = ["schemars"] }
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
-partial-json-fixer.workspace = true
+parking_lot.workspace = true
+partial-json-fixer = "0.3"
 project.workspace = true
 proto.workspace = true
 release_channel.workspace = true
@@ -56,6 +57,7 @@ tiktoken-rs.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 ui.workspace = true
 util.workspace = true
+uuid.workspace = true
 workspace-hack.workspace = true
 zed_llm_client.workspace = true
 

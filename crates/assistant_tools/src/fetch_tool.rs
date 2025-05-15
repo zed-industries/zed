@@ -39,6 +39,10 @@ impl FetchTool {
     }
 
     async fn build_message(http_client: Arc<HttpClientWithUrl>, url: &str) -> Result<String> {
+        if url.trim().is_empty() {
+            bail!("URL cannot be empty. Please provide a valid URL to fetch.");
+        }
+
         let mut url = url.to_owned();
         if !url.starts_with("https://") && !url.starts_with("http://") {
             url = format!("https://{url}");
@@ -153,6 +157,11 @@ impl Tool for FetchTool {
             Ok(input) => input,
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
+
+        // Validate URL is not empty
+        if input.url.trim().is_empty() {
+            return Task::ready(Err(anyhow!("Invalid format: URL cannot be empty. Please provide a valid URL to fetch."))).into();
+        }
 
         let text = cx.background_spawn({
             let http_client = self.http_client.clone();

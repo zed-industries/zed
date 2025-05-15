@@ -438,6 +438,11 @@ struct LmStudioStreamMapper {
     in_thinking_block: bool,
     thinking_buffer: String,
     pending_text: Option<String>,
+    // Tool call accumulation state
+    accumulating_tool_call: bool,
+    tool_call_id: Option<String>,
+    tool_call_name: Option<String>,
+    tool_call_args_buffer: String,
 }
 
 impl LmStudioStreamMapper {
@@ -446,6 +451,11 @@ impl LmStudioStreamMapper {
             in_thinking_block: false,
             thinking_buffer: String::new(),
             pending_text: None,
+            // Initialize tool call accumulation fields
+            accumulating_tool_call: false,
+            tool_call_id: None,
+            tool_call_name: None,
+            tool_call_args_buffer: String::new(),
         }
     }
 
@@ -463,9 +473,23 @@ impl LmStudioStreamMapper {
                 _ => StopReason::EndTurn,
             };
             
-            // Reset thinking state on stop
+            // If we were accumulating a tool call, emit it before stopping
+            if self.accumulating_tool_call && self.tool_call_name.is_some() {
+                // We need to complete the current tool call
+                let tool_use = self.create_tool_use_from_buffer();
+                
+                // Reset accumulation state
+                self.reset_tool_call_state();
+                
+                // Return the tool use and we'll handle the stop in the next iteration
+                return Ok(Some(LanguageModelCompletionEvent::ToolUse(tool_use)));
+            }
+            
+            // Reset any state
             self.in_thinking_block = false;
             self.thinking_buffer.clear();
+            self.pending_text = None;
+            self.reset_tool_call_state();
             
             return Ok(Some(LanguageModelCompletionEvent::Stop(stop_reason)));
         }
@@ -474,9 +498,58 @@ impl LmStudioStreamMapper {
         if let Ok(delta) =
             serde_json::from_value::<lmstudio::ResponseMessageDelta>(choice.delta.clone())
         {
-            // Handle text content
+            // Handle tool calls
+            if let Some(tool_calls) = delta.tool_calls {
+                for tool_call in tool_calls {
+                    if let Some(function) = tool_call.function {
+                        // Get or update the tool call ID
+                        if let Some(id) = tool_call.id {
+                            if self.tool_call_id.is_none() {
+                                log::debug!("LMStudio: Starting tool call accumulation with ID: {}", id);
+                                self.tool_call_id = Some(id);
+                                self.accumulating_tool_call = true;
+                            }
+                        }
+                        
+                        // Get or update the function name
+                        if let Some(name) = function.name {
+                            if self.tool_call_name.is_none() {
+                                log::debug!("LMStudio: Tool call name: {}", name);
+                                self.tool_call_name = Some(name);
+                            }
+                        }
+                        
+                        // Accumulate arguments
+                        if let Some(args) = function.arguments {
+                            log::debug!("LMStudio: Received argument fragment: {}", args);
+                            self.tool_call_args_buffer.push_str(&args);
+                            
+                            // Check if the accumulated arguments form valid JSON
+                            if self.is_likely_complete_json(&self.tool_call_args_buffer) {
+                                log::debug!("LMStudio: Detected complete JSON arguments, emitting tool use");
+                                let tool_use = self.create_tool_use_from_buffer();
+                                
+                                // Reset accumulation state
+                                self.reset_tool_call_state();
+                                
+                                return Ok(Some(LanguageModelCompletionEvent::ToolUse(tool_use)));
+                            }
+                        }
+                        
+                        // We're still accumulating, so don't emit any events yet
+                        return Ok(None);
+                    }
+                }
+            }
+
+            // Handle text content (only if we're not accumulating a tool call)
             if let Some(content) = delta.content {
                 if !content.is_empty() {
+                    // If we're accumulating a tool call, don't emit text events
+                    if self.accumulating_tool_call {
+                        return Ok(None);
+                    }
+                    
                     // Process thinking tags in the content
                     if self.in_thinking_block {
                         // Already in a thinking block
@@ -571,30 +644,6 @@ impl LmStudioStreamMapper {
                     }
                 }
             }
-
-            // Handle tool calls
-            if let Some(tool_calls) = delta.tool_calls {
-                for tool_call in tool_calls {
-                    if let Some(function) = tool_call.function {
-                        let id = tool_call.id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-                        let args = function.arguments.unwrap_or_default();
-                        
-                        // Extract function name, defaulting to "unknown_function" if not provided
-                        let function_name = function.name.unwrap_or_else(|| "unknown_function".to_string());
-                        
-                        // Create a LanguageModelToolUse
-                        let tool_use = LanguageModelToolUse {
-                            id: LanguageModelToolUseId::from(id),
-                            name: function_name.into(),
-                            raw_input: args.clone(),
-                            input: serde_json::from_str(&args).unwrap_or(serde_json::json!({})),
-                            is_input_complete: true,
-                        };
-                        
-                        return Ok(Some(LanguageModelCompletionEvent::ToolUse(tool_use)));
-                    }
-                }
-            }
         }
 
         // Check for any pending text
@@ -603,6 +652,60 @@ impl LmStudioStreamMapper {
         }
 
         Ok(None)
+    }
+    
+    // Check if JSON is likely to be complete
+    fn is_likely_complete_json(&self, json: &str) -> bool {
+        // First, simple case - parse it as JSON
+        if let Ok(_) = serde_json::from_str::<serde_json::Value>(json) {
+            return true;
+        }
+        
+        // If it can't be parsed, do some basic checks
+        // Count the number of opening and closing braces
+        let mut depth = 0;
+        let mut inside_string = false;
+        let mut was_escape = false;
+        
+        for c in json.chars() {
+            match c {
+                '"' if !was_escape => inside_string = !inside_string,
+                '\\' if inside_string => was_escape = !was_escape,
+                '{' if !inside_string => depth += 1,
+                '}' if !inside_string => depth -= 1,
+                _ => was_escape = false,
+            }
+        }
+        
+        // If we have no unclosed braces and the JSON starts with { and ends with }, it might be complete
+        depth == 0 && json.trim().starts_with('{') && json.trim().ends_with('}')
+    }
+    
+    // Create a tool use from the accumulated state
+    fn create_tool_use_from_buffer(&self) -> LanguageModelToolUse {
+        let id = self.tool_call_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let name = self.tool_call_name.clone().unwrap_or_else(|| "unknown_function".to_string());
+        let args = self.tool_call_args_buffer.clone();
+        
+        log::debug!("LMStudio: Creating tool use - Name: {}, Args: {}", name, args);
+        
+        // Create the tool use with accumulated values
+        LanguageModelToolUse {
+            id: LanguageModelToolUseId::from(id),
+            name: name.into(),
+            raw_input: args.clone(),
+            input: serde_json::from_str(&args).unwrap_or(serde_json::json!({})),
+            is_input_complete: true,
+        }
+    }
+    
+    // Reset the tool call accumulation state
+    fn reset_tool_call_state(&mut self) {
+        self.accumulating_tool_call = false;
+        self.tool_call_id = None;
+        self.tool_call_name = None;
+        self.tool_call_args_buffer.clear();
+        log::debug!("LMStudio: Reset tool call accumulation state");
     }
 }
 
