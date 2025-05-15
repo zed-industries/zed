@@ -788,6 +788,9 @@ let_underscore_future = "allow"
 # running afoul of the borrow checker.
 too_many_arguments = "allow"
 
+# We often have large enum variants yet we rarely actually bother with splitting them up.
+large_enum_variant = "allow"
+
 [workspace.metadata.cargo-machete]
 ignored = [
     "bindgen",

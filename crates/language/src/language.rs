@@ -1858,9 +1858,9 @@ impl LanguageScope {
     pub fn language_allowed(&self, name: &LanguageServerName) -> bool {
         let config = &self.language.config;
         let opt_in_servers = &config.scope_opt_in_language_servers;
-        if opt_in_servers.iter().any(|o| *o == *name) {
+        if opt_in_servers.contains(name) {
             if let Some(over) = self.config_override() {
-                over.opt_into_language_servers.iter().any(|o| *o == *name)
+                over.opt_into_language_servers.contains(name)
             } else {
                 false
             }

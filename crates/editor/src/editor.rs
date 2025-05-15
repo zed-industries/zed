@@ -1311,7 +1311,7 @@ pub struct ActiveDiagnosticGroup {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-#[allow(clippy::large_enum_variant)]
+
 pub(crate) enum ActiveDiagnostic {
     None,
     All,
@@ -20278,8 +20278,8 @@ impl EditorSnapshot {
         let participant_indices = collaboration_hub.user_participant_indices(cx);
         let collaborators_by_peer_id = collaboration_hub.collaborators(cx);
         let collaborators_by_replica_id = collaborators_by_peer_id
-            .iter()
-            .map(|(_, collaborator)| (collaborator.replica_id, collaborator))
+            .values()
+            .map(|collaborator| (collaborator.replica_id, collaborator))
             .collect::<HashMap<_, _>>();
         self.buffer_snapshot
             .selections_in_range(range, false)
