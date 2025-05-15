@@ -755,6 +755,9 @@ pub struct LanguageConfig {
     /// A list of preferred debuggers for this language.
     #[serde(default)]
     pub debuggers: IndexSet<SharedString>,
+    /// A character to add as a prefix when a new line is added to a documentation block.
+    #[serde(default)]
+    pub documentation_line_prefix: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -830,8 +833,6 @@ pub struct LanguageConfigOverride {
     pub opt_into_language_servers: Vec<LanguageServerName>,
     #[serde(default)]
     pub prefer_label_for_snippet: Option<bool>,
-    #[serde(default)]
-    pub documentation_line_prefix: Option<String>,
 }
 
 #[derive(Clone, Deserialize, Debug, Serialize, JsonSchema)]
@@ -1804,13 +1805,12 @@ impl LanguageScope {
             .unwrap_or(false)
     }
 
-    /// The character to add as a prefix when a new line is added to a documentation block
+    /// A character to add as a prefix when a new line is added to a documentation block.
     ///
     /// Used for documentation styles that require a leading character on each line,
     /// such as the asterisk in JSDoc, Javadoc, etc.
     pub fn documentation_line_prefix(&self) -> Option<&String> {
-        self.config_override()
-            .and_then(|o| o.documentation_line_prefix.as_ref())
+        self.language.config.documentation_line_prefix.as_ref()
     }
 
     /// Returns a list of bracket pairs for a given language with an additional

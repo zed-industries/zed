@@ -3993,8 +3993,11 @@ impl Editor {
 
                                     // todo: only sytax layer at position? not all right?
                                     let is_js_doc = snapshot.syntax_layers().into_iter().any(|s| {
+                                        dbg!(&s.language.name());
                                         s.language.name().to_string().to_lowercase() == "jsdoc"
                                     });
+
+                                    dbg!(&prefix);
 
                                     if is_js_doc { prefix } else { None }
                                 });
