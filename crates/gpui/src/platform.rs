@@ -1,5 +1,6 @@
 mod app_menu;
 mod keyboard;
+mod keycodes;
 mod keystroke;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -65,6 +66,7 @@ use uuid::Uuid;
 
 pub use app_menu::*;
 pub use keyboard::*;
+pub use keycodes::*;
 pub use keystroke::*;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -193,7 +195,6 @@ pub(crate) trait Platform: 'static {
 
     fn on_quit(&self, callback: Box<dyn FnMut()>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
-    fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>);
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
     fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
@@ -213,7 +214,6 @@ pub(crate) trait Platform: 'static {
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
-    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout>;
 
     fn compositor_name(&self) -> &'static str {
         ""
@@ -234,6 +234,10 @@ pub(crate) trait Platform: 'static {
     fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<Result<()>>;
     fn read_credentials(&self, url: &str) -> Task<Result<Option<(String, Vec<u8>)>>>;
     fn delete_credentials(&self, url: &str) -> Task<Result<()>>;
+
+    fn keyboard_mapper(&self) -> Box<dyn PlatformKeyboardMapper>;
+    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout>;
+    fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>);
 }
 
 /// A handle to a platform's display, e.g. a monitor or laptop screen.
