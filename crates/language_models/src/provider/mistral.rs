@@ -2,6 +2,7 @@ use anyhow::{Context as _, Result, anyhow};
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
+use futures::stream::BoxStream;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
@@ -14,13 +15,12 @@ use language_model::{
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
     RateLimiter, Role, StopReason,
 };
-
-use futures::stream::BoxStream;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::str::FromStr;
 use std::sync::Arc;
+use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
 use util::ResultExt;
@@ -58,9 +58,6 @@ pub struct MistralLanguageModelProvider {
 pub struct State {
     api_key: Option<String>,
     api_key_from_env: bool,
-    http_client: Arc<dyn HttpClient>,
-    models: Option<Vec<mistral::Model>>,
-    fetch_models_task: Option<Task<Result<()>>>,
     _subscription: Subscription,
 }
 
@@ -139,29 +136,6 @@ impl State {
             Ok(())
         })
     }
-
-    fn fetch_models(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let settings = &AllLanguageModelSettings::get_global(cx).mistral;
-        let http_client = self.http_client.clone();
-        let api_url = settings.api_url.clone();
-        let Some(api_key) = self.api_key.clone() else {
-            return Task::ready(Err(anyhow!("Mistral API key not set.")));
-        };
-
-        cx.spawn(async move |this, cx| {
-            let models = mistral::fetch_models(http_client.as_ref(), &api_url, &api_key).await?;
-
-            this.update(cx, |this, cx| {
-                this.models = Some(models);
-                cx.notify();
-            })
-        })
-    }
-
-    fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
-        let task = self.fetch_models(cx);
-        self.fetch_models_task.replace(task);
-    }
 }
 
 impl MistralLanguageModelProvider {
@@ -169,11 +143,7 @@ impl MistralLanguageModelProvider {
         let state = cx.new(|cx| State {
             api_key: None,
             api_key_from_env: false,
-            http_client: http_client.clone(),
-            models: None,
-            fetch_models_task: None,
-            _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
-                this.restart_fetch_models_task(cx);
+            _subscription: cx.observe_global::<SettingsStore>(|_this: &mut State, cx| {
                 cx.notify();
             }),
         });
@@ -223,33 +193,27 @@ impl LanguageModelProvider for MistralLanguageModelProvider {
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = BTreeMap::default();
-        let state = self.state.read(cx);
 
-        if let Some(fetched_models) = &state.models {
-            for model in fetched_models {
-                models.insert(model.name.clone(), model.clone());
+        // Add base models from mistral::Model::iter()
+        for model in mistral::Model::iter() {
+            if !matches!(model, mistral::Model::Custom { .. }) {
+                models.insert(model.id().to_string(), model);
             }
-        } else {
-            models.insert("codestral-latest".into(), mistral::Model::default());
-            models.insert(
-                "mistral-small-latest".into(),
-                mistral::Model::default_fast(),
-            );
         }
 
-        for model_info in &AllLanguageModelSettings::get_global(cx)
+        // Override with available models from settings
+        for model in &AllLanguageModelSettings::get_global(cx)
             .mistral
             .available_models
         {
             models.insert(
-                model_info.name.clone(),
-                mistral::Model {
-                    name: model_info.name.clone(),
-                    display_name: model_info.display_name.clone(),
-                    max_tokens: model_info.max_tokens,
-                    max_output_tokens: None,
-                    max_completion_tokens: None,
-                    supports_tools: Some(false),
+                model.name.clone(),
+                mistral::Model::Custom {
+                    name: model.name.clone(),
+                    display_name: model.display_name.clone(),
+                    max_tokens: model.max_tokens,
+                    max_output_tokens: model.max_output_tokens,
+                    max_completion_tokens: model.max_completion_tokens,
                 },
             );
         }
@@ -341,7 +305,14 @@ impl LanguageModel for MistralLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        self.model.supports_tools()
+        match self.model {
+            mistral::Model::CodestralLatest
+            | mistral::Model::MistralLargeLatest
+            | mistral::Model::MistralSmallLatest
+            | mistral::Model::OpenCodestralMamba
+            | mistral::Model::OpenMistralNemo => true,
+            _ => false,
+        }
     }
 
     fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {

@@ -8849,10 +8849,10 @@ dependencies = [
  "anyhow",
  "futures 0.3.31",
  "http_client",
- "log",
  "schemars",
  "serde",
  "serde_json",
+ "strum 0.27.1",
  "workspace-hack",
 ]
 
