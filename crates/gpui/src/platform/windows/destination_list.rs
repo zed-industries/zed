@@ -178,11 +178,6 @@ fn add_recent_folders(
     }
 }
 
-#[inline]
-fn is_item_in_array(item: &SmallVec<[PathBuf; 2]>, removed: &Vec<SmallVec<[PathBuf; 2]>>) -> bool {
-    removed.iter().any(|removed_item| removed_item == item)
-}
-
 fn create_shell_link(
     argument: HSTRING,
     description: HSTRING,
