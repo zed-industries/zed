@@ -3927,57 +3927,82 @@ impl Editor {
                         let end = selection.end;
                         let selection_is_empty = start == end;
                         let language_scope = buffer.language_scope_at(start);
-                        let (comment_delimiter, insert_extra_newline) = if let Some(language) =
-                            &language_scope
-                        {
-                            let insert_extra_newline =
-                                insert_extra_newline_brackets(&buffer, start..end, language)
-                                    || insert_extra_newline_tree_sitter(&buffer, start..end);
+                        let (comment_delimiter, insert_extra_newline, doc_prefix) =
+                            if let Some(language) = &language_scope {
+                                let insert_extra_newline =
+                                    insert_extra_newline_brackets(&buffer, start..end, language)
+                                        || insert_extra_newline_tree_sitter(&buffer, start..end);
 
-                            // Comment extension on newline is allowed only for cursor selections
-                            let comment_delimiter = maybe!({
-                                if !selection_is_empty {
-                                    return None;
-                                }
+                                // Comment extension on newline is allowed only for cursor selections
+                                let comment_delimiter = maybe!({
+                                    if !selection_is_empty {
+                                        return None;
+                                    }
 
-                                if !multi_buffer.language_settings(cx).extend_comment_on_newline {
-                                    return None;
-                                }
+                                    if !multi_buffer.language_settings(cx).extend_comment_on_newline
+                                    {
+                                        return None;
+                                    }
 
-                                let delimiters = language.line_comment_prefixes();
-                                let max_len_of_delimiter =
-                                    delimiters.iter().map(|delimiter| delimiter.len()).max()?;
-                                let (snapshot, range) =
-                                    buffer.buffer_line_for_row(MultiBufferRow(start_point.row))?;
+                                    let delimiters = language.line_comment_prefixes();
+                                    let max_len_of_delimiter =
+                                        delimiters.iter().map(|delimiter| delimiter.len()).max()?;
+                                    let (snapshot, range) = buffer
+                                        .buffer_line_for_row(MultiBufferRow(start_point.row))?;
 
-                                let mut index_of_first_non_whitespace = 0;
-                                let comment_candidate = snapshot
-                                    .chars_for_range(range)
-                                    .skip_while(|c| {
-                                        let should_skip = c.is_whitespace();
-                                        if should_skip {
-                                            index_of_first_non_whitespace += 1;
-                                        }
-                                        should_skip
-                                    })
-                                    .take(max_len_of_delimiter)
-                                    .collect::<String>();
-                                let comment_prefix = delimiters.iter().find(|comment_prefix| {
-                                    comment_candidate.starts_with(comment_prefix.as_ref())
-                                })?;
-                                let cursor_is_placed_after_comment_marker =
-                                    index_of_first_non_whitespace + comment_prefix.len()
-                                        <= start_point.column as usize;
-                                if cursor_is_placed_after_comment_marker {
-                                    Some(comment_prefix.clone())
-                                } else {
-                                    None
-                                }
-                            });
-                            (comment_delimiter, insert_extra_newline)
-                        } else {
-                            (None, false)
-                        };
+                                    let mut index_of_first_non_whitespace = 0;
+                                    let comment_candidate = snapshot
+                                        .chars_for_range(range)
+                                        .skip_while(|c| {
+                                            let should_skip = c.is_whitespace();
+                                            if should_skip {
+                                                index_of_first_non_whitespace += 1;
+                                            }
+                                            should_skip
+                                        })
+                                        .take(max_len_of_delimiter)
+                                        .collect::<String>();
+                                    let comment_prefix =
+                                        delimiters.iter().find(|comment_prefix| {
+                                            comment_candidate.starts_with(comment_prefix.as_ref())
+                                        })?;
+                                    let cursor_is_placed_after_comment_marker =
+                                        index_of_first_non_whitespace + comment_prefix.len()
+                                            <= start_point.column as usize;
+                                    if cursor_is_placed_after_comment_marker {
+                                        Some(comment_prefix.clone())
+                                    } else {
+                                        None
+                                    }
+                                });
+
+                                // Comment extension on newline is allowed only for cursor selections
+                                let doc_prefix = maybe!({
+                                    if !selection_is_empty {
+                                        return None;
+                                    }
+
+                                    if !multi_buffer.language_settings(cx).extend_comment_on_newline
+                                    {
+                                        return None;
+                                    }
+
+                                    let prefix = language.documentation_line_prefix();
+                                    let (snapshot, range) = buffer
+                                        .buffer_line_for_row(MultiBufferRow(start_point.row))?;
+
+                                    // todo: only sytax layer at position? not all right?
+                                    let is_js_doc = snapshot.syntax_layers().into_iter().any(|s| {
+                                        s.language.name().to_string().to_lowercase() == "jsdoc"
+                                    });
+
+                                    if is_js_doc { prefix } else { None }
+                                });
+
+                                (comment_delimiter, insert_extra_newline, doc_prefix)
+                            } else {
+                                (None, false, None)
+                            };
 
                         let capacity_for_delimiter = comment_delimiter
                             .as_deref()
@@ -3990,6 +4015,13 @@ impl Editor {
                         if let Some(delimiter) = &comment_delimiter {
                             new_text.push_str(delimiter);
                         }
+
+                        if let Some(prefix) = &doc_prefix {
+                            new_text.push_str(prefix);
+                        } else if let Some(delimiter) = &comment_delimiter {
+                            new_text.push_str(delimiter);
+                        }
+
                         if insert_extra_newline {
                             new_text = new_text.repeat(2);
                         }
