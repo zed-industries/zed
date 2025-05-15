@@ -36,7 +36,7 @@ use util::{ResultExt as _, maybe};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const REVISION: Option<&'static str> = option_env!("GITHUB_SHA");
 
-#[expect(clippy::large_enum_variant)]
+#[expect(clippy::result_large_err)]
 #[tokio::main]
 async fn main() -> Result<()> {
     if let Err(error) = env::load_dotenv() {
