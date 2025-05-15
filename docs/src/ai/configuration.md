@@ -1,10 +1,13 @@
-# Configuring Custom API Keys
+# Configuration
 
-While Zed offers hosted versions of models through our various plans, we're always happy to support users wanting to supply their own API keys for LLM providers.
+There are various aspects about the Agent Panel that you can customize.
+All of them can be seen by either visiting the [Configuring Zed page](/configuring-zed.html#agent.md) or by running the `zed: open default settings` action and searching for `"agent"`.
+Alternatively, you can also visit the panel's Settings view by running the `agent: open configuration` action or going to the top-right menu and hitting "Settings".
 
-> Using your own API keys is **_free_** - you do not need to subscribe to a Zed plan to use our AI features with your own keys.
+## LLM Providers
 
-## Supported LLM Providers
+Zed supports multiple large language model providers.
+Here's an overview of the supported providers and tool call support:
 
 | Provider                                        | Tool Use Supported |
 | ----------------------------------------------- | ------------------ |
@@ -17,21 +20,21 @@ While Zed offers hosted versions of models through our various plans, we're alwa
 | [OpenAI API Compatible](#openai-api-compatible) | 🚫                 |
 | [LM Studio](#lmstudio)                          | 🚫                 |
 
-## Providers {#providers}
+While Zed offers hosted versions of models through [our various plans](/ai/plans-and-usage), we're always happy to support users wanting to supply their own API keys for LLM providers.
 
-To access the Assistant configuration view, run `assistant: show configuration` in the command palette, or click on the hamburger menu at the top-right of the Assistant Panel and select "Configure".
+> Using your own API keys is _free_—you do not need to subscribe to a Zed plan to use our AI features with your own keys.
 
 Below you can find all the supported providers available so far.
 
 ### Anthropic {#anthropic}
 
-> 🔨Supports tool use
+> ✅ Supports tool use
 
-You can use Anthropic models with the Zed assistant by choosing it via the model dropdown in the assistant panel.
+You can use Anthropic models by choosing it via the model dropdown in the Agent Panel.
 
 1. Sign up for Anthropic and [create an API key](https://console.anthropic.com/settings/keys)
 2. Make sure that your Anthropic account has credits
-3. Open the configuration view (`assistant: show configuration`) and navigate to the Anthropic section
+3. Open the settings view (`agent: open configuration`) and go to the Anthropic section
 4. Enter your Anthropic API key
 
 Even if you pay for Claude Pro, you will still have to [pay for additional credits](https://console.anthropic.com/settings/plans) to use it via the API.
@@ -65,7 +68,7 @@ You can add custom models to the Anthropic provider by adding the following to y
 }
 ```
 
-Custom models will be listed in the model dropdown in the assistant panel.
+Custom models will be listed in the model dropdown in the Agent Panel.
 
 You can configure a model to use [extended thinking](https://docs.anthropic.com/en/docs/about-claude/models/extended-thinking-models) (if it supports it),
 by changing the mode in of your models configuration to `thinking`, for example:
@@ -84,19 +87,19 @@ by changing the mode in of your models configuration to `thinking`, for example:
 
 ### GitHub Copilot Chat {#github-copilot-chat}
 
-> 🔨Supports tool use in some cases.
-> See [here](https://github.com/zed-industries/zed/blob/9e0330ba7d848755c9734bf456c716bddf0973f3/crates/language_models/src/provider/copilot_chat.rs#L189-L198) for the supported subset
+> ✅ Supports tool use in some cases.
+> Visit [the Copilot Chat code](https://github.com/zed-industries/zed/blob/9e0330ba7d848755c9734bf456c716bddf0973f3/crates/language_models/src/provider/copilot_chat.rs#L189-L198) for the supported subset.
 
-You can use GitHub Copilot chat with the Zed assistant by choosing it via the model dropdown in the assistant panel.
+You can use GitHub Copilot chat with the Zed assistant by choosing it via the model dropdown in the Agent Panel.
 
 ### Google AI {#google-ai}
 
-> 🔨Supports tool use
+> ✅ Supports tool use
 
-You can use Gemini 1.5 Pro/Flash with the Zed assistant by choosing it via the model dropdown in the assistant panel.
+You can use Gemini 1.5 Pro/Flash with the Zed assistant by choosing it via the model dropdown in the Agent Panel.
 
 1. Go the Google AI Studio site and [create an API key](https://aistudio.google.com/app/apikey).
-2. Open the configuration view (`assistant: show configuration`) and navigate to the Google AI section
+2. Open the settings view (`agent: open configuration`) and go to the Google AI section
 3. Enter your Google AI API key and press enter.
 
 The Google AI API key will be saved in your keychain.
@@ -123,11 +126,11 @@ By default Zed will use `stable` versions of models, but you can use specific ve
 }
 ```
 
-Custom models will be listed in the model dropdown in the assistant panel.
+Custom models will be listed in the model dropdown in the Agent Panel.
 
 ### Ollama {#ollama}
 
-> 🔨Supports tool use
+> ✅ Supports tool use
 
 Download and install Ollama from [ollama.com/download](https://ollama.com/download) (Linux or macOS) and ensure it's running with `ollama --version`.
 
@@ -137,19 +140,21 @@ Download and install Ollama from [ollama.com/download](https://ollama.com/downlo
    ollama pull mistral
    ```
 
-2. Make sure that the Ollama server is running. You can start it either via running Ollama.app (MacOS) or launching:
+2. Make sure that the Ollama server is running. You can start it either via running Ollama.app (macOS) or launching:
 
    ```sh
    ollama serve
    ```
 
-3. In the assistant panel, select one of the Ollama models using the model dropdown.
+3. In the Agent Panel, select one of the Ollama models using the model dropdown.
 
 #### Ollama Context Length {#ollama-context}
 
-Zed has pre-configured maximum context lengths (`max_tokens`) to match the capabilities of common models. Zed API requests to Ollama include this as `num_ctx` parameter, but the default values do not exceed `16384` so users with ~16GB of ram are able to use most models out of the box. See [get_max_tokens in ollama.rs](https://github.com/zed-industries/zed/blob/main/crates/ollama/src/ollama.rs) for a complete set of defaults.
+Zed has pre-configured maximum context lengths (`max_tokens`) to match the capabilities of common models.
+Zed API requests to Ollama include this as `num_ctx` parameter, but the default values do not exceed `16384` so users with ~16GB of ram are able to use most models out of the box.
+See [get_max_tokens in ollama.rs](https://github.com/zed-industries/zed/blob/main/crates/ollama/src/ollama.rs) for a complete set of defaults.
 
-**Note**: Tokens counts displayed in the assistant panel are only estimates and will differ from the models native tokenizer.
+> **Note**: Tokens counts displayed in the Agent Panel are only estimates and will differ from the models native tokenizer.
 
 Depending on your hardware or use-case you may wish to limit or increase the context length for a specific model via settings.json:
 
@@ -176,11 +181,11 @@ You may also optionally specify a value for `keep_alive` for each available mode
 
 ### OpenAI {#openai}
 
-> 🔨Supports tool use
+> ✅ Supports tool use
 
 1. Visit the OpenAI platform and [create an API key](https://platform.openai.com/account/api-keys)
 2. Make sure that your OpenAI account has credits
-3. Open the configuration view (`assistant: show configuration`) and navigate to the OpenAI section
+3. Open the settings view (`agent: open configuration`) and go to the OpenAI section
 4. Enter your OpenAI API key
 
 The OpenAI API key will be saved in your keychain.
@@ -214,14 +219,14 @@ The Zed Assistant comes pre-configured to use the latest version for common mode
 }
 ```
 
-You must provide the model's Context Window in the `max_tokens` parameter, this can be found [OpenAI Model Docs](https://platform.openai.com/docs/models). OpenAI `o1` models should set `max_completion_tokens` as well to avoid incurring high reasoning token costs. Custom models will be listed in the model dropdown in the assistant panel.
+You must provide the model's Context Window in the `max_tokens` parameter, this can be found [OpenAI Model Docs](https://platform.openai.com/docs/models). OpenAI `o1` models should set `max_completion_tokens` as well to avoid incurring high reasoning token costs. Custom models will be listed in the model dropdown in the Agent Panel.
 
 ### DeepSeek {#deepseek}
 
-> 🚫 Does not support tool use 🚫
+> 🚫 Does not support tool use
 
 1. Visit the DeepSeek platform and [create an API key](https://platform.deepseek.com/api_keys)
-2. Open the configuration view (`assistant: show configuration`) and navigate to the DeepSeek section
+2. Open the settings view (`agent: open configuration`) and go to the DeepSeek section
 3. Enter your DeepSeek API key
 
 The DeepSeek API key will be saved in your keychain.
@@ -255,7 +260,7 @@ The Zed Assistant comes pre-configured to use the latest version for common mode
 }
 ```
 
-Custom models will be listed in the model dropdown in the assistant panel. You can also modify the `api_url` to use a custom endpoint if needed.
+Custom models will be listed in the model dropdown in the Agent Panel. You can also modify the `api_url` to use a custom endpoint if needed.
 
 ### OpenAI API Compatible{#openai-api-compatible}
 
@@ -283,7 +288,7 @@ Example configuration for using X.ai Grok with Zed:
 
 ### LM Studio {#lmstudio}
 
-> 🚫 Does not support tool use 🚫
+> 🚫 Does not support tool use
 
 1. Download and install the latest version of LM Studio from https://lmstudio.ai/download
 2. In the app press ⌘/Ctrl + Shift + M and download at least one model, e.g. qwen2.5-coder-7b
@@ -301,3 +306,102 @@ Example configuration for using X.ai Grok with Zed:
    ```
 
 Tip: Set [LM Studio as a login item](https://lmstudio.ai/docs/advanced/headless#run-the-llm-service-on-machine-login) to automate running the LM Studio server.
+
+## Advanced Configuration {#advanced-configuration}
+
+### Custom Provider Endpoints {#custom-provider-endpoint}
+
+You can use a custom API endpoint for different providers, as long as it's compatible with the providers API structure.
+To do so, add the following to your `settings.json`:
+
+```json
+{
+  "language_models": {
+    "some-provider": {
+      "api_url": "http://localhost:11434"
+    }
+  }
+}
+```
+
+Where `some-provider` can be any of the following values: `anthropic`, `google`, `ollama`, `openai`.
+
+### Default Model {#default-model}
+
+Zed's hosted LLM service sets `claude-3-7-sonnet-latest` as the default model.
+However, you can change it either via the model dropdown in the Agent Panel's bottom-right corner or by manually editing the `default_model` object in your settings:
+
+```json
+{
+  "assistant": {
+    "version": "2",
+    "default_model": {
+      "provider": "zed.dev",
+      "model": "gpt-4o"
+    }
+  }
+}
+```
+
+### Feature-specific Models {#feature-specific-models}
+
+If a feature-specific model is not set, it will fall back to using the default model, which is the one you set on the Agent Panel.
+
+You can configure the following feature-specific models:
+
+- Thread summary model: Used for generating thread summaries
+- Inline assistant model: Used for the inline assistant feature
+- Commit message model: Used for generating Git commit messages
+
+Example configuration:
+
+```json
+{
+  "assistant": {
+    "version": "2",
+    "default_model": {
+      "provider": "zed.dev",
+      "model": "claude-3-7-sonnet"
+    },
+    "inline_assistant_model": {
+      "provider": "anthropic",
+      "model": "claude-3-5-sonnet"
+    },
+    "commit_message_model": {
+      "provider": "openai",
+      "model": "gpt-4o-mini"
+    },
+    "thread_summary_model": {
+      "provider": "google",
+      "model": "gemini-2.0-flash"
+    }
+  }
+}
+```
+
+### Alternative Models for Inline Assists {#alternative-assists}
+
+You can configure additional models that will be used to perform inline assists in parallel.
+When you do this, the inline assist UI will surface controls to cycle between the alternatives generated by each model.
+
+The models you specify here are always used in _addition_ to your [default model](./ai/configuration.md#default-model).
+For example, the following configuration will generate two outputs for every assist.
+One with Claude 3.7 Sonnet, and one with GPT-4o.
+
+```json
+{
+  "assistant": {
+    "default_model": {
+      "provider": "zed.dev",
+      "model": "claude-3-7-sonnet"
+    },
+    "inline_alternatives": [
+      {
+        "provider": "zed.dev",
+        "model": "gpt-4o"
+      }
+    ],
+    "version": "2"
+  }
+}
+```
