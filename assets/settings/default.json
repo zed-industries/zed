@@ -113,8 +113,8 @@
   // Whether to show the informational hover box when moving the mouse
   // over symbols in the editor.
   "hover_popover_enabled": true,
-  // Time to wait before showing the informational hover box
-  "hover_popover_delay": 350,
+  // Time to wait in milliseconds before showing the informational hover box.
+  "hover_popover_delay": 300,
   // Whether to confirm before quitting Zed.
   "confirm_quit": false,
   // Whether to restore last closed project when fresh Zed instance is opened.
@@ -328,10 +328,16 @@
   "title_bar": {
     // Whether to show the branch icon beside branch switcher in the titlebar.
     "show_branch_icon": false,
+    // Whether to show the branch name button in the titlebar.
+    "show_branch_name": true,
+    // Whether to show the project host and name in the titlebar.
+    "show_project_items": true,
     // Whether to show onboarding banners in the titlebar.
     "show_onboarding_banner": true,
     // Whether to show user picture in the titlebar.
-    "show_user_picture": true
+    "show_user_picture": true,
+    // Whether to show the sign in button in the titlebar.
+    "show_sign_in": true
   },
   // Scrollbar related settings
   "scrollbar": {
@@ -470,6 +476,8 @@
   "search_wrap": true,
   // Search options to enable by default when opening new project and buffer searches.
   "search": {
+    // Whether to show the project search button in the status bar.
+    "button": true,
     "whole_word": false,
     "case_sensitive": false,
     "include_ignored": false,
@@ -750,6 +758,8 @@
     "stream_edits": false,
     // When enabled, agent edits will be displayed in single-file editors for review
     "single_file_review": true,
+    // When enabled, show voting thumbs for feedback on agent edits.
+    "enable_feedback": true,
     "default_profile": "write",
     "profiles": {
       "write": {
@@ -1002,6 +1012,8 @@
   "auto_update": true,
   // Diagnostics configuration.
   "diagnostics": {
+    // Whether to show the project diagnostics button in the status bar.
+    "button": true,
     // Whether to show warnings or not by default.
     "include_warnings": true,
     // Settings for inline diagnostics

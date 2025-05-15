@@ -12,9 +12,10 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason,
+    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
+    RateLimiter, Role, StopReason,
 };
-use open_ai::{Model, ResponseStreamEvent, stream_completion};
+use open_ai::{ImageUrl, Model, ResponseStreamEvent, stream_completion};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -295,6 +296,10 @@ impl LanguageModel for OpenAiLanguageModel {
         true
     }
 
+    fn supports_images(&self) -> bool {
+        false
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto => true,
@@ -357,17 +362,26 @@ pub fn into_open_ai(
     for message in request.messages {
         for content in message.content {
             match content {
-                MessageContent::Text(text) | MessageContent::Thinking { text, .. } => messages
-                    .push(match message.role {
-                        Role::User => open_ai::RequestMessage::User { content: text },
-                        Role::Assistant => open_ai::RequestMessage::Assistant {
-                            content: Some(text),
-                            tool_calls: Vec::new(),
-                        },
-                        Role::System => open_ai::RequestMessage::System { content: text },
-                    }),
+                MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
+                    add_message_content_part(
+                        open_ai::MessagePart::Text { text: text },
+                        message.role,
+                        &mut messages,
+                    )
+                }
                 MessageContent::RedactedThinking(_) => {}
-                MessageContent::Image(_) => {}
+                MessageContent::Image(image) => {
+                    add_message_content_part(
+                        open_ai::MessagePart::Image {
+                            image_url: ImageUrl {
+                                url: image.to_base64_url(),
+                                detail: None,
+                            },
+                        },
+                        message.role,
+                        &mut messages,
+                    );
+                }
                 MessageContent::ToolUse(tool_use) => {
                     let tool_call = open_ai::ToolCall {
                         id: tool_use.id.to_string(),
@@ -386,14 +400,30 @@ pub fn into_open_ai(
                         tool_calls.push(tool_call);
                     } else {
                         messages.push(open_ai::RequestMessage::Assistant {
-                            content: None,
+                            content: open_ai::MessageContent::empty(),
                             tool_calls: vec![tool_call],
                         });
                     }
                 }
                 MessageContent::ToolResult(tool_result) => {
+                    let content = match &tool_result.content {
+                        LanguageModelToolResultContent::Text(text) => {
+                            vec![open_ai::MessagePart::Text {
+                                text: text.to_string(),
+                            }]
+                        }
+                        LanguageModelToolResultContent::Image(image) => {
+                            vec![open_ai::MessagePart::Image {
+                                image_url: ImageUrl {
+                                    url: image.to_base64_url(),
+                                    detail: None,
+                                },
+                            }]
+                        }
+                    };
+
                     messages.push(open_ai::RequestMessage::Tool {
-                        content: tool_result.content.to_string(),
+                        content: content.into(),
                         tool_call_id: tool_result.tool_use_id.to_string(),
                     });
                 }
@@ -430,6 +460,34 @@ pub fn into_open_ai(
             LanguageModelToolChoice::Any => open_ai::ToolChoice::Required,
             LanguageModelToolChoice::None => open_ai::ToolChoice::None,
         }),
+    }
+}
+
+fn add_message_content_part(
+    new_part: open_ai::MessagePart,
+    role: Role,
+    messages: &mut Vec<open_ai::RequestMessage>,
+) {
+    match (role, messages.last_mut()) {
+        (Role::User, Some(open_ai::RequestMessage::User { content }))
+        | (Role::Assistant, Some(open_ai::RequestMessage::Assistant { content, .. }))
+        | (Role::System, Some(open_ai::RequestMessage::System { content, .. })) => {
+            content.push_part(new_part);
+        }
+        _ => {
+            messages.push(match role {
+                Role::User => open_ai::RequestMessage::User {
+                    content: open_ai::MessageContent::empty(),
+                },
+                Role::Assistant => open_ai::RequestMessage::Assistant {
+                    content: open_ai::MessageContent::empty(),
+                    tool_calls: Vec::new(),
+                },
+                Role::System => open_ai::RequestMessage::System {
+                    content: open_ai::MessageContent::empty(),
+                },
+            });
+        }
     }
 }
 

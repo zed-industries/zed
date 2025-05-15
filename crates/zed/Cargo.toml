@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.187.0"
+version = "0.188.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -78,6 +78,7 @@ languages = { workspace = true, features = ["load-grammars"] }
 libc.workspace = true
 log.workspace = true
 markdown_preview.workspace = true
+markdown.workspace = true
 menu.workspace = true
 migrator.workspace = true
 mimalloc = { version = "0.1", optional = true }

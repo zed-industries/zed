@@ -215,11 +215,7 @@ impl AgentDiffPane {
     }
 
     fn update_title(&mut self, cx: &mut Context<Self>) {
-        let new_title = self
-            .thread
-            .read(cx)
-            .summary()
-            .unwrap_or("Agent Changes".into());
+        let new_title = self.thread.read(cx).summary().unwrap_or("Agent Changes");
         if new_title != self.title {
             self.title = new_title;
             cx.emit(EditorEvent::TitleChanged);
@@ -469,11 +465,7 @@ impl Item for AgentDiffPane {
     }
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
-        let summary = self
-            .thread
-            .read(cx)
-            .summary()
-            .unwrap_or("Agent Changes".into());
+        let summary = self.thread.read(cx).summary().unwrap_or("Agent Changes");
         Label::new(format!("Review: {}", summary))
             .color(if params.selected {
                 Color::Default

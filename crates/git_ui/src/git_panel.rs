@@ -1051,8 +1051,8 @@ impl GitPanel {
                     repo.checkout_files(
                         "HEAD",
                         entries
-                            .iter()
-                            .map(|entries| entries.repo_path.clone())
+                            .into_iter()
+                            .map(|entries| entries.repo_path)
                             .collect(),
                         cx,
                     )
@@ -2583,19 +2583,18 @@ impl GitPanel {
         } else {
             workspace.update(cx, |workspace, cx| {
                 let workspace_weak = cx.weak_entity();
-                let toast =
-                    StatusToast::new(format!("git {} failed", action.clone()), cx, |this, _cx| {
-                        this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
-                            .action("View Log", move |window, cx| {
-                                let message = message.clone();
-                                let action = action.clone();
-                                workspace_weak
-                                    .update(cx, move |workspace, cx| {
-                                        Self::open_output(action, workspace, &message, window, cx)
-                                    })
-                                    .ok();
-                            })
-                    });
+                let toast = StatusToast::new(format!("git {} failed", action), cx, |this, _cx| {
+                    this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
+                        .action("View Log", move |window, cx| {
+                            let message = message.clone();
+                            let action = action.clone();
+                            workspace_weak
+                                .update(cx, move |workspace, cx| {
+                                    Self::open_output(action, workspace, &message, window, cx)
+                                })
+                                .ok();
+                        })
+                });
                 workspace.toggle_status_toast(toast, cx)
             });
         }
