@@ -8806,9 +8806,10 @@ impl LspStore {
                     })
                 });
 
-            let is_unnecessary = diagnostic.tags.as_ref().map_or(false, |tags| {
-                tags.iter().any(|tag| *tag == DiagnosticTag::UNNECESSARY)
-            });
+            let is_unnecessary = diagnostic
+                .tags
+                .as_ref()
+                .map_or(false, |tags| tags.contains(&DiagnosticTag::UNNECESSARY));
 
             if is_supporting {
                 supporting_diagnostics.insert(

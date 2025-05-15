@@ -117,6 +117,7 @@ impl From<dap::Thread> for Thread {
     }
 }
 
+#[expect(clippy::large_enum_variant)]
 pub enum Mode {
     Building,
     Running(LocalMode),
