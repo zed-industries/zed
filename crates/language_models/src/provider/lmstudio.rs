@@ -513,9 +513,13 @@ impl LmStudioStreamMapper {
                         
                         // Get or update the function name
                         if let Some(name) = function.name {
-                            if self.tool_call_name.is_none() {
+                            // Don't replace a valid name with an empty one
+                            if self.tool_call_name.is_none() && !name.trim().is_empty() {
                                 log::debug!("LMStudio: Tool call name: {}", name);
                                 self.tool_call_name = Some(name);
+                            } else if self.tool_call_name.is_none() && name.trim().is_empty() {
+                                // If we get an empty name and don't have one yet, log the warning
+                                log::warn!("LMStudio: Received empty function name, ignoring");
                             }
                         }
                         
@@ -684,7 +688,22 @@ impl LmStudioStreamMapper {
     // Create a tool use from the accumulated state
     fn create_tool_use_from_buffer(&self) -> LanguageModelToolUse {
         let id = self.tool_call_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        let name = self.tool_call_name.clone().unwrap_or_else(|| "unknown_function".to_string());
+        
+        // Get the function name, ensure it's not empty, and fall back to "unknown_function" if needed
+        let name = self.tool_call_name
+            .clone()
+            .unwrap_or_else(|| "unknown_function".to_string())
+            .trim()
+            .to_string();
+        
+        // If somehow we still have an empty name, use the fallback
+        let name = if name.is_empty() { 
+            log::warn!("LMStudio: Empty function name detected when creating tool use, using fallback name");
+            "unknown_function".to_string() 
+        } else { 
+            name 
+        };
+            
         let args = self.tool_call_args_buffer.clone();
         
         log::debug!("LMStudio: Creating tool use - Name: {}, Args: {}", name, args);
