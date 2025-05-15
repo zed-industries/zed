@@ -20,7 +20,6 @@ use crate::context::{
     ThreadContextHandle,
 };
 
-#[expect(clippy::large_enum_variant)]
 #[derive(IntoElement)]
 pub enum ContextPill {
     Added {

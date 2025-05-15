@@ -151,7 +151,6 @@ enum GitStoreState {
     },
 }
 
-#[expect(clippy::large_enum_variant)]
 enum DownstreamUpdate {
     UpdateRepository(RepositorySnapshot),
     RemoveRepository(RepositoryId),

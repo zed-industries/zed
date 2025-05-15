@@ -594,7 +594,6 @@ pub(crate) enum EditDisplayMode {
     Inline,
 }
 
-#[expect(clippy::large_enum_variant)]
 enum InlineCompletion {
     Edit {
         edits: Vec<(Range<Anchor>, String)>,
@@ -1312,7 +1311,7 @@ pub struct ActiveDiagnosticGroup {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-#[allow(clippy::large_enum_variant)]
+
 pub(crate) enum ActiveDiagnostic {
     None,
     All,

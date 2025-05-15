@@ -3415,7 +3415,6 @@ pub struct RemoteLspStore {
     upstream_project_id: u64,
 }
 
-#[allow(clippy::large_enum_variant)]
 pub(crate) enum LspStoreMode {
     Local(LocalLspStore),   // ssh host and collab host
     Remote(RemoteLspStore), // collab guest
