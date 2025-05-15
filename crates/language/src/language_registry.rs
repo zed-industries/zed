@@ -663,9 +663,9 @@ impl LanguageRegistry {
                 LanguageMatchPrecedence::Undetermined => {
                     name_matches().then_some(LanguageMatchPrecedence::PathOrContent(string.len()))
                 }
-                LanguageMatchPrecedence::PathOrContent(len) => (name_matches()
-                    && string.len() > len)
-                    .then_some(LanguageMatchPrecedence::PathOrContent(string.len())),
+                LanguageMatchPrecedence::PathOrContent(len) => (string.len() > len
+                    && name_matches())
+                .then_some(LanguageMatchPrecedence::PathOrContent(string.len())),
                 LanguageMatchPrecedence::UserConfigured(_) => None,
             }
         });
@@ -778,15 +778,11 @@ impl LanguageRegistry {
             match current_best_match {
                 LanguageMatchPrecedence::PathOrContent(current_len) => {
                     if let Some(len) = path_matches_custom_suffix() {
-                        Some(len)
-                            // >= because user config should win tie with system ext len
-                            .filter(|len| len >= &current_len)
-                            .map(LanguageMatchPrecedence::UserConfigured)
+                        // >= because user config should win tie with system ext len
+                        (len >= current_len).then_some(LanguageMatchPrecedence::UserConfigured(len))
                     } else if let Some(len) = path_matches_default_suffix() {
-                        Some(len)
-                            // >= because user config should win tie with system ext len
-                            .filter(|len| len >= &current_len)
-                            .map(LanguageMatchPrecedence::PathOrContent)
+                        // >= because user config should win tie with system ext len
+                        (len >= current_len).then_some(LanguageMatchPrecedence::PathOrContent(len))
                     } else {
                         None
                     }
