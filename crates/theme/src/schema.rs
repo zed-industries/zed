@@ -374,6 +374,14 @@ pub struct ThemeColorsContent {
     #[serde(rename = "scrollbar.track.border")]
     pub scrollbar_track_border: Option<String>,
 
+    /// The color of the minimap thumb.
+    #[serde(rename = "minimap.thumb.background")]
+    pub minimap_thumb_background: Option<String>,
+
+    /// The border color of the minimap thumb.
+    #[serde(rename = "minimap.thumb.border")]
+    pub minimap_thumb_border: Option<String>,
+
     #[serde(rename = "editor.foreground")]
     pub editor_foreground: Option<String>,
 
@@ -635,6 +643,10 @@ impl ThemeColorsContent {
                     .as_ref()
                     .and_then(|color| try_parse_color(color).ok())
             });
+        let scrollbar_thumb_border = self
+            .scrollbar_thumb_border
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok());
         ThemeColorsRefinement {
             border,
             border_variant: self
@@ -828,10 +840,7 @@ impl ThemeColorsContent {
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok())
                 .or(scrollbar_thumb_background),
-            scrollbar_thumb_border: self
-                .scrollbar_thumb_border
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
+            scrollbar_thumb_border,
             scrollbar_track_background: self
                 .scrollbar_track_background
                 .as_ref()
@@ -840,6 +849,24 @@ impl ThemeColorsContent {
                 .scrollbar_track_border
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
+            minimap_thumb_background: self
+                .minimap_thumb_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok())
+                .or_else(|| {
+                    scrollbar_thumb_background.map(|color| {
+                        if color.a > 0.7 {
+                            color.opacity(0.5)
+                        } else {
+                            color
+                        }
+                    })
+                }),
+            minimap_thumb_border: self
+                .minimap_thumb_border
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok())
+                .or(scrollbar_thumb_border),
             editor_foreground: self
                 .editor_foreground
                 .as_ref()

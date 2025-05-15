@@ -5768,9 +5768,9 @@ impl EditorElement {
                             window.paint_quad(quad(
                                 thumb_bounds,
                                 Corners::default(),
-                                cx.theme().colors().scrollbar_thumb_background,
+                                cx.theme().colors().minimap_thumb_background,
                                 minimap_thumb_border,
-                                cx.theme().colors().scrollbar_thumb_border,
+                                cx.theme().colors().minimap_thumb_border,
                                 BorderStyle::Solid,
                             ));
                         });

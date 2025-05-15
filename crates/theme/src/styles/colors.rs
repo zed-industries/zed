@@ -143,6 +143,10 @@ pub struct ThemeColors {
     pub scrollbar_track_background: Hsla,
     /// The border color of the scrollbar track.
     pub scrollbar_track_border: Hsla,
+    /// The color of the minimap thumb.
+    pub minimap_thumb_background: Hsla,
+    /// The border color of the minimap thumb.
+    pub minimap_thumb_border: Hsla,
 
     // ===
     // Editor
@@ -327,6 +331,8 @@ pub enum ThemeColorField {
     ScrollbarThumbBorder,
     ScrollbarTrackBackground,
     ScrollbarTrackBorder,
+    MinimapThumbBackground,
+    MinimapThumbBorder,
     EditorForeground,
     EditorBackground,
     EditorGutterBackground,
@@ -437,6 +443,8 @@ impl ThemeColors {
             ThemeColorField::ScrollbarThumbBorder => self.scrollbar_thumb_border,
             ThemeColorField::ScrollbarTrackBackground => self.scrollbar_track_background,
             ThemeColorField::ScrollbarTrackBorder => self.scrollbar_track_border,
+            ThemeColorField::MinimapThumbBackground => self.minimap_thumb_background,
+            ThemeColorField::MinimapThumbBorder => self.minimap_thumb_border,
             ThemeColorField::EditorForeground => self.editor_foreground,
             ThemeColorField::EditorBackground => self.editor_background,
             ThemeColorField::EditorGutterBackground => self.editor_gutter_background,
