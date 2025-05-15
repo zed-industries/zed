@@ -374,6 +374,7 @@ impl ScrollManager {
     pub fn dragging_scrollbar_axis(&self) -> Option<Axis> {
         self.active_scrollbar
             .as_ref()
+            .filter(|scrollbar| scrollbar.thumb_state == ScrollbarThumbState::Dragging)
             .map(|scrollbar| scrollbar.axis)
     }
 
