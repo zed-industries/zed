@@ -3935,7 +3935,7 @@ impl Editor {
                                     || insert_extra_newline_tree_sitter(&buffer, start..end);
 
                             // Comment extension on newline is allowed only for cursor selections
-                            let comment_delimiter = maybe!({
+                            let mut comment_delimiter = maybe!({
                                 if !selection_is_empty {
                                     return None;
                                 }
@@ -3944,19 +3944,11 @@ impl Editor {
                                     return None;
                                 }
 
+                                let delimiters = language.line_comment_prefixes();
+                                let max_len_of_delimiter =
+                                    delimiters.iter().map(|delimiter| delimiter.len()).max()?;
                                 let (snapshot, range) =
                                     buffer.buffer_line_for_row(MultiBufferRow(start_point.row))?;
-                                let doc_prefix = snapshot
-                                    .language_scope_at_with_options(range.start, true)
-                                    .and_then(|scope| scope.documentation_line_prefix().cloned());
-
-                                let comment_prefixes = language.line_comment_prefixes();
-                                let comment_prefix_len =
-                                    comment_prefixes.iter().map(|prefix| prefix.len()).max()?;
-                                let doc_prefix_len =
-                                    doc_prefix.as_ref().map_or(0, |prefix| prefix.len());
-                                let max_len_of_delimiter =
-                                    std::cmp::max(comment_prefix_len, doc_prefix_len);
 
                                 let mut index_of_first_non_whitespace = 0;
                                 let comment_candidate = snapshot
@@ -3970,12 +3962,9 @@ impl Editor {
                                     })
                                     .take(max_len_of_delimiter)
                                     .collect::<String>();
-
-                                let comment_prefix =
-                                    comment_prefixes.iter().find(|comment_prefix| {
-                                        comment_candidate.starts_with(comment_prefix.as_ref())
-                                    })?;
-
+                                let comment_prefix = delimiters.iter().find(|comment_prefix| {
+                                    comment_candidate.starts_with(comment_prefix.as_ref())
+                                })?;
                                 let cursor_is_placed_after_comment_marker =
                                     index_of_first_non_whitespace + comment_prefix.len()
                                         <= start_point.column as usize;
@@ -3985,6 +3974,65 @@ impl Editor {
                                     None
                                 }
                             });
+
+                            if comment_delimiter.is_none() {
+                                comment_delimiter = maybe!({
+                                    if !selection_is_empty {
+                                        return None;
+                                    }
+
+                                    if !multi_buffer.language_settings(cx).extend_comment_on_newline
+                                    {
+                                        return None;
+                                    }
+
+                                    let doc_block_prefix = language.documentation_block_prefix()?;
+                                    let doc_comment_prefix =
+                                        language.documentation_comment_prefix()?;
+                                    let max_len_of_delimiter = std::cmp::max(
+                                        doc_comment_prefix.len(),
+                                        doc_block_prefix.len(),
+                                    );
+
+                                    let (snapshot, range) = buffer
+                                        .buffer_line_for_row(MultiBufferRow(start_point.row))?;
+
+                                    let mut index_of_first_non_whitespace = 0;
+                                    let doc_line_candidate = snapshot
+                                        .chars_for_range(range)
+                                        .skip_while(|c| {
+                                            let should_skip = c.is_whitespace();
+                                            if should_skip {
+                                                index_of_first_non_whitespace += 1;
+                                            }
+                                            should_skip
+                                        })
+                                        .take(max_len_of_delimiter)
+                                        .collect::<String>();
+
+                                    let existing_comment_prefix = if doc_line_candidate
+                                        .starts_with(doc_block_prefix.as_ref())
+                                    {
+                                        Some(doc_block_prefix)
+                                    } else if doc_line_candidate
+                                        .starts_with(doc_comment_prefix.as_ref())
+                                    {
+                                        Some(doc_comment_prefix)
+                                    } else {
+                                        None
+                                    }?;
+
+                                    let cursor_is_placed_after_comment_marker =
+                                        index_of_first_non_whitespace
+                                            + existing_comment_prefix.len()
+                                            <= start_point.column as usize;
+                                    if cursor_is_placed_after_comment_marker {
+                                        Some(doc_comment_prefix.clone())
+                                    } else {
+                                        None
+                                    }
+                                });
+                            }
 
                             (comment_delimiter, insert_extra_newline)
                         } else {

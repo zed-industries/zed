@@ -6,4 +6,3 @@ brackets = [
   { start = "[", end = "]", close = true, newline = false },
 ]
 hidden = true
-documentation_line_prefix = "* "
