@@ -30,6 +30,7 @@ chrono.workspace = true
 clap.workspace = true
 client.workspace = true
 dap_adapters.workspace = true
+debug_adapter_extension.workspace = true
 env_logger.workspace = true
 extension.workspace = true
 extension_host.workspace = true

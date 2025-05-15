@@ -76,6 +76,7 @@ impl HeadlessProject {
         }: HeadlessAppState,
         cx: &mut Context<Self>,
     ) -> Self {
+        debug_adapter_extension::init(proxy.clone(), cx);
         language_extension::init(proxy.clone(), languages.clone());
         languages::init(languages.clone(), node_runtime.clone(), cx);
 
