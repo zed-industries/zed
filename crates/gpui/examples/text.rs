@@ -5,8 +5,8 @@ use std::{
 
 use gpui::{
     AbsoluteLength, App, Application, Context, DefiniteLength, ElementId, Global, Hsla, Menu,
-    SharedString, TextStyle, TitlebarOptions, Window, WindowBounds, WindowOptions, bounds, div,
-    point, prelude::*, px, relative, rgb, size,
+    SharedString, TextStyle, TitlebarOptions, Window, WindowBounds, WindowOptions, bounds,
+    colors::DefaultColors, div, point, prelude::*, px, relative, rgb, size,
 };
 use std::iter;
 use uuid::Uuid;
@@ -89,7 +89,7 @@ impl SpecimenTheme {
 
 #[derive(Debug, Clone, PartialEq, IntoElement)]
 struct Specimen {
-    id: Uuid,
+    id: ElementId,
     scale: f32,
     text_style: Option<TextStyle>,
     string: SharedString,
@@ -97,12 +97,15 @@ struct Specimen {
 }
 
 impl Specimen {
-    pub fn new() -> Self {
+    pub fn new(id: usize) -> Self {
+        let string = SharedString::new_static("The quick brown fox jumps over the lazy dog");
+        let id_string = format!("specimen-{}", id);
+        let id = ElementId::Name(id_string.into());
         Self {
-            id: Uuid::new_v4(),
+            id,
             scale: 1.0,
             text_style: None,
-            string: SharedString::new_static("The quick brown fox jumps over the lazy dog"),
+            string,
             invert: false,
         }
     }
@@ -147,7 +150,7 @@ impl RenderOnce for Specimen {
         }
 
         div()
-            .id(ElementId::Uuid(self.id))
+            .id(self.id)
             .bg(theme.bg)
             .text_color(theme.fg)
             .text_size(px(font_size * scale))
@@ -214,7 +217,6 @@ impl RenderOnce for CharacterGrid {
                 .flex_row()
                 .children((start_idx..end_idx).map(|i| {
                     div()
-                        .id(ElementId::Uuid(Uuid::new_v4()))
                         .text_center()
                         .size(px(62.))
                         .bg(theme.bg)
@@ -241,11 +243,26 @@ impl RenderOnce for CharacterGrid {
     }
 }
 
-struct TextExample {}
+struct TextExample {
+    next_id: usize,
+}
+
+impl TextExample {
+    fn new() -> Self {
+        Self { next_id: 0 }
+    }
+
+    fn next_id(&mut self) -> usize {
+        self.next_id += 1;
+        self.next_id
+    }
+}
 
 impl Render for TextExample {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tcx = cx.text_context();
+        let colors = cx.default_colors().clone();
+
         let type_scale = tcx.type_scale;
 
         let step_down_2 = 1.0 / (type_scale * type_scale);
@@ -259,33 +276,38 @@ impl Render for TextExample {
         let step_up_6 = step_up_5 * type_scale;
 
         div()
-            .id("text-example")
-            .overflow_y_scroll()
-            .overflow_x_hidden()
-            .bg(rgb(0xffffff))
             .size_full()
-            .child(div().child(CharacterGrid::new().scale(base)))
             .child(
                 div()
-                    .child(Specimen::new().scale(step_down_2))
-                    .child(Specimen::new().scale(step_down_2).invert())
-                    .child(Specimen::new().scale(step_down_1))
-                    .child(Specimen::new().scale(step_down_1).invert())
-                    .child(Specimen::new().scale(base))
-                    .child(Specimen::new().scale(base).invert())
-                    .child(Specimen::new().scale(step_up_1))
-                    .child(Specimen::new().scale(step_up_1).invert())
-                    .child(Specimen::new().scale(step_up_2))
-                    .child(Specimen::new().scale(step_up_2).invert())
-                    .child(Specimen::new().scale(step_up_3))
-                    .child(Specimen::new().scale(step_up_3).invert())
-                    .child(Specimen::new().scale(step_up_4))
-                    .child(Specimen::new().scale(step_up_4).invert())
-                    .child(Specimen::new().scale(step_up_5))
-                    .child(Specimen::new().scale(step_up_5).invert())
-                    .child(Specimen::new().scale(step_up_6))
-                    .child(Specimen::new().scale(step_up_6).invert()),
+                    .id("text-example")
+                    .overflow_y_scroll()
+                    .overflow_x_hidden()
+                    .bg(rgb(0xffffff))
+                    .size_full()
+                    .child(div().child(CharacterGrid::new().scale(base)))
+                    .child(
+                        div()
+                            .child(Specimen::new(self.next_id()).scale(step_down_2))
+                            .child(Specimen::new(self.next_id()).scale(step_down_2).invert())
+                            .child(Specimen::new(self.next_id()).scale(step_down_1))
+                            .child(Specimen::new(self.next_id()).scale(step_down_1).invert())
+                            .child(Specimen::new(self.next_id()).scale(base))
+                            .child(Specimen::new(self.next_id()).scale(base).invert())
+                            .child(Specimen::new(self.next_id()).scale(step_up_1))
+                            .child(Specimen::new(self.next_id()).scale(step_up_1).invert())
+                            .child(Specimen::new(self.next_id()).scale(step_up_2))
+                            .child(Specimen::new(self.next_id()).scale(step_up_2).invert())
+                            .child(Specimen::new(self.next_id()).scale(step_up_3))
+                            .child(Specimen::new(self.next_id()).scale(step_up_3).invert())
+                            .child(Specimen::new(self.next_id()).scale(step_up_4))
+                            .child(Specimen::new(self.next_id()).scale(step_up_4).invert())
+                            .child(Specimen::new(self.next_id()).scale(step_up_5))
+                            .child(Specimen::new(self.next_id()).scale(step_up_5).invert())
+                            .child(Specimen::new(self.next_id()).scale(step_up_6))
+                            .child(Specimen::new(self.next_id()).scale(step_up_6).invert()),
+                    ),
             )
+            .child(div().w(px(240.)).h_full().bg(colors.container))
     }
 }
 
@@ -296,6 +318,7 @@ fn main() {
             items: vec![],
         }]);
 
+        cx.init_colors();
         cx.set_global(GlobalTextContext(Arc::new(TextContext::default())));
 
         let window = cx
@@ -311,7 +334,7 @@ fn main() {
                     ))),
                     ..Default::default()
                 },
-                |_window, cx| cx.new(|_cx| TextExample {}),
+                |_window, cx| cx.new(|_cx| TextExample { next_id: 0 }),
             )
             .unwrap();
 
