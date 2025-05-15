@@ -52,28 +52,27 @@ pub(crate) fn get_keystroke_key(
     vkey: VIRTUAL_KEY,
     scan_code: u32,
     modifiers: &mut Modifiers,
-) -> Option<(String, bool)> {
-    if need_to_convert_to_shifted_key(vkey) && modifiers.shift {
-        get_shifted_key(vkey, scan_code).map(|key| {
+) -> Option<String> {
+    if modifiers.shift && need_to_convert_to_shifted_key(vkey) {
+        get_shifted_key(vkey, scan_code).and_then(|key| {
             modifiers.shift = false;
-            (key, true)
+            Some(key)
         })
     } else {
         get_key_from_vkey(vkey)
     }
 }
 
-fn get_key_from_vkey(vkey: VIRTUAL_KEY) -> Option<(String, bool)> {
+fn get_key_from_vkey(vkey: VIRTUAL_KEY) -> Option<String> {
     let key_data = unsafe { MapVirtualKeyW(vkey.0 as u32, MAPVK_VK_TO_CHAR) };
     if key_data == 0 {
         return None;
     }
 
     // The high word contains dead key flag, the low word contains the character
-    let is_dead_key = (key_data >> 16) > 0;
     let key = char::from_u32(key_data & 0xFFFF)?;
 
-    Some((key.to_ascii_lowercase().to_string(), !is_dead_key))
+    Some(key.to_ascii_lowercase().to_string())
 }
 
 #[inline]
