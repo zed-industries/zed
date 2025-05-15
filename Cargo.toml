@@ -534,6 +534,7 @@ serde_json_lenient = { version = "0.2", features = [
 serde_repr = "0.1"
 sha2 = "0.10"
 shellexpand = "2.1.0"
+shell-words = "1.1.0"
 shlex = "1.3.0"
 signal-hook = "0.3.17"
 simplelog = "0.12.2"
