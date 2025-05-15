@@ -1,7 +1,7 @@
 # Configuration
 
 There are various aspects about the Agent Panel that you can customize.
-All of them can be seen by either visiting the [Configuring Zed page](/configuring-zed.html#agent.md) or by running the `zed: open default settings` action and searching for `"agent"`.
+All of them can be seen by either visiting [the Configuring Zed page](/configuring-zed.md#agent) or by running the `zed: open default settings` action and searching for `"agent"`.
 Alternatively, you can also visit the panel's Settings view by running the `agent: open configuration` action or going to the top-right menu and hitting "Settings".
 
 ## LLM Providers
@@ -20,11 +20,11 @@ Here's an overview of the supported providers and tool call support:
 | [OpenAI API Compatible](#openai-api-compatible) | 🚫                 |
 | [LM Studio](#lmstudio)                          | 🚫                 |
 
-While Zed offers hosted versions of models through [our various plans](/ai/plans-and-usage), we're always happy to support users wanting to supply their own API keys for LLM providers.
+## Use Your Own Keys {#use-your-own-keys}
+
+While Zed offers hosted versions of models through [our various plans](/ai/plans-and-usage), we're always happy to support users wanting to supply their own API keys for LLM providers. Below, you can learn how to do that for each provider.
 
 > Using your own API keys is _free_—you do not need to subscribe to a Zed plan to use our AI features with your own keys.
-
-Below you can find all the supported providers available so far.
 
 ### Anthropic {#anthropic}
 
