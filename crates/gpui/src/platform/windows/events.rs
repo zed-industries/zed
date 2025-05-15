@@ -463,10 +463,10 @@ fn handle_char_msg(
     else {
         return Some(1);
     };
-    println!("\nchar: {:#?}", input);
     with_input_handler(&state_ptr, |input_handler| {
         input_handler.replace_text_in_range(None, &input);
     });
+    println!("\nchar: {:#?}", input);
 
     Some(0)
 }
@@ -1705,7 +1705,12 @@ fn with_input_handler<F, R>(state_ptr: &Rc<WindowsWindowStatePtr>, f: F) -> Opti
 where
     F: FnOnce(&mut PlatformInputHandler) -> R,
 {
-    let mut input_handler = state_ptr.state.borrow_mut().input_handler.take()?;
+    let mut lock = state_ptr.state.borrow_mut();
+    if lock.suppress_next_char_msg {
+        return None;
+    }
+    let mut input_handler = lock.input_handler.take()?;
+    drop(lock);
     let result = f(&mut input_handler);
     state_ptr.state.borrow_mut().input_handler = Some(input_handler);
     Some(result)
@@ -1719,6 +1724,9 @@ where
     F: FnOnce(&mut PlatformInputHandler, f32) -> Option<R>,
 {
     let mut lock = state_ptr.state.borrow_mut();
+    if lock.suppress_next_char_msg {
+        return None;
+    }
     let mut input_handler = lock.input_handler.take()?;
     let scale_factor = lock.scale_factor;
     drop(lock);
