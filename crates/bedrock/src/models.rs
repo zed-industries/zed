@@ -366,9 +366,13 @@ impl Model {
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
             // Models available in APAC
-            (Model::Claude3_5Sonnet | Model::Claude3Haiku | Model::Claude3Sonnet, "apac") => {
-                Ok(format!("{}.{}", region_group, model_id))
-            }
+            (
+                Model::Claude3_5Sonnet
+                | Model::Claude3_5SonnetV2
+                | Model::Claude3Haiku
+                | Model::Claude3Sonnet,
+                "apac",
+            ) => Ok(format!("{}.{}", region_group, model_id)),
 
             // Any other combination is not supported
             _ => Ok(self.id().into()),
