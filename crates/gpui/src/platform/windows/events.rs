@@ -353,17 +353,21 @@ fn handle_syskeydown_msg(
     println!("\nsys key down: {:#?}", input);
     let mut func = lock.callbacks.input.take()?;
     drop(lock);
-    let result = if !func(input).propagate {
-        state_ptr.state.borrow_mut().system_key_handled = true;
+
+    let handled = !func(input).propagate;
+
+    let mut lock = state_ptr.state.borrow_mut();
+    lock.callbacks.input = Some(func);
+
+    if handled {
+        lock.system_key_handled = true;
+        lock.suppress_next_char_msg = true;
         Some(0)
     } else {
         // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
         // shortcuts.
         None
-    };
-    state_ptr.state.borrow_mut().callbacks.input = Some(func);
-
-    result
+    }
 }
 
 fn handle_syskeyup_msg(
@@ -1421,6 +1425,7 @@ fn handle_key_event<F>(
 where
     F: FnOnce(Keystroke) -> PlatformInput,
 {
+    state.suppress_next_char_msg = false;
     let virtual_key = VIRTUAL_KEY(wparam.loword());
     let mut modifiers = current_modifiers();
 
