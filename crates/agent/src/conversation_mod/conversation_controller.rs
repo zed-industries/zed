@@ -65,6 +65,7 @@ pub struct ConversationController {
     project_context: SharedProjectContext,
     current_message_id: Option<MessageId>,
     pending_tool_results: Vec<LanguageModelToolResult>,
+    consecutive_tool_chains: usize,
 }
 
 impl EventEmitter<ConversationEvent> for ConversationController {}
@@ -98,6 +99,7 @@ impl ConversationController {
             is_generating: false,
             generating_task: None,
             _subscriptions: Vec::new(),
+            consecutive_tool_chains: 0,
         }
     }
     
@@ -222,6 +224,9 @@ impl ConversationController {
         
         // Set state to generating
         self.is_generating = true;
+        
+        // Reset the tool chain counter when starting a new message
+        self.consecutive_tool_chains = 0;
         
         // Get available tools
         let available_tools = self.tool_service.available_tools(model.clone(), cx);
@@ -564,6 +569,28 @@ impl ConversationController {
             return;
         }
         
+        // Limit the number of consecutive tool chains to prevent loops
+        const MAX_TOOL_CHAINS: usize = 5;
+        self.consecutive_tool_chains += 1;
+        
+        if self.consecutive_tool_chains > MAX_TOOL_CHAINS {
+            // We've exceeded the maximum number of tool chains, stop the loop
+            cx.emit(ConversationEvent::Error(
+                format!("Too many consecutive tool executions (limit: {}). Stopping to prevent infinite loops.", 
+                    MAX_TOOL_CHAINS).into()
+            ));
+            
+            // Clear pending tool results to break the cycle
+            self.pending_tool_results.clear();
+            
+            // Also emit stopped with error
+            cx.emit(ConversationEvent::Stopped(
+                Err(Arc::new(anyhow!("Tool execution limit reached")))
+            ));
+            
+            return;
+        }
+        
         // Get our current message or create a new one
         let message_id = if let Some(id) = self.current_message_id {
             id
@@ -613,6 +640,7 @@ impl Clone for ConversationController {
             is_generating: self.is_generating,
             generating_task: self.generating_task.clone(),
             _subscriptions: self._subscriptions.clone(),
+            consecutive_tool_chains: self.consecutive_tool_chains,
         }
     }
 } 
