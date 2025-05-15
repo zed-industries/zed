@@ -20,7 +20,7 @@ Zed offers various features that integrate LLMs smoothly into the editor.
 
 - [Tools](./tools.md): Explore the tools that enhance the AI's capabilities to interact with your codebase.
 
-- [Model Context Protocol](./mcp.md): Learn about context servers that enhance the Assistant's capabilities.
+- [Model Context Protocol](./mcp.md): Learn about context servers that enhance the Agent's capabilities.
 
 - [Inline Assistant](./inline-assistant.md): Discover how to use the agent to power inline transformations directly within your code editor and terminal.
 
