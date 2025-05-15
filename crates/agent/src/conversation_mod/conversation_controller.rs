@@ -226,155 +226,15 @@ impl ConversationController {
         // Get available tools
         let available_tools = self.tool_service.available_tools(model.clone(), cx);
         
-        // Get self as weak entity for tasks
-        let controller = cx.entity_id().downgrade();
+        // Create a request
+        let request = self.completion_service.prepare_request(
+            &self.conversation,
+            model.clone(),
+            available_tools,
+        );
         
         // Stream completion
-        let completion_service = self.completion_service.clone();
-        let tool_service = self.tool_service.clone();
-        let conversation = self.conversation.clone();
-        
-        let _completion_task = cx.spawn(async move |cx| {
-            // Start streaming
-            let mut completion_stream = completion_service
-                .stream_completion(
-                    &conversation,
-                    model.clone(),
-                    available_tools,
-                    message_id,
-                    window.clone(),
-                    cx,
-                )
-                .await;
-            
-            while let Some(result) = completion_stream.next().await {
-                if let Some(controller) = controller.upgrade() {
-                    match result {
-                        Ok(CompletionEvent::TextChunk(text)) => {
-                            controller.update(cx, |this, cx| {
-                                // Add text to the current assistant message
-                                if let Some(message) = this.conversation.message_mut(message_id) {
-                                    message.push_text(&text);
-                                }
-                                
-                                // Emit event
-                                cx.emit(ConversationEvent::StreamedText {
-                                    message_id,
-                                    text,
-                                });
-                            })?;
-                        }
-                        Ok(CompletionEvent::ThinkingChunk { text, signature }) => {
-                            controller.update(cx, |this, cx| {
-                                // Add thinking to the current assistant message
-                                if let Some(message) = this.conversation.message_mut(message_id) {
-                                    message.push_thinking(&text, signature.clone());
-                                }
-                                
-                                // Emit event
-                                cx.emit(ConversationEvent::StreamedThinking {
-                                    message_id,
-                                    text,
-                                    signature,
-                                });
-                            })?;
-                        }
-                        Ok(CompletionEvent::ToolCall { tool_use_id, tool_name, input }) => {
-                            controller.update(cx, |this, cx| {
-                                // Emit event
-                                cx.emit(ConversationEvent::ToolCall {
-                                    tool_use_id: tool_use_id.clone(),
-                                    tool_name: tool_name.clone(),
-                                    input: input.clone(),
-                                });
-                                
-                                // Execute the tool
-                                let window_handle = window.clone();
-                                let tool_service = this.tool_service.clone();
-                                let request = this.completion_service.prepare_request(
-                                    &this.conversation,
-                                    model.clone(),
-                                    this.tool_service.available_tools(model.clone(), cx),
-                                );
-                                
-                                cx.spawn(async move |cx| {
-                                    let result = tool_service.run_tool(
-                                        tool_use_id.clone(),
-                                        tool_name,
-                                        input,
-                                        message_id,
-                                        Arc::new(request),
-                                        model.clone(),
-                                        window_handle,
-                                        cx,
-                                    ).await;
-                                    
-                                    if let Some(controller) = controller.upgrade() {
-                                        controller.update(cx, |this, cx| {
-                                            match result {
-                                                Ok(tool_result) => {
-                                                    this.pending_tool_results.push(tool_result);
-                                                    cx.emit(ConversationEvent::ToolFinished {
-                                                        tool_use_id,
-                                                    });
-                                                }
-                                                Err(err) => {
-                                                    // Emit error event
-                                                    cx.emit(ConversationEvent::Error(
-                                                        format!("Tool execution error: {}", err).into()
-                                                    ));
-                                                }
-                                            }
-                                        })?;
-                                    }
-                                    
-                                    Ok(())
-                                }).detach();
-                            })?;
-                        }
-                        Ok(CompletionEvent::Stopped(result)) => {
-                            controller.update(cx, |this, cx| {
-                                this.is_generating = false;
-                                
-                                // Process token usage if available
-                                if let Ok(stop_reason) = &result {
-                                    if let Some(token_usage) = stop_reason.token_usage() {
-                                        this.conversation.update_token_usage(token_usage);
-                                    }
-                                }
-                                
-                                // Emit stopped event
-                                cx.emit(ConversationEvent::Stopped(result));
-                            })?;
-                            
-                            break;
-                        }
-                        Err(err) => {
-                            controller.update(cx, |this, cx| {
-                                this.is_generating = false;
-                                
-                                // Emit error event
-                                cx.emit(ConversationEvent::Error(
-                                    format!("Completion error: {}", err).into()
-                                ));
-                                
-                                // Also emit stopped with error
-                                cx.emit(ConversationEvent::Stopped(
-                                    Err(Arc::new(anyhow!(err.to_string())))
-                                ));
-                            })?;
-                            
-                            break;
-                        }
-                    }
-                } else {
-                    // Controller was dropped, exit the loop
-                    break;
-                }
-            }
-            
-            Ok(())
-        });
+        self.stream_completion_with_request(request, model, message_id, window, cx);
     }
     
     pub fn project(&self) -> &Entity<Project> {
@@ -617,6 +477,11 @@ impl ConversationController {
                                                     cx.emit(ConversationEvent::ToolFinished {
                                                         tool_use_id,
                                                     });
+                                                    
+                                                    // If we have tool results, continue the conversation with them
+                                                    if !this.pending_tool_results.is_empty() && !this.is_generating {
+                                                        this.continue_with_tool_results(model.clone(), window_handle, cx);
+                                                    }
                                                 }
                                                 Err(err) => {
                                                     // Emit error event
@@ -643,8 +508,13 @@ impl ConversationController {
                                     }
                                 }
                                 
-                                // Emit stopped event
-                                cx.emit(ConversationEvent::Stopped(result));
+                                // If we have tool results, continue the conversation with them
+                                if !this.pending_tool_results.is_empty() {
+                                    this.continue_with_tool_results(model.clone(), window.clone(), cx);
+                                } else {
+                                    // Emit stopped event
+                                    cx.emit(ConversationEvent::Stopped(result));
+                                }
                             })?;
                             
                             break;
@@ -675,6 +545,49 @@ impl ConversationController {
             
             Ok(())
         });
+    }
+    
+    /// Continue the conversation with tool results
+    pub fn continue_with_tool_results(
+        &mut self,
+        model: Arc<dyn LanguageModel>,
+        window: Option<AnyWindowHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.is_generating {
+            // Already generating, don't continue
+            return;
+        }
+        
+        // Make sure we have pending tool results
+        if self.pending_tool_results.is_empty() {
+            return;
+        }
+        
+        // Get our current message or create a new one
+        let message_id = if let Some(id) = self.current_message_id {
+            id
+        } else {
+            self.insert_assistant_message(Vec::new(), cx)
+        };
+        self.current_message_id = Some(message_id);
+        
+        // Set state to generating
+        self.is_generating = true;
+        
+        // Create a request with tool results
+        let mut request = self.completion_service.prepare_request(
+            &self.conversation,
+            model.clone(),
+            self.tool_service.available_tools(model.clone(), cx),
+        );
+        
+        // Add tool results to the request
+        let tool_results = std::mem::take(&mut self.pending_tool_results);
+        request.tool_results = tool_results;
+        
+        // Stream completion with the request including tool results
+        self.stream_completion_with_request(request, model, message_id, window, cx);
     }
     
     /// Set the conversation directly (used for deserialization)

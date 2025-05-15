@@ -72,7 +72,9 @@ pub trait CompletionService: Send + Sync {
         &self,
         conversation: &Conversation,
         model: Arc<dyn LanguageModel>,
-        available_tools: Vec<LanguageModelRequestTool>,
+        tools: Vec<LanguageModelRequestTool>,
+        message_id: MessageId,
+        window: Option<AnyWindowHandle>,
         cx: &mut AsyncApp,
     ) -> Pin<Box<dyn Stream<Item = Result<CompletionEvent, CompletionError>> + Send>>;
 
@@ -81,6 +83,8 @@ pub trait CompletionService: Send + Sync {
         &self,
         request: LanguageModelRequest,
         model: Arc<dyn LanguageModel>,
+        message_id: MessageId,
+        window: Option<AnyWindowHandle>,
         cx: &mut AsyncApp,
     ) -> Pin<Box<dyn Stream<Item = Result<CompletionEvent, CompletionError>> + Send>>;
 
@@ -107,106 +111,91 @@ impl CompletionService for DefaultCompletionService {
         &self,
         conversation: &Conversation,
         model: Arc<dyn LanguageModel>,
-        available_tools: Vec<LanguageModelRequestTool>,
+        tools: Vec<LanguageModelRequestTool>,
+        message_id: MessageId,
+        window: Option<AnyWindowHandle>,
         cx: &mut AsyncApp,
     ) -> Pin<Box<dyn Stream<Item = Result<CompletionEvent, CompletionError>> + Send>> {
-        let request = self.prepare_request(conversation, model.clone(), available_tools);
-        self.stream_completion_with_request(request, model, cx)
+        let request = self.prepare_request(conversation, model.clone(), tools);
+        self.stream_completion_with_request(request, model, message_id, window, cx)
     }
     
     fn stream_completion_with_request(
         &self,
         request: LanguageModelRequest,
         model: Arc<dyn LanguageModel>,
+        message_id: MessageId,
+        window: Option<AnyWindowHandle>,
         cx: &mut AsyncApp,
     ) -> Pin<Box<dyn Stream<Item = Result<CompletionEvent, CompletionError>> + Send>> {
         let (tx, rx) = mpsc::channel(10);
         
         cx.background_spawn(async move {
-            let completion_result = model.complete(&request).await;
+            // Call the model
+            let mut model_stream = match model.complete(&request).await {
+                Ok(stream) => stream,
+                Err(err) => {
+                    let _ = tx.send(Err(CompletionError::Other(err))).await;
+                    return;
+                }
+            };
             
-            match completion_result {
-                Ok(mut stream) => {
-                    while let Some(event_result) = stream.next().await {
-                        match event_result {
-                            Ok(event) => {
-                                match event {
-                                    LanguageModelCompletionEvent::ContentBlock { content, is_final, .. } => {
-                                        if !content.is_empty() {
-                                            if let Err(e) = tx.clone().try_send(Ok(CompletionEvent::TextChunk(content))) {
-                                                if !e.is_disconnected() {
-                                                    // Only log if the error isn't because the receiver was dropped
-                                                    log::error!("Error sending content chunk: {}", e);
-                                                }
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    LanguageModelCompletionEvent::ThinkingBlock { content, signature, .. } => {
-                                        if !content.is_empty() {
-                                            if let Err(e) = tx.clone().try_send(Ok(CompletionEvent::ThinkingChunk { 
-                                                text: content,
-                                                signature,
-                                            })) {
-                                                if !e.is_disconnected() {
-                                                    log::error!("Error sending thinking chunk: {}", e);
-                                                }
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    LanguageModelCompletionEvent::ToolCall { tool_name, tool_call_id, arguments, .. } => {
-                                        if let Err(e) = tx.clone().try_send(Ok(CompletionEvent::ToolCall { 
-                                            tool_use_id: tool_call_id,
-                                            tool_name,
-                                            input: arguments,
-                                        })) {
-                                            if !e.is_disconnected() {
-                                                log::error!("Error sending tool call: {}", e);
-                                            }
-                                            break;
-                                        }
-                                    }
-                                    LanguageModelCompletionEvent::StreamEnd { stop_reason } => {
-                                        let _ = tx.clone().try_send(Ok(CompletionEvent::Stopped(Ok(stop_reason))));
-                                        break;
-                                    }
-                                }
+            // Process model response events
+            while let Some(event) = model_stream.next().await {
+                match event {
+                    Ok(event) => {
+                        match event {
+                            LanguageModelCompletionEvent::Text(text) => {
+                                let _ = tx.send(Ok(CompletionEvent::TextChunk(text))).await;
                             }
-                            Err(error) => {
-                                let _ = tx.clone().try_send(Err(CompletionError::message("Error", error)));
+                            LanguageModelCompletionEvent::ToolUse(tool_use) => {
+                                let _ = tx.send(Ok(CompletionEvent::ToolCall {
+                                    tool_use_id: tool_use.id,
+                                    tool_name: tool_use.name,
+                                    input: tool_use.input,
+                                })).await;
+                            }
+                            LanguageModelCompletionEvent::Finished(stop_reason) => {
+                                let _ = tx.send(Ok(CompletionEvent::Stopped(Ok(stop_reason)))).await;
                                 break;
+                            }
+                            LanguageModelCompletionEvent::Thinking { text, signature } => {
+                                let _ = tx.send(Ok(CompletionEvent::ThinkingChunk {
+                                    text, 
+                                    signature,
+                                })).await;
                             }
                         }
                     }
-                }
-                Err(error) => {
-                    let _ = tx.try_send(Err(CompletionError::message("Error", error.to_string())));
+                    Err(err) => {
+                        let _ = tx.send(Err(CompletionError::Other(err))).await;
+                        break;
+                    }
                 }
             }
         });
         
-        rx
+        Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx))
     }
     
     fn prepare_request(
         &self,
         conversation: &Conversation,
         model: Arc<dyn LanguageModel>,
-        available_tools: Vec<LanguageModelRequestTool>,
+        tools: Vec<LanguageModelRequestTool>,
     ) -> LanguageModelRequest {
+        let messages = conversation.to_model_messages();
+        
+        // Create a request with system prompt and messages
         LanguageModelRequest {
             thread_id: conversation.id().to_string(),
-            messages: conversation.to_model_messages(),
-            tools: available_tools,
-            temperature: None,
-            top_p: None,
-            top_k: None,
-            presence_penalty: None,
-            frequency_penalty: None,
-            stop: None,
-            max_tokens: None,
-            extra: None,
+            prompt_id: conversation.current_prompt_id().to_string(),
+            mode: language_model::CompletionMode::Chat,
+            messages,
+            tools,
+            tool_results: Vec::new(), // Initialize with empty tool results
+            project: None,            // Will be set by caller if needed
+            action_log: None,         // Will be set by caller if needed
         }
     }
     
@@ -216,15 +205,36 @@ impl CompletionService for DefaultCompletionService {
         model: Arc<dyn LanguageModel>,
         cx: &mut AsyncApp,
     ) -> Pin<Box<dyn Future<Output = Result<TokenUsage>> + Send>> {
-        let request = request.clone();
         Box::pin(async move {
-            let count = model.count_tokens(request, cx.as_ref()).await?;
-            Ok(TokenUsage {
-                input_tokens: count,
-                output_tokens: 0,
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 0,
-            })
+            model.calculate_tokens(request).await
         })
+    }
+}
+
+// Helper function to map model events to completion events
+fn map_model_event(
+    event: Result<LanguageModelCompletionEvent, anyhow::Error>,
+    message_id: MessageId,
+) -> Result<CompletionEvent, CompletionError> {
+    match event {
+        Ok(event) => match event {
+            LanguageModelCompletionEvent::Text(text) => {
+                Ok(CompletionEvent::TextChunk(text))
+            }
+            LanguageModelCompletionEvent::ToolUse(tool_use) => {
+                Ok(CompletionEvent::ToolCall {
+                    tool_use_id: tool_use.id,
+                    tool_name: tool_use.name,
+                    input: tool_use.input,
+                })
+            }
+            LanguageModelCompletionEvent::Thinking { text, signature } => {
+                Ok(CompletionEvent::ThinkingChunk { text, signature })
+            }
+            LanguageModelCompletionEvent::Finished(stop_reason) => {
+                Ok(CompletionEvent::Stopped(Ok(stop_reason)))
+            }
+        },
+        Err(err) => Err(CompletionError::Other(err)),
     }
 } 
