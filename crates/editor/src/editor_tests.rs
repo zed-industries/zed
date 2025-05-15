@@ -2806,7 +2806,7 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
     let language = Arc::new(Language::new(
         LanguageConfig {
             documentation_block: Some(vec!["/**".into(), "*/".into()]),
-            documentation_comment_prefix: Some("* ".into()),
+            documentation_comment_prefix: Some(" * ".into()),
             ..LanguageConfig::default()
         },
         None,
