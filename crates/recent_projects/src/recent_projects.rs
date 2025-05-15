@@ -24,8 +24,8 @@ use std::{
 use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*, tooltip_container};
 use util::{ResultExt, paths::PathExt};
 use workspace::{
-    CloseIntent, HistoryManager, ModalView, OpenOptions, SerializedWorkspaceLocation, WORKSPACE_DB,
-    Workspace, WorkspaceId,
+    AppState, CloseIntent, HistoryManager, ModalView, OpenOptions, SerializedWorkspaceLocation,
+    WORKSPACE_DB, Workspace, WorkspaceId, open_new,
 };
 use zed_actions::{OpenRecent, OpenRemote};
 
@@ -34,6 +34,32 @@ pub fn init(cx: &mut App) {
     cx.observe_new(RecentProjects::register).detach();
     cx.observe_new(RemoteServerProjects::register).detach();
     cx.observe_new(DisconnectedOverlay::register).detach();
+    
+    // Initialize remote_servers module
+    remote_servers::init(cx);
+    
+    // Register app-level action for OpenRecent
+    cx.on_action({
+        move |action: &OpenRecent, cx: &mut App| {
+            if let Some(app_state) = AppState::try_global(cx).and_then(|weak| weak.upgrade()) {
+                // If window exists, use it
+                if let Some(window) = cx.active_window() {
+                    if let Some(workspace_window) = window.downcast::<Workspace>() {
+                        let _ = workspace_window.update(cx, |workspace, window, cx| {
+                            RecentProjects::open(workspace, action.create_new_window, window, cx);
+                        });
+                        return;
+                    }
+                }
+                
+                // No window exists, create a new one
+                let create_new_window = action.create_new_window;
+                open_new(Default::default(), app_state, cx, move |workspace, window, cx| {
+                    RecentProjects::open(workspace, create_new_window, window, cx);
+                }).detach();
+            }
+        }
+    });
 }
 
 pub struct RecentProjects {
