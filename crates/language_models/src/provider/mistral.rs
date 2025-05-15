@@ -308,6 +308,7 @@ impl LanguageModel for MistralLanguageModel {
         match self.model {
             mistral::Model::CodestralLatest
             | mistral::Model::MistralLargeLatest
+            | mistral::Model::MistralMediumLatest
             | mistral::Model::MistralSmallLatest
             | mistral::Model::OpenCodestralMamba
             | mistral::Model::OpenMistralNemo => true,
