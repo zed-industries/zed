@@ -18,7 +18,7 @@ word_characters = ["#", "$"]
 prettier_parser_name = "typescript"
 tab_size = 2
 debuggers = ["JavaScript"]
-documentation_comment_prefix = " * "
+documentation_comment_prefix = "* "
 documentation_block = ["/**", "*/"]
 
 [overrides.string]

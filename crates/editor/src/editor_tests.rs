@@ -2806,7 +2806,7 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
     let language = Arc::new(Language::new(
         LanguageConfig {
             documentation_block: Some(vec!["/**".into(), "*/".into()]),
-            documentation_comment_prefix: Some(" * ".into()),
+            documentation_comment_prefix: Some("* ".into()),
             ..LanguageConfig::default()
         },
         None,
@@ -2821,7 +2821,7 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
         cx.assert_editor_state(indoc! {"
         /**
-         * ˇ
+        * ˇ
     "});
         // Ensure that if cursor is before the comment start,
         // we do not actually insert a comment prefix.
@@ -2849,8 +2849,22 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
         cx.assert_editor_state(indoc! {"
         /**
-         * ˇ
-         */
+        * ˇ
+        */
+    "});
+        // Ensure that delimiter space is preserved when space is not
+        // on existing delimiter.
+        cx.set_state(indoc! {"
+        /**
+        *ˇ
+        */
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        /**
+        *
+        * ˇ
+        */
     "});
         // Ensure that if suffix exists on same line after cursor it
         // doesn't add extra new line if prefix is not on same line.
@@ -2895,7 +2909,7 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         /**
          *
          */
-        ˇ
+         ˇ
     "});
     }
     // Ensure that comment continuations can be disabled.
