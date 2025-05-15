@@ -350,7 +350,6 @@ fn handle_syskeydown_msg(
             is_held: lparam.0 & (0x1 << 30) > 0,
         })
     })?;
-    println!("\nsys key down: {:#?}", input);
     let mut func = lock.callbacks.input.take()?;
     drop(lock);
 
@@ -379,7 +378,6 @@ fn handle_syskeyup_msg(
     let input = handle_key_event(wparam, lparam, &mut lock, |keystroke| {
         PlatformInput::KeyUp(KeyUpEvent { keystroke })
     })?;
-    println!("\nsys key up: {:#?}", input);
     let mut func = lock.callbacks.input.take()?;
     drop(lock);
     func(input);
@@ -406,7 +404,6 @@ fn handle_keydown_msg(
         return Some(1);
     };
 
-    println!("\nkey down: {:#?}", input);
     let Some(mut func) = lock.callbacks.input.take() else {
         return Some(1);
     };
@@ -437,7 +434,6 @@ fn handle_keyup_msg(
         return Some(1);
     };
 
-    println!("\nkey up: {:#?}", input);
     let Some(mut func) = lock.callbacks.input.take() else {
         return Some(1);
     };
@@ -466,7 +462,6 @@ fn handle_char_msg(
     with_input_handler(&state_ptr, |input_handler| {
         input_handler.replace_text_in_range(None, &input);
     });
-    println!("\nchar: {:#?}", input);
 
     Some(0)
 }
