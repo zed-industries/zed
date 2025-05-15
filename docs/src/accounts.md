@@ -27,6 +27,6 @@ To sign out of Zed, you can use either of these methods:
 
 ## Email
 
-Note that Zed associates your Github *profile email* with your Zed account, not your *primary email*. We're unable to change the email associated with your Zed account without you changing your profile email.
+Note that Zed associates your Github _profile email_ with your Zed account, not your _primary email_. We're unable to change the email associated with your Zed account without you changing your profile email.
 
-We *are* able to update the billing email on your account, if you're a Zed Pro user. See [Updating Billing Information](./ai/billing.md#updating-billing-info) for more
+We _are_ able to update the billing email on your account, if you're a Zed Pro user. See [Updating Billing Information](./ai/billing.md#updating-billing-info) for more
