@@ -214,9 +214,9 @@ impl AgentConfiguration {
             )
             .when(is_expanded, |parent| match configuration_view {
                 Some(configuration_view) => parent.child(configuration_view),
-                None => parent.child(div().child(Label::new(format!(
+                None => parent.child(Label::new(format!(
                     "No configuration view for {provider_name}",
-                )))),
+                ))),
             })
     }
 
