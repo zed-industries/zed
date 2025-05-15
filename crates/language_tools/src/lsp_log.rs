@@ -702,7 +702,7 @@ impl LspLogView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> (Entity<Editor>, Vec<Subscription>) {
-        let mut editor = initialize_new_editor(log_contents, true, window, cx);
+        let editor = initialize_new_editor(log_contents, true, window, cx);
         let editor_subscription = cx.subscribe(
             &editor,
             |_, _, event: &EditorEvent, cx: &mut Context<LspLogView>| cx.emit(event.clone()),
