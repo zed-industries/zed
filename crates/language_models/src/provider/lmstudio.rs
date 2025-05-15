@@ -661,7 +661,7 @@ impl LmStudioStreamMapper {
     // Check if JSON is likely to be complete
     fn is_likely_complete_json(&self, json: &str) -> bool {
         // First, simple case - parse it as JSON
-        if let Ok(_) = serde_json::from_str::<serde_json::Value>(json) {
+        if serde_json::from_str::<serde_json::Value>(json).is_ok() {
             return true;
         }
         
