@@ -290,6 +290,9 @@ impl LineBreakpoint {
         )))
         .start_slot(indicator)
         .rounded()
+        .on_secondary_mouse_down(|_, _, cx| {
+            cx.stop_propagation();
+        })
         .end_hover_slot(
             IconButton::new(
                 SharedString::from(format!(
@@ -423,6 +426,9 @@ impl ExceptionBreakpoint {
             self.id
         )))
         .rounded()
+        .on_secondary_mouse_down(|_, _, cx| {
+            cx.stop_propagation();
+        })
         .start_slot(
             div()
                 .id(SharedString::from(format!(

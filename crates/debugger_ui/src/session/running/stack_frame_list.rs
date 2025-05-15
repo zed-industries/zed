@@ -426,6 +426,9 @@ impl StackFrameList {
             .when(is_selected_frame, |this| {
                 this.bg(cx.theme().colors().element_hover)
             })
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
             .on_click(cx.listener({
                 let stack_frame = stack_frame.clone();
                 move |this, _, window, cx| {
@@ -517,6 +520,9 @@ impl StackFrameList {
             .group("")
             .id(("stack-frame", first_stack_frame.id))
             .p_1()
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
             .on_click(cx.listener({
                 let stack_frames = stack_frames.clone();
                 move |this, _, _window, cx| {
