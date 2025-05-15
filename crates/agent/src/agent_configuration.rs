@@ -230,7 +230,6 @@ impl AgentConfiguration {
             .p(DynamicSpacing::Base16.rems(cx))
             .pr(DynamicSpacing::Base20.rems(cx))
             .gap_4()
-            .flex_1()
             .child(
                 v_flex()
                     .gap_0p5()
@@ -331,7 +330,6 @@ impl AgentConfiguration {
             .p(DynamicSpacing::Base16.rems(cx))
             .pr(DynamicSpacing::Base20.rems(cx))
             .gap_2p5()
-            .flex_1()
             .child(Headline::new("General Settings"))
             .child(self.render_command_permission(cx))
             .child(self.render_single_file_review(cx))
@@ -344,18 +342,15 @@ impl AgentConfiguration {
     ) -> impl IntoElement {
         let context_server_ids = self.context_server_store.read(cx).all_server_ids().clone();
 
-        const SUBHEADING: &str = "Connect to context servers via the Model Context Protocol either via Zed extensions or directly.";
-
         v_flex()
             .p(DynamicSpacing::Base16.rems(cx))
             .pr(DynamicSpacing::Base20.rems(cx))
             .gap_2()
-            .flex_1()
             .child(
                 v_flex()
                     .gap_0p5()
                     .child(Headline::new("Model Context Protocol (MCP) Servers"))
-                    .child(Label::new(SUBHEADING).color(Color::Muted)),
+                    .child(Label::new("Connect to context servers via the Model Context Protocol either via Zed extensions or directly.").color(Color::Muted)),
             )
             .children(
                 context_server_ids.into_iter().map(|context_server_id| {
