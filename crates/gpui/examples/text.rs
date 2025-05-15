@@ -9,7 +9,6 @@ use gpui::{
     colors::DefaultColors, div, point, prelude::*, px, relative, rgb, size,
 };
 use std::iter;
-use uuid::Uuid;
 
 #[derive(Clone, Debug)]
 pub struct TextContext {
@@ -162,7 +161,6 @@ impl RenderOnce for Specimen {
 
 #[derive(Debug, Clone, PartialEq, IntoElement)]
 struct CharacterGrid {
-    id: Uuid,
     scale: f32,
     invert: bool,
     text_style: Option<TextStyle>,
@@ -171,7 +169,6 @@ struct CharacterGrid {
 impl CharacterGrid {
     pub fn new() -> Self {
         Self {
-            id: Uuid::new_v4(),
             scale: 1.0,
             invert: false,
             text_style: None,
@@ -227,19 +224,12 @@ impl RenderOnce for CharacterGrid {
                 }))
                 .when(end_idx - start_idx < columns, |d| {
                     d.children(
-                        iter::repeat_with(|| div().flex_1().id(ElementId::Uuid(Uuid::new_v4())))
-                            .take(columns - (end_idx - start_idx)),
+                        iter::repeat_with(|| div().flex_1()).take(columns - (end_idx - start_idx)),
                     )
                 })
         });
 
-        div()
-            .id(ElementId::Uuid(self.id))
-            .p_4()
-            .gap_2()
-            .flex()
-            .flex_col()
-            .children(grid_rows)
+        div().p_4().gap_2().flex().flex_col().children(grid_rows)
     }
 }
 
@@ -248,10 +238,6 @@ struct TextExample {
 }
 
 impl TextExample {
-    fn new() -> Self {
-        Self { next_id: 0 }
-    }
-
     fn next_id(&mut self) -> usize {
         self.next_id += 1;
         self.next_id
