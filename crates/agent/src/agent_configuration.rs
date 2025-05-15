@@ -142,7 +142,7 @@ impl AgentConfiguration {
             .expanded_provider_configurations
             .get(&provider.id())
             .copied()
-            .unwrap_or(true);
+            .unwrap_or(false);
 
         v_flex()
             .pt_3()
@@ -201,12 +201,12 @@ impl AgentConfiguration {
                                 .on_click(cx.listener({
                                     let provider_id = provider.id().clone();
                                     move |this, _event, _window, _cx| {
-                                        let is_open = this
+                                        let is_expanded = this
                                             .expanded_provider_configurations
                                             .entry(provider_id.clone())
-                                            .or_insert(true);
+                                            .or_insert(false);
 
-                                        *is_open = !*is_open;
+                                        *is_expanded = !*is_expanded;
                                     }
                                 })),
                             ),
