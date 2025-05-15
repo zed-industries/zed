@@ -757,7 +757,7 @@ pub struct LanguageConfig {
     pub debuggers: IndexSet<SharedString>,
     /// A character to add as a prefix when a new line is added to a documentation block.
     #[serde(default)]
-    pub documentation_line_prefix: Option<String>,
+    pub documentation_line_prefix: Option<Arc<str>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -886,6 +886,7 @@ impl Default for LanguageConfig {
             completion_query_characters: Default::default(),
             debuggers: Default::default(),
             significant_indentation: Default::default(),
+            documentation_line_prefix: None,
         }
     }
 }
@@ -1809,7 +1810,7 @@ impl LanguageScope {
     ///
     /// Used for documentation styles that require a leading character on each line,
     /// such as the asterisk in JSDoc, Javadoc, etc.
-    pub fn documentation_line_prefix(&self) -> Option<&String> {
+    pub fn documentation_line_prefix(&self) -> Option<&Arc<str>> {
         self.language.config.documentation_line_prefix.as_ref()
     }
 
