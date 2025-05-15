@@ -3930,7 +3930,7 @@ impl Editor {
                         let (comment_delimiter, insert_extra_newline) = if let Some(language) =
                             &language_scope
                         {
-                            let insert_extra_newline =
+                            let mut insert_extra_newline =
                                 insert_extra_newline_brackets(&buffer, start..end, language)
                                     || insert_extra_newline_tree_sitter(&buffer, start..end);
 
@@ -3986,7 +3986,8 @@ impl Editor {
                                         return None;
                                     }
 
-                                    let doc_block_prefix = language.documentation_block_prefix()?;
+                                    let doc_block = language.documentation_block();
+                                    let doc_block_prefix = doc_block.first()?;
                                     let doc_comment_prefix =
                                         language.documentation_comment_prefix()?;
                                     let max_len_of_delimiter = std::cmp::max(
@@ -3999,7 +4000,7 @@ impl Editor {
 
                                     let mut index_of_first_non_whitespace = 0;
                                     let doc_line_candidate = snapshot
-                                        .chars_for_range(range)
+                                        .chars_for_range(range.clone())
                                         .skip_while(|c| {
                                             let should_skip = c.is_whitespace();
                                             if should_skip {
@@ -4027,6 +4028,18 @@ impl Editor {
                                             + existing_comment_prefix.len()
                                             <= start_point.column as usize;
                                     if cursor_is_placed_after_comment_marker {
+                                        if let Some(doc_block_last) = doc_block.last() {
+                                            let mut line_rev_iter = snapshot
+                                                .reversed_chars_for_range(range)
+                                                .skip_while(|c| c.is_whitespace());
+                                            let matches_doc_suffix = doc_block_last
+                                                .chars()
+                                                .rev()
+                                                .all(|char| line_rev_iter.next() == Some(char));
+                                            if matches_doc_suffix {
+                                                insert_extra_newline = true;
+                                            }
+                                        }
                                         Some(doc_comment_prefix.clone())
                                     } else {
                                         None
@@ -4047,12 +4060,14 @@ impl Editor {
                             String::with_capacity(1 + capacity_for_delimiter + indent.len as usize);
                         new_text.push('\n');
                         new_text.extend(indent.chars());
+
                         if let Some(delimiter) = &comment_delimiter {
                             new_text.push_str(delimiter);
                         }
 
                         if insert_extra_newline {
-                            new_text = new_text.repeat(2);
+                            new_text.push('\n');
+                            new_text.extend(indent.chars());
                         }
 
                         let anchor = buffer.anchor_after(end);

@@ -760,7 +760,7 @@ pub struct LanguageConfig {
     pub documentation_comment_prefix: Option<Arc<str>>,
     /// Returns string documentation block of this language should start with.
     #[serde(default)]
-    pub documentation_block_prefix: Option<Arc<str>>,
+    pub documentation_block: Option<Vec<Arc<str>>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -890,7 +890,7 @@ impl Default for LanguageConfig {
             debuggers: Default::default(),
             significant_indentation: Default::default(),
             documentation_comment_prefix: None,
-            documentation_block_prefix: None,
+            documentation_block: None,
         }
     }
 }
@@ -1818,9 +1818,13 @@ impl LanguageScope {
         self.language.config.documentation_comment_prefix.as_ref()
     }
 
-    /// Returns string documentation block of this language should start with.
-    pub fn documentation_block_prefix(&self) -> Option<&Arc<str>> {
-        self.language.config.documentation_block_prefix.as_ref()
+    /// Returns prefix and suffix for documentation block of this language.
+    pub fn documentation_block(&self) -> &[Arc<str>] {
+        self.language
+            .config
+            .documentation_block
+            .as_ref()
+            .map_or([].as_slice(), |e| e.as_slice())
     }
 
     /// Returns a list of bracket pairs for a given language with an additional
