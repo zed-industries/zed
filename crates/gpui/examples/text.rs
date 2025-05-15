@@ -263,7 +263,7 @@ impl Render for TextExample {
             .overflow_y_scroll()
             .overflow_x_hidden()
             .bg(rgb(0xffffff))
-            .w_full()
+            .size_full()
             .child(div().child(CharacterGrid::new().scale(base)))
             .child(
                 div()
