@@ -1349,8 +1349,7 @@ fn parse_normal_key(
             modifiers.shift,
             modifiers.alt,
         );
-        let key = get_keystroke_key(vkey, scan_code as u32, &mut modifiers)?;
-        Some(key)
+        get_keystroke_key(vkey, scan_code as u32, &mut modifiers)
     })?;
     Some(Keystroke {
         modifiers,
