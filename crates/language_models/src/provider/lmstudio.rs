@@ -4,7 +4,7 @@ use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelToolChoice,
+    LanguageModelToolChoice, StopReason, LanguageModelToolUse, LanguageModelToolUseId,
 };
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -77,7 +77,7 @@ impl State {
             let mut models: Vec<lmstudio::Model> = models
                 .into_iter()
                 .filter(|model| model.r#type != ModelType::Embeddings)
-                .map(|model| lmstudio::Model::new(&model.id, None, None))
+                .map(|model| lmstudio::Model::new(&model.id, None, None, None))
                 .collect();
 
             models.sort_by(|a, b| a.name.cmp(&b.name));
@@ -184,6 +184,7 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
                     name: model.name.clone(),
                     display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
+                    supports_tools: Some(true),
                 },
             );
         }
@@ -237,6 +238,43 @@ pub struct LmStudioLanguageModel {
 
 impl LmStudioLanguageModel {
     fn to_lmstudio_request(&self, request: LanguageModelRequest) -> ChatCompletionRequest {
+        // Make a deep clone of the tools for debugging and to preserve them
+        let tools_debug = request.tools.clone();
+        
+        // Check if tools are empty before moving them
+        let has_tools = !request.tools.is_empty();
+        
+        // Convert tools to LM Studio format
+        let tools = request
+            .tools
+            .into_iter()
+            .map(|tool| lmstudio::LmStudioTool::Function {
+                function: lmstudio::LmStudioFunctionTool {
+                    name: tool.name,
+                    description: Some(tool.description),
+                    parameters: Some(tool.input_schema),
+                },
+            })
+            .collect::<Vec<_>>();
+        
+        // Log the tools for debugging
+        if !tools.is_empty() {
+            log::debug!("LMStudio: Sending {} tools to model", tools.len());
+            for tool in &tools_debug {
+                log::debug!("  Tool: {}", tool.name);
+            }
+        }
+
+        // Convert tool choice to LM Studio format
+        let tool_choice = match request.tool_choice {
+            Some(choice) => match choice {
+                LanguageModelToolChoice::Auto => Some("auto"),
+                LanguageModelToolChoice::Any => Some("any"),
+                LanguageModelToolChoice::None => Some("none"),
+            },
+            None => if has_tools { Some("auto") } else { None },
+        };
+
         ChatCompletionRequest {
             model: self.model.name.clone(),
             messages: request
@@ -259,7 +297,8 @@ impl LmStudioLanguageModel {
             max_tokens: Some(-1),
             stop: Some(request.stop),
             temperature: request.temperature.or(Some(0.0)),
-            tools: vec![],
+            tools,
+            tool_choice,
         }
     }
 }
@@ -282,15 +321,19 @@ impl LanguageModel for LmStudioLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        false
+        // Return the model's supports_tools flag if available, otherwise default to true
+        self.model.supports_tools.unwrap_or(true)
     }
 
     fn supports_images(&self) -> bool {
         false
     }
 
-    fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
-        false
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        match choice {
+            LanguageModelToolChoice::Auto | LanguageModelToolChoice::Any => self.supports_tools(),
+            LanguageModelToolChoice::None => true
+        }
     }
 
     fn telemetry_id(&self) -> String {
@@ -329,6 +372,11 @@ impl LanguageModel for LmStudioLanguageModel {
     > {
         let request = self.to_lmstudio_request(request);
 
+        // Log the full request for debugging
+        if let Ok(request_json) = serde_json::to_string_pretty(&request) {
+            log::debug!("LMStudio: Request payload:\n{}", request_json);
+        }
+
         let http_client = self.http_client.clone();
         let Ok(api_url) = cx.update(|cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).lmstudio;
@@ -342,14 +390,29 @@ impl LanguageModel for LmStudioLanguageModel {
 
             // Create a stream mapper to handle content across multiple deltas
             let stream_mapper = LmStudioStreamMapper::new();
+            let stream_mapper = std::sync::Mutex::new(stream_mapper);
 
             let stream = response
                 .map(move |response| {
-                    response.and_then(|fragment| stream_mapper.process_fragment(fragment))
+                    match response {
+                        Ok(fragment) => {
+                            let mut mapper = stream_mapper.lock().unwrap();
+                            mapper.process_fragment(fragment)
+                        },
+                        Err(e) => {
+                            // In case of errors, we need to ensure we reset our state
+                            if let Ok(mut mapper) = stream_mapper.lock() {
+                                mapper.in_thinking_block = false;
+                                mapper.thinking_buffer.clear();
+                                mapper.pending_text = None;
+                            }
+                            Err(e)
+                        }
+                    }
                 })
                 .filter_map(|result| async move {
                     match result {
-                        Ok(Some(content)) => Some(Ok(content)),
+                        Ok(Some(event)) => Some(Ok(event)),
                         Ok(None) => None,
                         Err(error) => Some(Err(error)),
                     }
@@ -363,9 +426,7 @@ impl LanguageModel for LmStudioLanguageModel {
             Ok(future
                 .await?
                 .map(|result| {
-                    result
-                        .map(LanguageModelCompletionEvent::Text)
-                        .map_err(LanguageModelCompletionError::Other)
+                    result.map_err(LanguageModelCompletionError::Other)
                 })
                 .boxed())
         }
@@ -373,34 +434,172 @@ impl LanguageModel for LmStudioLanguageModel {
     }
 }
 
-// This will be more useful when we implement tool calling. Currently keeping it empty.
-struct LmStudioStreamMapper {}
+struct LmStudioStreamMapper {
+    in_thinking_block: bool,
+    thinking_buffer: String,
+    pending_text: Option<String>,
+}
 
 impl LmStudioStreamMapper {
     fn new() -> Self {
-        Self {}
+        Self {
+            in_thinking_block: false,
+            thinking_buffer: String::new(),
+            pending_text: None,
+        }
     }
 
-    fn process_fragment(&self, fragment: lmstudio::ChatResponse) -> Result<Option<String>> {
+    fn process_fragment(&mut self, fragment: lmstudio::ChatResponse) -> Result<Option<LanguageModelCompletionEvent>> {
         // Most of the time, there will be only one choice
         let Some(choice) = fragment.choices.first() else {
             return Ok(None);
         };
 
+        // Check for finish reason first
+        if let Some(reason) = choice.finish_reason.as_deref() {
+            let stop_reason = match reason {
+                "length" => StopReason::MaxTokens,
+                "tool_calls" => StopReason::ToolUse,
+                _ => StopReason::EndTurn,
+            };
+            
+            // Reset thinking state on stop
+            self.in_thinking_block = false;
+            self.thinking_buffer.clear();
+            
+            return Ok(Some(LanguageModelCompletionEvent::Stop(stop_reason)));
+        }
+
         // Extract the delta content
         if let Ok(delta) =
             serde_json::from_value::<lmstudio::ResponseMessageDelta>(choice.delta.clone())
         {
+            // Handle text content
             if let Some(content) = delta.content {
                 if !content.is_empty() {
-                    return Ok(Some(content));
+                    // Process thinking tags in the content
+                    if self.in_thinking_block {
+                        // Already in a thinking block
+                        if content.contains("</think>") {
+                            // End of thinking block
+                            log::debug!("LMStudio: Ending thinking block");
+                            let parts: Vec<&str> = content.split("</think>").collect();
+                            let before_closing = parts[0];
+                            
+                            // Add text before closing tag to thinking buffer
+                            let thinking_text = before_closing.to_string();
+                            
+                            // Return thinking event
+                            self.in_thinking_block = false;
+                            
+                            // Store text after closing tag as pending
+                            if parts.len() > 1 && !parts[1].is_empty() {
+                                log::debug!("LMStudio: Storing pending text after thinking: {}", parts[1]);
+                                self.pending_text = Some(parts[1].to_string());
+                            }
+                            
+                            return Ok(Some(LanguageModelCompletionEvent::Thinking {
+                                text: thinking_text,
+                                signature: None,
+                            }));
+                        } else {
+                            // Continue thinking block
+                            log::debug!("LMStudio: Continuing thinking block: {}", content);
+                            return Ok(Some(LanguageModelCompletionEvent::Thinking {
+                                text: content,
+                                signature: None,
+                            }));
+                        }
+                    } else if content.contains("<think>") {
+                        // Start of a thinking block
+                        log::debug!("LMStudio: Starting thinking block");
+                        self.in_thinking_block = true;
+                        
+                        // Extract content before the tag
+                        let parts: Vec<&str> = content.split("<think>").collect();
+                        let before_tag = parts[0];
+                        
+                        // Handle text before tag if any
+                        if !before_tag.is_empty() {
+                            self.pending_text = Some(before_tag.to_string());
+                            
+                            // Process this first to maintain order
+                            return Ok(Some(LanguageModelCompletionEvent::Text(
+                                before_tag.to_string()
+                            )));
+                        }
+                        
+                        if parts.len() > 1 {
+                            let after_tag = parts[1];
+                            
+                            // Check if closing tag is in the same fragment
+                            if after_tag.contains("</think>") {
+                                // Complete thinking block in a single fragment
+                                let thinking_parts: Vec<&str> = after_tag.split("</think>").collect();
+                                let thinking_text = thinking_parts[0].trim();
+                                
+                                self.in_thinking_block = false;
+                                
+                                // Store text after closing tag as pending
+                                if thinking_parts.len() > 1 && !thinking_parts[1].is_empty() {
+                                    self.pending_text = Some(thinking_parts[1].to_string());
+                                }
+                                
+                                // Return thinking event
+                                return Ok(Some(LanguageModelCompletionEvent::Thinking {
+                                    text: thinking_text.to_string(),
+                                    signature: None,
+                                }));
+                            } else if !after_tag.is_empty() {
+                                // Beginning of thinking block
+                                return Ok(Some(LanguageModelCompletionEvent::Thinking {
+                                    text: after_tag.to_string(),
+                                    signature: None,
+                                }));
+                            }
+                        }
+                        
+                        // Just the tag with nothing after it
+                        return Ok(None);
+                    } else if let Some(pending) = self.pending_text.take() {
+                        // Return any pending text first
+                        self.pending_text = Some(content);
+                        return Ok(Some(LanguageModelCompletionEvent::Text(pending)));
+                    } else {
+                        // Regular text content
+                        return Ok(Some(LanguageModelCompletionEvent::Text(content)));
+                    }
+                }
+            }
+
+            // Handle tool calls
+            if let Some(tool_calls) = delta.tool_calls {
+                for tool_call in tool_calls {
+                    if let Some(function) = tool_call.function {
+                        let id = tool_call.id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                        let args = function.arguments.unwrap_or_default();
+                        
+                        // Extract function name, defaulting to "unknown_function" if not provided
+                        let function_name = function.name.unwrap_or_else(|| "unknown_function".to_string());
+                        
+                        // Create a LanguageModelToolUse
+                        let tool_use = LanguageModelToolUse {
+                            id: LanguageModelToolUseId::from(id),
+                            name: function_name.into(),
+                            raw_input: args.clone(),
+                            input: serde_json::from_str(&args).unwrap_or(serde_json::json!({})),
+                            is_input_complete: true,
+                        };
+                        
+                        return Ok(Some(LanguageModelCompletionEvent::ToolUse(tool_use)));
+                    }
                 }
             }
         }
 
-        // If there's a finish_reason, we're done
-        if choice.finish_reason.is_some() {
-            return Ok(None);
+        // Check for any pending text
+        if let Some(text) = self.pending_text.take() {
+            return Ok(Some(LanguageModelCompletionEvent::Text(text)));
         }
 
         Ok(None)

@@ -1,9 +1,10 @@
 use anyhow::{Context as _, Result, anyhow};
-use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
+use futures::{AsyncBufReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, value::RawValue};
+use serde_json::Value;
 use std::{convert::TryFrom, sync::Arc, time::Duration};
+use bytes::Bytes;
 
 pub const LMSTUDIO_API_URL: &str = "http://localhost:1234/api/v0";
 
@@ -47,14 +48,33 @@ pub struct Model {
     pub name: String,
     pub display_name: Option<String>,
     pub max_tokens: usize,
+    pub supports_tools: Option<bool>,
+}
+
+fn get_max_tokens(name: &str) -> usize {
+    /// Default context length for unknown models.
+    const DEFAULT_TOKENS: usize = 2048;
+    /// Maximum allowed context length
+    const MAXIMUM_TOKENS: usize = 32768;
+
+    // Map known models to their context sizes
+    let tokens = match name.split(':').next().unwrap_or_default() {
+        "text-embedding-nomic-embed-text-v1.5" | "granite-code" => 2048,
+        "qwen3-32b" => 32768,
+        "deepseek-coder-v2-lite-instruct" => 163840,
+        _ => DEFAULT_TOKENS,
+    };
+    
+    tokens.clamp(1, MAXIMUM_TOKENS)
 }
 
 impl Model {
-    pub fn new(name: &str, display_name: Option<&str>, max_tokens: Option<usize>) -> Self {
+    pub fn new(name: &str, display_name: Option<&str>, max_tokens: Option<usize>, supports_tools: Option<bool>) -> Self {
         Self {
             name: name.to_owned(),
-            display_name: display_name.map(|s| s.to_owned()),
-            max_tokens: max_tokens.unwrap_or(2048),
+            display_name: display_name.map(ToOwned::to_owned),
+            max_tokens: max_tokens.unwrap_or_else(|| get_max_tokens(name)),
+            supports_tools,
         }
     }
 
@@ -63,20 +83,33 @@ impl Model {
     }
 
     pub fn display_name(&self) -> &str {
-        self.display_name.as_ref().unwrap_or(&self.name)
+        self.display_name.as_deref().unwrap_or(&self.name)
     }
 
     pub fn max_token_count(&self) -> usize {
         self.max_tokens
     }
 }
+
+#[derive(Deserialize, Debug)]
+pub struct ModelShow {
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+}
+
+impl ModelShow {
+    pub fn supports_tools(&self) -> bool {
+        self.capabilities.iter().any(|v| v == "tools")
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum ChatMessage {
     Assistant {
         #[serde(default)]
         content: Option<String>,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         tool_calls: Option<Vec<LmStudioToolCall>>,
     },
     User {
@@ -85,18 +118,24 @@ pub enum ChatMessage {
     System {
         content: String,
     },
+    Tool {
+        content: String,
+        tool_call_id: String,
+    },
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "lowercase")]
-pub enum LmStudioToolCall {
-    Function(LmStudioFunctionCall),
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct LmStudioToolCall {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub call_type: String, // Always "function"
+    pub function: LmStudioFunctionCall,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct LmStudioFunctionCall {
     pub name: String,
-    pub arguments: Box<RawValue>,
+    pub arguments: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -120,10 +159,13 @@ pub struct ChatCompletionRequest {
     pub max_tokens: Option<i32>,
     pub stop: Option<Vec<String>>,
     pub temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<LmStudioTool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<&'static str>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ChatResponse {
     pub id: String,
     pub object: String,
@@ -132,7 +174,7 @@ pub struct ChatResponse {
     pub choices: Vec<ChoiceDelta>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ChoiceDelta {
     pub index: u32,
     #[serde(default)]
@@ -140,18 +182,14 @@ pub struct ChoiceDelta {
     pub finish_reason: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 pub struct ToolCallChunk {
     pub index: usize,
     pub id: Option<String>,
-
-    // There is also an optional `type` field that would determine if a
-    // function is there. Sometimes this streams in with the `function` before
-    // it streams in the `type`
     pub function: Option<FunctionChunk>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 pub struct FunctionChunk {
     pub name: Option<String>,
     pub arguments: Option<String>,
@@ -181,11 +219,11 @@ pub struct ResponseStreamEvent {
 
 #[derive(Serialize, Deserialize)]
 pub struct ListModelsResponse {
-    pub data: Vec<ModelEntry>,
+    pub data: Vec<LocalModelListing>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct ModelEntry {
+pub struct LocalModelListing {
     pub id: String,
     pub object: String,
     pub r#type: ModelType,
@@ -194,8 +232,8 @@ pub struct ModelEntry {
     pub compatibility_type: CompatibilityType,
     pub quantization: Option<String>,
     pub state: ModelState,
-    pub max_context_length: Option<u32>,
-    pub loaded_context_length: Option<u32>,
+    pub max_context_length: Option<usize>,
+    pub loaded_context_length: Option<usize>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -215,13 +253,13 @@ pub enum ModelState {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub enum CompatibilityType {
     Gguf,
     Mlx,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ResponseMessageDelta {
     pub role: Option<Role>,
     pub content: Option<String>,
@@ -229,149 +267,248 @@ pub struct ResponseMessageDelta {
     pub tool_calls: Option<Vec<ToolCallChunk>>,
 }
 
+/// Client for making requests to the LM Studio API
+pub struct LmStudioClient {
+    client: Arc<dyn HttpClient>,
+    api_url: String,
+}
+
+impl LmStudioClient {
+    /// Create a new LM Studio client
+    pub fn new(client: Arc<dyn HttpClient>, api_url: String) -> Self {
+        Self { client, api_url }
+    }
+
+    /// Stream chat completions from LM Studio
+    pub async fn stream_chat_completion(
+        &self,
+        request: ChatCompletionRequest,
+    ) -> Result<BoxStream<'static, Result<ChatResponse>>> {
+        stream_chat_completion(self.client.as_ref(), &self.api_url, request).await
+    }
+    
+    /// Make a chat completion request to LM Studio
+    pub async fn complete(
+        &self,
+        request: ChatCompletionRequest,
+    ) -> Result<ChatResponse> {
+        complete(self.client.as_ref(), &self.api_url, request).await
+    }
+    
+    /// Get the list of available models from LM Studio
+    pub async fn get_models(
+        &self,
+        timeout: Option<Duration>,
+    ) -> Result<Vec<LocalModelListing>> {
+        get_models(self.client.as_ref(), &self.api_url, timeout).await
+    }
+    
+    /// Get model capabilities from LM Studio
+    pub async fn show_model(
+        &self,
+        model: &str,
+    ) -> Result<ModelShow> {
+        show_model(self.client.as_ref(), &self.api_url, model).await
+    }
+    
+    /// Preload a model in LM Studio
+    pub async fn preload_model(
+        &self,
+        model: &str,
+    ) -> Result<()> {
+        preload_model(self.client.clone(), &self.api_url, model).await
+    }
+}
+
+/// Helper function to read response body into a String and also return the status
+async fn read_response_body_with_status(
+    response: http_client::Response<AsyncBody>
+) -> Result<(http::StatusCode, String)> {
+    let status = response.status();
+    let mut body = String::new();
+    let mut reader = BufReader::new(response.into_body());
+    futures::AsyncReadExt::read_to_string(&mut reader, &mut body).await?;
+    Ok((status, body))
+}
+
+/// Makes a chat completion request to LM Studio API
 pub async fn complete(
     client: &dyn HttpClient,
     api_url: &str,
     request: ChatCompletionRequest,
 ) -> Result<ChatResponse> {
-    let uri = format!("{api_url}/chat/completions");
-    let request_builder = HttpRequest::builder()
+    let endpoint = format!("{}/chat/completions", api_url);
+    
+    let body = serde_json::to_vec(&request)
+        .context("Failed to serialize chat completion request")?;
+    
+    let http_request = HttpRequest::builder()
         .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json");
-
-    let serialized_request = serde_json::to_string(&request)?;
-    let request = request_builder.body(AsyncBody::from(serialized_request))?;
-
-    let mut response = client.send(request).await?;
-    if response.status().is_success() {
-        let mut body = Vec::new();
-        response.body_mut().read_to_end(&mut body).await?;
-        let response_message: ChatResponse = serde_json::from_slice(&body)?;
-        Ok(response_message)
-    } else {
-        let mut body = Vec::new();
-        response.body_mut().read_to_end(&mut body).await?;
-        let body_str = std::str::from_utf8(&body)?;
-        Err(anyhow!(
-            "Failed to connect to API: {} {}",
-            response.status(),
+        .uri(&endpoint)
+        .header("Content-Type", "application/json")
+        .body(AsyncBody::from_bytes(Bytes::from(body)))
+        .context("Failed to build HTTP request")?;
+    
+    let response = client.send(http_request).await?;
+    
+    let (status, body_str) = read_response_body_with_status(response).await?;
+    
+    if !status.is_success() {
+        return Err(anyhow!(
+            "LM Studio API error ({}): {}",
+            status,
             body_str
-        ))
+        ));
     }
+    
+    serde_json::from_str(&body_str).context("Failed to parse chat completion response")
 }
 
+/// Streams chat completions from LM Studio API
 pub async fn stream_chat_completion(
     client: &dyn HttpClient,
     api_url: &str,
     request: ChatCompletionRequest,
 ) -> Result<BoxStream<'static, Result<ChatResponse>>> {
-    let uri = format!("{api_url}/chat/completions");
-    let request_builder = http::Request::builder()
+    let endpoint = format!("{}/chat/completions", api_url);
+    
+    let request_body = serde_json::to_vec(&request)
+        .context("Failed to serialize chat completion request")?;
+    
+    // Debug log the serialized request
+    if log::log_enabled!(log::Level::Debug) {
+        match serde_json::to_string_pretty(&request) {
+            Ok(json) => log::debug!("LMStudio API request to {}: {}", endpoint, json),
+            Err(_) => log::debug!("LMStudio API request serialization debug failed"),
+        }
+    }
+    
+    let http_request = HttpRequest::builder()
         .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json");
-
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
-    let mut response = client.send(request).await?;
-    if response.status().is_success() {
-        let reader = BufReader::new(response.into_body());
-
-        Ok(reader
-            .lines()
-            .filter_map(|line| async move {
-                match line {
-                    Ok(line) => {
-                        let line = line.strip_prefix("data: ")?;
-                        if line == "[DONE]" {
-                            None
-                        } else {
-                            let result = serde_json::from_str(&line)
-                                .context("Unable to parse chat completions response");
-                            if let Err(ref e) = result {
-                                eprintln!("Error parsing line: {e}\nLine content: '{line}'");
-                            }
-                            Some(result)
-                        }
+        .uri(&endpoint)
+        .header("Content-Type", "application/json")
+        .body(AsyncBody::from_bytes(Bytes::from(request_body)))
+        .context("Failed to build HTTP request")?;
+    
+    let response = client.send(http_request).await?;
+    
+    let status = response.status();
+    if !status.is_success() {
+        let mut body = String::new();
+        let mut reader = BufReader::new(response.into_body());
+        futures::AsyncReadExt::read_to_string(&mut reader, &mut body).await?;
+        
+        return Err(anyhow!(
+            "LM Studio API error ({}): {}",
+            status,
+            body
+        ));
+    }
+    
+    let reader = BufReader::new(response.into_body());
+    let stream = reader
+        .lines()
+        .filter_map(|line| async move {
+            match line {
+                Ok(line) => {
+                    if line.is_empty() || line.starts_with("data: [DONE]") {
+                        return None;
                     }
-                    Err(e) => {
-                        eprintln!("Error reading line: {e}");
-                        Some(Err(e.into()))
+                    
+                    // Remove "data: " prefix if present
+                    let json_str = line.strip_prefix("data: ").unwrap_or(&line);
+                    
+                    match serde_json::from_str::<ChatResponse>(json_str) {
+                        Ok(response) => Some(Ok(response)),
+                        Err(e) => Some(Err(anyhow!("Failed to parse streaming response: {}", e))),
                     }
                 }
-            })
-            .boxed())
-    } else {
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
-
-        Err(anyhow!(
-            "Failed to connect to LM Studio API: {} {}",
-            response.status(),
-            body,
-        ))
-    }
+                Err(e) => Some(Err(anyhow!("Failed to read streaming response: {}", e))),
+            }
+        })
+        .boxed();
+    
+    Ok(stream)
 }
 
+/// Gets the list of available models from LM Studio API
 pub async fn get_models(
     client: &dyn HttpClient,
     api_url: &str,
-    _: Option<Duration>,
-) -> Result<Vec<ModelEntry>> {
-    let uri = format!("{api_url}/models");
-    let request_builder = HttpRequest::builder()
+    _timeout: Option<Duration>,
+) -> Result<Vec<LocalModelListing>> {
+    let endpoint = format!("{}/models", api_url);
+    
+    let http_request = HttpRequest::builder()
         .method(Method::GET)
-        .uri(uri)
-        .header("Accept", "application/json");
-
-    let request = request_builder.body(AsyncBody::default())?;
-
-    let mut response = client.send(request).await?;
-
-    let mut body = String::new();
-    response.body_mut().read_to_string(&mut body).await?;
-
-    if response.status().is_success() {
-        let response: ListModelsResponse =
-            serde_json::from_str(&body).context("Unable to parse LM Studio models response")?;
-        Ok(response.data)
-    } else {
-        Err(anyhow!(
-            "Failed to connect to LM Studio API: {} {}",
-            response.status(),
-            body,
-        ))
+        .uri(&endpoint)
+        .body(AsyncBody::empty())
+        .context("Failed to build HTTP request")?;
+    
+    let response = client.send(http_request).await?;
+    
+    let (status, body_str) = read_response_body_with_status(response).await?;
+    
+    if !status.is_success() {
+        return Err(anyhow!(
+            "LM Studio API error ({}): {}",
+            status,
+            body_str
+        ));
     }
+    
+    let models: ListModelsResponse = serde_json::from_str(&body_str)
+        .context("Failed to parse models response")?;
+    
+    Ok(models.data)
 }
 
-/// Sends an empty request to LM Studio to trigger loading the model
-pub async fn preload_model(client: Arc<dyn HttpClient>, api_url: &str, model: &str) -> Result<()> {
-    let uri = format!("{api_url}/completions");
-    let request = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json")
-        .body(AsyncBody::from(serde_json::to_string(
-            &serde_json::json!({
-                "model": model,
-                "messages": [],
-                "stream": false,
-                "max_tokens": 0,
-            }),
-        )?))?;
-
-    let mut response = client.send(request).await?;
-
-    if response.status().is_success() {
-        Ok(())
-    } else {
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
-
-        Err(anyhow!(
-            "Failed to connect to LM Studio API: {} {}",
-            response.status(),
-            body,
-        ))
+/// Gets model capabilities from LM Studio API
+pub async fn show_model(client: &dyn HttpClient, api_url: &str, model: &str) -> Result<ModelShow> {
+    let endpoint = format!("{}/models/{}", api_url, http::Uri::try_from(model)?);
+    
+    let http_request = HttpRequest::builder()
+        .method(Method::GET)
+        .uri(&endpoint)
+        .body(AsyncBody::empty())
+        .context("Failed to build HTTP request")?;
+    
+    let response = client.send(http_request).await?;
+    
+    let (status, body_str) = read_response_body_with_status(response).await?;
+    
+    if !status.is_success() {
+        return Err(anyhow!(
+            "LM Studio API error ({}): {}",
+            status,
+            body_str
+        ));
     }
+    
+    serde_json::from_str(&body_str).context("Failed to parse model show response")
+}
+
+/// Preloads a model in LM Studio
+pub async fn preload_model(client: Arc<dyn HttpClient>, api_url: &str, model: &str) -> Result<()> {
+    let endpoint = format!("{}/models/{}/load", api_url, http::Uri::try_from(model)?);
+    
+    let http_request = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(&endpoint)
+        .body(AsyncBody::empty())
+        .context("Failed to build HTTP request")?;
+    
+    let response = client.send(http_request).await?;
+    
+    let (status, body_str) = read_response_body_with_status(response).await?;
+    
+    if !status.is_success() {
+        return Err(anyhow!(
+            "LM Studio API error ({}): {}",
+            status,
+            body_str
+        ));
+    }
+    
+    Ok(())
 }
