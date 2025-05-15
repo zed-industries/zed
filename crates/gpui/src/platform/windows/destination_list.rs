@@ -137,10 +137,7 @@ fn add_recent_folders(
         let tasks: IObjectCollection =
             CoCreateInstance(&EnumerableObjectCollection, None, CLSCTX_INPROC_SERVER)?;
 
-        for folder_path in entries
-            .iter()
-            .filter(|path| !is_item_in_array(path, removed))
-        {
+        for folder_path in entries.iter().filter(|path| !removed.contains(path)) {
             let argument = HSTRING::from(
                 folder_path
                     .iter()
