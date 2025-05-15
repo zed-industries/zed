@@ -7,7 +7,6 @@ pub mod settings;
 use core::fmt;
 
 use wit::*;
-pub use wit::{DebugAdapterBinary, DebugTaskDefinition};
 
 pub use serde_json;
 
@@ -20,6 +19,10 @@ pub use wit::{
     KeyValueStore, LanguageServerInstallationStatus, Project, Range, Worktree, download_file,
     make_file_executable,
     zed::extension::context_server::ContextServerConfiguration,
+    zed::extension::dap::{
+        DebugAdapterBinary, DebugRequest, DebugTaskDefinition, StartDebuggingRequestArguments,
+        StartDebuggingRequestArgumentsRequest, TcpArguments, TcpArgumentsTemplate,
+    },
     zed::extension::github::{
         GithubRelease, GithubReleaseAsset, GithubReleaseOptions, github_release_by_tag_name,
         latest_github_release,
