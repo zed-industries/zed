@@ -1,0 +1,33 @@
+use gpui::actions;
+
+actions!(
+    agent_chat,
+    [
+        Cancel,
+        IncreaseIndent,
+        DecreaseIndent,
+        NewThread,
+        Confirm,
+        ToggleContextPicker,
+        RemoveAllContext,
+        SelectPrevious,
+        SelectNext,
+        SelectFirst,
+        SelectLast,
+        RunSelectedThread,
+        RemoveSelectedThread,
+        OpenHistory,
+        OpenConfiguration,
+        OpenAgentDiff,
+        GoBack,
+        ToggleNavigationMenu,
+        ToggleOptionsMenu,
+        OpenActiveThreadAsMarkdown,
+        DeployRulesLibrary,
+        IncreaseAgentPanelFontSize,
+        DecreaseAgentPanelFontSize,
+        ResetAgentPanelFontSize,
+        ToggleAgentPanelZoom,
+        ContinuousThinking,
+    ]
+); 
