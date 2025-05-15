@@ -18,8 +18,8 @@ use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageMod
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use settings::{Settings, update_settings_file};
 use ui::{
-    Disclosure, Divider, DividerColor, ElevationIndex, Indicator, Scrollbar, ScrollbarState,
-    Switch, SwitchColor, Tooltip, prelude::*,
+    Disclosure, ElevationIndex, Indicator, Scrollbar, ScrollbarState, Switch, SwitchColor, Tooltip,
+    prelude::*,
 };
 use util::ResultExt as _;
 use zed_actions::ExtensionCategoryFilter;
@@ -230,6 +230,8 @@ impl AgentConfiguration {
             .p(DynamicSpacing::Base16.rems(cx))
             .pr(DynamicSpacing::Base20.rems(cx))
             .gap_4()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
             .child(
                 v_flex()
                     .gap_0p5()
@@ -330,6 +332,8 @@ impl AgentConfiguration {
             .p(DynamicSpacing::Base16.rems(cx))
             .pr(DynamicSpacing::Base20.rems(cx))
             .gap_2p5()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
             .child(Headline::new("General Settings"))
             .child(self.render_command_permission(cx))
             .child(self.render_single_file_review(cx))
@@ -346,6 +350,8 @@ impl AgentConfiguration {
             .p(DynamicSpacing::Base16.rems(cx))
             .pr(DynamicSpacing::Base20.rems(cx))
             .gap_2()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
             .child(
                 v_flex()
                     .gap_0p5()
@@ -625,9 +631,7 @@ impl Render for AgentConfiguration {
                     .size_full()
                     .overflow_y_scroll()
                     .child(self.render_general_settings_section(cx))
-                    .child(Divider::horizontal().color(DividerColor::Border))
                     .child(self.render_context_servers_section(window, cx))
-                    .child(Divider::horizontal().color(DividerColor::Border))
                     .child(self.render_provider_configuration_section(cx)),
             )
             .child(
