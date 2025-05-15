@@ -11,6 +11,7 @@ While Zed offers hosted versions of models through our various plans, we're alwa
 | [Anthropic](#anthropic)                         | ✅                 |
 | [GitHub Copilot Chat](#github-copilot-chat)     | In Some Cases      |
 | [Google AI](#google-ai)                         | ✅                 |
+| [Mistral](#mistral)                             | ✅                 |
 | [Ollama](#ollama)                               | ✅                 |
 | [OpenAI](#openai)                               | ✅                 |
 | [DeepSeek](#deepseek)                           | 🚫                 |
@@ -173,6 +174,44 @@ Depending on your hardware or use-case you may wish to limit or increase the con
 If you specify a context length that is too large for your hardware, Ollama will log an error. You can watch these logs by running: `tail -f ~/.ollama/logs/ollama.log` (MacOS) or `journalctl -u ollama -f` (Linux). Depending on the memory available on your machine, you may need to adjust the context length to a smaller value.
 
 You may also optionally specify a value for `keep_alive` for each available model. This can be an integer (seconds) or alternately a string duration like "5m", "10m", "1h", "1d", etc., For example `"keep_alive": "120s"` will allow the remote server to unload the model (freeing up GPU VRAM) after 120seconds.
+
+### Mistral {#mistral}
+
+> 🔨Supports tool use
+
+1. Visit the Mistral platform and [create an API key](https://console.mistral.ai/api-keys/)
+2. Open the configuration view (`assistant: show configuration`) and navigate to the Mistral section
+3. Enter your Mistral API key
+
+The Mistral API key will be saved in your keychain.
+
+Zed will also use the `MISTRAL_API_KEY` environment variable if it's defined.
+
+#### Mistral Custom Models {#mistral-custom-models}
+
+The Zed Assistant comes pre-configured with several Mistral models (codestral-latest, mistral-large-latest, mistral-medium-latest, mistral-small-latest, open-mistral-nemo, and open-codestral-mamba). All the default models support tool use. If you wish to use alternate models or customize their parameters, you can do so by adding the following to your Zed `settings.json`:
+
+```json
+{
+  "language_models": {
+    "mistral": {
+      "api_url": "https://api.mistral.ai/v1",
+      "available_models": [
+        {
+          "name": "mistral-tiny-latest",
+          "display_name": "Mistral Tiny",
+          "max_tokens": 32000,
+          "max_output_tokens": 4096,
+          "max_completion_tokens": 1024,
+          "supports_tools": true
+        }
+      ]
+    }
+  }
+}
+```
+
+Custom models will be listed in the model dropdown in the assistant panel.
 
 ### OpenAI {#openai}
 
