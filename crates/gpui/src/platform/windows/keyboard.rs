@@ -2,9 +2,9 @@ use anyhow::Result;
 use windows::Win32::UI::{
     Input::KeyboardAndMouse::{
         GetKeyboardLayoutNameW, MAPVK_VK_TO_CHAR, MapVirtualKeyW, ToUnicode, VIRTUAL_KEY, VK_0,
-        VK_1, VK_2, VK_3, VK_4, VK_5, VK_6, VK_7, VK_8, VK_9, VK_ABNT_C1, VK_OEM_1, VK_OEM_2,
-        VK_OEM_3, VK_OEM_4, VK_OEM_5, VK_OEM_6, VK_OEM_7, VK_OEM_102, VK_OEM_COMMA, VK_OEM_MINUS,
-        VK_OEM_PERIOD, VK_OEM_PLUS, VK_SHIFT,
+        VK_1, VK_2, VK_3, VK_4, VK_5, VK_6, VK_7, VK_8, VK_9, VK_ABNT_C1, VK_CONTROL, VK_MENU,
+        VK_OEM_1, VK_OEM_2, VK_OEM_3, VK_OEM_4, VK_OEM_5, VK_OEM_6, VK_OEM_7, VK_OEM_102,
+        VK_OEM_COMMA, VK_OEM_MINUS, VK_OEM_PERIOD, VK_OEM_PLUS, VK_SHIFT,
     },
     WindowsAndMessaging::KL_NAMELENGTH,
 };
@@ -106,11 +106,29 @@ fn need_to_convert_to_shifted_key(vkey: VIRTUAL_KEY) -> bool {
 }
 
 fn get_shifted_key(vkey: VIRTUAL_KEY, scan_code: u32) -> Option<String> {
-    let mut state = [0; 256];
-    state[VK_SHIFT.0 as usize] = 0x80;
+    generate_key_char(vkey, scan_code, false, true, false)
+}
 
-    let mut buffer = [0; 4];
-    let len = unsafe { ToUnicode(vkey.0 as u32, scan_code, Some(&state), &mut buffer, 0) };
+pub(crate) fn generate_key_char(
+    vkey: VIRTUAL_KEY,
+    scan_code: u32,
+    control: bool,
+    shift: bool,
+    alt: bool,
+) -> Option<String> {
+    let mut state = [0; 256];
+    if control {
+        state[VK_CONTROL.0 as usize] = 0x80;
+    }
+    if shift {
+        state[VK_SHIFT.0 as usize] = 0x80;
+    }
+    if alt {
+        state[VK_MENU.0 as usize] = 0x80;
+    }
+
+    let mut buffer = [0; 8];
+    let len = unsafe { ToUnicode(vkey.0 as u32, scan_code, Some(&state), &mut buffer, 1 << 2) };
 
     if len > 0 {
         let candidate = String::from_utf16_lossy(&buffer[..len as usize]);
