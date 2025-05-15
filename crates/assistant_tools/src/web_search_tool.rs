@@ -166,7 +166,7 @@ impl ToolCard for WebSearchToolCard {
                     .gap_1()
                     .children(response.results.iter().enumerate().map(|(index, result)| {
                         let title = result.title.clone();
-                        let url = result.url.clone();
+                        let url = SharedString::from(result.url.clone());
 
                         Button::new(("result", index), title)
                             .label_size(LabelSize::Small)
