@@ -43,7 +43,7 @@ pub trait AgentPreview: Component + Sized {
 macro_rules! register_agent_preview {
     ($type:ty) => {
         inventory::submit! {
-            crate::ui::preview::AgentPreviewFn::new(|| {
+            $crate::ui::preview::AgentPreviewFn::new(|| {
                 (
                     <$type as component::Component>::id(),
                     <$type as $crate::ui::preview::AgentPreview>::agent_preview,
