@@ -42,11 +42,11 @@ impl RenderOnce for BreakpointIndicator {
         let opacity = if self.reachable { 0.5 } else { 0.85 };
 
         let bg = if self.active {
-            cx.theme().status().error
+            cx.theme().status().info
         } else {
             cx.theme()
                 .status()
-                .error
+                .info
                 .alpha(1.0)
                 .blend(cx.theme().colors().editor_background.alpha(opacity))
         };

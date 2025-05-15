@@ -2351,7 +2351,7 @@ impl EditorElement {
                         return None;
                     }
 
-                    let button = editor.render_breakpoint(text_anchor, display_row, &bp, cx);
+                    let button = editor.render_breakpoint(text_anchor, display_row, row, &bp, cx);
 
                     let button = prepaint_gutter_button(
                         button,
@@ -6251,7 +6251,7 @@ impl AcceptEditPredictionBinding {
 }
 
 fn prepaint_gutter_button(
-    button: IconButton,
+    button: impl IntoElement,
     row: DisplayRow,
     line_height: Pixels,
     gutter_dimensions: &GutterDimensions,
