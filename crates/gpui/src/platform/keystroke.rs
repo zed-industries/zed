@@ -79,7 +79,7 @@ impl Keystroke {
             .as_ref()
             .filter(|key_char| key_char != &&self.key)
         {
-            /// On Windows, if key_char is set, then the typed keystroke produced the key_char
+            // On Windows, if key_char is set, then the typed keystroke produced the key_char
             if &target.key == key_char && target.modifiers == Modifiers::none() {
                 return true;
             }
