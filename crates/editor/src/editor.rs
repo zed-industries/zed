@@ -4044,7 +4044,9 @@ impl Editor {
                                                 + block_end.len()
                                                 + start_point.column as usize
                                                 <= max_point;
-                                            if cursor_is_before_block_end {
+                                            if cursor_is_before_block_end
+                                                && cursor_is_after_block_start
+                                            {
                                                 insert_extra_newline = true;
                                             }
                                             cursor_is_before_block_end

@@ -2823,7 +2823,8 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         /**
          * ˇ
     "});
-        // Ensure that if cursor is before the comment start, we do not actually insert a comment prefix.
+        // Ensure that if cursor is before the comment start,
+        // we do not actually insert a comment prefix.
         cx.set_state(indoc! {"
         ˇ/**
     "});
@@ -2851,6 +2852,18 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
          * ˇ
          */
     "});
+        // Ensure that if suffix exists on same line after cursor it
+        // doesn't add extra new line if prefix is not on same line.
+        cx.set_state(indoc! {"
+        /**
+        ˇ*/
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        /**
+
+        ˇ*/
+    "});
         // Ensure that it detects suffix after existing prefix.
         cx.set_state(indoc! {"
         /**ˇ/
@@ -2860,7 +2873,8 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         /**
         ˇ/
     "});
-        // Ensure that if suffix exists on same line before cursor it does not add comment prefix.
+        // Ensure that if suffix exists on same line before
+        // cursor it does not add comment prefix.
         cx.set_state(indoc! {"
         /** */ˇ
     "});
@@ -2869,7 +2883,8 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         /** */
         ˇ
     "});
-        // Ensure that if suffix exists on same line before cursor it does not add comment prefix.
+        // Ensure that if suffix exists on same line before
+        // cursor it does not add comment prefix.
         cx.set_state(indoc! {"
         /**
          *
