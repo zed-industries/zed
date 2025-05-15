@@ -412,14 +412,17 @@ fn handle_keydown_msg(
     };
     drop(lock);
 
-    let result = if !func(input).propagate {
+    let handled = !func(input).propagate;
+
+    let mut lock = state_ptr.state.borrow_mut();
+    lock.callbacks.input = Some(func);
+
+    if handled {
+        lock.suppress_next_char_msg = true;
         Some(0)
     } else {
         Some(1)
-    };
-    state_ptr.state.borrow_mut().callbacks.input = Some(func);
-
-    result
+    }
 }
 
 fn handle_keyup_msg(
@@ -455,31 +458,14 @@ fn handle_char_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let Some(keystroke) = parse_char_msg_keystroke(wparam) else {
+    let Some(input) =
+        char::from_u32(wparam.0 as u32).and_then(|c| (!c.is_control()).then_some(c.to_string()))
+    else {
         return Some(1);
     };
-    println!("\nchar: {:#?}", keystroke);
-    let mut lock = state_ptr.state.borrow_mut();
-    let Some(mut func) = lock.callbacks.input.take() else {
-        return Some(1);
-    };
-    drop(lock);
-    let key_char = keystroke.key_char.clone();
-    let event = KeyDownEvent {
-        keystroke,
-        is_held: lparam.0 & (0x1 << 30) > 0,
-    };
-    let dispatch_event_result = func(PlatformInput::KeyDown(event));
-    state_ptr.state.borrow_mut().callbacks.input = Some(func);
-
-    if dispatch_event_result.default_prevented || !dispatch_event_result.propagate {
-        return Some(0);
-    }
-    let Some(ime_char) = key_char else {
-        return Some(1);
-    };
+    println!("\nchar: {:#?}", input);
     with_input_handler(&state_ptr, |input_handler| {
-        input_handler.replace_text_in_range(None, &ime_char);
+        input_handler.replace_text_in_range(None, &input);
     });
 
     Some(0)
