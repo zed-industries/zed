@@ -2869,6 +2869,19 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         /** */
         ˇ
     "});
+        // Ensure that if suffix exists on same line before cursor it does not add comment prefix.
+        cx.set_state(indoc! {"
+        /**
+        *
+        */ˇ
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        /**
+        *
+        */
+        ˇ
+    "});
     }
     // Ensure that comment continuations can be disabled.
     update_test_language_settings(cx, |settings| {
