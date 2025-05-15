@@ -5342,7 +5342,9 @@ impl EditorElement {
 
                         editor.scroll_manager.show_scrollbars(window, cx);
                         cx.stop_propagation();
-                    } else if let Some((layout, axis)) = scrollbars_layout.get_hovered_axis(window)
+                    } else if let Some((layout, axis)) = scrollbars_layout
+                        .get_hovered_axis(window)
+                        .filter(|_| !event.dragging())
                     {
                         if layout
                             .thumb_bounds
