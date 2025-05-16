@@ -156,4 +156,6 @@ arch=$(uname -m)
 # ls "${target_dir}/release" | grep -E ${remove_match} | xargs -d "\n" -I {} rm -f "${target_dir}/release/{}" || true
 # tar -czvf "${target_dir}/release/$archive" -C ${temp_dir} "zed$suffix.app"
 
-gzip -f --stdout --best "${target_dir}/${remote_server_triple}/release/remote_server" >"${target_dir}/zed-remote-server-freebsd-${arch}.gz"
+gzip -f --stdout --best "${target_dir}/${remote_server_triple}/release/remote_server" \
+    > "${target_dir}/zed-remote-server-freebsd-${arch}.gz"
+ls -l "${target_dir}"
