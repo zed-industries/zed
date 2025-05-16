@@ -588,7 +588,7 @@ impl Element for TerminalElement {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _debug_id: Option<&gpui::DebugElementId>,
+        debug_id: Option<&gpui::DebugElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -602,15 +602,19 @@ impl Element for TerminalElement {
             }
         }
 
-        let layout_id =
-            self.interactivity
-                .request_layout(global_id, window, cx, |mut style, window, cx| {
-                    style.size.width = relative(1.).into();
-                    style.size.height = relative(1.).into();
-                    // style.overflow = point(Overflow::Hidden, Overflow::Hidden);
+        let layout_id = self.interactivity.request_layout(
+            global_id,
+            debug_id,
+            window,
+            cx,
+            |mut style, window, cx| {
+                style.size.width = relative(1.).into();
+                style.size.height = relative(1.).into();
+                // style.overflow = point(Overflow::Hidden, Overflow::Hidden);
 
-                    window.request_layout(style, None, cx)
-                });
+                window.request_layout(style, None, cx)
+            },
+        );
         (layout_id, ())
     }
 
@@ -912,7 +916,7 @@ impl Element for TerminalElement {
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _debug_id: Option<&gpui::DebugElementId>,
+        debug_id: Option<&gpui::DebugElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         layout: &mut Self::PrepaintState,
@@ -950,6 +954,7 @@ impl Element for TerminalElement {
             let block_below_cursor_element = layout.block_below_cursor_element.take();
             self.interactivity.paint(
                 global_id,
+                debug_id,
                 bounds,
                 Some(&layout.hitbox),
                 window,

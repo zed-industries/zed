@@ -273,7 +273,7 @@ impl Element for Img {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _debug_id: Option<&DebugElementId>,
+        debug_id: Option<&DebugElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -295,6 +295,7 @@ impl Element for Img {
 
             let layout_id = self.interactivity.request_layout(
                 global_id,
+                debug_id,
                 window,
                 cx,
                 |mut style, window, cx| {
@@ -438,7 +439,7 @@ impl Element for Img {
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _debug_id: Option<&DebugElementId>,
+        debug_id: Option<&DebugElementId>,
         bounds: Bounds<Pixels>,
         layout_state: &mut Self::RequestLayoutState,
         hitbox: &mut Self::PrepaintState,
@@ -448,6 +449,7 @@ impl Element for Img {
         let source = self.source.clone();
         self.interactivity.paint(
             global_id,
+            debug_id,
             bounds,
             hitbox.as_ref(),
             window,

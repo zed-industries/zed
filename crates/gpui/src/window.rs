@@ -502,7 +502,14 @@ pub(crate) struct DeferredDraw {
 pub(crate) struct FrameDebugState {
     pub(crate) next_instance_ids:
         HashMap<(SmallVec<[ElementId; 32]>, &'static panic::Location<'static>), usize>,
-    pub(crate) element_states: FxHashMap<(DebugElementId, TypeId), Box<dyn Any>>,
+    pub(crate) element_states: FxHashMap<DebugElementId, FxHashMap<TypeId, Box<dyn Any>>>,
+}
+
+impl FrameDebugState {
+    fn clear(&mut self) {
+        self.next_instance_ids.clear();
+        self.element_states.clear();
+    }
 }
 
 pub(crate) struct Frame {
@@ -568,6 +575,7 @@ impl Frame {
     pub(crate) fn clear(&mut self) {
         self.element_states.clear();
         self.accessed_element_states.clear();
+        self.debug_state.clear();
         self.mouse_listeners.clear();
         self.dispatch_tree.clear();
         self.scene.clear();
@@ -637,6 +645,7 @@ pub struct Window {
     /// This is used by `with_rem_size` to allow rendering an element tree with
     /// a given rem size.
     rem_size_override_stack: SmallVec<[Pixels; 8]>,
+    pub(crate) selected_debug_element: Option<DebugElementId>,
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root: Option<AnyView>,
@@ -925,6 +934,7 @@ impl Window {
             text_system,
             rem_size: px(16.),
             rem_size_override_stack: SmallVec::new(),
+            selected_debug_element: None,
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
             root: None,
@@ -1510,6 +1520,12 @@ impl Window {
         self.rem_size = rem_size.into();
     }
 
+    /// Selects the element with the given [`DebugElementId`] as the active debug element.
+    pub fn select_debug_element(&mut self, id: Option<DebugElementId>) {
+        self.selected_debug_element = id;
+        self.refresh();
+    }
+
     /// Acquire a globally unique identifier for the given ElementId.
     /// Only valid for the duration of the provided closure.
     pub fn with_global_id<R>(
@@ -1524,25 +1540,27 @@ impl Window {
         result
     }
 
-    pub(crate) fn with_debug_state<T: 'static, R>(
+    /// todo!("document")
+    pub fn with_debug_state<T: 'static, R>(
         &mut self,
         debug_id: Option<&DebugElementId>,
         f: impl FnOnce(&mut Option<T>, &mut Self) -> R,
     ) -> R {
         if let Some(debug_id) = debug_id {
-            // todo!("avoid cloning debug id here")
-            let debug_key = (debug_id.clone(), TypeId::of::<T>());
+            let type_id = TypeId::of::<T>();
 
             let mut debug_state = self
                 .next_frame
                 .debug_state
                 .element_states
-                .remove(&debug_key)
+                .get_mut(&debug_id)
+                .and_then(|state| state.remove(&type_id))
                 .or_else(|| {
                     self.rendered_frame
                         .debug_state
                         .element_states
-                        .remove(&debug_key)
+                        .get_mut(&debug_id)
+                        .and_then(|state| state.remove(&type_id))
                 })
                 .map(|state| *state.downcast().unwrap());
 
@@ -1552,7 +1570,10 @@ impl Window {
                 self.next_frame
                     .debug_state
                     .element_states
-                    .insert(debug_key, Box::new(debug_state));
+                    // todo!("avoid cloning debug id here")
+                    .entry(debug_id.clone())
+                    .or_default()
+                    .insert(type_id, Box::new(debug_state));
             }
 
             result
@@ -1763,6 +1784,8 @@ impl Window {
             tooltip_element = self.prepaint_tooltip(cx);
         }
 
+        let debug_elements = self.prepaint_debug_elements(cx);
+
         self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
 
         // Now actually paint the elements.
@@ -1777,6 +1800,10 @@ impl Window {
             drag_element.paint(self, cx);
         } else if let Some(mut tooltip_element) = tooltip_element {
             tooltip_element.paint(self, cx);
+        }
+
+        for mut element in debug_elements {
+            element.paint(self, cx);
         }
     }
 
@@ -1911,6 +1938,40 @@ impl Window {
         }
         self.next_frame.deferred_draws = deferred_draws;
         self.element_id_stack.clear();
+    }
+
+    fn prepaint_debug_elements(&mut self, cx: &mut App) -> SmallVec<[AnyElement; 1]> {
+        let mut debug_elements = SmallVec::new();
+        // todo!("change all 'debug' to 'inspect' nomenclature")
+        if let Some(debug_id) = self.selected_debug_element.take() {
+            if let Some(states_by_type_id) =
+                self.next_frame.debug_state.element_states.remove(&debug_id)
+            {
+                for (type_id, state) in &states_by_type_id {
+                    if let Some(render_inspector) = cx.inspector_registry.remove(&type_id) {
+                        let mut element =
+                            (render_inspector)(debug_id.clone(), state.as_ref(), self, cx);
+                        element.prepaint_as_root(
+                            Point::default(),
+                            self.viewport_size.into(),
+                            self,
+                            cx,
+                        );
+                        debug_elements.push(element);
+                        cx.inspector_registry.insert(*type_id, render_inspector);
+                    }
+                }
+
+                self.next_frame
+                    .debug_state
+                    .element_states
+                    .insert(debug_id.clone(), states_by_type_id);
+            }
+
+            self.selected_debug_element = Some(debug_id);
+        }
+
+        debug_elements
     }
 
     pub(crate) fn prepaint_index(&self) -> PrepaintStateIndex {

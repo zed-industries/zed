@@ -1,5 +1,8 @@
 use crate::{
-    geometry::Negate as _, point, px, radians, size, App, Bounds, DebugElementId, Element, GlobalElementId, Hitbox, InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, Point, Radians, SharedString, Size, StyleRefinement, Styled, TransformationMatrix, Window
+    App, Bounds, DebugElementId, Element, GlobalElementId, Hitbox, InteractiveElement,
+    Interactivity, IntoElement, LayoutId, Pixels, Point, Radians, SharedString, Size,
+    StyleRefinement, Styled, TransformationMatrix, Window, geometry::Negate as _, point, px,
+    radians, size,
 };
 use util::ResultExt;
 
@@ -49,15 +52,17 @@ impl Element for Svg {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _debug_id: Option<&DebugElementId>,
+        debug_id: Option<&DebugElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let layout_id =
-            self.interactivity
-                .request_layout(global_id, window, cx, |style, window, cx| {
-                    window.request_layout(style, None, cx)
-                });
+        let layout_id = self.interactivity.request_layout(
+            global_id,
+            debug_id,
+            window,
+            cx,
+            |style, window, cx| window.request_layout(style, None, cx),
+        );
         (layout_id, ())
     }
 
@@ -83,7 +88,7 @@ impl Element for Svg {
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _debug_id: Option<&DebugElementId>,
+        debug_id: Option<&DebugElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,
@@ -94,6 +99,7 @@ impl Element for Svg {
     {
         self.interactivity.paint(
             global_id,
+            debug_id,
             bounds,
             hitbox.as_ref(),
             window,

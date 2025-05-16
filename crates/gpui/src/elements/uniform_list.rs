@@ -173,7 +173,7 @@ impl Element for UniformList {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _debug_id: Option<&DebugElementId>,
+        debug_id: Option<&DebugElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -181,6 +181,7 @@ impl Element for UniformList {
         let item_size = self.measure_item(None, window, cx);
         let layout_id = self.interactivity.request_layout(
             global_id,
+            debug_id,
             window,
             cx,
             |style, window, cx| match self.sizing_behavior {
@@ -441,7 +442,7 @@ impl Element for UniformList {
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _debug_id: Option<&DebugElementId>,
+        debug_id: Option<&DebugElementId>,
         bounds: Bounds<crate::Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,
@@ -450,6 +451,7 @@ impl Element for UniformList {
     ) {
         self.interactivity.paint(
             global_id,
+            debug_id,
             bounds,
             hitbox.as_ref(),
             window,

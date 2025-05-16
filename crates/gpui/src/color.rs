@@ -1,5 +1,6 @@
 use anyhow::{Context, bail};
-use serde::de::{self, Deserialize, Deserializer, Visitor};
+use serde::de::{self, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     fmt::{self, Display, Formatter},
     hash::{Hash, Hasher},
@@ -97,6 +98,21 @@ impl Visitor<'_> for RgbaVisitor {
 impl<'de> Deserialize<'de> for Rgba {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         deserializer.deserialize_str(RgbaVisitor)
+    }
+}
+
+impl Serialize for Rgba {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let r = (self.r * 255.0).round() as u8;
+        let g = (self.g * 255.0).round() as u8;
+        let b = (self.b * 255.0).round() as u8;
+        let a = (self.a * 255.0).round() as u8;
+
+        let s = format!("#{r:02x}{g:02x}{b:02x}{a:02x}");
+        serializer.serialize_str(&s)
     }
 }
 

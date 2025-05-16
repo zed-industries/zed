@@ -108,6 +108,51 @@ pub fn init(cx: &mut App) {
 
     cx.on_action(|_: &RestoreBanner, cx| title_bar::restore_banner(cx));
 
+    cx.register_inspectable(|debug_id, state: &gpui::DivInspectorState, window, cx| {
+        v_flex()
+            .child(Button::new("red", "Red").on_click({
+                let debug_id = debug_id.clone();
+                move |_event, window, _cx| {
+                    window.with_debug_state::<gpui::DivInspectorState, _>(
+                        Some(&debug_id),
+                        |state, _window| {
+                            if let Some(state) = state {
+                                state.background = gpui::rgb(0xff0000);
+                            }
+                        },
+                    );
+                }
+            }))
+            .child(Button::new("green", "Green").on_click({
+                let debug_id = debug_id.clone();
+                move |_event, window, _cx| {
+                    window.with_debug_state::<gpui::DivInspectorState, _>(
+                        Some(&debug_id),
+                        |state, _window| {
+                            if let Some(state) = state {
+                                state.background = gpui::rgb(0x00ff00);
+                            }
+                        },
+                    );
+                }
+            }))
+            .child(Button::new("blue", "Blue").on_click({
+                let debug_id = debug_id.clone();
+                move |_event, window, _cx| {
+                    window.with_debug_state::<gpui::DivInspectorState, _>(
+                        Some(&debug_id),
+                        |state, _window| {
+                            if let Some(state) = state {
+                                state.background = gpui::rgb(0x0000ff);
+                            }
+                        },
+                    );
+                }
+            }))
+            .into_any_element()
+        //
+    });
+
     if ReleaseChannel::global(cx) == ReleaseChannel::Dev {
         cx.on_action(test_panic);
     }
