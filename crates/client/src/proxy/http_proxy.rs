@@ -32,7 +32,7 @@ pub(super) fn parse_http_proxy<'t>(scheme: &str, proxy: &'t Url) -> HttpProxyTyp
     }
 }
 
-pub(crate) async fn connect_with_http_proxy(
+pub(crate) async fn connect_http_proxy_stream(
     stream: TcpStream,
     http_proxy: HttpProxyType<'_>,
     rpc_host: (&str, u16),

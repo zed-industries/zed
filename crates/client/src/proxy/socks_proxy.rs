@@ -43,7 +43,7 @@ pub(super) fn parse_socks_proxy<'t>(scheme: &str, proxy: &'t Url) -> SocksVersio
     }
 }
 
-pub(super) async fn connect_with_socks_proxy(
+pub(super) async fn connect_socks_proxy_stream(
     stream: TcpStream,
     socks_version: SocksVersion<'_>,
     rpc_host: (&str, u16),
