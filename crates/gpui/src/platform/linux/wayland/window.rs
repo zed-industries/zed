@@ -966,19 +966,19 @@ impl PlatformWindow for WaylandWindow {
         self.0.callbacks.borrow_mut().close = Some(callback);
     }
 
-    fn on_hit_test_window_drag(&self, callback: Box<dyn FnMut() -> bool>) {
+    fn on_hit_test_window_drag(&self, _callback: Box<dyn FnMut() -> bool>) {
         unimplemented!()
     }
 
-    fn on_hit_test_window_close(&self, callback: Box<dyn FnMut() -> bool>) {
+    fn on_hit_test_window_close(&self, _callback: Box<dyn FnMut() -> bool>) {
         unimplemented!()
     }
 
-    fn on_hit_test_window_max(&self, callback: Box<dyn FnMut() -> bool>) {
+    fn on_hit_test_window_max(&self, _callback: Box<dyn FnMut() -> bool>) {
         unimplemented!()
     }
 
-    fn on_hit_test_window_min(&self, callback: Box<dyn FnMut() -> bool>) {
+    fn on_hit_test_window_min(&self, _callback: Box<dyn FnMut() -> bool>) {
         unimplemented!()
     }
 
