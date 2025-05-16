@@ -24,7 +24,7 @@ use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use parking_lot::RwLock;
 use postage::watch;
-use proxy::connect_socks_proxy_stream;
+use proxy::connect_with_proxy_stream;
 use rand::prelude::*;
 use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
@@ -1156,7 +1156,7 @@ impl Client {
                 let handle = cx.update(|cx| gpui_tokio::Tokio::handle(cx)).ok().unwrap();
                 let _guard = handle.enter();
                 match proxy {
-                    Some(proxy) => connect_socks_proxy_stream(&proxy, rpc_host).await?,
+                    Some(proxy) => connect_with_proxy_stream(&proxy, rpc_host).await?,
                     None => Box::new(TcpStream::connect(rpc_host).await?),
                 }
             };
