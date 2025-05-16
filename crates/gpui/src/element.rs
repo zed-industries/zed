@@ -341,23 +341,27 @@ impl<E: Element> Drawable<E> {
                 });
 
                 // todo!()
-                // let debug_id = if let Some(source) = self.element.source() {
-                //     let key = (window.element_id_stack.clone(), source);
-                //     // todo!(avoid cloning when not needed)
-                //     let next_instance_id = window
-                //         .next_instance_id_by_global_element_id
-                //         .entry(key.clone())
-                //         .or_insert(0);
-                //     let instance_id = *next_instance_id;
-                //     *next_instance_id += 1;
-                //     Some(DebugElementId {
-                //         global_id: GlobalElementId(key.0),
-                //         source: key.1,
-                //         instance_id,
-                //     })
-                // } else {
-                //     None
-                // };
+                let debug_id = if let Some(source) = self.element.source() {
+                    let key = (window.element_id_stack.clone(), source);
+                    // todo!(avoid cloning when not needed)
+                    let next_instance_id = window
+                        .debug_state
+                        .next_instance_ids
+                        .entry(key.clone())
+                        .or_insert(0);
+                    let instance_id = *next_instance_id;
+                    *next_instance_id += 1;
+                    Some(DebugElementId {
+                        global_id: GlobalElementId(key.0),
+                        source: key.1,
+                        instance_id,
+                    })
+                } else {
+                    None
+                };
+
+                let debug_state = debug_id
+                    .and_then(|debug_id| window.debug_state.element_states.remove(&debug_id));
 
                 let (layout_id, request_layout) =
                     self.element.request_layout(global_id.as_ref(), window, cx);
