@@ -380,6 +380,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 # External crates
 #
 
+accesskit = "0.19.0"
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"

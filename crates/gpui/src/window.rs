@@ -877,6 +877,16 @@ impl Window {
                     .unwrap_or(DispatchEventResult::default())
             })
         });
+        platform_window.on_accesskit_action({
+            let mut cx = cx.to_async();
+            Box::new(move |action| {
+                handle
+                    .update(&mut cx, |_, window, cx| {
+                        window.dispatch_accessibility_action(action, cx)
+                    })
+                    .log_err();
+            })
+        });
 
         if let Some(app_id) = app_id {
             platform_window.set_app_id(&app_id);
@@ -3595,6 +3605,14 @@ impl Window {
             cx.global_action_listeners
                 .insert(action.as_any().type_id(), global_listeners);
         }
+    }
+
+    fn dispatch_accessibility_action(
+        &mut self,
+        action_request: accesskit::ActionRequest,
+        _cx: &mut App,
+    ) {
+        dbg!(action_request);
     }
 
     /// Register the given handler to be invoked whenever the global of the given type

@@ -254,6 +254,8 @@ impl PlatformWindow for TestWindow {
 
     fn on_close(&self, _callback: Box<dyn FnOnce()>) {}
 
+    fn on_accesskit_action(&self, _callback: Box<dyn FnMut(accesskit::ActionRequest)>) {}
+
     fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {}
 
     fn draw(&self, _scene: &crate::Scene) {}

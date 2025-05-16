@@ -336,6 +336,7 @@ struct MacWindowState {
     native_view: NonNull<Object>,
     display_link: Option<DisplayLink>,
     renderer: renderer::Renderer,
+    accesskit_adapter: accesskit_macos::Adapter,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     event_callback: Option<Box<dyn FnMut(PlatformInput) -> crate::DispatchEventResult>>,
     activate_callback: Option<Box<dyn FnMut(bool)>>,
@@ -344,6 +345,7 @@ struct MacWindowState {
     should_close_callback: Option<Box<dyn FnMut() -> bool>>,
     close_callback: Option<Box<dyn FnOnce()>>,
     appearance_changed_callback: Option<Box<dyn FnMut()>>,
+    accesskit_action_handler_callback: Option<Box<dyn FnMut(accesskit::ActionRequest)>>,
     input_handler: Option<PlatformInputHandler>,
     last_key_equivalent: Option<KeyDownEvent>,
     synthetic_drag_counter: usize,
@@ -499,6 +501,21 @@ impl MacWindowState {
     }
 }
 
+struct MacActionHandler(Weak<Mutex<MacWindowState>>);
+
+impl accesskit::ActionHandler for MacActionHandler {
+    fn do_action(&mut self, request: accesskit::ActionRequest) {
+        if let Some(this) = self.0.upgrade() {
+            let mut lock = this.lock();
+            if let Some(mut callback) = lock.accesskit_action_handler_callback.take() {
+                drop(lock);
+                callback(request);
+                this.lock().accesskit_action_handler_callback = Some(callback);
+            };
+        }
+    }
+}
+
 unsafe impl Send for MacWindowState {}
 
 pub(crate) struct MacWindow(Arc<Mutex<MacWindowState>>);
@@ -603,43 +620,51 @@ impl MacWindow {
             let native_view = NSView::init(native_view);
             assert!(!native_view.is_null());
 
-            let mut window = Self(Arc::new(Mutex::new(MacWindowState {
-                handle,
-                executor,
-                native_window,
-                native_view: NonNull::new_unchecked(native_view),
-                display_link: None,
-                renderer: renderer::new_renderer(
-                    renderer_context,
-                    native_window as *mut _,
-                    native_view as *mut _,
-                    bounds.size.map(|pixels| pixels.0),
-                    false,
-                ),
-                request_frame_callback: None,
-                event_callback: None,
-                activate_callback: None,
-                resize_callback: None,
-                moved_callback: None,
-                should_close_callback: None,
-                close_callback: None,
-                appearance_changed_callback: None,
-                input_handler: None,
-                last_key_equivalent: None,
-                synthetic_drag_counter: 0,
-                traffic_light_position: titlebar
-                    .as_ref()
-                    .and_then(|titlebar| titlebar.traffic_light_position),
-                transparent_titlebar: titlebar
-                    .as_ref()
-                    .map_or(true, |titlebar| titlebar.appears_transparent),
-                previous_modifiers_changed_event: None,
-                keystroke_for_do_command: None,
-                do_command_handled: None,
-                external_files_dragged: false,
-                first_mouse: false,
-                fullscreen_restore_bounds: Bounds::default(),
-            })));
+            let mut window = Self(Arc::new_cyclic(|weak| {
+                Mutex::new(MacWindowState {
+                    handle,
+                    executor,
+                    native_window,
+                    native_view: NonNull::new_unchecked(native_view),
+                    display_link: None,
+                    renderer: renderer::new_renderer(
+                        renderer_context,
+                        native_window as *mut _,
+                        native_view as *mut _,
+                        bounds.size.map(|pixels| pixels.0),
+                        false,
+                    ),
+                    accesskit_adapter: accesskit_macos::Adapter::new(
+                        native_view as *mut _,
+                        focus,
+                        MacActionHandler(weak.clone()),
+                    ),
+                    request_frame_callback: None,
+                    event_callback: None,
+                    activate_callback: None,
+                    resize_callback: None,
+                    moved_callback: None,
+                    should_close_callback: None,
+                    close_callback: None,
+                    appearance_changed_callback: None,
+                    accesskit_action_handler_callback: None,
+                    input_handler: None,
+                    last_key_equivalent: None,
+                    synthetic_drag_counter: 0,
+                    traffic_light_position: titlebar
+                        .as_ref()
+                        .and_then(|titlebar| titlebar.traffic_light_position),
+                    transparent_titlebar: titlebar
+                        .as_ref()
+                        .map_or(true, |titlebar| titlebar.appears_transparent),
+                    previous_modifiers_changed_event: None,
+                    keystroke_for_do_command: None,
+                    do_command_handled: None,
+                    external_files_dragged: false,
+                    first_mouse: false,
+                    fullscreen_restore_bounds: Bounds::default(),
+                })
+            }));
 
             (*native_window).set_ivar(
                 WINDOW_STATE_IVAR,
@@ -1136,6 +1161,10 @@ impl PlatformWindow for MacWindow {
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().appearance_changed_callback = Some(callback);
+    }
+
+    fn on_accesskit_action(&self, callback: Box<dyn FnMut(accesskit::ActionRequest)>) {
+        self.0.lock().accesskit_action_handler_callback = Some(callback);
     }
 
     fn draw(&self, scene: &crate::Scene) {

@@ -75,6 +75,7 @@ path = "src/gpui.rs"
 doctest = false
 
 [dependencies]
+accesskit.workspace = true
 anyhow.workspace = true
 async-task = "4.7"
 backtrace = { version = "0.3", optional = true }
@@ -143,6 +144,7 @@ objc2 = { version = "0.6", optional = true }
 objc2-metal = { version = "0.3", optional = true }
 #TODO: replace with "objc2"
 metal.workspace = true
+accesskit_macos = "0.20.0"
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))'.dependencies]
 pathfinder_geometry = "0.5"
