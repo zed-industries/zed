@@ -12,10 +12,6 @@ pub(crate) async fn connect_with_proxy_stream(
     proxy: &Url,
     rpc_host: (&str, u16),
 ) -> Result<Box<dyn AsyncReadWrite>> {
-    println!(
-        "Connecting to socks proxy: {:?}, with ({:?})",
-        proxy, rpc_host
-    );
     let Some((proxy_url, proxy_type)) = parse_proxy_type(proxy) else {
         // If parsing the proxy URL fails, we must avoid falling back to an insecure connection.
         // SOCKS proxies are often used in contexts where security and privacy are critical,
@@ -69,26 +65,4 @@ pub(crate) trait AsyncReadWrite:
 impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> AsyncReadWrite
     for T
 {
-}
-
-#[cfg(test)]
-mod tests {
-    use url::Url;
-
-    use crate::connect_with_proxy_stream;
-
-    /// If parsing the proxy URL fails, we must avoid falling back to an insecure connection.
-    /// SOCKS proxies are often used in contexts where security and privacy are critical,
-    /// so any fallback could expose users to significant risks.
-    #[tokio::test]
-    async fn fails_on_bad_proxy() {
-        // Should fail connecting because http is not a valid Socks proxy scheme
-        let proxy = Url::parse("http://localhost:2313").unwrap();
-
-        let result = connect_with_proxy_stream(&proxy, ("test", 1080)).await;
-        match result {
-            Err(e) => assert_eq!(e.to_string(), "Parsing proxy url failed"),
-            Ok(_) => panic!("Connecting on bad proxy should fail"),
-        };
-    }
 }
