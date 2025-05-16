@@ -1043,28 +1043,26 @@ fn handle_nc_mouse_up_msg(
     }
 
     let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.input.take() {
+    if let Some(mut func) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
         drop(lock);
+
         let mut cursor_point = POINT {
             x: lparam.signed_loword().into(),
             y: lparam.signed_hiword().into(),
         };
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-        let event = MouseUpEvent {
+        let input = PlatformInput::MouseUp(MouseUpEvent {
             button,
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
             modifiers: current_modifiers(),
             click_count: 1,
-        };
-        let result = if callback(PlatformInput::MouseUp(event)).default_prevented {
-            Some(0)
-        } else {
-            None
-        };
-        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
-        if result.is_some() {
-            return result;
+        });
+        let handled = !func(input).propagate;
+        state_ptr.state.borrow_mut().callbacks.input = Some(func);
+
+        if handled {
+            return Some(0);
         }
     } else {
         drop(lock);
@@ -1072,35 +1070,27 @@ fn handle_nc_mouse_up_msg(
 
     let last_pressed = state_ptr.state.borrow_mut().nc_button_pressed.take();
     if button == MouseButton::Left && last_pressed.is_some() {
-        let last_button = last_pressed.unwrap();
-        let mut handled = false;
-        match wparam.0 as u32 {
-            HTMINBUTTON => {
-                if last_button == HTMINBUTTON {
-                    unsafe { ShowWindowAsync(handle, SW_MINIMIZE).ok().log_err() };
-                    handled = true;
-                }
+        let handled = match (wparam.0 as u32, last_pressed.unwrap()) {
+            (HTMINBUTTON, HTMINBUTTON) => {
+                unsafe { ShowWindowAsync(handle, SW_MINIMIZE).ok().log_err() };
+                true
             }
-            HTMAXBUTTON => {
-                if last_button == HTMAXBUTTON {
-                    if state_ptr.state.borrow().is_maximized() {
-                        unsafe { ShowWindowAsync(handle, SW_NORMAL).ok().log_err() };
-                    } else {
-                        unsafe { ShowWindowAsync(handle, SW_MAXIMIZE).ok().log_err() };
-                    }
-                    handled = true;
+            (HTMAXBUTTON, HTMAXBUTTON) => {
+                if state_ptr.state.borrow().is_maximized() {
+                    unsafe { ShowWindowAsync(handle, SW_NORMAL).ok().log_err() };
+                } else {
+                    unsafe { ShowWindowAsync(handle, SW_MAXIMIZE).ok().log_err() };
                 }
+                true
             }
-            HTCLOSE => {
-                if last_button == HTCLOSE {
-                    unsafe {
-                        PostMessageW(Some(handle), WM_CLOSE, WPARAM::default(), LPARAM::default())
-                            .log_err()
-                    };
-                    handled = true;
-                }
+            (HTCLOSE, HTCLOSE) => {
+                unsafe {
+                    PostMessageW(Some(handle), WM_CLOSE, WPARAM::default(), LPARAM::default())
+                        .log_err()
+                };
+                true
             }
-            _ => {}
+            _ => false,
         };
         if handled {
             return Some(0);
