@@ -4,6 +4,7 @@ use crate::{
     ThemeNotFoundError, ThemeRegistry, ThemeStyleContent,
 };
 use anyhow::Result;
+use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use gpui::{
     App, Context, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels,
@@ -15,7 +16,8 @@ use schemars::{
     r#gen::SchemaGenerator,
     schema::{InstanceType, Schema, SchemaObject},
 };
-use serde::{Deserialize, Serialize};
+use serde::ser::SerializeMap;
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
 use settings::{Settings, SettingsJsonSchemaParams, SettingsSources, add_references_to_properties};
 use std::sync::Arc;
@@ -121,7 +123,7 @@ pub struct ThemeSettings {
     /// Manual overrides for the active theme.
     ///
     /// Note: This setting is still experimental. See [this tracking issue](https://github.com/zed-industries/zed/issues/18078)
-    pub theme_overrides: Option<ThemeStyleContent>,
+    pub theme_overrides: Option<HashMap<String, ThemeStyleContent>>,
     /// The current icon theme selection.
     pub icon_theme_selection: Option<IconThemeSelection>,
     /// The active icon theme.
@@ -376,6 +378,8 @@ impl IconThemeSelection {
     }
 }
 
+type ThemeOverrides = HashMap<String, ThemeStyleContent>;
+
 /// Settings for rendering text in UI and text buffers.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeSettingsContent {
@@ -439,8 +443,72 @@ pub struct ThemeSettingsContent {
     /// EXPERIMENTAL: Overrides for the current theme.
     ///
     /// These values will override the ones on the current theme specified in `theme`.
-    #[serde(rename = "experimental.theme_overrides", default)]
-    pub theme_overrides: Option<ThemeStyleContent>,
+    #[serde(
+        rename = "experimental.theme_overrides",
+        serialize_with = "serialize_theme_overrides",
+        deserialize_with = "deserialize_theme_overrides",
+        default
+    )]
+    pub theme_overrides: Option<ThemeOverrides>,
+}
+
+fn serialize_theme_overrides<S>(
+    theme_overrides: &Option<ThemeOverrides>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    if let Some(theme_overrides) = theme_overrides {
+        let mut map = serializer.serialize_map(Some(theme_overrides.len()))?;
+        for (k, v) in theme_overrides {
+            map.serialize_entry(&format!("[{}]", k), v)?;
+        }
+        map.end()
+    } else {
+        serializer.serialize_none()
+    }
+}
+
+fn deserialize_theme_overrides<'de, D>(deserializer: D) -> Result<Option<ThemeOverrides>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::{MapAccess, Visitor};
+    use std::fmt;
+
+    struct ThemeOverridesVisitor;
+
+    impl<'de> Visitor<'de> for ThemeOverridesVisitor {
+        type Value = ThemeOverrides;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a map of theme overrides")
+        }
+
+        fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
+        where
+            M: MapAccess<'de>,
+        {
+            let mut theme_overrides = ThemeOverrides::default();
+
+            while let Some((key, value)) =
+                access.next_entry::<String, Option<ThemeStyleContent>>()?
+            {
+                if let Some(value) = value {
+                    let key = key
+                        .trim_start_matches('[')
+                        .trim_end_matches(']')
+                        .to_string();
+                    theme_overrides.insert(key, value);
+                }
+            }
+            Ok(theme_overrides)
+        }
+    }
+
+    let theme_overrides = deserializer.deserialize_map(ThemeOverridesVisitor)?;
+    Ok(Some(theme_overrides))
 }
 
 fn default_font_features() -> Option<FontFeatures> {
@@ -648,25 +716,35 @@ impl ThemeSettings {
     pub fn apply_theme_overrides(&mut self) {
         if let Some(theme_overrides) = &self.theme_overrides {
             let mut base_theme = (*self.active_theme).clone();
+            if let Some(this_theme_overrides) = theme_overrides.get(base_theme.name.as_ref()) {
+                if let Some(window_background_appearance) =
+                    this_theme_overrides.window_background_appearance
+                {
+                    base_theme.styles.window_background_appearance =
+                        window_background_appearance.into();
+                }
 
-            if let Some(window_background_appearance) = theme_overrides.window_background_appearance
-            {
-                base_theme.styles.window_background_appearance =
-                    window_background_appearance.into();
+                base_theme
+                    .styles
+                    .colors
+                    .refine(&this_theme_overrides.theme_colors_refinement());
+                base_theme
+                    .styles
+                    .status
+                    .refine(&this_theme_overrides.status_colors_refinement());
+                base_theme
+                    .styles
+                    .player
+                    .merge(&this_theme_overrides.players);
+                base_theme
+                    .styles
+                    .accents
+                    .merge(&this_theme_overrides.accents);
+                base_theme.styles.syntax = SyntaxTheme::merge(
+                    base_theme.styles.syntax,
+                    this_theme_overrides.syntax_overrides(),
+                );
             }
-
-            base_theme
-                .styles
-                .colors
-                .refine(&theme_overrides.theme_colors_refinement());
-            base_theme
-                .styles
-                .status
-                .refine(&theme_overrides.status_colors_refinement());
-            base_theme.styles.player.merge(&theme_overrides.players);
-            base_theme.styles.accents.merge(&theme_overrides.accents);
-            base_theme.styles.syntax =
-                SyntaxTheme::merge(base_theme.styles.syntax, theme_overrides.syntax_overrides());
 
             self.active_theme = Arc::new(base_theme);
         }
@@ -902,8 +980,10 @@ impl settings::Settings for ThemeSettings {
                 }
             }
 
-            this.theme_overrides.clone_from(&value.theme_overrides);
-            this.apply_theme_overrides();
+            if let Some(theme_overrides) = &value.theme_overrides {
+                this.theme_overrides = Some(theme_overrides.clone());
+                this.apply_theme_overrides();
+            }
 
             if let Some(value) = &value.icon_theme {
                 this.icon_theme_selection = Some(value.clone());
@@ -1008,5 +1088,32 @@ impl settings::Settings for ThemeSettings {
 fn merge<T: Copy>(target: &mut T, value: Option<T>) {
     if let Some(value) = value {
         *target = value;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_theme_settings_overrides_deserialization() {
+        let raw_settings = r#"{
+            "experimental.theme_overrides": {
+                "[Modus Operandi]": {
+                    "border": "border-color"
+                }
+            }
+        }
+        "#;
+
+        let settings: ThemeSettingsContent = serde_json::from_str(raw_settings).unwrap();
+        let theme_overrides = settings.theme_overrides.as_ref().unwrap();
+        assert!(theme_overrides.contains_key("Modus Operandi"));
+
+        let modus_operandi_overrides = theme_overrides.get("Modus Operandi").unwrap();
+        assert_eq!(
+            modus_operandi_overrides.colors.border,
+            Some(String::from("border-color"))
+        )
     }
 }
