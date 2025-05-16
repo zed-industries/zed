@@ -1,0 +1,42 @@
+id = "zed.vector-store-context-server"
+name = "vector-store-context-server"
+version = "0.1.0"
+schema_version = 0
+description = "Provides vector storage and semantic search capabilities for Zed's AI assistant"
+repository = ""
+icon = "database"
+authors = []
+
+[lib]
+kind = "Rust"
+
+[activation]
+language = []
+workspace_contains = []
+
+[config]
+database_path = { default = "~/.config/zed/vector_stores", description = "Path for storing the vector databases" }
+
+[[commands]]
+name = "vector-create"
+description = "Create a new vector store"
+title = "Create Vector Store"
+
+[[commands]]
+name = "vector-add"
+description = "Add vectors to a store"
+title = "Add Vector"
+
+[[commands]]
+name = "vector-search"
+description = "Search for similar vectors in the vector store"
+title = "Search Vectors"
+
+[[commands]]
+name = "vector-info"
+description = "Get information about vector stores"
+title = "Vector Stores Info"
+
+[context_servers.vector-store]
+description = "A context server for vector storage and semantic search capabilities"
+slash_commands = ["vector-search", "vector-info", "vector-create", "vector-add"] 

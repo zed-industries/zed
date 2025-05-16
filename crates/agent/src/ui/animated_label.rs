@@ -17,6 +17,7 @@ impl AnimatedLabel {
         }
     }
     
+    #[allow(dead_code)]
     pub fn duration(self, _duration: Duration) -> Self {
         // This is just for API compatibility, the animation duration is fixed in render
         self

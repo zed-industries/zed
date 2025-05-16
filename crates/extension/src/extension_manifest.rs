@@ -208,31 +208,79 @@ pub struct IndexedDocsProviderEntry {}
 
 impl ExtensionManifest {
     pub async fn load(fs: Arc<dyn Fs>, extension_dir: &Path) -> Result<Self> {
+        log::info!("Loading extension manifest from directory: {}", extension_dir.display());
+        
         let extension_name = extension_dir
             .file_name()
             .and_then(OsStr::to_str)
-            .ok_or_else(|| anyhow!("invalid extension name"))?;
+            .ok_or_else(|| {
+                let err = anyhow!("invalid extension name");
+                log::error!("Failed to get extension name: {}", err);
+                err
+            })?;
+        
+        log::info!("Extension name: {}", extension_name);
 
         let mut extension_manifest_path = extension_dir.join("extension.json");
         if fs.is_file(&extension_manifest_path).await {
-            let manifest_content = fs
-                .load(&extension_manifest_path)
-                .await
-                .with_context(|| format!("failed to load {extension_name} extension.json"))?;
-            let manifest_json = serde_json::from_str::<OldExtensionManifest>(&manifest_content)
-                .with_context(|| {
-                    format!("invalid extension.json for extension {extension_name}")
-                })?;
+            log::info!("Found extension.json at: {}", extension_manifest_path.display());
+            
+            let manifest_content = match fs.load(&extension_manifest_path).await {
+                Ok(content) => {
+                    log::info!("Successfully loaded extension.json ({} bytes)", content.len());
+                    content
+                },
+                Err(err) => {
+                    let ctx_err = format!("failed to load {extension_name} extension.json");
+                    log::error!("{}: {}", ctx_err, err);
+                    return Err(err).with_context(|| ctx_err);
+                }
+            };
+            
+            let manifest_json = match serde_json::from_str::<OldExtensionManifest>(&manifest_content) {
+                Ok(manifest) => {
+                    log::info!("Successfully parsed extension.json for extension: {}", extension_name);
+                    manifest
+                },
+                Err(err) => {
+                    let ctx_err = format!("invalid extension.json for extension {extension_name}");
+                    log::error!("{}: {}", ctx_err, err);
+                    return Err(err).with_context(|| ctx_err);
+                }
+            };
 
-            Ok(manifest_from_old_manifest(manifest_json, extension_name))
+            log::info!("Converting old manifest format to new format");
+            let manifest = manifest_from_old_manifest(manifest_json, extension_name);
+            log::info!("Extension manifest loaded successfully for extension: {}", manifest.id);
+            Ok(manifest)
         } else {
             extension_manifest_path.set_extension("toml");
-            let manifest_content = fs
-                .load(&extension_manifest_path)
-                .await
-                .with_context(|| format!("failed to load {extension_name} extension.toml"))?;
-            toml::from_str(&manifest_content)
-                .with_context(|| format!("invalid extension.toml for extension {extension_name}"))
+            log::info!("Looking for extension.toml at: {}", extension_manifest_path.display());
+            
+            let manifest_content = match fs.load(&extension_manifest_path).await {
+                Ok(content) => {
+                    log::info!("Successfully loaded extension.toml ({} bytes)", content.len());
+                    content
+                },
+                Err(err) => {
+                    let ctx_err = format!("failed to load {extension_name} extension.toml");
+                    log::error!("{}: {}", ctx_err, err);
+                    return Err(err).with_context(|| ctx_err);
+                }
+            };
+            
+            match toml::from_str::<ExtensionManifest>(&manifest_content) {
+                Ok(manifest) => {
+                    log::info!("Successfully parsed extension.toml for extension: {}", manifest.id);
+                    log::info!("Extension manifest loaded successfully for extension: {}", manifest.id);
+                    Ok(manifest)
+                },
+                Err(err) => {
+                    let ctx_err = format!("invalid extension.toml for extension {extension_name}");
+                    log::error!("{}: {}", ctx_err, err);
+                    Err(err).with_context(|| ctx_err)
+                }
+            }
         }
     }
 }

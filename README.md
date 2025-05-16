@@ -41,3 +41,38 @@ We use [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) to automati
 - Is it showing a `no license specified` error for a crate you've created? If so, add `publish = false` under `[package]` in your crate's Cargo.toml.
 - Is the error `failed to satisfy license requirements` for a dependency? If so, first determine what license the project has and whether this system is sufficient to comply with this license's requirements. If you're unsure, ask a lawyer. Once you've verified that this system is acceptable add the license's SPDX identifier to the `accepted` array in `script/licenses/zed-licenses.toml`.
 - Is `cargo-about` unable to find the license for a dependency? If so, add a clarification field at the end of `script/licenses/zed-licenses.toml`, as specified in the [cargo-about book](https://embarkstudios.github.io/cargo-about/cli/generate/config.html#crate-configuration).
+
+## Testing
+
+This extension has a comprehensive testing framework that verifies functionality at multiple levels:
+
+1. **Unit Tests**: Tests for individual components of the browser tools server
+   - Client tests: Verify the `BrowserToolsClient` functionality, including mock mode
+   - Server tests: Verify the `BrowserToolsServer` initialization and operation
+   - API tests: Verify tool implementations
+
+2. **Integration Tests**: Tests that verify the JSON-RPC protocol implementation
+   - Protocol tests: Verify correct handling of initialization, tools/list, and tools/call requests
+   - Response format tests: Verify that responses match the expected MCP protocol format
+
+3. **End-to-End Tests**: Tests that verify the complete system with ChromeDriver
+   - Connection tests: Verify connection to ChromeDriver works correctly
+   - Mock mode tests: Verify functionality when ChromeDriver is unavailable
+   - Navigation and DOM query tests: Verify core functionality
+
+### Running Tests
+
+To run the tests, use the following commands:
+
+```bash
+# Run unit tests
+cd .. && cargo test -p browser_tools_server
+
+# Run end-to-end tests 
+./test-browser.sh
+
+# Run all tests
+./run_tests.sh
+```
+
+The test suite is designed to handle both real WebDriver connections and mock mode when ChromeDriver is unavailable.

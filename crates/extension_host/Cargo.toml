@@ -52,6 +52,8 @@ wasmparser.workspace = true
 wasmtime-wasi.workspace = true
 wasmtime.workspace = true
 workspace-hack.workspace = true
+workspace.workspace = true
+zed_extension_api = { path = "../extension_api" }
 
 [dev-dependencies]
 ctor.workspace = true

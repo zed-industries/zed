@@ -5,6 +5,7 @@ world extension {
     import dap;
     import github;
     import http-client;
+    import notifications;
     import platform;
     import process;
     import nodejs;

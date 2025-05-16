@@ -76,7 +76,7 @@ dependencies = [
  "fuzzy",
  "git",
  "gpui",
- "heed",
+ "heed 0.21.0",
  "html_to_markdown",
  "http_client",
  "indexed_docs",
@@ -5143,7 +5143,9 @@ dependencies = [
  "wasmparser 0.221.3",
  "wasmtime",
  "wasmtime-wasi",
+ "workspace",
  "workspace-hack",
+ "zed_extension_api 0.6.0",
 ]
 
 [[package]]
@@ -5151,6 +5153,7 @@ name = "extensions_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "client",
  "collections",
  "db",
@@ -5161,6 +5164,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "language",
+ "log",
  "num-format",
  "picker",
  "project",
@@ -6482,6 +6486,25 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "heed"
+version = "0.20.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d4f449bab7320c56003d37732a917e18798e2f1709d80263face2b4f9436ddb"
+dependencies = [
+ "bitflags 2.9.0",
+ "byteorder",
+ "heed-traits",
+ "heed-types 0.20.1",
+ "libc",
+ "lmdb-master-sys",
+ "once_cell",
+ "page_size",
+ "serde",
+ "synchronoise",
+ "url",
+]
+
+[[package]]
+name = "heed"
 version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bd54745cfacb7b97dee45e8fdb91814b62bccddb481debb7de0f9ee6b7bf5b43"
@@ -6489,7 +6512,7 @@ dependencies = [
  "bitflags 2.9.0",
  "byteorder",
  "heed-traits",
- "heed-types",
+ "heed-types 0.21.0",
  "libc",
  "lmdb-master-sys",
  "once_cell",
@@ -6504,6 +6527,19 @@ name = "heed-traits"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eb3130048d404c57ce5a1ac61a903696e8fcde7e8c2991e9fcfc1f27c3ef74ff"
+
+[[package]]
+name = "heed-types"
+version = "0.20.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d3f528b053a6d700b2734eabcd0fd49cb8230647aa72958467527b0b7917114"
+dependencies = [
+ "bincode",
+ "byteorder",
+ "heed-traits",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "heed-types"
@@ -7163,7 +7199,7 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "gpui",
- "heed",
+ "heed 0.21.0",
  "html_to_markdown",
  "http_client",
  "indexmap",
@@ -8629,6 +8665,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e7465ac9959cc2b1404e8e2367b43684a6d13790fe23056cc8c6c5a6b7bcb94"
 
 [[package]]
+name = "matrixmultiply"
+version = "0.3.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06de3016e9fae57a36fd14dba131fccf49f74b40b7fbdb472f96e361ec71a08"
+dependencies = [
+ "autocfg",
+ "rawpointer",
+]
+
+[[package]]
 name = "maybe-owned"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8985,6 +9031,19 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "uuid",
+]
+
+[[package]]
+name = "ndarray"
+version = "0.15.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "adb12d4e967ec485a5f71c6311fe28158e9d6f4bc4a447b474184d0f91a8fa32"
+dependencies = [
+ "matrixmultiply",
+ "num-complex",
+ "num-integer",
+ "num-traits",
+ "rawpointer",
 ]
 
 [[package]]
@@ -11084,7 +11143,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "handlebars 4.5.0",
- "heed",
+ "heed 0.21.0",
  "language",
  "log",
  "parking_lot",
@@ -11596,6 +11655,12 @@ dependencies = [
  "objc",
  "raw-window-handle",
 ]
+
+[[package]]
+name = "rawpointer"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "60a357793950651c4ed0f3f52338f53b2f809f32d83a07f72909fa13e4c6c1e3"
 
 [[package]]
 name = "rayon"
@@ -13006,7 +13071,7 @@ dependencies = [
  "futures 0.3.31",
  "futures-batch",
  "gpui",
- "heed",
+ "heed 0.21.0",
  "http_client",
  "language",
  "language_model",
@@ -16051,6 +16116,43 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
+name = "vector_store"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "collections",
+ "futures 0.3.31",
+ "gpui",
+ "heed 0.20.5",
+ "log",
+ "ndarray",
+ "schemars",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "util",
+ "uuid",
+]
+
+[[package]]
+name = "vector_store_context_server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "context_server",
+ "dirs 4.0.0",
+ "env_logger 0.11.8",
+ "extension",
+ "gpui",
+ "log",
+ "serde",
+ "serde_json",
+ "vector_store",
+]
+
+[[package]]
 name = "version-compare"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -18717,6 +18819,7 @@ dependencies = [
 name = "zed_extension_api"
 version = "0.6.0"
 dependencies = [
+ "schemars",
  "serde",
  "serde_json",
  "wit-bindgen 0.41.0",

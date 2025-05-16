@@ -1,0 +1,8 @@
+package zed:extension;
+
+interface notifications {
+    /// Shows a notification to the user.
+    /// The level parameter must be one of "info", "warning", or "error".
+    /// The notification_json parameter is a JSON string representation of the notification.
+    show-notification: func(level: string, notification-json: string) -> result<_, string>;
+} 

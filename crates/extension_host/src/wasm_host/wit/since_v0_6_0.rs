@@ -29,6 +29,7 @@ use std::{
 };
 use util::maybe;
 use wasmtime::component::{Linker, Resource};
+use zed_extension_api;
 
 pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 6, 0);
 pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 6, 0);
@@ -731,6 +732,104 @@ impl context_server::Host for WasmState {}
 
 #[async_trait]
 impl dap::Host for WasmState {}
+
+impl notifications::Host for WasmState {
+    async fn show_notification(
+        &mut self,
+        level: String,
+        notification_json: String,
+    ) -> wasmtime::Result<Result<(), String>> {
+        // Log the notification based on its level
+        match level.as_str() {
+            "info" => log::info!("Extension notification: {}", notification_json),
+            "warning" => log::warn!("Extension warning: {}", notification_json),
+            "error" => log::error!("Extension notification: {}", notification_json),
+            _ => log::warn!("Unknown notification level '{}': {}", level, notification_json),
+        }
+        
+        // Parse the notification JSON
+        let notification = match serde_json::from_str::<zed_extension_api::notifications::Notification>(&notification_json) {
+            Ok(n) => n,
+            Err(e) => {
+                log::error!("Failed to parse notification JSON: {}", e);
+                return Ok(Err(format!("Failed to parse notification JSON: {}", e)));
+            }
+        };
+        
+        // Format the notification message
+        let message = notification.message.clone();
+        let title_text = notification.title.clone();
+        let link_text = notification.link_text.clone();
+        let link_url = notification.link_url.clone();
+        let extension_id = self.manifest.id.clone();
+        
+        log::info!("Creating toast notification from extension '{}': '{}'", extension_id, message);
+        
+        // Show notification in the UI via the main thread
+        let result = self.on_main_thread(|cx| {
+            async move {
+                cx.update(|cx| {
+                    log::info!("Running on main thread with {} windows", cx.windows().len());
+                    // Get all workspace windows
+                    for window in cx.windows() {
+                        if let Some(workspace_window) = window.downcast::<workspace::Workspace>() {
+                            log::info!("Found workspace window, updating...");
+                            workspace_window.update(cx, |workspace, _window, cx| {
+                                // Create a notification ID based on extension ID
+                                let notification_id = workspace::notifications::NotificationId::named(
+                                    format!("extension-{}", extension_id).into()
+                                );
+                                
+                                // Format message with title if provided
+                                let display_message = if let Some(title) = &title_text {
+                                    format!("{}: {}", title, message)
+                                } else {
+                                    message.clone()
+                                };
+                                
+                                log::info!("Creating toast with message: {}", display_message);
+                                
+                                // Create a toast
+                                let mut toast = workspace::Toast::new(notification_id, display_message);
+                                
+                                // Add URL link if provided
+                                if let (Some(text), Some(url)) = (&link_text, &link_url) {
+                                    let url_clone = url.clone();
+                                    toast = toast.on_click(
+                                        text.clone(),
+                                        move |_, cx| {
+                                            cx.open_url(&url_clone);
+                                        }
+                                    );
+                                }
+                                
+                                // Set autohide
+                                toast = toast.autohide();
+                                
+                                // Show the toast in the workspace
+                                log::info!("Showing toast in workspace");
+                                workspace.show_toast(toast, cx);
+                                log::info!("Toast shown successfully");
+                            }).map_err(|e| log::error!("Failed to update workspace: {}", e)).ok();
+                        } else {
+                            log::warn!("Found window that is not a workspace");
+                        }
+                    }
+                })
+            }
+            .boxed_local()
+        }).await;
+        
+        // Log any errors, but don't fail the operation even if UI notification fails
+        if let Err(e) = result {
+            log::error!("Failed to show notification in UI: {}", e);
+        } else {
+            log::info!("Successfully processed notification display");
+        }
+        
+        Ok(Ok(()))
+    }
+}
 
 impl ExtensionImports for WasmState {
     async fn get_settings(

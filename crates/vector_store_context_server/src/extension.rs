@@ -8,14 +8,12 @@ use std::path::Path;
 use serde_json::Value;
 
 pub struct VectorStoreExtension {
-    manifest_name: String,
     work_dir: Arc<Path>,
 }
 
 impl VectorStoreExtension {
-    pub fn new(_manifest: Arc<Value>, work_dir: Arc<Path>) -> Self {
+    pub fn new(manifest: Arc<Value>, work_dir: Arc<Path>) -> Self {
         Self {
-            manifest_name: "vector-store-context-server".to_string(),
             work_dir,
         }
     }
@@ -23,11 +21,99 @@ impl VectorStoreExtension {
 
 #[async_trait]
 impl Extension for VectorStoreExtension {
+    fn id(&self) -> String {
+        "zed.vector-store-context-server".to_string()
+    }
+
+    fn schema_version(&self) -> SchemaVersion {
+        SchemaVersion(0)
+    }
+
+    fn register_commands(&self) -> Vec<Command> {
+        vec![
+            Command {
+                name: "vector-create".to_string(),
+                title: "Create Vector Store".to_string(),
+                description: Some("Create a new vector store".to_string()),
+                command_group: None,
+                palette_kind: None,
+                command_kind: None,
+            },
+            Command {
+                name: "vector-add".to_string(),
+                title: "Add Vector".to_string(),
+                description: Some("Add vectors to a store".to_string()),
+                command_group: None,
+                palette_kind: None,
+                command_kind: None,
+            },
+            Command {
+                name: "vector-search".to_string(),
+                title: "Search Vectors".to_string(),
+                description: Some("Search for similar vectors in the vector store".to_string()),
+                command_group: None,
+                palette_kind: None,
+                command_kind: None,
+            },
+            Command {
+                name: "vector-info".to_string(),
+                title: "Vector Stores Info".to_string(),
+                description: Some("Get information about vector stores".to_string()),
+                command_group: None,
+                palette_kind: None,
+                command_kind: None,
+            },
+        ]
+    }
+
+    fn context_server_configs(&self) -> Vec<ContextServerConfiguration> {
+        vec![ContextServerConfiguration {
+            name: "vector-store".to_string(),
+            description: "A context server for vector storage and semantic search capabilities".to_string(),
+            capabilities: Some(vec![
+                "SlashCommands".to_string(),
+                "Tools".to_string(),
+            ]),
+            slash_commands: Some(vec![
+                "vector-search".to_string(),
+                "vector-info".to_string(),
+                "vector-create".to_string(),
+                "vector-add".to_string(),
+            ]),
+        }]
+    }
+
+    async fn context_server_binary(
+        &self,
+        name: &str,
+        _project_root: Option<PathBuf>,
+    ) -> Result<ContextServerManifestEntry> {
+        if name != "vector-store" {
+            return Err(anyhow!("Unknown context server: {}", name));
+        }
+
+        Ok(ContextServerManifestEntry::Library(LibManifestEntry {
+            name: "vector_store_context_server".to_string(),
+            kind: ExtensionLibraryKind::Rust,
+            functions: vec!["create_extension".to_string()],
+        }))
+    }
+
+    async fn handle_command(
+        &self,
+        _command_name: &str,
+        _args: Value,
+        _project_root: Option<PathBuf>,
+        _project_delegate: Option<Box<dyn ProjectDelegate>>,
+    ) -> Result<Value> {
+        Err(anyhow!("Command not handled by extension directly, should be handled by context server"))
+    }
+
     fn manifest(&self) -> Arc<ExtensionManifest> {
         // Create a minimal static manifest
         Arc::new(ExtensionManifest {
             id: Arc::from("vector-store-context-server"),
-            name: self.manifest_name.clone(),
+            name: "vector-store-context-server".to_string(),
             version: Arc::from("0.1.0"),
             schema_version: SchemaVersion(0),
             description: Some("Provides vector storage and semantic search capabilities".to_string()),
@@ -44,7 +130,11 @@ impl Extension for VectorStoreExtension {
             language_servers: Default::default(),
             context_servers: [(
                 Arc::from("vector-store"),
-                ContextServerManifestEntry {},
+                ContextServerManifestEntry::Library(LibManifestEntry {
+                    name: "vector_store_context_server".to_string(),
+                    kind: ExtensionLibraryKind::Rust,
+                    functions: vec!["create_extension".to_string()],
+                }),
             )]
             .into_iter()
             .collect(),
@@ -59,10 +149,13 @@ impl Extension for VectorStoreExtension {
         self.work_dir.clone()
     }
 
+    // The following methods are required by the Extension trait
+    // but we provide minimal implementations
+    
     async fn language_server_command(
         &self,
-        _language_server_id: lsp::LanguageServerName,
-        _language_name: language::LanguageName,
+        _language_server_id: Arc<str>,
+        _language_name: Arc<str>,
         _worktree: Arc<dyn extension::WorktreeDelegate>,
     ) -> Result<Command> {
         Err(anyhow!("Not supported"))
@@ -70,139 +163,21 @@ impl Extension for VectorStoreExtension {
 
     async fn language_server_initialization_options(
         &self,
-        _language_server_id: lsp::LanguageServerName,
-        _language_name: language::LanguageName,
+        _language_server_id: Arc<str>,
+        _language_name: Arc<str>,
         _worktree: Arc<dyn extension::WorktreeDelegate>,
     ) -> Result<Option<String>> {
         Ok(None)
-    }
-
-    async fn language_server_workspace_configuration(
-        &self,
-        _language_server_id: lsp::LanguageServerName,
-        _worktree: Arc<dyn extension::WorktreeDelegate>,
-    ) -> Result<Option<String>> {
-        Ok(None)
-    }
-
-    async fn language_server_additional_initialization_options(
-        &self,
-        _language_server_id: lsp::LanguageServerName,
-        _target_language_server_id: lsp::LanguageServerName,
-        _worktree: Arc<dyn extension::WorktreeDelegate>,
-    ) -> Result<Option<String>> {
-        Ok(None)
-    }
-
-    async fn language_server_additional_workspace_configuration(
-        &self,
-        _language_server_id: lsp::LanguageServerName,
-        _target_language_server_id: lsp::LanguageServerName,
-        _worktree: Arc<dyn extension::WorktreeDelegate>,
-    ) -> Result<Option<String>> {
-        Ok(None)
-    }
-
-    async fn labels_for_completions(
-        &self,
-        _language_server_id: lsp::LanguageServerName,
-        _completions: Vec<extension::Completion>,
-    ) -> Result<Vec<Option<extension::CodeLabel>>> {
-        Ok(Vec::new())
-    }
-
-    async fn labels_for_symbols(
-        &self,
-        _language_server_id: lsp::LanguageServerName,
-        _symbols: Vec<extension::Symbol>,
-    ) -> Result<Vec<Option<extension::CodeLabel>>> {
-        Ok(Vec::new())
-    }
-
-    async fn complete_slash_command_argument(
-        &self,
-        _command: extension::SlashCommand,
-        _arguments: Vec<String>,
-    ) -> Result<Vec<extension::SlashCommandArgumentCompletion>> {
-        Ok(Vec::new())
-    }
-
-    async fn run_slash_command(
-        &self,
-        _command: extension::SlashCommand,
-        _arguments: Vec<String>,
-        _worktree: Option<Arc<dyn extension::WorktreeDelegate>>,
-    ) -> Result<extension::SlashCommandOutput> {
-        Err(anyhow!("Not supported"))
-    }
-
-    async fn context_server_command(
-        &self,
-        context_server_id: Arc<str>,
-        _project: Arc<dyn ProjectDelegate>,
-    ) -> Result<Command> {
-        // Make sure this is our context server
-        if context_server_id.as_ref() != "vector-store" {
-            return Err(anyhow!("Unknown context server ID: {}", context_server_id));
-        }
-
-        // Get the path to our executable
-        let mut executable_path = std::env::current_exe()?;
-        executable_path.pop(); // Remove the executable name
-        executable_path.push("vector_store_context_server");
-
-        // Prepare the command
-        Ok(Command {
-            command: executable_path.to_string_lossy().to_string(),
-            args: vec![],
-            env: Vec::new(),
-        })
     }
 
     async fn context_server_configuration(
         &self,
         context_server_id: Arc<str>,
         _project: Arc<dyn ProjectDelegate>,
-    ) -> Result<Option<ContextServerConfiguration>> {
+    ) -> Result<Option<String>> {
         if context_server_id.as_ref() != "vector-store" {
-            return Err(anyhow!("Unknown context server ID: {}", context_server_id));
+            return Err(anyhow!("Unknown context server: {}", context_server_id));
         }
-
-        Ok(Some(ContextServerConfiguration {
-            installation_instructions: "The vector store context server is built into Zed".to_string(),
-            settings_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "database_path": {
-                        "type": "string",
-                        "description": "Path for storing the vector databases",
-                        "default": "~/.config/zed/vector_stores"
-                    }
-                }
-            }),
-            default_settings: r#"{ "database_path": "~/.config/zed/vector_stores" }"#.to_string(),
-        }))
-    }
-
-    async fn suggest_docs_packages(&self, _provider: Arc<str>) -> Result<Vec<String>> {
-        Ok(Vec::new())
-    }
-
-    async fn index_docs(
-        &self,
-        _provider: Arc<str>,
-        _package_name: Arc<str>,
-        _kv_store: Arc<dyn extension::KeyValueStoreDelegate>,
-    ) -> Result<()> {
-        Ok(())
-    }
-
-    async fn get_dap_binary(
-        &self,
-        _dap_name: Arc<str>,
-        _config: extension::DebugTaskDefinition,
-        _user_installed_path: Option<PathBuf>,
-    ) -> Result<extension::DebugAdapterBinary> {
-        Err(anyhow!("Not supported"))
+        Ok(None)
     }
 } 

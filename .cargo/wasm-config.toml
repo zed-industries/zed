@@ -1,0 +1,14 @@
+# Common configuration for WebAssembly targets
+# Extensions should reference this file in their build process
+
+[target.wasm32-wasip1]
+rustflags = [
+  "-C", "link-arg=--import-memory",
+  "-C", "target-feature=+bulk-memory",
+]
+
+[env]
+CARGO_TARGET_WASM32_WASIP1_LINKER = "clang"
+
+# Disable treating warnings as errors for WASM builds
+RUSTFLAGS = "--cap-lints warn" 

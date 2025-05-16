@@ -1,6 +1,7 @@
 //! The Zed Rust Extension API allows you write extensions for [Zed](https://zed.dev/) in Rust.
 
 pub mod http_client;
+pub mod notifications;
 pub mod process;
 pub mod settings;
 
@@ -23,6 +24,7 @@ pub use wit::{
         GithubRelease, GithubReleaseAsset, GithubReleaseOptions, github_release_by_tag_name,
         latest_github_release,
     },
+    zed::extension::notifications::show_notification,
     zed::extension::nodejs::{
         node_binary_path, npm_install_package, npm_package_installed_version,
         npm_package_latest_version,

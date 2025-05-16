@@ -162,6 +162,8 @@ members = [
     "crates/util_macros",
     "crates/vim",
     "crates/vim_mode_setting",
+    "crates/vector_store",
+    "crates/vector_store_context_server",
     "crates/web_search",
     "crates/web_search_providers",
     "crates/welcome",
@@ -196,6 +198,11 @@ members = [
     "tooling/xtask",
 ]
 default-members = ["crates/zed"]
+
+[patch.crates-io]
+cpal = { git = "https://github.com/zed-industries/cpal", rev = "fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50" }
+notify = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
+notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
 
 [workspace.package]
 publish = false
@@ -370,6 +377,8 @@ vim_mode_setting = { path = "crates/vim_mode_setting" }
 web_search = { path = "crates/web_search" }
 web_search_providers = { path = "crates/web_search_providers" }
 welcome = { path = "crates/welcome" }
+vector_store = { path = "crates/vector_store" }
+vector_store_context_server = { path = "crates/vector_store_context_server" }
 workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
 zed = { path = "crates/zed" }
@@ -377,6 +386,8 @@ zed_actions = { path = "crates/zed_actions" }
 zeta = { path = "crates/zeta" }
 zlog = { path = "crates/zlog" }
 zlog_settings = { path = "crates/zlog_settings" }
+browser_tools_server = { path = "crates/browser_tools_server" }
+browser-tools-mcp = { path = "extensions/browser-tools-mcp" }
 
 #
 # External crates
@@ -607,7 +618,7 @@ wasmtime = { version = "29", default-features = false, features = [
 wasmtime-wasi = "29"
 which = "6.0.0"
 wit-component = "0.221"
-workspace-hack = "0.1.0"
+workspace-hack = { path = "tooling/workspace-hack" }
 zed_llm_client = "0.8.1"
 zstd = "0.11"
 
@@ -671,10 +682,10 @@ features = [
 ]
 
 # TODO livekit https://github.com/RustAudio/cpal/pull/891
-[patch.crates-io]
-cpal = { git = "https://github.com/zed-industries/cpal", rev = "fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50" }
-notify = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
-notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
+# [patch.crates-io]
+# cpal = { git = "https://github.com/zed-industries/cpal", rev = "fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50" }
+# notify = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
+# notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
 
 # Makes the workspace hack crate refer to the local one, but only when you're building locally
 workspace-hack = { path = "tooling/workspace-hack" }

@@ -6,6 +6,13 @@ This list should be updated as we notice things that should be changed so that w
 
 ## vNext
 
+### New Features
+
+- Add notification API to allow extensions to show notifications to users
+  - Supports info, warning, and error notifications
+  - Allows setting notification title
+  - Supports links to documentation or additional resources
+
 ### Slash Commands
 
 - Rename `SlashCommand.tooltip_text` to `SlashCommand.menu_text`

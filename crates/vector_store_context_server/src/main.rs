@@ -1,35 +1,13 @@
 mod server;
 
 use anyhow::Result;
-use context_server::{ContextServer, ContextServerId};
-use context_server::transport::Transport;
-use futures::{Stream, stream::empty};
-use std::{path::PathBuf, pin::Pin, sync::Arc};
-use async_trait::async_trait;
+use std::{path::PathBuf, sync::Arc};
 use server::VectorStoreServer;
 
-// Create a minimal transport that doesn't do much
-struct DummyTransport {
-    _server: Arc<VectorStoreServer>,
-}
-
-#[async_trait]
-impl Transport for DummyTransport {
-    async fn send(&self, _message: String) -> Result<()> {
-        // This is just a stub implementation
-        Ok(())
-    }
-
-    fn receive(&self) -> Pin<Box<dyn Stream<Item = String> + Send>> {
-        Box::pin(empty())
-    }
-    
-    fn receive_err(&self) -> Pin<Box<dyn Stream<Item = String> + Send>> {
-        Box::pin(empty())
-    }
-}
-
 fn main() -> Result<()> {
+    // Setup logging
+    env_logger::try_init().ok();
+    
     // Default path for database
     let db_path = dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -38,19 +16,20 @@ fn main() -> Result<()> {
     // Create the vector store server
     let vector_store_server = Arc::new(VectorStoreServer::new(db_path));
     
-    // Create a transport
-    let transport = Arc::new(DummyTransport {
-        _server: vector_store_server.clone(),
-    });
+    // Print server information
+    log::info!("Vector store context server initialized");
+    log::info!("Server capabilities: {:?}", vector_store_server.capabilities());
     
-    // Create the context server with our transport
-    let server_id = ContextServerId(Arc::from("vector_store"));
-    let _context_server = Arc::new(ContextServer::new(server_id, transport));
+    // In a real implementation, this would handle requests from the context server
+    // For now, just demonstrate the functionality is available
+    log::info!("Server ready to handle requests");
     
-    println!("Vector store context server initialized");
+    // Wait for user input to exit
+    println!("Press Enter to exit");
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
     
-    // Since this is a CLI tool, just wait forever
-    std::thread::park();
+    log::info!("Shutting down");
     
     Ok(())
 } 

@@ -47,6 +47,30 @@ impl zed::Extension for MyExtension {
 zed::register_extension!(MyExtension);
 ```
 
+## Showing Notifications
+
+You can use the notification API to show notifications to users:
+
+```rust
+use zed_extension_api as zed;
+
+// Show an informational notification
+let notification = zed::notifications::Notification::info("Operation completed successfully")
+    .with_title("My Extension");
+notification.show()?;
+
+// Show a warning notification with a link
+let warning = zed::notifications::Notification::warning("Configuration issue detected")
+    .with_title("My Extension Warning")
+    .with_link("View documentation", "https://example.com/docs/config");
+warning.show()?;
+
+// Show an error notification
+let error = zed::notifications::Notification::error("Failed to connect to service")
+    .with_title("My Extension Error");
+error.show()?;
+```
+
 ## Testing your extension
 
 To run your extension in Zed as you're developing it:

@@ -1,0 +1,17 @@
+[workspace]
+members = [
+    "browser_tools_server",
+    "browser-tools-extension",
+]
+
+[workspace.dependencies]
+collections = "0.1"
+futures = "0.3"
+gpui = "0.3"
+parking_lot = "0.12"
+postage = "0.5"
+smol = "1.3"
+url = "2.4"
+tokio = { version = "1.28", features = ["full"] }
+bytes = "1.4"
+workspace-hack = "0.1" 

@@ -6,31 +6,24 @@ publish = false
 
 [lib]
 path = "src/lib.rs"
-crate-type = ["cdylib", "rlib"]
 
 [[bin]]
-name = "vector_store_context_server"
+name = "vector_store_context_server_bin"
 path = "src/main.rs"
+
+[[bin]]
+name = "standalone"
+path = "src/standalone.rs"
 
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
-collections = { path = "../collections" }
-futures = "0.3"
+context_server = { path = "../context_server" }
+dirs = "4.0"
+env_logger = "0.11"
+extension = { path = "../extension" }
 gpui = { path = "../gpui" }
-heed = "0.20"
 log = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-schemars = "0.8"
-toml = "0.8"
-tokio = { version = "1.28", features = ["full"] }
-uuid = { version = "1.6", features = ["v4", "serde"] }
-vector_store = { path = "../vector_store" }
-util = { path = "../util" }
-context_server = { path = "../context_server" }
-url = "2.2"
-dirs = "4.0"
-extension = { path = "../extension" }
-language = { path = "../language" }
-lsp = { path = "../lsp" } 
+vector_store = { path = "../vector_store" } 

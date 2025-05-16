@@ -1,0 +1,31 @@
+[package]
+name = "browser_tools"
+version = "0.1.0"
+edition = "2021"
+description = "Zed extension for browser automation and control"
+publish = false
+
+[lib]
+# The name must match what Zed expects (same as the package name)
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+zed_extension_api.workspace = true
+
+# Use these only when not targeting wasm
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+anyhow.workspace = true
+tokio.workspace = true
+parking_lot.workspace = true
+thiserror.workspace = true
+env_logger.workspace = true
+futures.workspace = true
+reqwest.workspace = true
+async-trait.workspace = true
+browser_tools_server = { path = "../browser_tools_server" }
+context_server.workspace = true
+gpui.workspace = true 
