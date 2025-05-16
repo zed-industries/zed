@@ -317,6 +317,11 @@ impl LmStudioLanguageModel {
                     },
                 })
                 .collect(),
+            tool_choice: request.tool_choice.map(|choice| match choice {
+                LanguageModelToolChoice::Auto => lmstudio::ToolChoice::Auto,
+                LanguageModelToolChoice::Any => lmstudio::ToolChoice::Required,
+                LanguageModelToolChoice::None => lmstudio::ToolChoice::None,
+            }),
         }
     }
 
@@ -365,11 +370,16 @@ impl LanguageModel for LmStudioLanguageModel {
         self.model.supports_tool_calls()
     }
 
-    fn supports_images(&self) -> bool {
-        false
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        self.supports_tools()
+            && match choice {
+                LanguageModelToolChoice::Auto => true,
+                LanguageModelToolChoice::Any => true,
+                LanguageModelToolChoice::None => true,
+            }
     }
 
-    fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
+    fn supports_images(&self) -> bool {
         false
     }
 
