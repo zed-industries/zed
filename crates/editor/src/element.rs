@@ -7109,6 +7109,7 @@ impl Element for EditorElement {
         _: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
+        debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
@@ -7576,7 +7577,7 @@ impl Element for EditorElement {
                         // If the fold widths have changed, we need to prepaint
                         // the element again to account for any changes in
                         // wrapping.
-                        return self.prepaint(None, bounds, &mut (), window, cx);
+                        return self.prepaint(None, bounds, &mut (), debug_state, window, cx);
                     }
 
                     let longest_line_blame_width = self
@@ -7661,7 +7662,7 @@ impl Element for EditorElement {
                             self.editor.update(cx, |editor, cx| {
                                 editor.resize_blocks(resized_blocks, autoscroll_request, cx)
                             });
-                            return self.prepaint(None, bounds, &mut (), window, cx);
+                            return self.prepaint(None, bounds, &mut (), debug_state, window, cx);
                         }
                     };
 
@@ -8165,6 +8166,7 @@ impl Element for EditorElement {
         bounds: Bounds<gpui::Pixels>,
         _: &mut Self::RequestLayoutState,
         layout: &mut Self::PrepaintState,
+        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {

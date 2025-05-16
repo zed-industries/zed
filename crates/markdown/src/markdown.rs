@@ -723,6 +723,7 @@ impl Element for MarkdownElement {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
@@ -1196,6 +1197,7 @@ impl Element for MarkdownElement {
         _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         rendered_markdown: &mut Self::RequestLayoutState,
+        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
@@ -1214,6 +1216,7 @@ impl Element for MarkdownElement {
         bounds: Bounds<Pixels>,
         rendered_markdown: &mut Self::RequestLayoutState,
         hitbox: &mut Self::PrepaintState,
+        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {

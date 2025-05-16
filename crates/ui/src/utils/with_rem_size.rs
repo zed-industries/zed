@@ -45,25 +45,25 @@ impl ParentElement for WithRemSize {
 impl Element for WithRemSize {
     type RequestLayoutState = DivFrameState;
     type PrepaintState = Option<Hitbox>;
-    type DebugState = ();
+    type DebugState = <Div as Element>::DebugState;
 
     fn id(&self) -> Option<ElementId> {
         Element::id(&self.div)
     }
 
     fn source(&self) -> Option<&'static core::panic::Location<'static>> {
-        None
+        Element::source(&self.div)
     }
 
     fn request_layout(
         &mut self,
         id: Option<&GlobalElementId>,
-        _debug_state: &mut Option<Self::DebugState>,
+        debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         window.with_rem_size(Some(self.rem_size), |window| {
-            self.div.request_layout(id, window, cx)
+            self.div.request_layout(id, debug_state, window, cx)
         })
     }
 
@@ -72,12 +72,13 @@ impl Element for WithRemSize {
         id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
-        _debug_state: &mut Option<Self::DebugState>,
+        debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
         window.with_rem_size(Some(self.rem_size), |window| {
-            self.div.prepaint(id, bounds, request_layout, window, cx)
+            self.div
+                .prepaint(id, bounds, request_layout, debug_state, window, cx)
         })
     }
 
@@ -87,13 +88,20 @@ impl Element for WithRemSize {
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
-        _debug_state: &mut Option<Self::DebugState>,
+        debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {
         window.with_rem_size(Some(self.rem_size), |window| {
-            self.div
-                .paint(id, bounds, request_layout, prepaint, window, cx)
+            self.div.paint(
+                id,
+                bounds,
+                request_layout,
+                prepaint,
+                debug_state,
+                window,
+                cx,
+            )
         })
     }
 }
