@@ -362,8 +362,9 @@ impl<E: Element> Drawable<E> {
                 // todo!()
                 let debug_id = if let Some(source) = self.element.source() {
                     let key = (window.element_id_stack.clone(), source);
-                    // todo!(avoid cloning when not needed)
+                    // todo!(avoid cloning when not needed, extract a function in the window)
                     let next_instance_id = window
+                        .next_frame
                         .debug_state
                         .next_instance_ids
                         .entry(key.clone())
@@ -379,21 +380,11 @@ impl<E: Element> Drawable<E> {
                     None
                 };
 
-                let mut debug_state = debug_id
-                    .as_ref()
-                    .and_then(|debug_id| window.debug_state.element_states.remove(&debug_id))
-                    .map(|state| *state.downcast().unwrap());
-
                 let (layout_id, request_layout) =
-                    self.element
-                        .request_layout(global_id.as_ref(), &mut debug_state, window, cx);
-
-                if let Some((debug_id, debug_state)) = debug_id.as_ref().zip(debug_state) {
-                    window
-                        .debug_state
-                        .element_states
-                        .insert(debug_id.clone(), Box::new(debug_state));
-                }
+                    window.with_debug_state(debug_id.as_ref(), |debug_state, window| {
+                        self.element
+                            .request_layout(global_id.as_ref(), debug_state, window, cx)
+                    });
 
                 if global_id.is_some() {
                     window.element_id_stack.pop();
@@ -431,29 +422,19 @@ impl<E: Element> Drawable<E> {
                     debug_assert_eq!(global_id.as_ref().unwrap().0, window.element_id_stack);
                 }
 
-                let mut debug_state = debug_id
-                    .as_ref()
-                    .and_then(|debug_id| window.debug_state.element_states.remove(&debug_id))
-                    .map(|state| *state.downcast().unwrap());
-
                 let bounds = window.layout_bounds(layout_id);
                 let node_id = window.next_frame.dispatch_tree.push_node();
-                let prepaint = self.element.prepaint(
-                    global_id.as_ref(),
-                    bounds,
-                    &mut request_layout,
-                    &mut debug_state,
-                    window,
-                    cx,
-                );
+                let prepaint = window.with_debug_state(debug_id.as_ref(), |debug_state, window| {
+                    self.element.prepaint(
+                        global_id.as_ref(),
+                        bounds,
+                        &mut request_layout,
+                        debug_state,
+                        window,
+                        cx,
+                    )
+                });
                 window.next_frame.dispatch_tree.pop_node();
-
-                if let Some((debug_id, debug_state)) = debug_id.as_ref().zip(debug_state) {
-                    window
-                        .debug_state
-                        .element_states
-                        .insert(debug_id.clone(), Box::new(debug_state));
-                }
 
                 if global_id.is_some() {
                     window.element_id_stack.pop();
@@ -492,28 +473,18 @@ impl<E: Element> Drawable<E> {
                     debug_assert_eq!(global_id.as_ref().unwrap().0, window.element_id_stack);
                 }
 
-                let mut debug_state = debug_id
-                    .as_ref()
-                    .and_then(|debug_id| window.debug_state.element_states.remove(&debug_id))
-                    .map(|state| *state.downcast().unwrap());
-
                 window.next_frame.dispatch_tree.set_active_node(node_id);
-                self.element.paint(
-                    global_id.as_ref(),
-                    bounds,
-                    &mut request_layout,
-                    &mut prepaint,
-                    &mut debug_state,
-                    window,
-                    cx,
-                );
-
-                if let Some((debug_id, debug_state)) = debug_id.as_ref().zip(debug_state) {
-                    window
-                        .debug_state
-                        .element_states
-                        .insert(debug_id.clone(), Box::new(debug_state));
-                }
+                window.with_debug_state(debug_id.as_ref(), |debug_state, window| {
+                    self.element.paint(
+                        global_id.as_ref(),
+                        bounds,
+                        &mut request_layout,
+                        &mut prepaint,
+                        debug_state,
+                        window,
+                        cx,
+                    );
+                });
 
                 if global_id.is_some() {
                     window.element_id_stack.pop();

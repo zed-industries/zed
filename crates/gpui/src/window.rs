@@ -488,11 +488,19 @@ pub(crate) struct DeferredDraw {
     paint_range: Range<PaintIndex>,
 }
 
+#[derive(Default)]
+pub(crate) struct FrameDebugState {
+    pub(crate) next_instance_ids:
+        HashMap<(SmallVec<[ElementId; 32]>, &'static panic::Location<'static>), usize>,
+    pub(crate) element_states: FxHashMap<(DebugElementId, TypeId), Box<dyn Any>>,
+}
+
 pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
     accessed_element_states: Vec<(GlobalElementId, TypeId)>,
+    pub(crate) debug_state: FrameDebugState,
     pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
@@ -532,6 +540,7 @@ impl Frame {
             window_active: false,
             element_states: FxHashMap::default(),
             accessed_element_states: Vec::new(),
+            debug_state: FrameDebugState::default(),
             mouse_listeners: Vec::new(),
             dispatch_tree,
             scene: Scene::default(),
@@ -599,13 +608,6 @@ enum WindowMode {
     Inspector,
 }
 
-#[derive(Default)]
-pub(crate) struct WindowDebugState {
-    pub(crate) next_instance_ids:
-        HashMap<(SmallVec<[ElementId; 32]>, &'static panic::Location<'static>), usize>,
-    pub(crate) element_states: HashMap<DebugElementId, Box<dyn Any>>,
-}
-
 /// Holds the state for a specific window.
 pub struct Window {
     mode: WindowMode,
@@ -626,7 +628,6 @@ pub struct Window {
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root: Option<AnyView>,
     pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
-    pub(crate) debug_state: WindowDebugState,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
@@ -915,7 +916,6 @@ impl Window {
             layout_engine: Some(TaffyLayoutEngine::new()),
             root: None,
             element_id_stack: SmallVec::default(),
-            debug_state: WindowDebugState::default(),
             text_style_stack: Vec::new(),
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
@@ -1499,6 +1499,43 @@ impl Window {
         let result = f(&global_id, self);
         self.element_id_stack.pop();
         result
+    }
+
+    pub(crate) fn with_debug_state<T: 'static, R>(
+        &mut self,
+        debug_id: Option<&DebugElementId>,
+        f: impl FnOnce(&mut Option<T>, &mut Self) -> R,
+    ) -> R {
+        if let Some(debug_id) = debug_id {
+            // todo!("avoid cloning debug id here")
+            let debug_key = (debug_id.clone(), TypeId::of::<T>());
+
+            let mut debug_state = self
+                .next_frame
+                .debug_state
+                .element_states
+                .remove(&debug_key)
+                .or_else(|| {
+                    self.rendered_frame
+                        .debug_state
+                        .element_states
+                        .remove(&debug_key)
+                })
+                .map(|state| *state.downcast().unwrap());
+
+            let result = f(&mut debug_state, self);
+
+            if let Some(debug_state) = debug_state {
+                self.next_frame
+                    .debug_state
+                    .element_states
+                    .insert(debug_key, Box::new(debug_state));
+            }
+
+            result
+        } else {
+            f(&mut None, self)
+        }
     }
 
     /// Executes the provided function with the specified rem size.
