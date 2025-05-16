@@ -6987,7 +6987,6 @@ impl EditorElement {
 impl Element for EditorElement {
     type RequestLayoutState = ();
     type PrepaintState = EditorLayout;
-    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
         None
@@ -7000,7 +6999,7 @@ impl Element for EditorElement {
     fn request_layout(
         &mut self,
         _: Option<&GlobalElementId>,
-        _debug_state: &mut Option<Self::DebugState>,
+        _debug_id: Option<&gpui::DebugElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, ()) {
@@ -7107,9 +7106,9 @@ impl Element for EditorElement {
     fn prepaint(
         &mut self,
         _: Option<&GlobalElementId>,
+        debug_id: Option<&gpui::DebugElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
-        debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
@@ -7577,7 +7576,7 @@ impl Element for EditorElement {
                         // If the fold widths have changed, we need to prepaint
                         // the element again to account for any changes in
                         // wrapping.
-                        return self.prepaint(None, bounds, &mut (), debug_state, window, cx);
+                        return self.prepaint(None, debug_id, bounds, &mut (), window, cx);
                     }
 
                     let longest_line_blame_width = self
@@ -7662,7 +7661,7 @@ impl Element for EditorElement {
                             self.editor.update(cx, |editor, cx| {
                                 editor.resize_blocks(resized_blocks, autoscroll_request, cx)
                             });
-                            return self.prepaint(None, bounds, &mut (), debug_state, window, cx);
+                            return self.prepaint(None, debug_id, bounds, &mut (), window, cx);
                         }
                     };
 
@@ -8163,10 +8162,10 @@ impl Element for EditorElement {
     fn paint(
         &mut self,
         _: Option<&GlobalElementId>,
+        _debug_id: Option<&gpui::DebugElementId>,
         bounds: Bounds<gpui::Pixels>,
         _: &mut Self::RequestLayoutState,
         layout: &mut Self::PrepaintState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {

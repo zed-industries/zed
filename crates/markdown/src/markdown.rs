@@ -710,7 +710,6 @@ impl MarkdownElement {
 impl Element for MarkdownElement {
     type RequestLayoutState = RenderedMarkdown;
     type PrepaintState = Hitbox;
-    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
         None
@@ -723,7 +722,7 @@ impl Element for MarkdownElement {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _debug_state: &mut Option<Self::DebugState>,
+        _debug_id: Option<&gpui::DebugElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
@@ -1195,9 +1194,9 @@ impl Element for MarkdownElement {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _debug_id: Option<&gpui::DebugElementId>,
         bounds: Bounds<Pixels>,
         rendered_markdown: &mut Self::RequestLayoutState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
@@ -1213,10 +1212,10 @@ impl Element for MarkdownElement {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _debug_id: Option<&gpui::DebugElementId>,
         bounds: Bounds<Pixels>,
         rendered_markdown: &mut Self::RequestLayoutState,
         hitbox: &mut Self::PrepaintState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {

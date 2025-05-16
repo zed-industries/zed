@@ -163,7 +163,6 @@ impl Scrollbar {
 impl Element for Scrollbar {
     type RequestLayoutState = ();
     type PrepaintState = Hitbox;
-    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
         None
@@ -176,7 +175,7 @@ impl Element for Scrollbar {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _debug_state: &mut Option<Self::DebugState>,
+        _debug_id: Option<&gpui::DebugElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -198,9 +197,9 @@ impl Element for Scrollbar {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _debug_id: Option<&gpui::DebugElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         _: &mut App,
     ) -> Self::PrepaintState {
@@ -212,10 +211,10 @@ impl Element for Scrollbar {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _debug_id: Option<&gpui::DebugElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {

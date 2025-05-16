@@ -16,12 +16,12 @@
 //! constructed by combining these two systems into an all-in-one element.
 
 use crate::{
-    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
-    Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox, HitboxId,
-    IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
-    Render, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task, TooltipId,
-    Visibility, Window, point, px, size,
+    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DebugElementId,
+    DispatchPhase, Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox,
+    HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
+    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, point, px, size,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -1212,7 +1212,6 @@ impl ParentElement for Div {
 impl Element for Div {
     type RequestLayoutState = DivFrameState;
     type PrepaintState = Option<Hitbox>;
-    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
         self.interactivity.element_id.clone()
@@ -1229,7 +1228,7 @@ impl Element for Div {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _debug_state: &mut Option<Self::DebugState>,
+        _debug_id: Option<&DebugElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -1259,9 +1258,9 @@ impl Element for Div {
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        _debug_id: Option<&DebugElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Hitbox> {
@@ -1328,10 +1327,10 @@ impl Element for Div {
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        _debug_id: Option<&DebugElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -2728,7 +2727,6 @@ where
 {
     type RequestLayoutState = E::RequestLayoutState;
     type PrepaintState = E::PrepaintState;
-    type DebugState = E::DebugState;
 
     fn id(&self) -> Option<ElementId> {
         self.element.id()
@@ -2741,38 +2739,38 @@ where
     fn request_layout(
         &mut self,
         id: Option<&GlobalElementId>,
-        debug_state: &mut Option<Self::DebugState>,
+        debug_id: Option<&DebugElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        self.element.request_layout(id, debug_state, window, cx)
+        self.element.request_layout(id, debug_id, window, cx)
     }
 
     fn prepaint(
         &mut self,
         id: Option<&GlobalElementId>,
+        debug_id: Option<&DebugElementId>,
         bounds: Bounds<Pixels>,
         state: &mut Self::RequestLayoutState,
-        debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> E::PrepaintState {
         self.element
-            .prepaint(id, bounds, state, debug_state, window, cx)
+            .prepaint(id, debug_id, bounds, state, window, cx)
     }
 
     fn paint(
         &mut self,
         id: Option<&GlobalElementId>,
+        debug_id: Option<&DebugElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
-        debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {
         self.element
-            .paint(id, bounds, request_layout, prepaint, debug_state, window, cx)
+            .paint(id, debug_id, bounds, request_layout, prepaint, window, cx)
     }
 }
 
@@ -2834,7 +2832,6 @@ where
 {
     type RequestLayoutState = E::RequestLayoutState;
     type PrepaintState = E::PrepaintState;
-    type DebugState = E::DebugState;
 
     fn id(&self) -> Option<ElementId> {
         self.element.id()
@@ -2847,45 +2844,38 @@ where
     fn request_layout(
         &mut self,
         id: Option<&GlobalElementId>,
-        debug_state: &mut Option<Self::DebugState>,
+        debug_id: Option<&DebugElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        self.element.request_layout(id, debug_state, window, cx)
+        self.element.request_layout(id, debug_id, window, cx)
     }
 
     fn prepaint(
         &mut self,
         id: Option<&GlobalElementId>,
+        debug_id: Option<&DebugElementId>,
         bounds: Bounds<Pixels>,
         state: &mut Self::RequestLayoutState,
-        debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> E::PrepaintState {
         self.element
-            .prepaint(id, bounds, state, debug_state, window, cx)
+            .prepaint(id, debug_id, bounds, state, window, cx)
     }
 
     fn paint(
         &mut self,
         id: Option<&GlobalElementId>,
+        debug_id: Option<&DebugElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
-        debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {
-        self.element.paint(
-            id,
-            bounds,
-            request_layout,
-            prepaint,
-            debug_state,
-            window,
-            cx,
-        );
+        self.element
+            .paint(id, debug_id, bounds, request_layout, prepaint, window, cx);
     }
 }
 

@@ -222,7 +222,6 @@ mod uniform_list {
     impl Element for IndentGuidesElement {
         type RequestLayoutState = ();
         type PrepaintState = IndentGuidesElementPrepaintState;
-        type DebugState = ();
 
         fn id(&self) -> Option<ElementId> {
             None
@@ -235,7 +234,7 @@ mod uniform_list {
         fn request_layout(
             &mut self,
             _id: Option<&gpui::GlobalElementId>,
-            _debug_state: &mut Option<Self::DebugState>,
+            _debug_id: Option<&gpui::DebugElementId>,
             window: &mut Window,
             cx: &mut App,
         ) -> (gpui::LayoutId, Self::RequestLayoutState) {
@@ -245,9 +244,9 @@ mod uniform_list {
         fn prepaint(
             &mut self,
             _id: Option<&gpui::GlobalElementId>,
+            _debug_id: Option<&gpui::DebugElementId>,
             _bounds: Bounds<Pixels>,
             _request_layout: &mut Self::RequestLayoutState,
-            _debug_state: &mut Option<Self::DebugState>,
             window: &mut Window,
             _cx: &mut App,
         ) -> Self::PrepaintState {
@@ -271,10 +270,10 @@ mod uniform_list {
         fn paint(
             &mut self,
             _id: Option<&gpui::GlobalElementId>,
+            _debug_id: Option<&gpui::DebugElementId>,
             _bounds: Bounds<Pixels>,
             _request_layout: &mut Self::RequestLayoutState,
             prepaint: &mut Self::PrepaintState,
-            _debug_state: &mut Option<Self::DebugState>,
             window: &mut Window,
             _cx: &mut App,
         ) {

@@ -1,9 +1,9 @@
 use crate::{
-    AbsoluteLength, AnyElement, AnyImageCache, App, Asset, AssetLogger, Bounds, DefiniteLength,
-    Element, ElementId, Entity, GlobalElementId, Hitbox, Image, ImageCache, InteractiveElement,
-    Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
-    SMOOTH_SVG_SCALE_FACTOR, SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task,
-    Window, px, swap_rgba_pa_to_bgra,
+    AbsoluteLength, AnyElement, AnyImageCache, App, Asset, AssetLogger, Bounds, DebugElementId,
+    DefiniteLength, Element, ElementId, Entity, GlobalElementId, Hitbox, Image, ImageCache,
+    InteractiveElement, Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels,
+    RenderImage, Resource, SMOOTH_SVG_SCALE_FACTOR, SharedString, SharedUri, StyleRefinement,
+    Styled, SvgSize, Task, Window, px, swap_rgba_pa_to_bgra,
 };
 use anyhow::{Result, anyhow};
 
@@ -261,7 +261,6 @@ pub struct ImgLayoutState {
 impl Element for Img {
     type RequestLayoutState = ImgLayoutState;
     type PrepaintState = Option<Hitbox>;
-    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
         self.interactivity.element_id.clone()
@@ -274,7 +273,7 @@ impl Element for Img {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _debug_state: &mut Option<Self::DebugState>,
+        _debug_id: Option<&DebugElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -414,9 +413,9 @@ impl Element for Img {
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        _debug_id: Option<&DebugElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
@@ -439,10 +438,10 @@ impl Element for Img {
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        _debug_id: Option<&DebugElementId>,
         bounds: Bounds<Pixels>,
         layout_state: &mut Self::RequestLayoutState,
         hitbox: &mut Self::PrepaintState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {

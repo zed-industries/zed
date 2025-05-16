@@ -1,6 +1,8 @@
 use std::time::{Duration, Instant};
 
-use crate::{AnyElement, App, Element, ElementId, GlobalElementId, IntoElement, Window};
+use crate::{
+    AnyElement, App, DebugElementId, Element, ElementId, GlobalElementId, IntoElement, Window,
+};
 
 pub use easing::*;
 use smallvec::SmallVec;
@@ -116,7 +118,6 @@ struct AnimationState {
 impl<E: IntoElement + 'static> Element for AnimationElement<E> {
     type RequestLayoutState = AnyElement;
     type PrepaintState = ();
-    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
         Some(self.id.clone())
@@ -129,7 +130,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _debug_state: &mut Option<Self::DebugState>,
+        _debug_id: Option<&DebugElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
@@ -178,9 +179,9 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _debug_id: Option<&DebugElementId>,
         _bounds: crate::Bounds<crate::Pixels>,
         element: &mut Self::RequestLayoutState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
@@ -190,10 +191,10 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _debug_id: Option<&DebugElementId>,
         _bounds: crate::Bounds<crate::Pixels>,
         element: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {

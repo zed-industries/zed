@@ -1,7 +1,5 @@
 use crate::{
-    App, Bounds, Element, GlobalElementId, Hitbox, InteractiveElement, Interactivity, IntoElement,
-    LayoutId, Pixels, Point, Radians, SharedString, Size, StyleRefinement, Styled,
-    TransformationMatrix, Window, geometry::Negate as _, point, px, radians, size,
+    geometry::Negate as _, point, px, radians, size, App, Bounds, DebugElementId, Element, GlobalElementId, Hitbox, InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, Point, Radians, SharedString, Size, StyleRefinement, Styled, TransformationMatrix, Window
 };
 use util::ResultExt;
 
@@ -39,7 +37,6 @@ impl Svg {
 impl Element for Svg {
     type RequestLayoutState = ();
     type PrepaintState = Option<Hitbox>;
-    type DebugState = ();
 
     fn id(&self) -> Option<crate::ElementId> {
         self.interactivity.element_id.clone()
@@ -52,7 +49,7 @@ impl Element for Svg {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _debug_state: &mut Option<Self::DebugState>,
+        _debug_id: Option<&DebugElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -67,9 +64,9 @@ impl Element for Svg {
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        _debug_id: Option<&DebugElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Hitbox> {
@@ -86,10 +83,10 @@ impl Element for Svg {
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        _debug_id: Option<&DebugElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) where

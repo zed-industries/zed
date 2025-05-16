@@ -311,7 +311,6 @@ pub struct PopoverMenuFrameState<M: ManagedView> {
 impl<M: ManagedView> Element for PopoverMenu<M> {
     type RequestLayoutState = PopoverMenuFrameState<M>;
     type PrepaintState = Option<HitboxId>;
-    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
         Some(self.id.clone())
@@ -324,7 +323,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _debug_state: &mut Option<Self::DebugState>,
+        _debug_id: Option<&gpui::DebugElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
@@ -400,9 +399,9 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        _debug_id: Option<&gpui::DebugElementId>,
         _bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<HitboxId> {
@@ -429,10 +428,10 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _debug_id: Option<&gpui::DebugElementId>,
         _: Bounds<gpui::Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         child_hitbox: &mut Option<HitboxId>,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {

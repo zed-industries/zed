@@ -576,7 +576,6 @@ impl TerminalElement {
 impl Element for TerminalElement {
     type RequestLayoutState = ();
     type PrepaintState = LayoutState;
-    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
         self.interactivity.element_id.clone()
@@ -589,7 +588,7 @@ impl Element for TerminalElement {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _debug_state: &mut Option<Self::DebugState>,
+        _debug_id: Option<&gpui::DebugElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -618,9 +617,9 @@ impl Element for TerminalElement {
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        _debug_id: Option<&gpui::DebugElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
@@ -913,10 +912,10 @@ impl Element for TerminalElement {
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        _debug_id: Option<&gpui::DebugElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         layout: &mut Self::PrepaintState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {

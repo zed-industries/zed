@@ -1108,7 +1108,6 @@ mod element {
     impl Element for PaneAxisElement {
         type RequestLayoutState = ();
         type PrepaintState = PaneAxisLayout;
-        type DebugState = ();
 
         fn id(&self) -> Option<ElementId> {
             Some(self.basis.into())
@@ -1121,7 +1120,7 @@ mod element {
         fn request_layout(
             &mut self,
             _global_id: Option<&GlobalElementId>,
-            _debug_state: &mut Option<Self::DebugState>,
+            _debug_id: Option<&gpui::DebugElementId>,
             window: &mut Window,
             cx: &mut App,
         ) -> (gpui::LayoutId, Self::RequestLayoutState) {
@@ -1138,9 +1137,9 @@ mod element {
         fn prepaint(
             &mut self,
             global_id: Option<&GlobalElementId>,
+            _debug_id: Option<&gpui::DebugElementId>,
             bounds: Bounds<Pixels>,
             _state: &mut Self::RequestLayoutState,
-            _debug_state: &mut Option<Self::DebugState>,
             window: &mut Window,
             cx: &mut App,
         ) -> PaneAxisLayout {
@@ -1231,10 +1230,10 @@ mod element {
         fn paint(
             &mut self,
             _id: Option<&GlobalElementId>,
+            _debug_id: Option<&gpui::DebugElementId>,
             bounds: gpui::Bounds<ui::prelude::Pixels>,
             _: &mut Self::RequestLayoutState,
             layout: &mut Self::PrepaintState,
-            _debug_state: &mut Option<Self::DebugState>,
             window: &mut Window,
             cx: &mut App,
         ) {

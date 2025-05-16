@@ -5,10 +5,10 @@
 //! elements with uniform height.
 
 use crate::{
-    AnyElement, App, AvailableSpace, Bounds, ContentMask, Context, Element, ElementId, Entity,
-    GlobalElementId, Hitbox, InteractiveElement, Interactivity, IntoElement, IsZero, LayoutId,
-    ListSizingBehavior, Pixels, Render, ScrollHandle, Size, StyleRefinement, Styled, Window, point,
-    size,
+    AnyElement, App, AvailableSpace, Bounds, ContentMask, Context, DebugElementId, Element,
+    ElementId, Entity, GlobalElementId, Hitbox, InteractiveElement, Interactivity, IntoElement,
+    IsZero, LayoutId, ListSizingBehavior, Pixels, Render, ScrollHandle, Size, StyleRefinement,
+    Styled, Window, point, size,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -161,7 +161,6 @@ impl Styled for UniformList {
 impl Element for UniformList {
     type RequestLayoutState = UniformListFrameState;
     type PrepaintState = Option<Hitbox>;
-    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
         self.interactivity.element_id.clone()
@@ -174,7 +173,7 @@ impl Element for UniformList {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _debug_state: &mut Option<Self::DebugState>,
+        _debug_id: Option<&DebugElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -229,9 +228,9 @@ impl Element for UniformList {
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        _debug_id: Option<&DebugElementId>,
         bounds: Bounds<Pixels>,
         frame_state: &mut Self::RequestLayoutState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Hitbox> {
@@ -442,10 +441,10 @@ impl Element for UniformList {
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        _debug_id: Option<&DebugElementId>,
         bounds: Bounds<crate::Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {

@@ -1,7 +1,7 @@
 use crate::{
-    AnyElement, AnyEntity, AnyWeakEntity, App, Bounds, ContentMask, Context, Element, ElementId,
-    Entity, EntityId, GlobalElementId, IntoElement, LayoutId, PaintIndex, Pixels,
-    PrepaintStateIndex, Render, Style, StyleRefinement, TextStyle, WeakEntity,
+    AnyElement, AnyEntity, AnyWeakEntity, App, Bounds, ContentMask, Context, DebugElementId,
+    Element, ElementId, Entity, EntityId, GlobalElementId, IntoElement, LayoutId, PaintIndex,
+    Pixels, PrepaintStateIndex, Render, Style, StyleRefinement, TextStyle, WeakEntity,
 };
 use crate::{Empty, Window};
 use anyhow::Result;
@@ -28,7 +28,6 @@ struct ViewCacheKey {
 impl<V: Render> Element for Entity<V> {
     type RequestLayoutState = AnyElement;
     type PrepaintState = ();
-    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
         Some(ElementId::View(self.entity_id()))
@@ -41,7 +40,7 @@ impl<V: Render> Element for Entity<V> {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _debug_state: &mut Option<Self::DebugState>,
+        _debug_id: Option<&DebugElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -55,9 +54,9 @@ impl<V: Render> Element for Entity<V> {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _debug_id: Option<&DebugElementId>,
         _: Bounds<Pixels>,
         element: &mut Self::RequestLayoutState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -68,10 +67,10 @@ impl<V: Render> Element for Entity<V> {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _debug_id: Option<&DebugElementId>,
         _: Bounds<Pixels>,
         element: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -150,7 +149,6 @@ impl Eq for AnyView {}
 impl Element for AnyView {
     type RequestLayoutState = Option<AnyElement>;
     type PrepaintState = Option<AnyElement>;
-    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
         Some(ElementId::View(self.entity_id()))
@@ -163,7 +161,7 @@ impl Element for AnyView {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _debug_state: &mut Option<Self::DebugState>,
+        _debug_id: Option<&DebugElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -184,9 +182,9 @@ impl Element for AnyView {
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        _debug_id: Option<&DebugElementId>,
         bounds: Bounds<Pixels>,
         element: &mut Self::RequestLayoutState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
@@ -256,10 +254,10 @@ impl Element for AnyView {
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        _debug_id: Option<&DebugElementId>,
         _bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         element: &mut Self::PrepaintState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {

@@ -1,7 +1,8 @@
 use crate::{
-    AnyElement, AnyEntity, App, AppContext, Asset, AssetLogger, Bounds, Element, ElementId, Entity,
-    GlobalElementId, ImageAssetLoader, ImageCacheError, IntoElement, LayoutId, ParentElement,
-    Pixels, RenderImage, Resource, Style, StyleRefinement, Styled, Task, Window, hash,
+    AnyElement, AnyEntity, App, AppContext, Asset, AssetLogger, Bounds, DebugElementId, Element,
+    ElementId, Entity, GlobalElementId, ImageAssetLoader, ImageCacheError, IntoElement, LayoutId,
+    ParentElement, Pixels, RenderImage, Resource, Style, StyleRefinement, Styled, Task, Window,
+    hash,
 };
 
 use futures::{FutureExt, future::Shared};
@@ -97,7 +98,6 @@ impl IntoElement for ImageCacheElement {
 impl Element for ImageCacheElement {
     type RequestLayoutState = SmallVec<[LayoutId; 4]>;
     type PrepaintState = ();
-    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
         None
@@ -110,7 +110,7 @@ impl Element for ImageCacheElement {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _debug_state: &mut Option<Self::DebugState>,
+        _debug_id: Option<&DebugElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -131,9 +131,9 @@ impl Element for ImageCacheElement {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _debug_id: Option<&DebugElementId>,
         _bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
@@ -145,10 +145,10 @@ impl Element for ImageCacheElement {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _debug_id: Option<&DebugElementId>,
         _bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {

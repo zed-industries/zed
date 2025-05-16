@@ -111,7 +111,6 @@ pub struct PrepaintState {
 impl<M: ManagedView> Element for RightClickMenu<M> {
     type RequestLayoutState = RequestLayoutState;
     type PrepaintState = PrepaintState;
-    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
         Some(self.id.clone())
@@ -124,7 +123,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
     fn request_layout(
         &mut self,
         id: Option<&GlobalElementId>,
-        _debug_state: &mut Option<Self::DebugState>,
+        _debug_id: Option<&gpui::DebugElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
@@ -180,9 +179,9 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _debug_id: Option<&gpui::DebugElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> PrepaintState {
@@ -207,10 +206,10 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
     fn paint(
         &mut self,
         id: Option<&GlobalElementId>,
+        _debug_id: Option<&gpui::DebugElementId>,
         _bounds: Bounds<gpui::Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         prepaint_state: &mut Self::PrepaintState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {

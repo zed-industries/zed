@@ -1,6 +1,5 @@
 use crate::{
-    App, Bounds, Element, ElementId, GlobalElementId, IntoElement, LayoutId, ObjectFit, Pixels,
-    Style, StyleRefinement, Styled, Window,
+    App, Bounds, DebugElementId, Element, ElementId, GlobalElementId, IntoElement, LayoutId, ObjectFit, Pixels, Style, StyleRefinement, Styled, Window
 };
 #[cfg(target_os = "macos")]
 use core_video::pixel_buffer::CVPixelBuffer;
@@ -48,7 +47,6 @@ impl Surface {
 impl Element for Surface {
     type RequestLayoutState = ();
     type PrepaintState = ();
-    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
         None
@@ -61,7 +59,7 @@ impl Element for Surface {
     fn request_layout(
         &mut self,
         _global_id: Option<&GlobalElementId>,
-        _debug_state: &mut Option<Self::DebugState>,
+        _debug_id: Option<&DebugElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -74,9 +72,9 @@ impl Element for Surface {
     fn prepaint(
         &mut self,
         _global_id: Option<&GlobalElementId>,
+        _debug_id: Option<&DebugElementId>,
         _bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
-        _debug_state: &mut Option<Self::DebugState>,
         _window: &mut Window,
         _cx: &mut App,
     ) -> Self::PrepaintState {
@@ -85,10 +83,10 @@ impl Element for Surface {
     fn paint(
         &mut self,
         _global_id: Option<&GlobalElementId>,
+        _debug_id: Option<&DebugElementId>,
         #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
-        _debug_state: &mut Option<Self::DebugState>,
         #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] window: &mut Window,
         _: &mut App,
     ) {

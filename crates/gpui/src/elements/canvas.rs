@@ -1,8 +1,8 @@
 use refineable::Refineable as _;
 
 use crate::{
-    App, Bounds, Element, ElementId, GlobalElementId, IntoElement, Pixels, Style, StyleRefinement,
-    Styled, Window,
+    App, Bounds, DebugElementId, Element, ElementId, GlobalElementId, IntoElement, Pixels, Style,
+    StyleRefinement, Styled, Window,
 };
 
 /// Construct a canvas element with the given paint callback.
@@ -37,7 +37,6 @@ impl<T: 'static> IntoElement for Canvas<T> {
 impl<T: 'static> Element for Canvas<T> {
     type RequestLayoutState = Style;
     type PrepaintState = Option<T>;
-    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
         None
@@ -50,7 +49,7 @@ impl<T: 'static> Element for Canvas<T> {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _debug_state: &mut Option<Self::DebugState>,
+        _debug_id: Option<&DebugElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
@@ -63,9 +62,9 @@ impl<T: 'static> Element for Canvas<T> {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _debug_id: Option<&DebugElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Style,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<T> {
@@ -75,10 +74,10 @@ impl<T: 'static> Element for Canvas<T> {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _debug_id: Option<&DebugElementId>,
         bounds: Bounds<Pixels>,
         style: &mut Style,
         prepaint: &mut Self::PrepaintState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {

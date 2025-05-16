@@ -1,5 +1,6 @@
 use crate::{
-    AnyElement, App, Bounds, Element, GlobalElementId, IntoElement, LayoutId, Pixels, Window,
+    AnyElement, App, Bounds, DebugElementId, Element, GlobalElementId, IntoElement, LayoutId,
+    Pixels, Window,
 };
 
 /// Builds a `Deferred` element, which delays the layout and paint of its child.
@@ -30,7 +31,6 @@ impl Deferred {
 impl Element for Deferred {
     type RequestLayoutState = ();
     type PrepaintState = ();
-    type DebugState = ();
 
     fn id(&self) -> Option<crate::ElementId> {
         None
@@ -43,7 +43,7 @@ impl Element for Deferred {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _debug_state: &mut Option<Self::DebugState>,
+        _debug_id: Option<&DebugElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, ()) {
@@ -54,9 +54,9 @@ impl Element for Deferred {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _debug_id: Option<&DebugElementId>,
         _bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         _cx: &mut App,
     ) {
@@ -68,10 +68,10 @@ impl Element for Deferred {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _debug_id: Option<&DebugElementId>,
         _bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
-        _debug_state: &mut Option<Self::DebugState>,
         _window: &mut Window,
         _cx: &mut App,
     ) {

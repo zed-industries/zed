@@ -8,9 +8,9 @@
 //! If all of your elements are the same height, see [`UniformList`] for a simpler API
 
 use crate::{
-    AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges, Element, EntityId,
-    FocusHandle, GlobalElementId, Hitbox, IntoElement, Pixels, Point, ScrollWheelEvent, Size,
-    Style, StyleRefinement, Styled, Window, point, px, size,
+    AnyElement, App, AvailableSpace, Bounds, ContentMask, DebugElementId, DispatchPhase, Edges,
+    Element, EntityId, FocusHandle, GlobalElementId, Hitbox, IntoElement, Pixels, Point,
+    ScrollWheelEvent, Size, Style, StyleRefinement, Styled, Window, point, px, size,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -815,7 +815,6 @@ pub struct ListOffset {
 impl Element for List {
     type RequestLayoutState = ();
     type PrepaintState = ListPrepaintState;
-    type DebugState = ();
 
     fn id(&self) -> Option<crate::ElementId> {
         None
@@ -828,7 +827,7 @@ impl Element for List {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _debug_state: &mut Option<Self::DebugState>,
+        _debug_id: Option<&DebugElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
@@ -896,9 +895,9 @@ impl Element for List {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _debug_id: Option<&DebugElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> ListPrepaintState {
@@ -945,10 +944,10 @@ impl Element for List {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _debug_id: Option<&DebugElementId>,
         bounds: Bounds<crate::Pixels>,
         _: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
-        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {
