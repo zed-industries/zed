@@ -989,7 +989,7 @@ fn handle_nc_mouse_down_msg(
     }
 
     let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.input.take() {
+    if let Some(mut func) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
         let mut cursor_point = POINT {
             x: lparam.signed_loword().into(),
@@ -999,22 +999,19 @@ fn handle_nc_mouse_down_msg(
         let physical_point = point(DevicePixels(cursor_point.x), DevicePixels(cursor_point.y));
         let click_count = lock.click_state.update(button, physical_point);
         drop(lock);
-        let event = MouseDownEvent {
+
+        let input = PlatformInput::MouseDown(MouseDownEvent {
             button,
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
             modifiers: current_modifiers(),
             click_count,
             first_mouse: false,
-        };
-        let result = if callback(PlatformInput::MouseDown(event)).default_prevented {
-            Some(0)
-        } else {
-            None
-        };
-        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
+        });
+        let handled = !func(input).propagate;
+        state_ptr.state.borrow_mut().callbacks.input = Some(func);
 
-        if result.is_some() {
-            return result;
+        if handled {
+            return Some(0);
         }
     } else {
         drop(lock);
