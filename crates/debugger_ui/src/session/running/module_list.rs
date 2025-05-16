@@ -129,6 +129,9 @@ impl ModuleList {
             .w_full()
             .group("")
             .id(("module-list", ix))
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
             .when(module.path.is_some(), |this| {
                 this.on_click({
                     let path = module
