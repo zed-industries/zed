@@ -25,12 +25,12 @@ impl Render for HelloWorld {
             .text_color(rgb(0xffffff))
             .child(format!("Hello, {}!", &self.text))
             .child(
-                button("counter-button", format!("Count: {}", &self.count)).on_click(cx.listener(
-                    move |this, _, _, cx| {
+                button("counter-button")
+                    .on_click(Box::new(cx.listener(move |this, _, _, cx| {
                         this.count += 1;
                         cx.notify();
-                    },
-                )),
+                    })))
+                    .child(div().child(format!("Count: {}", &self.count))),
             )
             .child(
                 div()

@@ -1,26 +1,24 @@
 #![allow(missing_docs)]
 use super::{FocusableElement, InteractiveElement, Interactivity, StatefulInteractiveElement};
 use crate::{
-    App, ClickEvent, Element, ElementId, GlobalElementId, Hitbox, IntoElement, LayoutId,
-    SharedString, StyleRefinement, Styled, Window,
+    AnyElement, App, ClickEvent, Element, ElementId, GlobalElementId, Hitbox, IntoElement,
+    LayoutId, ParentElement, SharedString, StyleRefinement, Styled, TextStyleRefinement, Window,
+    colors::Colors,
 };
+use smallvec::SmallVec;
 
-pub fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Button {
+pub fn button(id: impl Into<ElementId>) -> Button {
     Button {
         id: id.into(),
-        label: label.into(),
         interactivity: Interactivity::default(),
-        disabled: false,
-        on_click: None,
+        children: SmallVec::new(),
     }
 }
 
 pub struct Button {
     id: ElementId,
-    label: SharedString,
     interactivity: Interactivity,
-    disabled: bool, // todo: this could move into Interactivity
-    on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    children: SmallVec<[AnyElement; 2]>,
 }
 
 impl Element for Button {
@@ -41,7 +39,12 @@ impl Element for Button {
         let layout_id =
             self.interactivity
                 .request_layout(global_id, window, cx, |style, window, cx| {
-                    window.request_layout(style, vec![], cx)
+                    let mut child_layout_ids = Vec::new();
+                    for child in &mut self.children {
+                        let child_layout_id = child.request_layout(window, cx);
+                        child_layout_ids.push(child_layout_id);
+                    }
+                    window.request_layout(style, child_layout_ids, cx)
                 });
 
         // Initialize the layout state
@@ -63,6 +66,11 @@ impl Element for Button {
         }
         let content_size = bounds.size;
 
+        // Prepaint children
+        for child in &mut self.children {
+            child.prepaint(window, cx);
+        }
+
         self.interactivity.prepaint(
             global_id,
             bounds,
@@ -82,13 +90,31 @@ impl Element for Button {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let colors = Colors::for_appearance(window);
+        let text_style = self.text_style().clone();
+
+        let mut style = self.style();
+        let mut text_style = if let Some(style) = text_style {
+            style.clone()
+        } else {
+            TextStyleRefinement::default()
+        };
+
+        text_style.color = Some(colors.text.into());
+        style.background = Some(colors.container.into());
+        style.text = Some(text_style);
+
         self.interactivity.paint(
             global_id,
             bounds,
             hitbox.as_ref(),
             window,
             cx,
-            |_style, _window, _cx| {},
+            |style, window, cx| {
+                for child in &mut self.children {
+                    child.paint(window, cx);
+                }
+            },
         )
     }
 }
@@ -114,3 +140,20 @@ impl InteractiveElement for Button {
 }
 impl StatefulInteractiveElement for Button {}
 impl FocusableElement for Button {}
+
+impl ParentElement for Button {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        self.children.extend(elements)
+    }
+}
+
+impl Button {
+    pub fn on_click(
+        mut self,
+        callback: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+    ) -> Self {
+        self.interactivity
+            .on_click(move |event, window, cx| callback(event, window, cx));
+        self
+    }
+}
