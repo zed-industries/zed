@@ -4,11 +4,11 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
-use dap_types::{StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest};
+pub use dap_types::{StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest};
 use futures::io::BufReader;
 use gpui::{AsyncApp, SharedString};
 pub use http_client::{HttpClient, github::latest_github_release};
-use language::LanguageToolchainStore;
+use language::{LanguageName, LanguageToolchainStore};
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
 use settings::WorktreeId;
@@ -76,6 +76,11 @@ impl std::fmt::Display for DebugAdapterName {
 impl From<DebugAdapterName> for SharedString {
     fn from(name: DebugAdapterName) -> Self {
         name.0
+    }
+}
+impl From<SharedString> for DebugAdapterName {
+    fn from(name: SharedString) -> Self {
+        DebugAdapterName(name)
     }
 }
 
@@ -402,10 +407,6 @@ pub async fn fetch_latest_adapter_version_from_github(
     })
 }
 
-pub trait InlineValueProvider {
-    fn provide(&self, variables: Vec<(String, lsp_types::Range)>) -> Vec<lsp_types::InlineValue>;
-}
-
 #[async_trait(?Send)]
 pub trait DebugAdapter: 'static + Send + Sync {
     fn name(&self) -> DebugAdapterName;
@@ -418,7 +419,8 @@ pub trait DebugAdapter: 'static + Send + Sync {
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary>;
 
-    fn inline_value_provider(&self) -> Option<Box<dyn InlineValueProvider>> {
+    /// Returns the language name of an adapter if it only supports one language
+    fn adapter_language_name(&self) -> Option<LanguageName> {
         None
     }
 }

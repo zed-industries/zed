@@ -191,7 +191,7 @@ impl TerminalInlineAssistant {
         };
 
         self.prompt_history.retain(|prompt| *prompt != user_prompt);
-        self.prompt_history.push_back(user_prompt.clone());
+        self.prompt_history.push_back(user_prompt);
         if self.prompt_history.len() > PROMPT_HISTORY_MAX_LEN {
             self.prompt_history.pop_front();
         }
@@ -293,6 +293,7 @@ impl TerminalInlineAssistant {
                 mode: None,
                 messages: vec![request_message],
                 tools: Vec::new(),
+                tool_choice: None,
                 stop: Vec::new(),
                 temperature,
             }

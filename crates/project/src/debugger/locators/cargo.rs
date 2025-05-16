@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use dap::{DapLocator, DebugRequest};
+use dap::{DapLocator, DebugRequest, adapters::DebugAdapterName};
 use gpui::SharedString;
 use serde_json::Value;
 use smol::{
@@ -41,13 +41,18 @@ impl DapLocator for CargoLocator {
     fn name(&self) -> SharedString {
         SharedString::new_static("rust-cargo-locator")
     }
-    fn create_scenario(&self, build_config: &TaskTemplate, adapter: &str) -> Option<DebugScenario> {
+    fn create_scenario(
+        &self,
+        build_config: &TaskTemplate,
+        resolved_label: &str,
+        adapter: DebugAdapterName,
+    ) -> Option<DebugScenario> {
         if build_config.command != "cargo" {
             return None;
         }
         let mut task_template = build_config.clone();
         let cargo_action = task_template.args.first_mut()?;
-        if cargo_action == "check" {
+        if cargo_action == "check" || cargo_action == "clean" {
             return None;
         }
 
@@ -70,10 +75,9 @@ impl DapLocator for CargoLocator {
             }
             _ => {}
         }
-        let label = format!("Debug `{}`", build_config.label);
         Some(DebugScenario {
-            adapter: adapter.to_owned().into(),
-            label: SharedString::from(label),
+            adapter: adapter.0,
+            label: resolved_label.to_string().into(),
             build: Some(BuildTaskDefinition::Template {
                 task_template,
                 locator_name: Some(self.name()),
@@ -136,20 +140,20 @@ impl DapLocator for CargoLocator {
 
         let mut test_name = None;
         if is_test {
-            if let Some(package_index) = build_config
+            test_name = build_config
                 .args
                 .iter()
-                .position(|arg| arg == "-p" || arg == "--package")
-            {
-                test_name = build_config
-                    .args
-                    .get(package_index + 2)
-                    .filter(|name| !name.starts_with("--"))
-                    .cloned();
-            }
+                .rev()
+                .take_while(|name| "--" != name.as_str())
+                .find(|name| !name.starts_with("-"))
+                .cloned();
         }
         let executable = {
-            if let Some(ref name) = test_name {
+            if let Some(ref name) = test_name.as_ref().and_then(|name| {
+                name.strip_prefix('$')
+                    .map(|name| build_config.env.get(name))
+                    .unwrap_or(Some(name))
+            }) {
                 find_best_executable(&executables, &name).await
             } else {
                 None

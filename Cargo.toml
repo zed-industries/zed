@@ -6,7 +6,6 @@ members = [
     "crates/anthropic",
     "crates/askpass",
     "crates/assets",
-    "crates/assistant",
     "crates/assistant_context_editor",
     "crates/assistant_settings",
     "crates/assistant_slash_command",
@@ -32,13 +31,13 @@ members = [
     "crates/command_palette",
     "crates/command_palette_hooks",
     "crates/component",
-    "crates/component_preview",
     "crates/context_server",
     "crates/copilot",
     "crates/credentials_provider",
     "crates/dap",
     "crates/dap_adapters",
     "crates/db",
+    "crates/debug_adapter_extension",
     "crates/debugger_tools",
     "crates/debugger_ui",
     "crates/deepseek",
@@ -214,7 +213,6 @@ ai = { path = "crates/ai" }
 anthropic = { path = "crates/anthropic" }
 askpass = { path = "crates/askpass" }
 assets = { path = "crates/assets" }
-assistant = { path = "crates/assistant" }
 assistant_context_editor = { path = "crates/assistant_context_editor" }
 assistant_settings = { path = "crates/assistant_settings" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
@@ -240,13 +238,13 @@ collections = { path = "crates/collections" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
 component = { path = "crates/component" }
-component_preview = { path = "crates/component_preview" }
 context_server = { path = "crates/context_server" }
 copilot = { path = "crates/copilot" }
 credentials_provider = { path = "crates/credentials_provider" }
 dap = { path = "crates/dap" }
 dap_adapters = { path = "crates/dap_adapters" }
 db = { path = "crates/db" }
+debug_adapter_extension = { path = "crates/debug_adapter_extension" }
 debugger_tools = { path = "crates/debugger_tools" }
 debugger_ui = { path = "crates/debugger_ui" }
 deepseek = { path = "crates/deepseek" }
@@ -412,9 +410,9 @@ aws-smithy-runtime-api = { version = "1.7.4", features = ["http-1x", "client"] }
 aws-smithy-types = { version = "1.3.0", features = ["http-body-1-x"] }
 base64 = "0.22"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "b16f5c7bd873c7126f48c82c39e7ae64602ae74f" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "b16f5c7bd873c7126f48c82c39e7ae64602ae74f" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "b16f5c7bd873c7126f48c82c39e7ae64602ae74f" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "416375211bb0b5826b3584dccdb6a43369e499ad" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "416375211bb0b5826b3584dccdb6a43369e499ad" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "416375211bb0b5826b3584dccdb6a43369e499ad" }
 blake3 = "1.5.3"
 bytes = "1.0"
 cargo_metadata = "0.19"
@@ -467,13 +465,12 @@ jupyter-websocket-client = {  git = "https://github.com/ConradIrwin/runtimed" ,r
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
-linkme = "0.3.31"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "c9c189f1c5dd53c624a419ce35bc77ad6a908d18" }
 markup5ever_rcdom = "0.3.0"
 metal = "0.29"
 mlua = { version = "0.10", features = ["lua54", "vendored", "async", "send"] }
-naga = { version = "23.1.0", features = ["wgsl-in"] }
+naga = { version = "25.0", features = ["wgsl-in"] }
 nanoid = "0.4"
 nbformat = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
 nix = "0.29"
@@ -597,6 +594,7 @@ url = "2.2"
 urlencoding = "2.1.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 walkdir = "2.3"
+wasi-preview1-component-adapter-provider = "29"
 wasm-encoder = "0.221"
 wasmparser = "0.221"
 wasmtime = { version = "29", default-features = false, features = [
@@ -610,7 +608,7 @@ wasmtime-wasi = "29"
 which = "6.0.0"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
-zed_llm_client = "0.7.5"
+zed_llm_client = "0.8.1"
 zstd = "0.11"
 
 [workspace.dependencies.async-stripe]
@@ -790,6 +788,9 @@ let_underscore_future = "allow"
 # running afoul of the borrow checker.
 too_many_arguments = "allow"
 
+# We often have large enum variants yet we rarely actually bother with splitting them up.
+large_enum_variant = "allow"
+
 [workspace.metadata.cargo-machete]
 ignored = [
     "bindgen",
@@ -797,7 +798,6 @@ ignored = [
     "prost_build",
     "serde",
     "component",
-    "linkme",
     "documented",
     "workspace-hack",
 ]

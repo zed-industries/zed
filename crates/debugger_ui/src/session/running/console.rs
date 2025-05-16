@@ -5,7 +5,7 @@ use super::{
 use anyhow::Result;
 use collections::HashMap;
 use dap::OutputEvent;
-use editor::{CompletionProvider, Editor, EditorElement, EditorStyle, ExcerptId};
+use editor::{Bias, CompletionProvider, Editor, EditorElement, EditorStyle, ExcerptId};
 use fuzzy::StringMatchCandidate;
 use gpui::{
     Context, Entity, FocusHandle, Focusable, Render, Subscription, Task, TextStyle, WeakEntity,
@@ -45,6 +45,7 @@ impl Console {
             let mut editor = Editor::multi_line(window, cx);
             editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
             editor.set_read_only(true);
+            editor.disable_scrollbars_and_minimap(window, cx);
             editor.set_show_gutter(false, cx);
             editor.set_show_runnables(false, cx);
             editor.set_show_breakpoints(false, cx);
@@ -76,8 +77,14 @@ impl Console {
             editor
         });
 
-        let _subscriptions =
-            vec![cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events)];
+        let _subscriptions = vec![
+            cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
+            cx.on_focus_in(&focus_handle, window, |console, window, cx| {
+                if console.is_running(cx) {
+                    console.query_bar.focus_handle(cx).focus(window);
+                }
+            }),
+        ];
 
         Self {
             session,
@@ -97,7 +104,7 @@ impl Console {
         &self.console
     }
 
-    fn is_local(&self, cx: &Context<Self>) -> bool {
+    fn is_running(&self, cx: &Context<Self>) -> bool {
         self.session.read(cx).is_local()
     }
 
@@ -109,6 +116,7 @@ impl Console {
     ) {
         match event {
             StackFrameListEvent::SelectedStackFrameChanged(_) => cx.notify(),
+            StackFrameListEvent::BuiltEntries => {}
         }
     }
 
@@ -142,8 +150,9 @@ impl Console {
     pub fn evaluate(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
         let expression = self.query_bar.update(cx, |editor, cx| {
             let expression = editor.text(cx);
-
-            editor.clear(window, cx);
+            cx.defer_in(window, |editor, window, cx| {
+                editor.clear(window, cx);
+            });
 
             expression
         });
@@ -152,8 +161,8 @@ impl Console {
             session
                 .evaluate(
                     expression,
-                    Some(dap::EvaluateArgumentsContext::Variables),
-                    self.stack_frame_list.read(cx).selected_stack_frame_id(),
+                    Some(dap::EvaluateArgumentsContext::Repl),
+                    self.stack_frame_list.read(cx).opened_stack_frame_id(),
                     None,
                     cx,
                 )
@@ -218,7 +227,7 @@ impl Render for Console {
             .on_action(cx.listener(Self::evaluate))
             .size_full()
             .child(self.render_console(cx))
-            .when(self.is_local(cx), |this| {
+            .when(self.is_running(cx), |this| {
                 this.child(Divider::horizontal())
                     .child(self.render_query_bar(cx))
             })
@@ -356,7 +365,7 @@ impl ConsoleQueryBarCompletionProvider {
                             new_text: string_match.string.clone(),
                             label: CodeLabel {
                                 filter_range: 0..string_match.string.len(),
-                                text: format!("{} {}", string_match.string.clone(), variable_value),
+                                text: format!("{} {}", string_match.string, variable_value),
                                 runs: Vec::new(),
                             },
                             icon_path: None,
@@ -380,7 +389,7 @@ impl ConsoleQueryBarCompletionProvider {
     ) -> Task<Result<Option<Vec<Completion>>>> {
         let completion_task = console.update(cx, |console, cx| {
             console.session.update(cx, |state, cx| {
-                let frame_id = console.stack_frame_list.read(cx).selected_stack_frame_id();
+                let frame_id = console.stack_frame_list.read(cx).opened_stack_frame_id();
 
                 state.completions(
                     CompletionsQuery::new(buffer.read(cx), buffer_position, frame_id),
@@ -401,28 +410,21 @@ impl ConsoleQueryBarCompletionProvider {
                             .as_ref()
                             .unwrap_or(&completion.label)
                             .to_owned();
-                        let mut word_bytes_length = 0;
-                        for chunk in snapshot
-                            .reversed_chunks_in_range(language::Anchor::MIN..buffer_position)
-                        {
-                            let mut processed_bytes = 0;
-                            if let Some(_) = chunk.chars().rfind(|c| {
-                                let is_whitespace = c.is_whitespace();
-                                if !is_whitespace {
-                                    processed_bytes += c.len_utf8();
-                                }
+                        let buffer_text = snapshot.text();
+                        let buffer_bytes = buffer_text.as_bytes();
+                        let new_bytes = new_text.as_bytes();
 
-                                is_whitespace
-                            }) {
-                                word_bytes_length += processed_bytes;
+                        let mut prefix_len = 0;
+                        for i in (0..new_bytes.len()).rev() {
+                            if buffer_bytes.ends_with(&new_bytes[0..i]) {
+                                prefix_len = i;
                                 break;
-                            } else {
-                                word_bytes_length += chunk.len();
                             }
                         }
 
                         let buffer_offset = buffer_position.to_offset(&snapshot);
-                        let start = buffer_offset - word_bytes_length;
+                        let start = buffer_offset - prefix_len;
+                        let start = snapshot.clip_offset(start, Bias::Left);
                         let start = snapshot.anchor_before(start);
                         let replace_range = start..buffer_position;
 

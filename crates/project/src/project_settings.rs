@@ -36,6 +36,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 pub struct ProjectSettings {
     /// Configuration for language servers.
     ///
@@ -104,7 +105,7 @@ pub struct NodeBinarySettings {
     pub npm_path: Option<String>,
     /// If enabled, Zed will download its own copy of Node.
     #[serde(default)]
-    pub ignore_system_version: Option<bool>,
+    pub ignore_system_version: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -117,18 +118,19 @@ pub enum DirenvSettings {
     Direct,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct DiagnosticsSettings {
-    /// Whether or not to include warning diagnostics
-    #[serde(default = "true_value")]
+    /// Whether to show the project diagnostics button in the status bar.
+    pub button: bool,
+
+    /// Whether or not to include warning diagnostics.
     pub include_warnings: bool,
 
-    /// Settings for showing inline diagnostics
-    #[serde(default)]
+    /// Settings for showing inline diagnostics.
     pub inline: InlineDiagnosticsSettings,
 
     /// Configuration, related to Rust language diagnostics.
-    #[serde(default)]
     pub cargo: Option<CargoDiagnosticsSettings>,
 }
 
@@ -141,33 +143,29 @@ impl DiagnosticsSettings {
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct InlineDiagnosticsSettings {
     /// Whether or not to show inline diagnostics
     ///
     /// Default: false
-    #[serde(default)]
     pub enabled: bool,
     /// Whether to only show the inline diagnostics after a delay after the
     /// last editor event.
     ///
     /// Default: 150
-    #[serde(default = "default_inline_diagnostics_debounce_ms")]
     pub update_debounce_ms: u64,
     /// The amount of padding between the end of the source line and the start
     /// of the inline diagnostic in units of columns.
     ///
     /// Default: 4
-    #[serde(default = "default_inline_diagnostics_padding")]
     pub padding: u32,
     /// The minimum column to display inline diagnostics. This setting can be
     /// used to horizontally align inline diagnostics at some position. Lines
     /// longer than this value will still push diagnostics further to the right.
     ///
     /// Default: 0
-    #[serde(default)]
     pub min_column: u32,
 
-    #[serde(default)]
     pub max_severity: Option<DiagnosticSeverity>,
 }
 
@@ -181,33 +179,52 @@ pub struct CargoDiagnosticsSettings {
     pub fetch_cargo_diagnostics: bool,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DiagnosticSeverity {
+    // No diagnostics are shown.
+    Off,
     Error,
     Warning,
     Info,
     Hint,
 }
 
-impl Default for InlineDiagnosticsSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            update_debounce_ms: default_inline_diagnostics_debounce_ms(),
-            padding: default_inline_diagnostics_padding(),
-            min_column: 0,
-            max_severity: None,
+impl DiagnosticSeverity {
+    pub fn into_lsp(self) -> Option<lsp::DiagnosticSeverity> {
+        match self {
+            DiagnosticSeverity::Off => None,
+            DiagnosticSeverity::Error => Some(lsp::DiagnosticSeverity::ERROR),
+            DiagnosticSeverity::Warning => Some(lsp::DiagnosticSeverity::WARNING),
+            DiagnosticSeverity::Info => Some(lsp::DiagnosticSeverity::INFORMATION),
+            DiagnosticSeverity::Hint => Some(lsp::DiagnosticSeverity::HINT),
         }
     }
 }
 
-fn default_inline_diagnostics_debounce_ms() -> u64 {
-    150
+impl Default for DiagnosticsSettings {
+    fn default() -> Self {
+        Self {
+            button: true,
+            include_warnings: true,
+            inline: Default::default(),
+            cargo: Default::default(),
+        }
+    }
 }
 
-fn default_inline_diagnostics_padding() -> u32 {
-    4
+impl Default for InlineDiagnosticsSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            update_debounce_ms: 150,
+            padding: 4,
+            min_column: 0,
+            max_severity: None,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -288,7 +305,7 @@ pub struct InlineBlameSettings {
     /// the currently focused line.
     ///
     /// Default: true
-    #[serde(default = "true_value")]
+    #[serde(default = "default_true")]
     pub enabled: bool,
     /// Whether to only show the inline blame information
     /// after a delay once the cursor stops moving.
@@ -304,10 +321,6 @@ pub struct InlineBlameSettings {
     /// Default: false
     #[serde(default)]
     pub show_commit_summary: bool,
-}
-
-const fn true_value() -> bool {
-    true
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]

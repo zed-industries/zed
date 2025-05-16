@@ -1,18 +1,21 @@
 use super::*;
 use crate::{
-    ReadFileToolInput, grep_tool::GrepToolInput,
-    streaming_edit_file_tool::StreamingEditFileToolInput,
+    ReadFileToolInput,
+    edit_file_tool::{EditFileMode, EditFileToolInput},
+    grep_tool::GrepToolInput,
 };
 use Role::*;
 use anyhow::anyhow;
+use assistant_tool::ToolRegistry;
 use client::{Client, UserStore};
 use collections::HashMap;
 use fs::FakeFs;
 use futures::{FutureExt, future::LocalBoxFuture};
 use gpui::{AppContext, TestAppContext};
-use indoc::indoc;
+use indoc::{formatdoc, indoc};
 use language_model::{
-    LanguageModelRegistry, LanguageModelToolResult, LanguageModelToolUse, LanguageModelToolUseId,
+    LanguageModelRegistry, LanguageModelRequestTool, LanguageModelToolResult,
+    LanguageModelToolResultContent, LanguageModelToolUse, LanguageModelToolUseId,
 };
 use project::Project;
 use rand::prelude::*;
@@ -40,7 +43,7 @@ fn eval_extract_handle_command_output() {
             conversation: vec![
                 message(
                     User,
-                    [text(indoc! {"
+                    [text(formatdoc! {"
                         Read the `{input_file_path}` file and extract a method in
                         the final stanza of `run_git_blame` to deal with command failures,
                         call it `handle_command_output` and take the std::process::Output as the only parameter.
@@ -69,10 +72,10 @@ fn eval_extract_handle_command_output() {
                     [tool_use(
                         "tool_2",
                         "edit_file",
-                        StreamingEditFileToolInput {
+                        EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
-                            create_or_overwrite: false,
+                            mode: EditFileMode::Edit,
                         },
                     )],
                 ),
@@ -99,7 +102,7 @@ fn eval_delete_run_git_blame() {
             conversation: vec![
                 message(
                     User,
-                    [text(indoc! {"
+                    [text(formatdoc! {"
                         Read the `{input_file_path}` file and delete `run_git_blame`. Just that
                         one function, not its usages.
                     "})],
@@ -125,10 +128,10 @@ fn eval_delete_run_git_blame() {
                     [tool_use(
                         "tool_2",
                         "edit_file",
-                        StreamingEditFileToolInput {
+                        EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
-                            create_or_overwrite: false,
+                            mode: EditFileMode::Edit,
                         },
                     )],
                 ),
@@ -137,6 +140,61 @@ fn eval_delete_run_git_blame() {
             input_content: Some(input_file_content.into()),
             edit_description: edit_description.into(),
             assertion: EvalAssertion::assert_eq(output_file_content),
+        },
+    );
+}
+
+#[test]
+#[cfg_attr(not(feature = "eval"), ignore)]
+fn eval_translate_doc_comments() {
+    let input_file_path = "root/canvas.rs";
+    let input_file_content = include_str!("evals/fixtures/translate_doc_comments/before.rs");
+    let edit_description = "Translate all doc comments to Italian";
+    eval(
+        200,
+        1.,
+        EvalInput {
+            conversation: vec![
+                message(
+                    User,
+                    [text(formatdoc! {"
+                        Read the {input_file_path} file and edit it (without overwriting it),
+                        translating all the doc comments to italian.
+                    "})],
+                ),
+                message(
+                    Assistant,
+                    [tool_use(
+                        "tool_1",
+                        "read_file",
+                        ReadFileToolInput {
+                            path: input_file_path.into(),
+                            start_line: None,
+                            end_line: None,
+                        },
+                    )],
+                ),
+                message(
+                    User,
+                    [tool_result("tool_1", "read_file", input_file_content)],
+                ),
+                message(
+                    Assistant,
+                    [tool_use(
+                        "tool_2",
+                        "edit_file",
+                        EditFileToolInput {
+                            display_description: edit_description.into(),
+                            path: input_file_path.into(),
+                            mode: EditFileMode::Edit,
+                        },
+                    )],
+                ),
+            ],
+            input_path: input_file_path.into(),
+            input_content: Some(input_file_content.into()),
+            edit_description: edit_description.into(),
+            assertion: EvalAssertion::judge_diff("Doc comments were translated to Italian"),
         },
     );
 }
@@ -155,7 +213,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
             conversation: vec![
                 message(
                     User,
-                    [text(indoc! {"
+                    [text(formatdoc! {"
                         Read the `{input_file_path}` file and change `compile_parser_to_wasm` to use `wasi-sdk` instead of emscripten.
                         Use `ureq` to download the SDK for the current platform and architecture.
                         Extract the archive into a sibling of `lib` inside the `tree-sitter` directory in the cache_dir.
@@ -163,7 +221,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
                         that's inside of the archive.
                         Don't re-download the SDK if that executable already exists.
 
-                        Use these clang flags: -fPIC -shared -Os -Wl,--export=tree_sitter_{language_name}
+                        Use these clang flags: -fPIC -shared -Os -Wl,--export=tree_sitter_{{language_name}}
 
                         Here are the available wasi-sdk assets:
                         - wasi-sdk-25.0-x86_64-macos.tar.gz
@@ -240,10 +298,10 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
                     [tool_use(
                         "tool_4",
                         "edit_file",
-                        StreamingEditFileToolInput {
+                        EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
-                            create_or_overwrite: false,
+                            mode: EditFileMode::Edit,
                         },
                     )],
                 ),
@@ -264,11 +322,10 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
 fn eval_disable_cursor_blinking() {
     let input_file_path = "root/editor.rs";
     let input_file_content = include_str!("evals/fixtures/disable_cursor_blinking/before.rs");
-    let output_file_content = include_str!("evals/fixtures/disable_cursor_blinking/after.rs");
     let edit_description = "Comment out the call to `BlinkManager::enable`";
     eval(
         200,
-        0.6, // TODO: make this eval better
+        0.95,
         EvalInput {
             conversation: vec![
                 message(User, [text("Let's research how to cursor blinking works.")]),
@@ -316,10 +373,10 @@ fn eval_disable_cursor_blinking() {
                     [tool_use(
                         "tool_4",
                         "edit_file",
-                        StreamingEditFileToolInput {
+                        EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
-                            create_or_overwrite: false,
+                            mode: EditFileMode::Edit,
                         },
                     )],
                 ),
@@ -327,7 +384,11 @@ fn eval_disable_cursor_blinking() {
             input_path: input_file_path.into(),
             input_content: Some(input_file_content.into()),
             edit_description: edit_description.into(),
-            assertion: EvalAssertion::assert_eq(output_file_content),
+            assertion: EvalAssertion::judge_diff(indoc! {"
+                - Calls to BlinkManager in `observe_window_activation` were commented out
+                - The call to `blink_manager.enable` above the call to show_cursor_names was commented out
+                - All the edits have valid indentation
+            "}),
         },
     );
 }
@@ -506,10 +567,10 @@ fn eval_from_pixels_constructor() {
                     [tool_use(
                         "tool_5",
                         "edit_file",
-                        StreamingEditFileToolInput {
+                        EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
-                            create_or_overwrite: false,
+                            mode: EditFileMode::Edit,
                         },
                     )],
                 ),
@@ -583,10 +644,10 @@ fn eval_zode() {
                         tool_use(
                             "tool_3",
                             "edit_file",
-                            StreamingEditFileToolInput {
+                            EditFileToolInput {
                                 display_description: edit_description.into(),
                                 path: input_file_path.into(),
-                                create_or_overwrite: true,
+                                mode: EditFileMode::Create,
                             },
                         ),
                     ],
@@ -828,10 +889,10 @@ fn eval_add_overwrite_test() {
                         tool_use(
                             "tool_5",
                             "edit_file",
-                            StreamingEditFileToolInput {
+                            EditFileToolInput {
                                 display_description: edit_description.into(),
                                 path: input_file_path.into(),
-                                create_or_overwrite: false,
+                                mode: EditFileMode::Edit,
                             },
                         ),
                     ],
@@ -894,7 +955,7 @@ fn tool_result(
         tool_use_id: LanguageModelToolUseId::from(id.into()),
         tool_name: name.into(),
         is_error: false,
-        content: result.into(),
+        content: LanguageModelToolResultContent::Text(result.into()),
         output: None,
     })
 }
@@ -1034,7 +1095,8 @@ impl EvalAssertion {
 
 fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
     let mut evaluated_count = 0;
-    report_progress(evaluated_count, iterations);
+    let mut failed_count = 0;
+    report_progress(evaluated_count, failed_count, iterations);
 
     let (tx, rx) = mpsc::channel();
 
@@ -1051,7 +1113,6 @@ fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
     }
     drop(tx);
 
-    let mut failed_count = 0;
     let mut failed_evals = HashMap::default();
     let mut errored_evals = HashMap::default();
     let mut eval_outputs = Vec::new();
@@ -1059,7 +1120,7 @@ fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
     while let Ok(output) = rx.recv() {
         match output {
             Ok(output) => {
-                cumulative_parser_metrics += output.sample.edit_output._parser_metrics.clone();
+                cumulative_parser_metrics += output.sample.edit_output.parser_metrics.clone();
                 eval_outputs.push(output.clone());
                 if output.assertion.score < 80 {
                     failed_count += 1;
@@ -1076,7 +1137,7 @@ fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
         }
 
         evaluated_count += 1;
-        report_progress(evaluated_count, iterations);
+        report_progress(evaluated_count, failed_count, iterations);
     }
 
     let actual_pass_ratio = (iterations - failed_count) as f32 / iterations as f32;
@@ -1140,15 +1201,26 @@ impl Display for EvalOutput {
         writeln!(
             f,
             "Parser Metrics:\n{:#?}",
-            self.sample.edit_output._parser_metrics
+            self.sample.edit_output.parser_metrics
         )?;
-        writeln!(f, "Raw Edits:\n{}", self.sample.edit_output._raw_edits)?;
+        writeln!(f, "Raw Edits:\n{}", self.sample.edit_output.raw_edits)?;
         Ok(())
     }
 }
 
-fn report_progress(evaluated_count: usize, iterations: usize) {
-    print!("\r\x1b[KEvaluated {}/{}", evaluated_count, iterations);
+fn report_progress(evaluated_count: usize, failed_count: usize, iterations: usize) {
+    let passed_count = evaluated_count - failed_count;
+    let passed_ratio = if evaluated_count == 0 {
+        0.0
+    } else {
+        passed_count as f64 / evaluated_count as f64
+    };
+    print!(
+        "\r\x1b[KEvaluated {}/{} ({:.2}%)",
+        evaluated_count,
+        iterations,
+        passed_ratio * 100.0
+    );
     std::io::stdout().flush().unwrap();
 }
 
@@ -1161,25 +1233,30 @@ struct EditAgentTest {
 impl EditAgentTest {
     async fn new(cx: &mut TestAppContext) -> Self {
         cx.executor().allow_parking();
-        cx.update(settings::init);
-        cx.update(Project::init_settings);
-        cx.update(language::init);
-        cx.update(gpui_tokio::init);
-        cx.update(client::init_settings);
 
         let fs = FakeFs::new(cx.executor().clone());
+        cx.update(|cx| {
+            settings::init(cx);
+            gpui_tokio::init(cx);
+            let http_client = Arc::new(ReqwestClient::user_agent("agent tests").unwrap());
+            cx.set_http_client(http_client);
+
+            client::init_settings(cx);
+            let client = Client::production(cx);
+            let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+
+            settings::init(cx);
+            Project::init_settings(cx);
+            language::init(cx);
+            language_model::init(client.clone(), cx);
+            language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
+            crate::init(client.http_client(), cx);
+        });
+
         fs.insert_tree("/root", json!({})).await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let (agent_model, judge_model) = cx
             .update(|cx| {
-                let http_client = ReqwestClient::user_agent("agent tests").unwrap();
-                cx.set_http_client(Arc::new(http_client));
-
-                let client = Client::production(cx);
-                let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-                language_model::init(client.clone(), cx);
-                language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
-
                 cx.spawn(async move |cx| {
                     let agent_model =
                         Self::load_model("anthropic", "claude-3-7-sonnet-latest", cx).await;
@@ -1228,12 +1305,32 @@ impl EditAgentTest {
             .update(cx, |project, cx| project.open_buffer(path, cx))
             .await
             .unwrap();
+        let conversation = LanguageModelRequest {
+            messages: eval.conversation,
+            tools: cx.update(|cx| {
+                ToolRegistry::default_global(cx)
+                    .tools()
+                    .into_iter()
+                    .filter_map(|tool| {
+                        let input_schema = tool
+                            .input_schema(self.agent.model.tool_input_format())
+                            .ok()?;
+                        Some(LanguageModelRequestTool {
+                            name: tool.name(),
+                            description: tool.description(),
+                            input_schema,
+                        })
+                    })
+                    .collect()
+            }),
+            ..Default::default()
+        };
         let edit_output = if let Some(input_content) = eval.input_content.as_deref() {
             buffer.update(cx, |buffer, cx| buffer.set_text(input_content, cx));
             let (edit_output, _) = self.agent.edit(
                 buffer.clone(),
                 eval.edit_description,
-                eval.conversation,
+                &conversation,
                 &mut cx.to_async(),
             );
             edit_output.await?
@@ -1241,7 +1338,7 @@ impl EditAgentTest {
             let (edit_output, _) = self.agent.overwrite(
                 buffer.clone(),
                 eval.edit_description,
-                eval.conversation,
+                &conversation,
                 &mut cx.to_async(),
             );
             edit_output.await?

@@ -4,6 +4,7 @@ mod go;
 mod javascript;
 mod php;
 mod python;
+mod ruby;
 
 use std::{net::Ipv4Addr, sync::Arc};
 
@@ -16,6 +17,7 @@ use dap::{
         self, AdapterVersion, DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName,
         GithubRepo,
     },
+    inline_value::{PythonInlineValueProvider, RustInlineValueProvider},
 };
 use gdb::GdbDebugAdapter;
 use go::GoDebugAdapter;
@@ -23,6 +25,7 @@ use gpui::{App, BorrowAppContext};
 use javascript::JsDebugAdapter;
 use php::PhpDebugAdapter;
 use python::PythonDebugAdapter;
+use ruby::RubyDebugAdapter;
 use serde_json::{Value, json};
 use task::TcpArgumentsTemplate;
 
@@ -32,8 +35,13 @@ pub fn init(cx: &mut App) {
         registry.add_adapter(Arc::from(PythonDebugAdapter::default()));
         registry.add_adapter(Arc::from(PhpDebugAdapter::default()));
         registry.add_adapter(Arc::from(JsDebugAdapter::default()));
+        registry.add_adapter(Arc::from(RubyDebugAdapter));
         registry.add_adapter(Arc::from(GoDebugAdapter));
         registry.add_adapter(Arc::from(GdbDebugAdapter));
+
+        registry.add_inline_value_provider("Rust".to_string(), Arc::from(RustInlineValueProvider));
+        registry
+            .add_inline_value_provider("Python".to_string(), Arc::from(PythonInlineValueProvider));
     })
 }
 

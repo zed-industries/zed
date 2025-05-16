@@ -15,7 +15,7 @@ use editor::Editor;
 use extension::ExtensionHostProxy;
 use extension_host::ExtensionStore;
 use fs::{Fs, RealFs};
-use futures::{StreamExt, future};
+use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext as _, Application, AsyncApp, UpdateGlobal as _};
 
@@ -44,7 +44,7 @@ use theme::{
     ActiveTheme, IconThemeNotFoundError, SystemAppearance, ThemeNotFoundError, ThemeRegistry,
     ThemeSettings,
 };
-use util::{ResultExt, TryFutureExt, maybe};
+use util::{ConnectionResult, ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use welcome::{BaseKeymap, FIRST_OPEN, show_welcome_view};
 use workspace::{AppState, SerializedWorkspaceLocation, WorkspaceSettings, WorkspaceStore};
@@ -54,9 +54,6 @@ use zed::{
     handle_settings_file_changes, initialize_workspace, inline_completion_registry,
     open_paths_with_positions,
 };
-
-#[cfg(unix)]
-use util::{load_login_shell_environment, load_shell_from_passwd};
 
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
@@ -297,21 +294,29 @@ fn main() {
         fs.clone(),
         paths::settings_file().clone(),
     );
+    let global_settings_file_rx = watch_config_file(
+        &app.background_executor(),
+        fs.clone(),
+        paths::global_settings_file().clone(),
+    );
     let user_keymap_file_rx = watch_config_file(
         &app.background_executor(),
         fs.clone(),
         paths::keymap_file().clone(),
     );
 
-    #[cfg(unix)]
+    let (shell_env_loaded_tx, shell_env_loaded_rx) = oneshot::channel();
     if !stdout_is_a_pty() {
         app.background_executor()
             .spawn(async {
-                load_shell_from_passwd().log_err();
-                load_login_shell_environment().log_err();
+                #[cfg(unix)]
+                util::load_login_shell_environment().log_err();
+                shell_env_loaded_tx.send(()).ok();
             })
             .detach()
-    };
+    } else {
+        drop(shell_env_loaded_tx)
+    }
 
     app.on_open_urls({
         let open_listener = open_listener.clone();
@@ -340,7 +345,12 @@ fn main() {
         }
         settings::init(cx);
         zlog_settings::init(cx);
-        handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
+        handle_settings_file_changes(
+            user_settings_file_rx,
+            global_settings_file_rx,
+            cx,
+            handle_settings_changed,
+        );
         handle_keymap_file_changes(user_keymap_file_rx, cx);
         client::init_settings(cx);
         let user_agent = format!(
@@ -386,7 +396,7 @@ fn main() {
         cx.observe_global::<SettingsStore>(move |cx| {
             let settings = &ProjectSettings::get_global(cx).node;
             let options = NodeBinaryOptions {
-                allow_path_lookup: !settings.ignore_system_version.unwrap_or_default(),
+                allow_path_lookup: !settings.ignore_system_version,
                 // TODO: Expose this setting
                 allow_binary_download: true,
                 use_paths: settings.path.as_ref().map(|node_path| {
@@ -407,7 +417,7 @@ fn main() {
             tx.send(Some(options)).log_err();
         })
         .detach();
-        let node_runtime = NodeRuntime::new(client.http_client(), rx);
+        let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
 
         language::init(cx);
         language_extension::init(extension_host_proxy.clone(), languages.clone());
@@ -503,12 +513,6 @@ fn main() {
             cx,
         );
         let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);
-        assistant::init(
-            app_state.fs.clone(),
-            app_state.client.clone(),
-            prompt_builder.clone(),
-            cx,
-        );
         agent::init(
             app_state.fs.clone(),
             app_state.client.clone(),
@@ -620,9 +624,17 @@ fn main() {
 
         cx.spawn({
             let client = app_state.client.clone();
-            async move |cx| authenticate(client, &cx).await
+            async move |cx| match authenticate(client, &cx).await {
+                ConnectionResult::Timeout => log::error!("Timeout during initial auth"),
+                ConnectionResult::ConnectionReset => {
+                    log::error!("Connection reset during initial auth")
+                }
+                ConnectionResult::Result(r) => {
+                    r.log_err();
+                }
+            }
         })
-        .detach_and_log_err(cx);
+        .detach();
 
         let urls: Vec<_> = args
             .paths_or_urls
@@ -658,7 +670,7 @@ fn main() {
 
         let app_state = app_state.clone();
 
-        component_preview::init(app_state.clone(), cx);
+        crate::zed::component_preview::init(app_state.clone(), cx);
 
         cx.spawn(async move |cx| {
             while let Some(urls) = open_rx.next().await {
@@ -735,7 +747,15 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 let client = app_state.client.clone();
                 // we continue even if authentication fails as join_channel/ open channel notes will
                 // show a visible error message.
-                authenticate(client, &cx).await.log_err();
+                match authenticate(client, &cx).await {
+                    ConnectionResult::Timeout => {
+                        log::error!("Timeout during open request handling")
+                    }
+                    ConnectionResult::ConnectionReset => {
+                        log::error!("Connection reset during open request handling")
+                    }
+                    ConnectionResult::Result(r) => r?,
+                };
 
                 if let Some(channel_id) = request.join_channel {
                     cx.update(|cx| {
@@ -785,17 +805,18 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     }
 }
 
-async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> Result<()> {
+async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> ConnectionResult<()> {
     if stdout_is_a_pty() {
         if client::IMPERSONATE_LOGIN.is_some() {
-            client.authenticate_and_connect(false, cx).await?;
+            return client.authenticate_and_connect(false, cx).await;
         } else if client.has_credentials(cx).await {
-            client.authenticate_and_connect(true, cx).await?;
+            return client.authenticate_and_connect(true, cx).await;
         }
     } else if client.has_credentials(cx).await {
-        client.authenticate_and_connect(true, cx).await?;
+        return client.authenticate_and_connect(true, cx).await;
     }
-    Ok::<_, anyhow::Error>(())
+
+    ConnectionResult::Result(Ok(()))
 }
 
 async fn system_id() -> Result<IdType> {

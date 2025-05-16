@@ -18,7 +18,9 @@ use gpui::IntoElement;
 use gpui::Window;
 use gpui::{App, Entity, SharedString, Task, WeakEntity};
 use icons::IconName;
-use language_model::LanguageModelRequestMessage;
+use language_model::LanguageModel;
+use language_model::LanguageModelImage;
+use language_model::LanguageModelRequest;
 use language_model::LanguageModelToolSchemaFormat;
 use project::Project;
 use workspace::Workspace;
@@ -64,21 +66,50 @@ impl ToolUseStatus {
 
 #[derive(Debug)]
 pub struct ToolResultOutput {
-    pub content: String,
+    pub content: ToolResultContent,
     pub output: Option<serde_json::Value>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ToolResultContent {
+    Text(String),
+    Image(LanguageModelImage),
+}
+
+impl ToolResultContent {
+    pub fn len(&self) -> usize {
+        match self {
+            ToolResultContent::Text(str) => str.len(),
+            ToolResultContent::Image(image) => image.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            ToolResultContent::Text(str) => str.is_empty(),
+            ToolResultContent::Image(image) => image.is_empty(),
+        }
+    }
+
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            ToolResultContent::Text(str) => Some(str),
+            ToolResultContent::Image(_) => None,
+        }
+    }
 }
 
 impl From<String> for ToolResultOutput {
     fn from(value: String) -> Self {
         ToolResultOutput {
-            content: value,
+            content: ToolResultContent::Text(value),
             output: None,
         }
     }
 }
 
 impl Deref for ToolResultOutput {
-    type Target = String;
+    type Target = ToolResultContent;
 
     fn deref(&self) -> &Self::Target {
         &self.content
@@ -205,9 +236,10 @@ pub trait Tool: 'static + Send + Sync {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        messages: &[LanguageModelRequestMessage],
+        request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        model: Arc<dyn LanguageModel>,
         window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult;

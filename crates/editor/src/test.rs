@@ -18,7 +18,7 @@ use gpui::{
 };
 use multi_buffer::ToPoint;
 use pretty_assertions::assert_eq;
-use project::Project;
+use project::{Project, project_settings::DiagnosticSeverity};
 use ui::{App, BorrowAppContext, px};
 use util::test::{marked_text_offsets, marked_text_ranges};
 
@@ -72,6 +72,7 @@ pub fn marked_display_snapshot(
             1,
             1,
             FoldPlaceholder::test(),
+            DiagnosticSeverity::Warning,
             cx,
         )
     });

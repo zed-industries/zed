@@ -10,7 +10,7 @@ use fs::{FakeFs, Fs, RealFs};
 use futures::{AsyncReadExt, StreamExt, io::BufReader};
 use gpui::{AppContext as _, SemanticVersion, SharedString, TestAppContext};
 use http_client::{FakeHttpClient, Response};
-use language::{BinaryStatus, LanguageConfig, LanguageMatcher, LanguageRegistry};
+use language::{BinaryStatus, LanguageMatcher, LanguageRegistry};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
@@ -206,14 +206,11 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 ExtensionIndexLanguageEntry {
                     extension: "zed-ruby".into(),
                     path: "languages/erb".into(),
-                    config: LanguageConfig {
-                        grammar: Some("embedded_template".into()),
-                        hidden: false,
-                        matcher: LanguageMatcher {
-                            path_suffixes: vec!["erb".into()],
-                            first_line_pattern: None,
-                        },
-                        ..Default::default()
+                    grammar: Some("embedded_template".into()),
+                    hidden: false,
+                    matcher: LanguageMatcher {
+                        path_suffixes: vec!["erb".into()],
+                        first_line_pattern: None,
                     },
                 },
             ),
@@ -222,14 +219,11 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 ExtensionIndexLanguageEntry {
                     extension: "zed-ruby".into(),
                     path: "languages/ruby".into(),
-                    config: LanguageConfig {
-                        grammar: Some("ruby".into()),
-                        hidden: false,
-                        matcher: LanguageMatcher {
-                            path_suffixes: vec!["rb".into()],
-                            first_line_pattern: None,
-                        },
-                        ..Default::default()
+                    grammar: Some("ruby".into()),
+                    hidden: false,
+                    matcher: LanguageMatcher {
+                        path_suffixes: vec!["rb".into()],
+                        first_line_pattern: None,
                     },
                 },
             ),
@@ -301,18 +295,9 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             index.languages.iter().zip(expected_index.languages.iter())
         {
             assert_eq!(actual_key, expected_key);
-            assert_eq!(
-                actual_language.config.grammar,
-                expected_language.config.grammar
-            );
-            assert_eq!(
-                actual_language.config.matcher,
-                expected_language.config.matcher
-            );
-            assert_eq!(
-                actual_language.config.hidden,
-                expected_language.config.hidden
-            );
+            assert_eq!(actual_language.grammar, expected_language.grammar);
+            assert_eq!(actual_language.matcher, expected_language.matcher);
+            assert_eq!(actual_language.hidden, expected_language.hidden);
         }
         assert_eq!(index.themes, expected_index.themes);
 
@@ -405,18 +390,9 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             index.languages.iter().zip(expected_index.languages.iter())
         {
             assert_eq!(actual_key, expected_key);
-            assert_eq!(
-                actual_language.config.grammar,
-                expected_language.config.grammar
-            );
-            assert_eq!(
-                actual_language.config.matcher,
-                expected_language.config.matcher
-            );
-            assert_eq!(
-                actual_language.config.hidden,
-                expected_language.config.hidden
-            );
+            assert_eq!(actual_language.grammar, expected_language.grammar);
+            assert_eq!(actual_language.matcher, expected_language.matcher);
+            assert_eq!(actual_language.hidden, expected_language.hidden);
         }
 
         assert_eq!(index.extensions, expected_index.extensions);
@@ -470,18 +446,9 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             .zip(expected_index.languages.iter())
         {
             assert_eq!(actual_key, expected_key);
-            assert_eq!(
-                actual_language.config.grammar,
-                expected_language.config.grammar
-            );
-            assert_eq!(
-                actual_language.config.matcher,
-                expected_language.config.matcher
-            );
-            assert_eq!(
-                actual_language.config.hidden,
-                expected_language.config.hidden
-            );
+            assert_eq!(actual_language.grammar, expected_language.grammar);
+            assert_eq!(actual_language.matcher, expected_language.matcher);
+            assert_eq!(actual_language.hidden, expected_language.hidden);
         }
 
         assert_eq!(
@@ -534,18 +501,9 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             .zip(expected_index.languages.iter())
         {
             assert_eq!(actual_key, expected_key);
-            assert_eq!(
-                actual_language.config.grammar,
-                expected_language.config.grammar
-            );
-            assert_eq!(
-                actual_language.config.matcher,
-                expected_language.config.matcher
-            );
-            assert_eq!(
-                actual_language.config.hidden,
-                expected_language.config.hidden
-            );
+            assert_eq!(actual_language.grammar, expected_language.grammar);
+            assert_eq!(actual_language.matcher, expected_language.matcher);
+            assert_eq!(actual_language.hidden, expected_language.hidden);
         }
 
         assert_eq!(language_registry.language_names(), ["Plain Text"]);

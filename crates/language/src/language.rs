@@ -666,7 +666,7 @@ pub struct CodeLabel {
     pub filter_range: Range<usize>,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, Serialize, Debug)]
+#[derive(Clone, Deserialize, JsonSchema)]
 pub struct LanguageConfig {
     /// Human-readable name of the language.
     pub name: LanguageName,
@@ -681,6 +681,10 @@ pub struct LanguageConfig {
     #[serde(default)]
     #[schemars(schema_with = "bracket_pair_config_json_schema")]
     pub brackets: BracketPairConfig,
+    /// If set to true, indicates the language uses significant whitespace/indentation
+    /// for syntax structure (like Python) rather than brackets/braces for code blocks.
+    #[serde(default)]
+    pub significant_indentation: bool,
     /// If set to true, auto indentation uses last non empty line to determine
     /// the indentation level for a new line.
     #[serde(default = "auto_indent_using_last_non_empty_line_default")]
@@ -690,20 +694,12 @@ pub struct LanguageConfig {
     pub auto_indent_on_paste: Option<bool>,
     /// A regex that is used to determine whether the indentation level should be
     /// increased in the following line.
-    #[serde(
-        default,
-        deserialize_with = "deserialize_regex",
-        serialize_with = "serialize_regex"
-    )]
+    #[serde(default, deserialize_with = "deserialize_regex")]
     #[schemars(schema_with = "regex_json_schema")]
     pub increase_indent_pattern: Option<Regex>,
     /// A regex that is used to determine whether the indentation level should be
     /// decreased in the following line.
-    #[serde(
-        default,
-        deserialize_with = "deserialize_regex",
-        serialize_with = "serialize_regex"
-    )]
+    #[serde(default, deserialize_with = "deserialize_regex")]
     #[schemars(schema_with = "regex_json_schema")]
     pub decrease_indent_pattern: Option<Regex>,
     /// A list of characters that trigger the automatic insertion of a closing
@@ -758,7 +754,11 @@ pub struct LanguageConfig {
     pub completion_query_characters: HashSet<char>,
     /// A list of preferred debuggers for this language.
     #[serde(default)]
-    pub debuggers: IndexSet<String>,
+    pub debuggers: IndexSet<SharedString>,
+    /// Whether to treat documentation comment of this language differently by
+    /// auto adding prefix on new line, adjusting the indenting , etc.
+    #[serde(default)]
+    pub documentation: Option<DocumentationConfig>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -777,7 +777,7 @@ pub struct LanguageMatcher {
 }
 
 /// The configuration for JSX tag auto-closing.
-#[derive(Clone, Deserialize, JsonSchema, Serialize, Debug)]
+#[derive(Clone, Deserialize, JsonSchema)]
 pub struct JsxTagAutoCloseConfig {
     /// The name of the node for a opening tag
     pub open_tag_node_name: String,
@@ -809,6 +809,19 @@ pub struct JsxTagAutoCloseConfig {
     pub erroneous_close_tag_name_node_name: Option<String>,
 }
 
+/// The configuration for documentation block for this language.
+#[derive(Clone, Deserialize, JsonSchema)]
+pub struct DocumentationConfig {
+    /// A start tag of documentation block.
+    pub start: Arc<str>,
+    /// A end tag of documentation block.
+    pub end: Arc<str>,
+    /// A character to add as a prefix when a new line is added to a documentation block.
+    pub prefix: Arc<str>,
+    /// A indent to add for prefix and end line upon new line.
+    pub tab_size: NonZeroU32,
+}
+
 /// Represents a language for the given range. Some languages (e.g. HTML)
 /// interleave several languages together, thus a single buffer might actually contain
 /// several nested scopes.
@@ -818,7 +831,7 @@ pub struct LanguageScope {
     override_id: Option<u32>,
 }
 
-#[derive(Clone, Deserialize, Default, Debug, JsonSchema, Serialize)]
+#[derive(Clone, Deserialize, Default, Debug, JsonSchema)]
 pub struct LanguageConfigOverride {
     #[serde(default)]
     pub line_comments: Override<Vec<Arc<str>>>,
@@ -832,6 +845,8 @@ pub struct LanguageConfigOverride {
     pub completion_query_characters: Override<HashSet<char>>,
     #[serde(default)]
     pub opt_into_language_servers: Vec<LanguageServerName>,
+    #[serde(default)]
+    pub prefer_label_for_snippet: Option<bool>,
 }
 
 #[derive(Clone, Deserialize, Debug, Serialize, JsonSchema)]
@@ -884,6 +899,8 @@ impl Default for LanguageConfig {
             jsx_tag_auto_close: None,
             completion_query_characters: Default::default(),
             debuggers: Default::default(),
+            significant_indentation: Default::default(),
+            documentation: None,
         }
     }
 }
@@ -944,7 +961,7 @@ pub struct FakeLspAdapter {
 ///
 /// This struct includes settings for defining which pairs of characters are considered brackets and
 /// also specifies any language-specific scopes where these pairs should be ignored for bracket matching purposes.
-#[derive(Clone, Debug, Default, JsonSchema, Serialize)]
+#[derive(Clone, Debug, Default, JsonSchema)]
 pub struct BracketPairConfig {
     /// A list of character pairs that should be treated as brackets in the context of a given language.
     pub pairs: Vec<BracketPair>,
@@ -994,7 +1011,7 @@ impl<'de> Deserialize<'de> for BracketPairConfig {
 
 /// Describes a single bracket pair and how an editor should react to e.g. inserting
 /// an opening bracket or to a newline character insertion in between `start` and `end` characters.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, JsonSchema, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, JsonSchema)]
 pub struct BracketPair {
     /// Starting substring for a bracket.
     pub start: String,
@@ -1044,7 +1061,6 @@ pub struct Grammar {
     pub(crate) brackets_config: Option<BracketsConfig>,
     pub(crate) redactions_config: Option<RedactionConfig>,
     pub(crate) runnable_config: Option<RunnableConfig>,
-    pub(crate) debug_variables_config: Option<DebugVariablesConfig>,
     pub(crate) indents_config: Option<IndentConfig>,
     pub outline_config: Option<OutlineConfig>,
     pub text_object_config: Option<TextObjectConfig>,
@@ -1145,18 +1161,6 @@ struct RunnableConfig {
     pub extra_captures: Vec<RunnableCapture>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-enum DebugVariableCapture {
-    Named(SharedString),
-    Variable,
-}
-
-#[derive(Debug)]
-struct DebugVariablesConfig {
-    pub query: Query,
-    pub captures: Vec<DebugVariableCapture>,
-}
-
 struct OverrideConfig {
     query: Query,
     values: HashMap<u32, OverrideEntry>,
@@ -1217,7 +1221,6 @@ impl Language {
                     override_config: None,
                     redactions_config: None,
                     runnable_config: None,
-                    debug_variables_config: None,
                     error_query: Query::new(&ts_language, "(ERROR) @error").ok(),
                     ts_language,
                     highlight_map: Default::default(),
@@ -1288,11 +1291,6 @@ impl Language {
             self = self
                 .with_text_object_query(query.as_ref())
                 .context("Error loading textobject query")?;
-        }
-        if let Some(query) = queries.debug_variables {
-            self = self
-                .with_debug_variables_query(query.as_ref())
-                .context("Error loading debug variable query")?;
         }
         Ok(self)
     }
@@ -1386,25 +1384,6 @@ impl Language {
             query,
             text_objects_by_capture_ix,
         });
-        Ok(self)
-    }
-
-    pub fn with_debug_variables_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self
-            .grammar_mut()
-            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
-        let query = Query::new(&grammar.ts_language, source)?;
-
-        let mut captures = Vec::new();
-        for name in query.capture_names() {
-            captures.push(if *name == "debug_variable" {
-                DebugVariableCapture::Variable
-            } else {
-                DebugVariableCapture::Named(name.to_string().into())
-            });
-        }
-        grammar.debug_variables_config = Some(DebugVariablesConfig { query, captures });
-
         Ok(self)
     }
 
@@ -1829,6 +1808,26 @@ impl LanguageScope {
         )
     }
 
+    /// Returns whether to prefer snippet `label` over `new_text` to replace text when
+    /// completion is accepted.
+    ///
+    /// In cases like when cursor is in string or renaming existing function,
+    /// you don't want to expand function signature instead just want function name
+    /// to replace existing one.
+    pub fn prefers_label_for_snippet_in_completion(&self) -> bool {
+        self.config_override()
+            .and_then(|o| o.prefer_label_for_snippet)
+            .unwrap_or(false)
+    }
+
+    /// Returns config to documentation block for this language.
+    ///
+    /// Used for documentation styles that require a leading character on each line,
+    /// such as the asterisk in JSDoc, Javadoc, etc.
+    pub fn documentation(&self) -> Option<&DocumentationConfig> {
+        self.language.config.documentation.as_ref()
+    }
+
     /// Returns a list of bracket pairs for a given language with an additional
     /// piece of information about whether the particular bracket pair is currently active for a given language.
     pub fn brackets(&self) -> impl Iterator<Item = (&BracketPair, bool)> {
@@ -1860,9 +1859,9 @@ impl LanguageScope {
     pub fn language_allowed(&self, name: &LanguageServerName) -> bool {
         let config = &self.language.config;
         let opt_in_servers = &config.scope_opt_in_language_servers;
-        if opt_in_servers.iter().any(|o| *o == *name) {
+        if opt_in_servers.contains(name) {
             if let Some(over) = self.config_override() {
-                over.opt_into_language_servers.iter().any(|o| *o == *name)
+                over.opt_into_language_servers.contains(name)
             } else {
                 false
             }

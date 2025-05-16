@@ -214,25 +214,9 @@
     }
   },
   {
-    "context": "AssistantPanel",
-    "bindings": {
-      "ctrl-k c": "assistant::CopyCode",
-      "ctrl-shift-e": "project_panel::ToggleFocus",
-      "ctrl-g": "search::SelectNextMatch",
-      "ctrl-shift-g": "search::SelectPreviousMatch",
-      "ctrl-alt-/": "agent::ToggleModelSelector",
-      "ctrl-k h": "assistant::DeployHistory",
-      "ctrl-k l": "agent::OpenRulesLibrary",
-      "new": "assistant::NewChat",
-      "ctrl-t": "assistant::NewChat",
-      "ctrl-n": "assistant::NewChat"
-    }
-  },
-  {
     "context": "ContextEditor > Editor",
     "bindings": {
       "ctrl-enter": "assistant::Assist",
-      "ctrl-shift-enter": "assistant::Edit",
       "ctrl-s": "workspace::Save",
       "save": "workspace::Save",
       "ctrl->": "assistant::QuoteSelection",
@@ -260,7 +244,7 @@
       "ctrl-shift-a": "agent::ToggleContextPicker",
       "ctrl-shift-o": "agent::ToggleNavigationMenu",
       "ctrl-shift-i": "agent::ToggleOptionsMenu",
-      "shift-escape": "agent::ExpandMessageEditor",
+      "shift-alt-escape": "agent::ExpandMessageEditor",
       "ctrl-alt-e": "agent::RemoveAllContext",
       "ctrl-shift-e": "project_panel::ToggleFocus"
     }
@@ -713,8 +697,8 @@
   {
     "context": "PromptEditor",
     "bindings": {
-      "ctrl-[": "assistant::CyclePreviousInlineAssist",
-      "ctrl-]": "assistant::CycleNextInlineAssist",
+      "ctrl-[": "agent::CyclePreviousInlineAssist",
+      "ctrl-]": "agent::CycleNextInlineAssist",
       "ctrl-alt-e": "agent::RemoveAllContext"
     }
   },
@@ -782,7 +766,7 @@
       "alt-ctrl-r": "project_panel::RevealInFileManager",
       "ctrl-shift-enter": "project_panel::OpenWithSystem",
       "shift-find": "project_panel::NewSearchInDirectory",
-      "ctrl-shift-f": "project_panel::NewSearchInDirectory",
+      "ctrl-alt-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrevious",
       "escape": "menu::Cancel"
@@ -950,6 +934,7 @@
       "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"],
       "ctrl-o": ["terminal::SendKeystroke", "ctrl-o"],
       "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
+      "ctrl-backspace": ["terminal::SendKeystroke", "ctrl-w"],
       "ctrl-shift-a": "editor::SelectAll",
       "find": "buffer_search::Deploy",
       "ctrl-shift-f": "buffer_search::Deploy",
@@ -967,7 +952,10 @@
       "shift-down": "terminal::ScrollLineDown",
       "shift-home": "terminal::ScrollToTop",
       "shift-end": "terminal::ScrollToBottom",
-      "ctrl-shift-space": "terminal::ToggleViMode"
+      "ctrl-shift-space": "terminal::ToggleViMode",
+      "ctrl-shift-r": "terminal::RerunTask",
+      "ctrl-alt-r": "terminal::RerunTask",
+      "alt-t": "terminal::RerunTask"
     }
   },
   {
@@ -989,6 +977,13 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-r": "diagnostics::ToggleDiagnosticsRefresh"
+    }
+  },
+  {
+    "context": "DebugConsole > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "menu::Confirm"
     }
   }
 ]

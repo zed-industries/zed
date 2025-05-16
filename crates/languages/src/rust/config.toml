@@ -16,6 +16,7 @@ brackets = [
 ]
 collapsed_placeholder = " /* ... */ "
 debuggers = ["CodeLLDB", "GDB"]
+documentation = { start = "/*", end = "*/", prefix = "* ", tab_size = 1 }
 scope_opt_in_language_servers = ["tailwindcss-language-server"]
 
 [overrides.string]

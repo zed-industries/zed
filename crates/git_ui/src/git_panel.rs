@@ -1051,8 +1051,8 @@ impl GitPanel {
                     repo.checkout_files(
                         "HEAD",
                         entries
-                            .iter()
-                            .map(|entries| entries.repo_path.clone())
+                            .into_iter()
+                            .map(|entries| entries.repo_path)
                             .collect(),
                         cx,
                     )
@@ -1774,6 +1774,7 @@ impl GitPanel {
                         cache: false,
                     }],
                     tools: Vec::new(),
+                    tool_choice: None,
                     stop: Vec::new(),
                     temperature,
                 };
@@ -2582,19 +2583,18 @@ impl GitPanel {
         } else {
             workspace.update(cx, |workspace, cx| {
                 let workspace_weak = cx.weak_entity();
-                let toast =
-                    StatusToast::new(format!("git {} failed", action.clone()), cx, |this, _cx| {
-                        this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
-                            .action("View Log", move |window, cx| {
-                                let message = message.clone();
-                                let action = action.clone();
-                                workspace_weak
-                                    .update(cx, move |workspace, cx| {
-                                        Self::open_output(action, workspace, &message, window, cx)
-                                    })
-                                    .ok();
-                            })
-                    });
+                let toast = StatusToast::new(format!("git {} failed", action), cx, |this, _cx| {
+                    this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
+                        .action("View Log", move |window, cx| {
+                            let message = message.clone();
+                            let action = action.clone();
+                            workspace_weak
+                                .update(cx, move |workspace, cx| {
+                                    Self::open_output(action, workspace, &message, window, cx)
+                                })
+                                .ok();
+                        })
+                });
                 workspace.toggle_status_toast(toast, cx)
             });
         }
@@ -2764,9 +2764,9 @@ impl GitPanel {
         let potential_co_authors = self.potential_co_authors(cx);
 
         let (tooltip_label, icon) = if self.add_coauthors {
-            ("Add co-authored-by", IconName::UserCheck)
-        } else {
             ("Remove co-authored-by", IconName::Person)
+        } else {
+            ("Add co-authored-by", IconName::UserCheck)
         };
 
         if potential_co_authors.is_empty() {
