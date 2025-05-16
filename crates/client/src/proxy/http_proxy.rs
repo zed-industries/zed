@@ -2,7 +2,7 @@ use anyhow::Result;
 use base64::Engine;
 use httparse::{EMPTY_HEADER, Response};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufStream},
     net::TcpStream,
 };
 use url::Url;
@@ -35,8 +35,19 @@ pub(crate) async fn connect_with_http_proxy(
         Some(HttpProxyAuthorization { username, password }) => {
             connect_with_auth(stream, rpc_host, username, password).await
         }
-        None => Err(anyhow::anyhow!("Not implemented")),
+        None => connect(stream, rpc_host).await,
     }
+}
+
+async fn connect(stream: TcpStream, target: (&str, u16)) -> Result<Box<dyn AsyncReadWrite>> {
+    let mut stream = BufStream::new(stream);
+    let mut request = make_request(target);
+    request.push_str("\r\n");
+    stream.write_all(request.as_bytes()).await?;
+    stream.flush().await?;
+
+    check_response(&mut stream).await?;
+    Ok(Box::new(stream))
 }
 
 async fn connect_with_auth(
@@ -45,6 +56,7 @@ async fn connect_with_auth(
     username: &str,
     password: &str,
 ) -> Result<Box<dyn AsyncReadWrite>> {
+    let mut stream = BufStream::new(stream);
     let request = make_request_with_auth(target, username, password);
     stream.write_all(request.as_bytes()).await?;
     stream.flush().await?;
@@ -72,7 +84,7 @@ fn make_request(target: (&str, u16)) -> String {
     )
 }
 
-async fn check_response(stream: &mut TcpStream) -> Result<()> {
+async fn check_response(stream: &mut BufStream<TcpStream>) -> Result<()> {
     let response_string = get_response(stream).await?;
     parse_and_check(&response_string)
 }
@@ -80,10 +92,10 @@ async fn check_response(stream: &mut TcpStream) -> Result<()> {
 const MAXIMUM_RESPONSE_HEADER_LENGTH: usize = 4096;
 const MAXIMUM_RESPONSE_HEADERS: usize = 16;
 
-async fn get_response(stream: &mut TcpStream) -> Result<String> {
+async fn get_response(stream: &mut BufStream<TcpStream>) -> Result<String> {
     let mut response = String::new();
     loop {
-        if stream.read_to_string(&mut response).await? == 0 {
+        if stream.read_line(&mut response).await? == 0 {
             return Err(anyhow::anyhow!("End of stream"));
         }
 
