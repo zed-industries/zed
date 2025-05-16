@@ -261,7 +261,7 @@ fn get_directory_env_impl(
         if let Some(shell_env) = shell_env {
             shell_env
         } else {
-            std::env::vars().collect()
+            environment::inherited()
         }
     })
 }

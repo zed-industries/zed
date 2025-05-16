@@ -3,14 +3,14 @@ use collections::HashMap;
 use std::path::Path;
 use util::ResultExt;
 
-// Returns the environment that Zed was launched with.
-// Prefer `in_home_dir` outside of a project context, or `in_dir` inside of a project context,
-// as these will work more like running commands in a shell.
+/// The environment that Zed was launched with.
+/// Prefer `in_home_dir` outside of a project context, or `in_dir` inside of a project context,
+/// as these will be more like the user's shell environment.
 pub fn inherited() -> HashMap<String, String> {
     std::env::vars().collect()
 }
 
-// The environment you get if you run a shell in the user's home directory.
+/// The environment read from launching a login shell in the user's home directory.
 pub async fn in_home_dir() -> HashMap<String, String> {
     static HOME_ENV: tokio::sync::OnceCell<HashMap<String, String>> =
         tokio::sync::OnceCell::const_new();
@@ -40,6 +40,7 @@ pub async fn in_dir(_dir: &Path, _load_direnv: bool) -> Result<HashMap<String, S
 }
 
 #[cfg(not(any(target_os = "windows", test, feature = "test-support")))]
+/// The environment read from launching a login shell in a specific directory.
 pub async fn in_dir(dir: &Path, load_direnv: bool) -> Result<HashMap<String, String>> {
     use anyhow::Context;
     use std::path::PathBuf;

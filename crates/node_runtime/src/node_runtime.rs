@@ -73,8 +73,7 @@ impl NodeRuntime {
             return Ok(instance.boxed_clone());
         }
 
-        let home = paths::home_dir();
-        let env = environment::in_dir(home, false).await?;
+        let env = environment::in_home_dir().await;
 
         if let Some((node, npm)) = options.use_paths.as_ref() {
             let instance = SystemNodeRuntime::new(env, node.clone(), npm.clone()).await?;

@@ -7,6 +7,8 @@ use smol::process::windows::CommandExt;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000_u32;
 
+// Create a new command to run in a given environment
+// (typically from the environment crate)
 pub fn new_std_command(
     program: impl AsRef<OsStr>,
     env: &HashMap<String, String>,
@@ -18,6 +20,8 @@ pub fn new_std_command(
     command
 }
 
+// Create a new command to run in a given environment
+// (typically from the environment crate)
 pub fn new_smol_command(
     program: impl AsRef<OsStr>,
     env: &HashMap<String, String>,
