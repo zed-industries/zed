@@ -25,6 +25,7 @@ collections.workspace = true
 component.workspace = true
 derive_more.workspace = true
 editor.workspace = true
+environment.workspace = true
 feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true

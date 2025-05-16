@@ -120,7 +120,8 @@ impl super::LspAdapter for GoLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let go = delegate.which("go".as_ref()).await.unwrap_or("go".into());
-        let go_version_output = util::command::new_smol_command(&go)
+        let env = delegate.shell_env().await;
+        let go_version_output = util::command::new_smol_command(&go, &env)
             .args(["version"])
             .output()
             .await
@@ -154,7 +155,7 @@ impl super::LspAdapter for GoLspAdapter {
 
         let gobin_dir = container_dir.join("gobin");
         fs::create_dir_all(&gobin_dir).await?;
-        let install_output = util::command::new_smol_command(go)
+        let install_output = util::command::new_smol_command(go, &env)
             .env("GO111MODULE", "on")
             .env("GOBIN", &gobin_dir)
             .args(["install", "golang.org/x/tools/gopls@latest"])
@@ -174,7 +175,7 @@ impl super::LspAdapter for GoLspAdapter {
         }
 
         let installed_binary_path = gobin_dir.join(BINARY);
-        let version_output = util::command::new_smol_command(&installed_binary_path)
+        let version_output = util::command::new_smol_command(&installed_binary_path, &env)
             .arg("version")
             .output()
             .await
@@ -443,7 +444,7 @@ impl ContextProvider for GoContextProvider {
         &self,
         variables: &TaskVariables,
         location: &Location,
-        _: Option<HashMap<String, String>>,
+        _: HashMap<String, String>,
         _: Arc<dyn LanguageToolchainStore>,
         cx: &mut gpui::App,
     ) -> Task<Result<TaskVariables>> {

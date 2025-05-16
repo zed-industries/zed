@@ -364,7 +364,7 @@ pub async fn download_adapter_from_github(
             futures::io::copy(response.body_mut(), &mut file).await?;
 
             // we cannot check the status as some adapter include files with names that trigger `Illegal byte sequence`
-            util::command::new_smol_command("unzip")
+            util::command::new_smol_command("unzip", &environment::inherited())
                 .arg(&zip_path)
                 .arg("-d")
                 .arg(&version_path)

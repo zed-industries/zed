@@ -7,6 +7,7 @@ pub mod fs_watcher;
 use anyhow::{Context as _, Result, anyhow};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
+use collections::HashMap;
 use gpui::App;
 use gpui::BackgroundExecutor;
 use gpui::Global;
@@ -132,8 +133,17 @@ pub trait Fs: Send + Sync {
     );
 
     fn home_dir(&self) -> Option<PathBuf>;
-    fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>>;
-    fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String) -> Result<()>;
+    fn open_repo(
+        &self,
+        abs_dot_git: &Path,
+        project_env: HashMap<String, String>,
+    ) -> Option<Arc<dyn GitRepository>>;
+    fn git_init(
+        &self,
+        abs_work_directory: &Path,
+        fallback_branch_name: String,
+        project_env: &HashMap<String, String>,
+    ) -> Result<()>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> Result<bool>;
 
@@ -788,16 +798,26 @@ impl Fs for RealFs {
         )
     }
 
-    fn open_repo(&self, dotgit_path: &Path) -> Option<Arc<dyn GitRepository>> {
+    fn open_repo(
+        &self,
+        dotgit_path: &Path,
+        project_env: HashMap<String, String>,
+    ) -> Option<Arc<dyn GitRepository>> {
         Some(Arc::new(RealGitRepository::new(
             dotgit_path,
             self.git_binary_path.clone(),
+            project_env,
             self.executor.clone(),
         )?))
     }
 
-    fn git_init(&self, abs_work_directory_path: &Path, fallback_branch_name: String) -> Result<()> {
-        let config = new_std_command("git")
+    fn git_init(
+        &self,
+        abs_work_directory_path: &Path,
+        fallback_branch_name: String,
+        project_env: &HashMap<String, String>,
+    ) -> Result<()> {
+        let config = new_std_command("git", project_env)
             .current_dir(abs_work_directory_path)
             .args(&["config", "--global", "--get", "init.defaultBranch"])
             .output()?;
@@ -810,7 +830,7 @@ impl Fs for RealFs {
             branch_name = Cow::Borrowed(fallback_branch_name.as_str());
         }
 
-        new_std_command("git")
+        new_std_command("git", project_env)
             .current_dir(abs_work_directory_path)
             .args(&["init", "-b"])
             .arg(branch_name.trim())
@@ -2292,7 +2312,11 @@ impl Fs for FakeFs {
         )
     }
 
-    fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>> {
+    fn open_repo(
+        &self,
+        abs_dot_git: &Path,
+        _: HashMap<String, String>,
+    ) -> Option<Arc<dyn GitRepository>> {
         use util::ResultExt as _;
 
         self.with_git_state_and_paths(
@@ -2315,6 +2339,7 @@ impl Fs for FakeFs {
         &self,
         abs_work_directory_path: &Path,
         _fallback_branch_name: String,
+        _project_path: &HashMap<String, String>,
     ) -> Result<()> {
         smol::block_on(self.create_dir(&abs_work_directory_path.join(".git")))
     }

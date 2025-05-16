@@ -43,6 +43,7 @@ members = [
     "crates/deepseek",
     "crates/diagnostics",
     "crates/docs_preprocessor",
+    "crates/environment",
     "crates/editor",
     "crates/eval",
     "crates/extension",
@@ -250,6 +251,7 @@ debugger_ui = { path = "crates/debugger_ui" }
 deepseek = { path = "crates/deepseek" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
+environment = { path = "crates/environment" }
 extension = { path = "crates/extension" }
 extension_host = { path = "crates/extension_host" }
 extensions_ui = { path = "crates/extensions_ui" }

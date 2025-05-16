@@ -21,7 +21,6 @@ pub mod worktree_store;
 #[cfg(test)]
 mod project_tests;
 
-mod direnv;
 mod environment;
 use buffer_diff::BufferDiff;
 use context_server_store::ContextServerStore;
@@ -1654,7 +1653,7 @@ impl Project {
         buffer: &Entity<Buffer>,
         worktree_store: &Entity<WorktreeStore>,
         cx: &'a mut App,
-    ) -> Shared<Task<Option<HashMap<String, String>>>> {
+    ) -> Shared<Task<HashMap<String, String>>> {
         self.environment.update(cx, |environment, cx| {
             environment.get_buffer_environment(&buffer, &worktree_store, cx)
         })
@@ -1664,7 +1663,7 @@ impl Project {
         &self,
         abs_path: Arc<Path>,
         cx: &mut App,
-    ) -> Shared<Task<Option<HashMap<String, String>>>> {
+    ) -> Shared<Task<HashMap<String, String>>> {
         self.environment.update(cx, |environment, cx| {
             environment.get_directory_environment(abs_path, cx)
         })
@@ -4873,11 +4872,11 @@ impl Project {
         &self,
         path: Arc<Path>,
         fallback_branch_name: String,
-        cx: &App,
+        cx: &mut App,
     ) -> Task<Result<()>> {
-        self.git_store
-            .read(cx)
-            .git_init(path, fallback_branch_name, cx)
+        self.git_store.update(cx, |git_store, cx| {
+            git_store.git_init(path, fallback_branch_name, cx)
+        })
     }
 
     pub fn buffer_store(&self) -> &Entity<BufferStore> {

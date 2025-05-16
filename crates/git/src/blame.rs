@@ -33,11 +33,12 @@ impl Blame {
     pub async fn for_path(
         git_binary: &Path,
         working_directory: &Path,
+        env: &HashMap<String, String>,
         path: &Path,
         content: &Rope,
         remote_url: Option<String>,
     ) -> Result<Self> {
-        let output = run_git_blame(git_binary, working_directory, path, content).await?;
+        let output = run_git_blame(git_binary, working_directory, env, path, content).await?;
         let mut entries = parse_git_blame(&output)?;
         entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start));
 
@@ -48,7 +49,7 @@ impl Blame {
         }
 
         let shas = unique_shas.into_iter().collect::<Vec<_>>();
-        let messages = get_messages(working_directory, &shas)
+        let messages = get_messages(working_directory, env, &shas)
             .await
             .context("failed to get commit messages")?;
 
@@ -66,10 +67,11 @@ const GIT_BLAME_NO_PATH: &str = "fatal: no such path";
 async fn run_git_blame(
     git_binary: &Path,
     working_directory: &Path,
+    env: &HashMap<String, String>,
     path: &Path,
     contents: &Rope,
 ) -> Result<String> {
-    let mut child = util::command::new_smol_command(git_binary)
+    let mut child = util::command::new_smol_command(git_binary, env)
         .current_dir(working_directory)
         .arg("blame")
         .arg("--incremental")

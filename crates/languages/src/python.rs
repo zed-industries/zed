@@ -336,7 +336,7 @@ impl ContextProvider for PythonContextProvider {
         &self,
         variables: &task::TaskVariables,
         location: &project::Location,
-        _: Option<HashMap<String, String>>,
+        _: HashMap<String, String>,
         toolchains: Arc<dyn LanguageToolchainStore>,
         cx: &mut gpui::App,
     ) -> Task<Result<task::TaskVariables>> {
@@ -646,10 +646,9 @@ impl ToolchainLister for PythonToolchainProvider {
     async fn list(
         &self,
         worktree_root: PathBuf,
-        project_env: Option<HashMap<String, String>>,
+        project_env: HashMap<String, String>,
     ) -> ToolchainList {
-        let env = project_env.unwrap_or_default();
-        let environment = EnvironmentApi::from_env(&env);
+        let environment = EnvironmentApi::from_env(&project_env);
         let locators = pet::locators::create_locators(
             Arc::new(pet_conda::Conda::from(&environment)),
             Arc::new(pet_poetry::Poetry::from(&environment)),
@@ -860,9 +859,10 @@ impl PyLspAdapter {
             .await
             .ok_or_else(|| anyhow!("Could not get working directory for PyLSP"))?;
         let mut path = PathBuf::from(work_dir.as_ref());
+        let env = delegate.shell_env().await;
         path.push("pylsp-venv");
         if !path.exists() {
-            util::command::new_smol_command(python_path)
+            util::command::new_smol_command(python_path, &env)
                 .arg("-m")
                 .arg("venv")
                 .arg("pylsp-venv")
@@ -954,8 +954,9 @@ impl LspAdapter for PyLspAdapter {
     ) -> Result<LanguageServerBinary> {
         let venv = self.base_venv(delegate).await.map_err(|e| anyhow!(e))?;
         let pip_path = venv.join(BINARY_DIR).join("pip3");
+        let env = delegate.shell_env().await;
         ensure!(
-            util::command::new_smol_command(pip_path.as_path())
+            util::command::new_smol_command(pip_path.as_path(), &env)
                 .arg("install")
                 .arg("python-lsp-server")
                 .arg("-U")
@@ -966,7 +967,7 @@ impl LspAdapter for PyLspAdapter {
             "python-lsp-server installation failed"
         );
         ensure!(
-            util::command::new_smol_command(pip_path.as_path())
+            util::command::new_smol_command(pip_path.as_path(), &env)
                 .arg("install")
                 .arg("python-lsp-server[all]")
                 .arg("-U")
@@ -977,7 +978,7 @@ impl LspAdapter for PyLspAdapter {
             "python-lsp-server[all] installation failed"
         );
         ensure!(
-            util::command::new_smol_command(pip_path)
+            util::command::new_smol_command(pip_path, &env)
                 .arg("install")
                 .arg("pylsp-mypy")
                 .arg("-U")

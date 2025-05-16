@@ -22,6 +22,7 @@ anyhow.workspace = true
 askpass.workspace = true
 async-trait.workspace = true
 collections.workspace = true
+environment.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true

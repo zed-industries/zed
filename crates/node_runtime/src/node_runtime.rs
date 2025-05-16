@@ -4,7 +4,8 @@ use anyhow::{Context, Result, anyhow, bail};
 pub use archive::extract_zip;
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use futures::{AsyncReadExt, FutureExt as _, channel::oneshot, future::Shared};
+use collections::HashMap;
+use futures::AsyncReadExt;
 use http_client::{HttpClient, Url};
 use semver::Version;
 use serde::Deserialize;
@@ -12,15 +13,12 @@ use smol::io::BufReader;
 use smol::{fs, lock::Mutex};
 use std::{
     env::{self, consts},
-    ffi::OsString,
     io,
     path::{Path, PathBuf},
     process::{Output, Stdio},
     sync::Arc,
 };
 use util::ResultExt;
-
-const NODE_CA_CERTS_ENV_VAR: &str = "NODE_EXTRA_CA_CERTS";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct NodeBinaryOptions {
@@ -37,13 +35,11 @@ struct NodeRuntimeState {
     instance: Option<Box<dyn NodeRuntimeTrait>>,
     last_options: Option<NodeBinaryOptions>,
     options: async_watch::Receiver<Option<NodeBinaryOptions>>,
-    shell_env_loaded: Shared<oneshot::Receiver<()>>,
 }
 
 impl NodeRuntime {
     pub fn new(
         http: Arc<dyn HttpClient>,
-        shell_env_loaded: Option<oneshot::Receiver<()>>,
         options: async_watch::Receiver<Option<NodeBinaryOptions>>,
     ) -> Self {
         NodeRuntime(Arc::new(Mutex::new(NodeRuntimeState {
@@ -51,7 +47,6 @@ impl NodeRuntime {
             instance: None,
             last_options: None,
             options,
-            shell_env_loaded: shell_env_loaded.unwrap_or(oneshot::channel().1).shared(),
         })))
     }
 
@@ -61,7 +56,6 @@ impl NodeRuntime {
             instance: None,
             last_options: None,
             options: async_watch::channel(Some(NodeBinaryOptions::default())).1,
-            shell_env_loaded: oneshot::channel().1.shared(),
         })))
     }
 
@@ -79,22 +73,24 @@ impl NodeRuntime {
             return Ok(instance.boxed_clone());
         }
 
+        let home = paths::home_dir();
+        let env = environment::in_dir(home, false).await?;
+
         if let Some((node, npm)) = options.use_paths.as_ref() {
-            let instance = SystemNodeRuntime::new(node.clone(), npm.clone()).await?;
+            let instance = SystemNodeRuntime::new(env, node.clone(), npm.clone()).await?;
             state.instance = Some(instance.boxed_clone());
             return Ok(instance);
         }
 
         if options.allow_path_lookup {
-            state.shell_env_loaded.clone().await.ok();
-            if let Some(instance) = SystemNodeRuntime::detect().await {
+            if let Some(instance) = SystemNodeRuntime::detect(env.clone()).await {
                 state.instance = Some(instance.boxed_clone());
                 return Ok(instance);
             }
         }
 
         let instance = if options.allow_binary_download {
-            ManagedNodeRuntime::install_if_needed(&state.http).await?
+            ManagedNodeRuntime::install_if_needed(env, &state.http).await?
         } else {
             Box::new(UnavailableNodeRuntime)
         };
@@ -266,6 +262,7 @@ trait NodeRuntimeTrait: Send + Sync {
 #[derive(Clone)]
 struct ManagedNodeRuntime {
     installation_path: PathBuf,
+    clean_env: HashMap<String, String>,
 }
 
 impl ManagedNodeRuntime {
@@ -281,7 +278,10 @@ impl ManagedNodeRuntime {
     #[cfg(windows)]
     const NPM_PATH: &str = "node_modules/npm/bin/npm-cli.js";
 
-    async fn install_if_needed(http: &Arc<dyn HttpClient>) -> Result<Box<dyn NodeRuntimeTrait>> {
+    async fn install_if_needed(
+        env: HashMap<String, String>,
+        http: &Arc<dyn HttpClient>,
+    ) -> Result<Box<dyn NodeRuntimeTrait>> {
         log::info!("Node runtime install_if_needed");
 
         let os = match consts::OS {
@@ -303,11 +303,20 @@ impl ManagedNodeRuntime {
         let node_dir = node_containing_dir.join(folder_name);
         let node_binary = node_dir.join(Self::NODE_PATH);
         let npm_file = node_dir.join(Self::NPM_PATH);
-        let node_ca_certs = env::var(NODE_CA_CERTS_ENV_VAR).unwrap_or_else(|_| String::new());
 
-        let result = util::command::new_smol_command(&node_binary)
-            .env_clear()
-            .env(NODE_CA_CERTS_ENV_VAR, node_ca_certs)
+        let mut clean_env = HashMap::default();
+        clean_env.insert(
+            "PATH".to_string(),
+            path_with_node_binary_prepended(
+                env.get("PATH").cloned().unwrap_or_default(),
+                &node_binary,
+            ),
+        );
+        if let Ok(node_ca_certs) = env::var("NODE_EXTRA_CA_CERTS") {
+            clean_env.insert("NODE_EXTRA_CA_CERTS".to_string(), node_ca_certs);
+        }
+
+        let result = util::command::new_smol_command(&node_binary, &env)
             .arg(npm_file)
             .arg("--version")
             .stdin(Stdio::null())
@@ -363,30 +372,24 @@ impl ManagedNodeRuntime {
         _ = fs::write(node_dir.join("blank_global_npmrc"), []).await;
 
         anyhow::Ok(Box::new(ManagedNodeRuntime {
+            clean_env,
             installation_path: node_dir,
         }))
     }
 }
 
-fn path_with_node_binary_prepended(node_binary: &Path) -> Option<OsString> {
-    let existing_path = env::var_os("PATH");
-    let node_bin_dir = node_binary.parent().map(|dir| dir.as_os_str());
-    match (existing_path, node_bin_dir) {
-        (Some(existing_path), Some(node_bin_dir)) => {
-            if let Ok(joined) = env::join_paths(
-                [PathBuf::from(node_bin_dir)]
-                    .into_iter()
-                    .chain(env::split_paths(&existing_path)),
-            ) {
-                Some(joined)
-            } else {
-                Some(existing_path)
-            }
-        }
-        (Some(existing_path), None) => Some(existing_path),
-        (None, Some(node_bin_dir)) => Some(node_bin_dir.to_owned()),
-        _ => None,
-    }
+fn path_with_node_binary_prepended(existing_path: String, node_binary: &Path) -> String {
+    let Some(node_bin_dir) = node_binary.parent().map(|dir| dir.as_os_str()) else {
+        return existing_path;
+    };
+
+    let mut existing = env::split_paths(&existing_path).collect::<Vec<_>>();
+    existing.insert(0, PathBuf::from(node_bin_dir));
+
+    let joined = env::join_paths(existing)
+        .ok()
+        .and_then(|e| e.to_str().map(|s| s.to_string()));
+    joined.unwrap_or(existing_path)
 }
 
 #[async_trait::async_trait]
@@ -409,7 +412,6 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
         let attempt = || async move {
             let node_binary = self.installation_path.join(Self::NODE_PATH);
             let npm_file = self.installation_path.join(Self::NPM_PATH);
-            let env_path = path_with_node_binary_prepended(&node_binary).unwrap_or_default();
 
             if smol::fs::metadata(&node_binary).await.is_err() {
                 return Err(anyhow!("missing node binary file"));
@@ -419,12 +421,7 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
                 return Err(anyhow!("missing npm file"));
             }
 
-            let node_ca_certs = env::var(NODE_CA_CERTS_ENV_VAR).unwrap_or_else(|_| String::new());
-
-            let mut command = util::command::new_smol_command(node_binary);
-            command.env_clear();
-            command.env("PATH", env_path);
-            command.env(NODE_CA_CERTS_ENV_VAR, node_ca_certs);
+            let mut command = util::command::new_smol_command(node_binary, &self.clean_env);
             command.arg(npm_file).arg(subcommand);
             command.args(["--cache".into(), self.installation_path.join("cache")]);
             command.args([
@@ -478,12 +475,26 @@ pub struct SystemNodeRuntime {
     npm: PathBuf,
     global_node_modules: PathBuf,
     scratch_dir: PathBuf,
+    clean_env: HashMap<String, String>,
 }
 
 impl SystemNodeRuntime {
     const MIN_VERSION: semver::Version = Version::new(20, 0, 0);
-    async fn new(node: PathBuf, npm: PathBuf) -> Result<Box<dyn NodeRuntimeTrait>> {
-        let output = util::command::new_smol_command(&node)
+    async fn new(
+        env: HashMap<String, String>,
+        node: PathBuf,
+        npm: PathBuf,
+    ) -> Result<Box<dyn NodeRuntimeTrait>> {
+        let path =
+            path_with_node_binary_prepended(env.get("PATH").cloned().unwrap_or_default(), &node);
+        let mut clean_env = HashMap::default();
+        clean_env.insert("PATH".to_string(), path);
+
+        if let Ok(node_ca_certs) = env::var("NODE_EXTRA_CA_CERTS") {
+            clean_env.insert("NODE_EXTRA_CA_CERTS".to_string(), node_ca_certs);
+        }
+
+        let output = util::command::new_smol_command(&node, &clean_env)
             .arg("--version")
             .output()
             .await
@@ -515,6 +526,7 @@ impl SystemNodeRuntime {
             npm,
             global_node_modules: PathBuf::default(),
             scratch_dir,
+            clean_env,
         };
         let output = this.run_npm_subcommand(None, None, "root", &["-g"]).await?;
         this.global_node_modules =
@@ -523,10 +535,14 @@ impl SystemNodeRuntime {
         Ok(Box::new(this))
     }
 
-    async fn detect() -> Option<Box<dyn NodeRuntimeTrait>> {
-        let node = which::which("node").ok()?;
-        let npm = which::which("npm").ok()?;
-        Self::new(node, npm).await.log_err()
+    async fn detect(env: HashMap<String, String>) -> Option<Box<dyn NodeRuntimeTrait>> {
+        let path = env
+            .get("PATH")
+            .cloned()
+            .or_else(|| std::env::var("PATH").ok());
+        let node = which::which_in_global("node", path.as_ref()).ok()?.next()?;
+        let npm = which::which_in_global("npm", path.as_ref()).ok()?.next()?;
+        Self::new(env, node, npm).await.log_err()
     }
 }
 
@@ -547,13 +563,8 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
         subcommand: &str,
         args: &[&str],
     ) -> anyhow::Result<Output> {
-        let node_ca_certs = env::var(NODE_CA_CERTS_ENV_VAR).unwrap_or_else(|_| String::new());
-        let mut command = util::command::new_smol_command(self.npm.clone());
-        let path = path_with_node_binary_prepended(&self.node).unwrap_or_default();
+        let mut command = util::command::new_smol_command(self.npm.clone(), &self.clean_env);
         command
-            .env_clear()
-            .env("PATH", path)
-            .env(NODE_CA_CERTS_ENV_VAR, node_ca_certs)
             .arg(subcommand)
             .args(["--cache".into(), self.scratch_dir.join("cache")])
             .args(args);

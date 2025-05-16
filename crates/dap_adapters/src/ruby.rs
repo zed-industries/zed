@@ -39,6 +39,7 @@ impl DebugAdapter for RubyDebugAdapter {
     ) -> Result<DebugAdapterBinary> {
         let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
         let mut rdbg_path = adapter_path.join("rdbg");
+        let env = delegate.shell_env().await;
         if !delegate.fs().is_file(&rdbg_path).await {
             match delegate.which("rdbg".as_ref()) {
                 Some(path) => rdbg_path = path,
@@ -46,7 +47,7 @@ impl DebugAdapter for RubyDebugAdapter {
                     delegate.output_to_console(
                         "rdbg not found on path, trying `gem install debug`".to_string(),
                     );
-                    let output = new_smol_command("gem")
+                    let output = new_smol_command("gem", &env)
                         .arg("install")
                         .arg("--no-document")
                         .arg("--bindir")

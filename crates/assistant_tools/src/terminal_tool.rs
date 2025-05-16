@@ -148,11 +148,14 @@ impl Tool for TerminalTool {
             Some(dir) => project.update(cx, |project, cx| {
                 project.directory_environment(dir.as_path().into(), cx)
             }),
-            None => Task::ready(None).shared(),
+            None => cx
+                .background_executor()
+                .spawn(async move { environment::in_home_dir().await })
+                .shared(),
         };
 
         let env = cx.spawn(async move |_| {
-            let mut env = env.await.unwrap_or_default();
+            let mut env = env.await;
             if cfg!(unix) {
                 env.insert("PAGER".into(), "cat".into());
             }

@@ -468,7 +468,7 @@ pub fn execute_run(
                 )
             };
 
-            let node_runtime = NodeRuntime::new(http_client.clone(), None, node_settings_rx);
+            let node_runtime = NodeRuntime::new(http_client.clone(), node_settings_rx);
 
             let mut languages = LanguageRegistry::new(cx.background_executor().clone());
             languages.set_language_server_download_dir(paths::languages_dir().clone());

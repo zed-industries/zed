@@ -1904,11 +1904,9 @@ impl GitPanel {
                 let fallback_branch_name = GitPanelSettings::get_global(cx)
                     .fallback_branch_name
                     .clone();
-                this.project.read(cx).git_init(
-                    worktree.read(cx).abs_path(),
-                    fallback_branch_name,
-                    cx,
-                )
+                this.project.update(cx, |project, cx| {
+                    project.git_init(worktree.read(cx).abs_path(), fallback_branch_name, cx)
+                })
             }) else {
                 return;
             };

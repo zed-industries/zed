@@ -417,7 +417,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
         tx.send(Some(options)).log_err();
     })
     .detach();
-    let node_runtime = NodeRuntime::new(client.http_client(), None, rx);
+    let node_runtime = NodeRuntime::new(client.http_client(), rx);
 
     let extension_host_proxy = ExtensionHostProxy::global(cx);
 

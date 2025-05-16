@@ -305,19 +305,6 @@ fn main() {
         paths::keymap_file().clone(),
     );
 
-    let (shell_env_loaded_tx, shell_env_loaded_rx) = oneshot::channel();
-    if !stdout_is_a_pty() {
-        app.background_executor()
-            .spawn(async {
-                #[cfg(unix)]
-                util::load_login_shell_environment().log_err();
-                shell_env_loaded_tx.send(()).ok();
-            })
-            .detach()
-    } else {
-        drop(shell_env_loaded_tx)
-    }
-
     app.on_open_urls({
         let open_listener = open_listener.clone();
         move |urls| open_listener.open_urls(urls)
@@ -417,7 +404,7 @@ fn main() {
             tx.send(Some(options)).log_err();
         })
         .detach();
-        let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
+        let node_runtime = NodeRuntime::new(client.http_client(), rx);
 
         language::init(cx);
         language_extension::init(extension_host_proxy.clone(), languages.clone());

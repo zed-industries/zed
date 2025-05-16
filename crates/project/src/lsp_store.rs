@@ -207,12 +207,14 @@ impl LocalLspStore {
         let pending_workspace_folders: Arc<Mutex<BTreeSet<Url>>> = Default::default();
         let pending_server = cx.spawn({
             let adapter = adapter.clone();
+            let delegate = delegate.clone();
             let server_name = adapter.name.clone();
             let stderr_capture = stderr_capture.clone();
             #[cfg(any(test, feature = "test-support"))]
             let lsp_store = self.weak.clone();
             let pending_workspace_folders = pending_workspace_folders.clone();
             async move |cx| {
+                let env = delegate.shell_env().await;
                 let binary = binary.await?;
                 #[cfg(any(test, feature = "test-support"))]
                 if let Some(server) = lsp_store
@@ -238,6 +240,7 @@ impl LocalLspStore {
                     &root_path,
                     adapter.code_action_kinds(),
                     pending_workspace_folders,
+                    env,
                     cx,
                 )
             }
@@ -427,7 +430,9 @@ impl LocalLspStore {
             let mut binary = binary_result?;
             let mut shell_env = delegate.shell_env().await;
 
-            shell_env.extend(binary.env.unwrap_or_default());
+            if let Some(binary_env) = binary.env {
+                shell_env.extend(binary_env);
+            }
 
             if let Some(settings) = settings {
                 if let Some(arguments) = settings.arguments {
@@ -2000,11 +2005,7 @@ impl LocalLspStore {
             Some(worktree_path)
         })?;
 
-        let mut child = util::command::new_smol_command(command);
-
-        if let Some(buffer_env) = buffer.env.as_ref() {
-            child.envs(buffer_env);
-        }
+        let mut child = util::command::new_smol_command(command, &buffer.env);
 
         if let Some(working_dir_path) = working_dir_path {
             child.current_dir(working_dir_path);
@@ -3406,7 +3407,7 @@ impl LocalLspStore {
 pub struct FormattableBuffer {
     handle: Entity<Buffer>,
     abs_path: Option<PathBuf>,
-    env: Option<HashMap<String, String>>,
+    env: HashMap<String, String>,
     ranges: Option<Vec<Range<Anchor>>>,
 }
 
@@ -8320,13 +8321,13 @@ impl LspStore {
         &self,
         buffer: &Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Shared<Task<Option<HashMap<String, String>>>> {
+    ) -> Shared<Task<HashMap<String, String>>> {
         if let Some(environment) = &self.as_local().map(|local| local.environment.clone()) {
             environment.update(cx, |env, cx| {
                 env.get_buffer_environment(&buffer, &self.worktree_store, cx)
             })
         } else {
-            Task::ready(None).shared()
+            Task::ready(environment::inherited()).shared()
         }
     }
 
@@ -10166,7 +10167,7 @@ pub struct LocalLspAdapterDelegate {
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
     language_registry: Arc<LanguageRegistry>,
-    load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
+    load_shell_env_task: Shared<Task<HashMap<String, String>>>,
 }
 
 impl LocalLspAdapterDelegate {
@@ -10242,7 +10243,7 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
 
     async fn shell_env(&self) -> HashMap<String, String> {
         let task = self.load_shell_env_task.clone();
-        task.await.unwrap_or_default()
+        task.await
     }
 
     async fn npm_package_installed_version(
@@ -10266,9 +10267,8 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         };
 
         let env = self.shell_env().await;
-        let output = util::command::new_smol_command(&npm)
+        let output = util::command::new_smol_command(&npm, &env)
             .args(["root", "-g"])
-            .envs(env)
             .current_dir(local_package_directory)
             .output()
             .await?;
@@ -10300,7 +10300,8 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
 
     async fn try_exec(&self, command: LanguageServerBinary) -> Result<()> {
         let working_dir = self.worktree_root_path();
-        let output = util::command::new_smol_command(&command.path)
+        let shell_env = self.shell_env().await;
+        let output = util::command::new_smol_command(&command.path, &shell_env)
             .args(command.arguments)
             .envs(command.env.clone().unwrap_or_default())
             .current_dir(working_dir)

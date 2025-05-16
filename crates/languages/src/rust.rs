@@ -560,7 +560,7 @@ impl ContextProvider for RustContextProvider {
         &self,
         task_variables: &TaskVariables,
         location: &Location,
-        project_env: Option<HashMap<String, String>>,
+        project_env: HashMap<String, String>,
         _: Arc<dyn LanguageToolchainStore>,
         cx: &mut gpui::App,
     ) -> Task<Result<TaskVariables>> {
@@ -592,14 +592,12 @@ impl ContextProvider for RustContextProvider {
                 .as_deref()
                 .and_then(|local_abs_path| local_abs_path.parent())
             {
-                if let Some(package_name) =
-                    human_readable_package_name(path, project_env.as_ref()).await
-                {
+                if let Some(package_name) = human_readable_package_name(path, &project_env).await {
                     variables.insert(RUST_PACKAGE_TASK_VARIABLE.clone(), package_name);
                 }
             }
             if let Some(path) = local_abs_path.as_ref() {
-                if let Some(target) = target_info_from_abs_path(&path, project_env.as_ref()).await {
+                if let Some(target) = target_info_from_abs_path(&path, &project_env).await {
                     variables.extend(TaskVariables::from_iter([
                         (RUST_PACKAGE_TASK_VARIABLE.clone(), target.package_name),
                         (RUST_BIN_NAME_TASK_VARIABLE.clone(), target.target_name),
@@ -862,12 +860,9 @@ struct TargetInfo {
 
 async fn target_info_from_abs_path(
     abs_path: &Path,
-    project_env: Option<&HashMap<String, String>>,
+    project_env: &HashMap<String, String>,
 ) -> Option<TargetInfo> {
-    let mut command = util::command::new_smol_command("cargo");
-    if let Some(envs) = project_env {
-        command.envs(envs);
-    }
+    let mut command = util::command::new_smol_command("cargo", &project_env);
     let output = command
         .current_dir(abs_path.parent()?)
         .arg("metadata")
@@ -911,12 +906,9 @@ fn target_info_from_metadata(metadata: CargoMetadata, abs_path: &Path) -> Option
 
 async fn human_readable_package_name(
     package_directory: &Path,
-    project_env: Option<&HashMap<String, String>>,
+    project_env: &HashMap<String, String>,
 ) -> Option<String> {
-    let mut command = util::command::new_smol_command("cargo");
-    if let Some(envs) = project_env {
-        command.envs(envs);
-    }
+    let mut command = util::command::new_smol_command("cargo", project_env);
     let pkgid = String::from_utf8(
         command
             .current_dir(package_directory)

@@ -101,9 +101,10 @@ pub fn python_env_kernel_specifications(
         let kernelspecs = toolchains.toolchains.into_iter().map(|toolchain| {
             background_executor.spawn(async move {
                 let python_path = toolchain.path.to_string();
+                let env = environment::in_home_dir().await;
 
                 // Check if ipykernel is installed
-                let ipykernel_check = util::command::new_smol_command(&python_path)
+                let ipykernel_check = util::command::new_smol_command(&python_path, &env)
                     .args(&["-c", "import ipykernel"])
                     .output()
                     .await;

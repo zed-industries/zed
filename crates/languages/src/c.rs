@@ -69,6 +69,7 @@ impl super::LspAdapter for CLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
+        let env = delegate.shell_env().await;
         let zip_path = container_dir.join(format!("clangd_{}.zip", version.name));
         let version_dir = container_dir.join(format!("clangd_{}", version.name));
         let binary_path = version_dir.join("bin/clangd");
@@ -88,7 +89,7 @@ impl super::LspAdapter for CLspAdapter {
             }
             futures::io::copy(response.body_mut(), &mut file).await?;
 
-            let unzip_status = util::command::new_smol_command("unzip")
+            let unzip_status = util::command::new_smol_command("unzip", &env)
                 .current_dir(&container_dir)
                 .arg(&zip_path)
                 .output()
