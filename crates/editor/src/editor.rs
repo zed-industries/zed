@@ -3954,26 +3954,28 @@ impl Editor {
                                 let (snapshot, range) =
                                     buffer.buffer_line_for_row(MultiBufferRow(start_point.row))?;
 
-                                let mut index_of_first_non_whitespace = 0;
+                                let num_of_whitespaces = snapshot
+                                    .chars_for_range(range.clone())
+                                    .take_while(|c| c.is_whitespace())
+                                    .count();
                                 let comment_candidate = snapshot
                                     .chars_for_range(range)
-                                    .skip_while(|c| {
-                                        let should_skip = c.is_whitespace();
-                                        if should_skip {
-                                            index_of_first_non_whitespace += 1;
-                                        }
-                                        should_skip
-                                    })
+                                    .skip(num_of_whitespaces)
                                     .take(max_len_of_delimiter)
                                     .collect::<String>();
-                                let comment_prefix = delimiters.iter().find(|comment_prefix| {
-                                    comment_candidate.starts_with(comment_prefix.as_ref())
-                                })?;
+                                let (delimiter, trimmed_len) =
+                                    delimiters.iter().find_map(|delimiter| {
+                                        let trimmed = delimiter.trim_end();
+                                        if comment_candidate.starts_with(trimmed) {
+                                            Some((delimiter, trimmed.len()))
+                                        } else {
+                                            None
+                                        }
+                                    })?;
                                 let cursor_is_placed_after_comment_marker =
-                                    index_of_first_non_whitespace + comment_prefix.len()
-                                        <= start_point.column as usize;
+                                    num_of_whitespaces + trimmed_len <= start_point.column as usize;
                                 if cursor_is_placed_after_comment_marker {
-                                    Some(comment_prefix.clone())
+                                    Some(delimiter.clone())
                                 } else {
                                     None
                                 }
