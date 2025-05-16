@@ -3,6 +3,8 @@ use std::ffi::OsStr;
 
 #[cfg(target_os = "windows")]
 use smol::process::windows::CommandExt;
+#[cfg(target_os = "windows")]
+use std::process::windows::CommandExt;
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000_u32;
