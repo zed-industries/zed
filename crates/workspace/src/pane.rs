@@ -1857,7 +1857,7 @@ impl Pane {
                     matches!(
                         item.workspace_settings(cx).autosave,
                         AutosaveSetting::OnFocusChange | AutosaveSetting::OnWindowChange
-                    ) && Self::can_autosave_item(item, cx)
+                    ) && item.can_autosave(cx)
                 })?;
                 if !will_autosave {
                     let item_id = item.item_id();
@@ -1945,11 +1945,6 @@ impl Pane {
         })
     }
 
-    fn can_autosave_item(item: &dyn ItemHandle, cx: &App) -> bool {
-        let is_deleted = item.project_entry_ids(cx).is_empty();
-        item.is_dirty(cx) && !item.has_conflict(cx) && item.can_save(cx) && !is_deleted
-    }
-
     pub fn autosave_item(
         item: &dyn ItemHandle,
         project: Entity<Project>,
@@ -1960,7 +1955,7 @@ impl Pane {
             item.workspace_settings(cx).autosave,
             AutosaveSetting::AfterDelay { .. }
         );
-        if Self::can_autosave_item(item, cx) {
+        if item.can_autosave(cx) {
             item.save(format, project, window, cx)
         } else {
             Task::ready(Ok(()))

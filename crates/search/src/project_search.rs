@@ -37,7 +37,7 @@ use ui::{
     Icon, IconButton, IconButtonShape, IconName, KeyBinding, Label, LabelCommon, LabelSize,
     Toggleable, Tooltip, h_flex, prelude::*, utils::SearchInputWidth, v_flex,
 };
-use util::paths::PathMatcher;
+use util::{ResultExt as _, paths::PathMatcher};
 use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
@@ -910,6 +910,7 @@ impl ProjectSearchView {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        dbg!("deploy_search");
         let existing = workspace
             .active_pane()
             .read(cx)
@@ -925,6 +926,7 @@ impl ProjectSearchView {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        dbg!("search_in_new");
         if let Some(search_view) = workspace
             .active_item(cx)
             .and_then(|item| item.downcast::<ProjectSearchView>())
@@ -969,6 +971,7 @@ impl ProjectSearchView {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        dbg!("new_search");
         Self::existing_or_new_search(workspace, None, &DeploySearch::find(), window, cx)
     }
 
@@ -979,6 +982,7 @@ impl ProjectSearchView {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        dbg!("existing_or_new");
         let query = workspace.active_item(cx).and_then(|item| {
             if let Some(buffer_search_query) = buffer_search_query(workspace, item.as_ref(), cx) {
                 return Some(buffer_search_query);
@@ -1032,7 +1036,60 @@ impl ProjectSearchView {
         });
     }
 
+    fn prompt_to_save_if_dirty_then_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use workspace::AutosaveSetting;
+
+        let project = self.entity.read(cx).project.clone();
+
+        let can_autosave = self.results_editor.can_autosave(cx);
+        let autosave_setting = self.results_editor.workspace_settings(cx).autosave;
+
+        let will_autosave = can_autosave
+            && matches!(
+                autosave_setting,
+                AutosaveSetting::OnFocusChange | AutosaveSetting::OnWindowChange
+            );
+
+        let is_dirty = self.is_dirty(cx);
+
+        let should_confirm_save = !will_autosave && is_dirty;
+
+        cx.spawn_in(window, async move |this, cx| {
+            let should_search = if should_confirm_save {
+                let options = &["Save", "Don't Save", "Cancel"];
+                let result_channel = this.update_in(cx, |_, window, cx| {
+                    window.prompt(
+                        gpui::PromptLevel::Warning,
+                        "Project search buffer contains unsaved edits. Do you want to save it?",
+                        None,
+                        options,
+                        cx,
+                    )
+                })?;
+                let result = result_channel.await?;
+                let should_save = result == 0;
+                if should_save {
+                    this.update_in(cx, |this, window, cx| this.save(true, project, window, cx))?
+                        .await
+                        .log_err();
+                }
+                let should_search = result != 2;
+                should_search
+            } else {
+                true
+            };
+            if should_search {
+                this.update(cx, |this, cx| {
+                    this.search(cx);
+                })?;
+            }
+            anyhow::Ok(())
+        })
+        .detach();
+    }
+
     fn search(&mut self, cx: &mut Context<Self>) {
+        dbg!("search");
         if let Some(query) = self.build_search_query(cx) {
             self.entity.update(cx, |model, cx| model.search(query, cx));
         }
@@ -1495,6 +1552,7 @@ impl ProjectSearchBar {
     }
 
     fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        dbg!("confirm");
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
                 if !search_view
@@ -1503,7 +1561,7 @@ impl ProjectSearchBar {
                     .is_focused(window)
                 {
                     cx.stop_propagation();
-                    search_view.search(cx);
+                    search_view.prompt_to_save_if_dirty_then_search(window, cx);
                 }
             });
         }
