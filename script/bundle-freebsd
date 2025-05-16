@@ -157,5 +157,4 @@ arch=$(uname -m)
 # tar -czvf "${target_dir}/release/$archive" -C ${temp_dir} "zed$suffix.app"
 
 gzip -f --stdout --best "${target_dir}/${remote_server_triple}/release/remote_server" \
-    > "${target_dir}/zed-remote-server-freebsd-${arch}.gz"
-ls -l "${target_dir}"
+    > "${target_dir}/zed-remote-server-freebsd-x86_64.gz"

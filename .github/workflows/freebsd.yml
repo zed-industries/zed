@@ -18,7 +18,7 @@ jobs:
           # envs: "MYTOKEN MYTOKEN2"
           usesh: true
           release: 13.5
-          copyback: false
+          copyback: true
           prepare: |
             pkg install -y \
               bash curl jq git \
@@ -37,6 +37,10 @@ jobs:
             mv "target/zed-remote-server-freebsd-x86_64.gz" out/
             rm -rf target/
             cargo clean
+
+      - run: |
+          ls -l
+          ls out/
 
       - name: Upload Artifact to Workflow - zed-remote-server (run-bundling)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
