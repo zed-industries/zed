@@ -741,7 +741,6 @@ impl Motion {
             | Jump { line: true, .. } => MotionKind::Linewise,
             EndOfLine { .. }
             | EndOfLineDownward
-            | MiddleOfLine { .. }
             | Matching
             | FindForward { .. }
             | NextWordEnd { .. }
@@ -758,6 +757,7 @@ impl Motion {
             | SentenceBackward
             | SentenceForward
             | GoToColumn
+            | MiddleOfLine { .. }
             | UnmatchedForward { .. }
             | UnmatchedBackward { .. }
             | NextWordStart { .. }
@@ -917,7 +917,7 @@ impl Motion {
                 SelectionGoal::None,
             ),
             MiddleOfLine { display_lines } => (
-                middle_of_line(map, *display_lines, point, times),
+                middle_of_line(map, *display_lines, point, maybe_times),
                 SelectionGoal::None,
             ),
             EndOfLine { display_lines } => (
@@ -1974,17 +1974,27 @@ pub(crate) fn middle_of_line(
     map: &DisplaySnapshot,
     display_lines: bool,
     point: DisplayPoint,
-    times: usize,
+    times: Option<usize>,
 ) -> DisplayPoint {
-    let percent: f64 = if times >= 100 || times == 1 { 0.50 } else { times as f64 / 100. };
+    let percent = if let Some(times) = times.filter(|&t| t <= 100) {
+        times as f64 / 100.
+    } else {
+        0.5
+    };
     if display_lines {
         map.clip_point(
-            DisplayPoint::new(point.row(), (map.line_len(point.row()) as f64 * percent) as u32),
+            DisplayPoint::new(
+                point.row(),
+                (map.line_len(point.row()) as f64 * percent) as u32,
+            ),
             Bias::Left,
         )
     } else {
         let mut buffer_point = point.to_point(map);
-        buffer_point.column = (map.buffer_snapshot.line_len(MultiBufferRow(buffer_point.row)) as f64 * percent) as u32;
+        buffer_point.column = (map
+            .buffer_snapshot
+            .line_len(MultiBufferRow(buffer_point.row)) as f64
+            * percent) as u32;
 
         map.clip_point(buffer_point.to_display_point(map), Bias::Left)
     }
@@ -3960,7 +3970,7 @@ mod test {
              ˇthe quick brown fox
              jumped over the lazy dog"})
             .await;
-        cx.simulate_shared_keystrokes("d v g M").await;
+        cx.simulate_shared_keystrokes("d v g shift-m").await;
         cx.shared_state().await.assert_eq(indoc! {"
              ˇbrown fox
              jumped over the lazy dog"});
@@ -3970,7 +3980,7 @@ mod test {
             the quick bˇrown fox
             jumped over the lazy dog"})
             .await;
-        cx.simulate_shared_keystrokes("d v g M").await;
+        cx.simulate_shared_keystrokes("d v g shift-m").await;
         cx.shared_state().await.assert_eq(indoc! {"
             the quickˇown fox
             jumped over the lazy dog"});
@@ -3980,7 +3990,7 @@ mod test {
             the quick brown foˇx
             jumped over the lazy dog"})
             .await;
-        cx.simulate_shared_keystrokes("d v g M").await;
+        cx.simulate_shared_keystrokes("d v g shift-m").await;
         cx.shared_state().await.assert_eq(indoc! {"
             the quicˇk
             jumped over the lazy dog"});
@@ -3990,7 +4000,7 @@ mod test {
             ˇthe quick brown fox
             jumped over the lazy dog"})
             .await;
-        cx.simulate_shared_keystrokes("d v 7 5 g M").await;
+        cx.simulate_shared_keystrokes("d v 7 5 g shift-m").await;
         cx.shared_state().await.assert_eq(indoc! {"
             ˇ fox
             jumped over the lazy dog"});
@@ -4000,7 +4010,7 @@ mod test {
             ˇthe quick brown fox
             jumped over the lazy dog"})
             .await;
-        cx.simulate_shared_keystrokes("d v 2 3 g M").await;
+        cx.simulate_shared_keystrokes("d v 2 3 g shift-m").await;
         cx.shared_state().await.assert_eq(indoc! {"
             ˇuick brown fox
             jumped over the lazy dog"});

@@ -152,7 +152,7 @@
       "g end": ["vim::EndOfLine", { "display_lines": true }],
       "g 0": ["vim::StartOfLine", { "display_lines": true }],
       "g home": ["vim::StartOfLine", { "display_lines": true }],
-      "g M": ["vim::MiddleOfLine", { "display_lines": true }],
+      "g shift-m": ["vim::MiddleOfLine", { "display_lines": true }],
       "g ^": ["vim::FirstNonWhitespace", { "display_lines": true }],
       "g v": "vim::RestoreVisualSelection",
       "g ]": "editor::GoToDiagnostic",
