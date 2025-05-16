@@ -20,7 +20,7 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use client::{TypedEnvelope, proto};
-use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map, hash_map};
+use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
 use futures::{
     AsyncWriteExt, Future, FutureExt, StreamExt,
     future::{Shared, join_all},
@@ -9128,12 +9128,8 @@ impl LspStore {
         language_server_ids.dedup();
 
         let abs_path = worktree_handle.read(cx).abs_path();
-        for server_id in language_server_ids.iter().copied() {
-            let Some(LanguageServerState::Running { server, .. }) =
-                local.language_servers.get(&server_id)
-            else {
-                continue;
-            };
+
+        for server_id in &language_server_ids {
             let Some(watch) = local.language_server_watched_paths.get_mut(&server_id) else {
                 continue;
             };
@@ -9154,12 +9150,13 @@ impl LspStore {
             if watch.pending_events.is_empty() {
                 continue;
             }
+            let server_id = server_id.clone();
 
             watch.flush_timer_task = Some(cx.spawn(async move |this, cx| {
                 cx.background_executor()
                     .timer(FS_WATCH_DEBOUNCE_TIMEOUT)
                     .await;
-                this.update(cx, |this, cx| {
+                this.update(cx, |this, _cx| {
                     let Some(this) = this.as_local_mut() else {
                         return;
                     };
