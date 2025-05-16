@@ -148,15 +148,16 @@ impl From<extension::DebugRequest> for DebugRequest {
 impl TryFrom<extension::DebugTaskDefinition> for DebugTaskDefinition {
     type Error = anyhow::Error;
     fn try_from(value: extension::DebugTaskDefinition) -> Result<Self, Self::Error> {
-        let initialize_args = value.initialize_args.map(|s| s.to_string());
-        Ok(Self {
-            label: value.label.to_string(),
-            adapter: value.adapter.to_string(),
-            request: value.request.into(),
-            initialize_args,
-            stop_on_entry: value.stop_on_entry,
-            tcp_connection: value.tcp_connection.map(Into::into),
-        })
+        // let initialize_args = value.config.map(|s| s.to_string());
+        // Ok(Self {
+        //     label: value.label.to_string(),
+        //     adapter: value.adapter.to_string(),
+        //     request: value.request.into(),
+        //     initialize_args,
+        //     stop_on_entry: value.stop_on_entry,
+        //     tcp_connection: value.tcp_connection.map(Into::into),
+        // })
+        todo!()
     }
 }
 

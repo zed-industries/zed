@@ -4,7 +4,7 @@ use anyhow::{Result, bail};
 use async_trait::async_trait;
 use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
-use task::DebugRequest;
+use task::{DebugRequest, DebugScenario, ZedDebugScenario};
 
 use crate::*;
 
@@ -15,45 +15,46 @@ impl GdbDebugAdapter {
     const ADAPTER_NAME: &'static str = "GDB";
 
     fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
-        let mut args = json!({
-            "request": match config.request {
-                DebugRequest::Launch(_) => "launch",
-                DebugRequest::Attach(_) => "attach",
-            },
-        });
+        // let mut args = json!({
+        //     "request": match config.request {
+        //         DebugRequest::Launch(_) => "launch",
+        //         DebugRequest::Attach(_) => "attach",
+        //     },
+        // });
 
-        let map = args.as_object_mut().unwrap();
-        match &config.request {
-            DebugRequest::Attach(attach) => {
-                map.insert("pid".into(), attach.process_id.into());
-            }
+        // let map = args.as_object_mut().unwrap();
+        // match &config.request {
+        //     DebugRequest::Attach(attach) => {
+        //         map.insert("pid".into(), attach.process_id.into());
+        //     }
 
-            DebugRequest::Launch(launch) => {
-                map.insert("program".into(), launch.program.clone().into());
+        //     DebugRequest::Launch(launch) => {
+        //         map.insert("program".into(), launch.program.clone().into());
 
-                if !launch.args.is_empty() {
-                    map.insert("args".into(), launch.args.clone().into());
-                }
+        //         if !launch.args.is_empty() {
+        //             map.insert("args".into(), launch.args.clone().into());
+        //         }
 
-                if !launch.env.is_empty() {
-                    map.insert("env".into(), launch.env_json());
-                }
+        //         if !launch.env.is_empty() {
+        //             map.insert("env".into(), launch.env_json());
+        //         }
 
-                if let Some(stop_on_entry) = config.stop_on_entry {
-                    map.insert(
-                        "stopAtBeginningOfMainSubprogram".into(),
-                        stop_on_entry.into(),
-                    );
-                }
-                if let Some(cwd) = launch.cwd.as_ref() {
-                    map.insert("cwd".into(), cwd.to_string_lossy().into_owned().into());
-                }
-            }
-        }
-        StartDebuggingRequestArguments {
-            configuration: args,
-            request: config.request.to_dap(),
-        }
+        //         if let Some(stop_on_entry) = config.stop_on_entry {
+        //             map.insert(
+        //                 "stopAtBeginningOfMainSubprogram".into(),
+        //                 stop_on_entry.into(),
+        //             );
+        //         }
+        //         if let Some(cwd) = launch.cwd.as_ref() {
+        //             map.insert("cwd".into(), cwd.to_string_lossy().into_owned().into());
+        //         }
+        //     }
+        // }
+        // StartDebuggingRequestArguments {
+        //     configuration: args,
+        //     request: config.request.to_dap(),
+        // }
+        todo!()
     }
 }
 
@@ -61,6 +62,10 @@ impl GdbDebugAdapter {
 impl DebugAdapter for GdbDebugAdapter {
     fn name(&self) -> DebugAdapterName {
         DebugAdapterName(Self::ADAPTER_NAME.into())
+    }
+
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugScenario) -> DebugScenario {
+        todo!()
     }
 
     async fn get_binary(

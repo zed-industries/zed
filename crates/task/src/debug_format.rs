@@ -1,6 +1,6 @@
 use anyhow::Result;
 use collections::FxHashMap;
-use gpui::SharedString;
+use gpui::{App, SharedString};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -120,34 +120,35 @@ pub enum DebugRequest {
 
 impl DebugRequest {
     pub fn to_proto(&self) -> proto::DebugRequest {
-        match self {
-            DebugRequest::Launch(launch_request) => proto::DebugRequest {
-                request: Some(proto::debug_request::Request::DebugLaunchRequest(
-                    proto::DebugLaunchRequest {
-                        program: launch_request.program.clone(),
-                        cwd: launch_request
-                            .cwd
-                            .as_ref()
-                            .map(|cwd| cwd.to_string_lossy().into_owned()),
-                        args: launch_request.args.clone(),
-                        env: launch_request
-                            .env
-                            .iter()
-                            .map(|(k, v)| (k.clone(), v.clone()))
-                            .collect(),
-                    },
-                )),
-            },
-            DebugRequest::Attach(attach_request) => proto::DebugRequest {
-                request: Some(proto::debug_request::Request::DebugAttachRequest(
-                    proto::DebugAttachRequest {
-                        process_id: attach_request
-                            .process_id
-                            .expect("The process ID to be already filled out."),
-                    },
-                )),
-            },
-        }
+        // match self {
+        //     DebugRequest::Launch(launch_request) => proto::DebugRequest {
+        //         request: Some(proto::debug_request::Request::DebugLaunchRequest(
+        //             proto::DebugLaunchRequest {
+        //                 program: launch_request.program.clone(),
+        //                 cwd: launch_request
+        //                     .cwd
+        //                     .as_ref()
+        //                     .map(|cwd| cwd.to_string_lossy().into_owned()),
+        //                 args: launch_request.args.clone(),
+        //                 env: launch_request
+        //                     .env
+        //                     .iter()
+        //                     .map(|(k, v)| (k.clone(), v.clone()))
+        //                     .collect(),
+        //             },
+        //         )),
+        //     },
+        //     DebugRequest::Attach(attach_request) => proto::DebugRequest {
+        //         request: Some(proto::debug_request::Request::DebugAttachRequest(
+        //             proto::DebugAttachRequest {
+        //                 process_id: attach_request
+        //                     .process_id
+        //                     .expect("The process ID to be already filled out."),
+        //             },
+        //         )),
+        //     },
+        // }
+        todo!()
     }
 
     pub fn from_proto(val: proto::DebugRequest) -> Result<DebugRequest> {
@@ -200,8 +201,30 @@ pub enum BuildTaskDefinition {
         locator_name: Option<SharedString>,
     },
 }
+
+#[derive(Deserialize, Serialize, PartialEq, Eq, Clone, Debug, JsonSchema)]
+pub enum Request {
+    Launch,
+    Attach,
+}
+
+/// This struct represent a user created debug task from the new session modal
+#[derive(Deserialize, Serialize, PartialEq, Eq, Clone, Debug, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct ZedDebugScenario {
+    /// Name of the debug task
+    pub label: SharedString,
+    /// The debug adapter to use
+    pub adapter: SharedString,
+    #[serde(flatten)]
+    pub request: DebugRequest,
+    /// Whether to tell the debug adapter to stop on entry
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_on_entry: Option<bool>,
+}
+
 /// This struct represent a user created debug task
-#[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
+#[derive(Deserialize, Serialize, PartialEq, Eq, Clone, Debug, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct DebugScenario {
     pub adapter: SharedString,
@@ -211,10 +234,10 @@ pub struct DebugScenario {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build: Option<BuildTaskDefinition>,
     #[serde(flatten)]
-    pub request: Option<DebugRequest>,
+    pub request: Option<Request>,
     /// Additional initialization arguments to be sent on DAP initialization
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub initialize_args: Option<serde_json::Value>,
+    #[serde(default, flatten)]
+    pub config: serde_json::Value,
     /// Optional TCP connection information
     ///
     /// If provided, this will be used to connect to the debug adapter instead of
@@ -229,11 +252,12 @@ pub struct DebugScenario {
 
 impl DebugScenario {
     pub fn cwd(&self) -> Option<&Path> {
-        if let Some(DebugRequest::Launch(config)) = &self.request {
-            config.cwd.as_ref().map(Path::new)
-        } else {
-            None
-        }
+        // if let Some(DebugRequest::Launch(config)) = &self.request {
+        //     config.cwd.as_ref().map(Path::new)
+        // } else {
+        //     None
+        // } todo!()
+        None
     }
 }
 
@@ -244,7 +268,7 @@ pub struct DebugTaskFile(pub Vec<DebugScenario>);
 
 impl DebugTaskFile {
     /// Generates JSON schema of Tasks JSON template format.
-    pub fn generate_json_schema() -> serde_json_lenient::Value {
+    pub fn generate_json_schema(schemas: &AdapterSchemas) -> serde_json_lenient::Value {
         let adapter_schemas = AdapterSchemas(vec![
             AdapterSchema {
                 adapter: "CodeLLDB".into(),
@@ -268,10 +292,12 @@ impl DebugTaskFile {
             },
         ]);
 
-        let schema = adapter_schemas.generate_json_schema();
+        // let schema = adapter_schemas.generate_json_schema();
 
         // todo!() add error handling
-        schema.unwrap()
+        // schema.unwrap()
+
+        schemas.generate_json_schema().unwrap_or_default()
     }
 }
 

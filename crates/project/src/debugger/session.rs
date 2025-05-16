@@ -315,7 +315,7 @@ impl LocalMode {
         // Of relevance: https://github.com/microsoft/vscode/issues/4902#issuecomment-368583522
         let launch = match raw.request {
             dap::StartDebuggingRequestArgumentsRequest::Launch => self.request(Launch {
-                raw: raw.configuration,
+                raw: dbg!(raw.configuration),
             }),
             dap::StartDebuggingRequestArgumentsRequest::Attach => self.request(Attach {
                 raw: raw.configuration,

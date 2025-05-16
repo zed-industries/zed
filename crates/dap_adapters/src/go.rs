@@ -11,30 +11,31 @@ pub(crate) struct GoDebugAdapter;
 impl GoDebugAdapter {
     const ADAPTER_NAME: &'static str = "Delve";
     fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
-        let mut args = match &config.request {
-            dap::DebugRequest::Attach(attach_config) => {
-                json!({
-                    "processId": attach_config.process_id,
-                })
-            }
-            dap::DebugRequest::Launch(launch_config) => json!({
-                "program": launch_config.program,
-                "cwd": launch_config.cwd,
-                "args": launch_config.args,
-                "env": launch_config.env_json()
-            }),
-        };
+        // let mut args = match &config.request {
+        //     dap::DebugRequest::Attach(attach_config) => {
+        //         json!({
+        //             "processId": attach_config.process_id,
+        //         })
+        //     }
+        //     dap::DebugRequest::Launch(launch_config) => json!({
+        //         "program": launch_config.program,
+        //         "cwd": launch_config.cwd,
+        //         "args": launch_config.args,
+        //         "env": launch_config.env_json()
+        //     }),
+        // };
 
-        let map = args.as_object_mut().unwrap();
+        // let map = args.as_object_mut().unwrap();
 
-        if let Some(stop_on_entry) = config.stop_on_entry {
-            map.insert("stopOnEntry".into(), stop_on_entry.into());
-        }
+        // if let Some(stop_on_entry) = config.stop_on_entry {
+        //     map.insert("stopOnEntry".into(), stop_on_entry.into());
+        // }
 
-        StartDebuggingRequestArguments {
-            configuration: args,
-            request: config.request.to_dap(),
-        }
+        // StartDebuggingRequestArguments {
+        //     configuration: args,
+        //     request: config.request.to_dap(),
+        // }
+        todo!()
     }
 }
 
@@ -46,6 +47,10 @@ impl DebugAdapter for GoDebugAdapter {
 
     fn adapter_language_name(&self) -> Option<LanguageName> {
         Some(SharedString::new_static("Go").into())
+    }
+
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugScenario) -> DebugScenario {
+        todo!()
     }
 
     async fn get_binary(

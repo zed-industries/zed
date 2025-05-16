@@ -716,7 +716,7 @@ impl RunningState {
                 label,
                 build,
                 request,
-                initialize_args,
+                config,
                 tcp_connection,
                 stop_on_entry,
             } = scenario;
@@ -836,53 +836,17 @@ impl RunningState {
                     .update(cx, |this, cx| {
                         this.run_debug_locator(&locator_name, task, cx)
                     })?
-                    .await?
+                    .await?;
+                todo!()
             } else {
                 return Err(anyhow!("No request or build provided"));
             };
-            let request = match request {
-                dap::DebugRequest::Launch(launch_request) => {
-                    let cwd = match launch_request.cwd.as_deref().and_then(|path| path.to_str()) {
-                        Some(cwd) => {
-                            let substituted_cwd = substitute_variables_in_str(&cwd, &task_context)
-                                .ok_or_else(|| anyhow!("Failed to substitute variables in cwd"))?;
-                            Some(PathBuf::from(substituted_cwd))
-                        }
-                        None => None,
-                    };
 
-                    let env = substitute_variables_in_map(
-                        &launch_request.env.into_iter().collect(),
-                        &task_context,
-                    )
-                    .ok_or_else(|| anyhow!("Failed to substitute variables in env"))?
-                    .into_iter()
-                    .collect();
-                    let new_launch_request = LaunchRequest {
-                        program: substitute_variables_in_str(
-                            &launch_request.program,
-                            &task_context,
-                        )
-                        .ok_or_else(|| anyhow!("Failed to substitute variables in program"))?,
-                        args: launch_request
-                            .args
-                            .into_iter()
-                            .map(|arg| substitute_variables_in_str(&arg, &task_context))
-                            .collect::<Option<Vec<_>>>()
-                            .ok_or_else(|| anyhow!("Failed to substitute variables in args"))?,
-                        cwd,
-                        env,
-                    };
-
-                    dap::DebugRequest::Launch(new_launch_request)
-                }
-                request @ dap::DebugRequest::Attach(_) => request, // todo(debugger): We should check that process_id is valid and if not show the modal
-            };
             Ok(DebugTaskDefinition {
                 label,
                 adapter: DebugAdapterName(adapter),
                 request,
-                initialize_args,
+                config,
                 stop_on_entry,
                 tcp_connection,
             })

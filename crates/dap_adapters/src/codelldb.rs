@@ -2,10 +2,13 @@ use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use dap::adapters::{DebugTaskDefinition, latest_github_release};
+use dap::{
+    StartDebuggingRequestArgumentsRequest,
+    adapters::{DebugTaskDefinition, latest_github_release},
+};
 use futures::StreamExt;
 use gpui::AsyncApp;
-use task::DebugRequest;
+use task::{DebugRequest, DebugScenario, ZedDebugScenario};
 use util::fs::remove_matching;
 
 use crate::*;
@@ -21,8 +24,8 @@ impl CodeLldbDebugAdapter {
     fn request_args(&self, config: &DebugTaskDefinition) -> dap::StartDebuggingRequestArguments {
         let mut configuration = json!({
             "request": match config.request {
-                DebugRequest::Launch(_) => "launch",
-                DebugRequest::Attach(_) => "attach",
+                task::Request::Launch => "launch",
+                task::Request::Attach => "attach",
             },
         });
         let map = configuration.as_object_mut().unwrap();
@@ -31,28 +34,13 @@ impl CodeLldbDebugAdapter {
             "name".into(),
             Value::String(String::from(config.label.as_ref())),
         );
-        let request = config.request.to_dap();
-        match &config.request {
-            DebugRequest::Attach(attach) => {
-                map.insert("pid".into(), attach.process_id.into());
-            }
-            DebugRequest::Launch(launch) => {
-                map.insert("program".into(), launch.program.clone().into());
 
-                if !launch.args.is_empty() {
-                    map.insert("args".into(), launch.args.clone().into());
-                }
-                if !launch.env.is_empty() {
-                    map.insert("env".into(), launch.env_json());
-                }
-                if let Some(stop_on_entry) = config.stop_on_entry {
-                    map.insert("stopOnEntry".into(), stop_on_entry.into());
-                }
-                if let Some(cwd) = launch.cwd.as_ref() {
-                    map.insert("cwd".into(), cwd.to_string_lossy().into_owned().into());
-                }
-            }
-        }
+        util::merge_json_value_into(config.config.clone(), &mut configuration);
+        let request = match config.request {
+            task::Request::Launch => StartDebuggingRequestArgumentsRequest::Launch,
+            task::Request::Attach => StartDebuggingRequestArgumentsRequest::Attach,
+        };
+
         dap::StartDebuggingRequestArguments {
             request,
             configuration,
@@ -107,6 +95,65 @@ impl CodeLldbDebugAdapter {
 impl DebugAdapter for CodeLldbDebugAdapter {
     fn name(&self) -> DebugAdapterName {
         DebugAdapterName(Self::ADAPTER_NAME.into())
+    }
+
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugScenario) -> DebugScenario {
+        let mut configuration = json!({
+            "request": match zed_scenario.request {
+                DebugRequest::Launch(_) => "launch",
+                DebugRequest::Attach(_) => "attach",
+            },
+        });
+        let map = configuration.as_object_mut().unwrap();
+        // CodeLLDB uses `name` for a terminal label.
+        map.insert(
+            "name".into(),
+            Value::String(String::from(zed_scenario.label.as_ref())),
+        );
+        match &zed_scenario.request {
+            DebugRequest::Attach(attach) => {
+                map.insert("pid".into(), attach.process_id.into());
+            }
+            DebugRequest::Launch(launch) => {
+                map.insert("program".into(), launch.program.clone().into());
+
+                if !launch.args.is_empty() {
+                    map.insert("args".into(), launch.args.clone().into());
+                }
+                if !launch.env.is_empty() {
+                    map.insert("env".into(), launch.env_json());
+                }
+                if let Some(stop_on_entry) = zed_scenario.stop_on_entry {
+                    map.insert("stopOnEntry".into(), stop_on_entry.into());
+                }
+                if let Some(cwd) = launch.cwd.as_ref() {
+                    map.insert("cwd".into(), cwd.to_string_lossy().into_owned().into());
+                }
+            }
+        }
+
+        DebugScenario {
+            adapter: zed_scenario.adapter,
+            label: zed_scenario.label,
+            config: configuration,
+            build: None,
+            request: Some(match zed_scenario.request {
+                DebugRequest::Launch(_) => task::Request::Launch,
+                DebugRequest::Attach(_) => task::Request::Attach,
+            }),
+            tcp_connection: None,
+            stop_on_entry: zed_scenario.stop_on_entry,
+        }
+    }
+
+    fn dap_schema(&self) -> serde_json::Value {
+        json!({
+            "properties": {
+                "url": { "type": "string" },
+                "webRoot": { "type": "string" }
+            },
+            "required": ["url"],
+        })
     }
 
     async fn get_binary(

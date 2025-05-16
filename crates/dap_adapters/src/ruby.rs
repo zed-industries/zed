@@ -9,6 +9,7 @@ use dap::{
 use gpui::{AsyncApp, SharedString};
 use language::LanguageName;
 use std::path::PathBuf;
+use task::{DebugScenario, ZedDebugScenario};
 use util::command::new_smol_command;
 
 use crate::ToDap;
@@ -28,6 +29,10 @@ impl DebugAdapter for RubyDebugAdapter {
 
     fn adapter_language_name(&self) -> Option<LanguageName> {
         Some(SharedString::new_static("Ruby").into())
+    }
+
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugScenario) -> DebugScenario {
+        todo!()
     }
 
     async fn get_binary(

@@ -22,7 +22,10 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{AttachRequest, DebugRequest, DebugScenario, LaunchRequest, TcpArgumentsTemplate};
+use task::{
+    AttachRequest, DebugRequest, DebugScenario, LaunchRequest, Request, TcpArgumentsTemplate,
+    ZedDebugScenario,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DapStatus {
@@ -130,9 +133,9 @@ impl TcpArguments {
 pub struct DebugTaskDefinition {
     pub label: SharedString,
     pub adapter: DebugAdapterName,
-    pub request: DebugRequest,
+    pub request: Request,
     /// Additional initialization arguments to be sent on DAP initialization
-    pub initialize_args: Option<serde_json::Value>,
+    pub config: serde_json::Value,
     /// Whether to tell the debug adapter to stop on entry
     pub stop_on_entry: Option<bool>,
     /// Optional TCP connection information
@@ -145,11 +148,12 @@ pub struct DebugTaskDefinition {
 
 impl DebugTaskDefinition {
     pub fn cwd(&self) -> Option<&Path> {
-        if let DebugRequest::Launch(config) = &self.request {
-            config.cwd.as_ref().map(Path::new)
-        } else {
-            None
-        }
+        // if let DebugRequest::Launch(config) = &self.request {
+        //     config.cwd.as_ref().map(Path::new)
+        // } else {
+        //     None
+        // }
+        None
     }
 
     pub fn to_scenario(&self) -> DebugScenario {
@@ -157,44 +161,47 @@ impl DebugTaskDefinition {
             label: self.label.clone(),
             adapter: self.adapter.clone().into(),
             build: None,
-            request: Some(self.request.clone()),
+            request: Some(task::Request::Launch),
             stop_on_entry: self.stop_on_entry,
             tcp_connection: self.tcp_connection.clone(),
-            initialize_args: self.initialize_args.clone(),
+            config: self.config.clone(),
         }
     }
 
     pub fn to_proto(&self) -> proto::DebugTaskDefinition {
-        proto::DebugTaskDefinition {
-            adapter: self.adapter.to_string(),
-            request: Some(match &self.request {
-                DebugRequest::Launch(config) => {
-                    proto::debug_task_definition::Request::DebugLaunchRequest(
-                        proto::DebugLaunchRequest {
-                            program: config.program.clone(),
-                            cwd: config.cwd.as_ref().map(|c| c.to_string_lossy().to_string()),
-                            args: config.args.clone(),
-                            env: config
-                                .env
-                                .iter()
-                                .map(|(k, v)| (k.clone(), v.clone()))
-                                .collect(),
-                        },
-                    )
-                }
-                DebugRequest::Attach(attach_request) => {
-                    proto::debug_task_definition::Request::DebugAttachRequest(
-                        proto::DebugAttachRequest {
-                            process_id: attach_request.process_id.unwrap_or_default(),
-                        },
-                    )
-                }
-            }),
-            label: self.label.to_string(),
-            initialize_args: self.initialize_args.as_ref().map(|v| v.to_string()),
-            tcp_connection: self.tcp_connection.as_ref().map(|t| t.to_proto()),
-            stop_on_entry: self.stop_on_entry,
-        }
+        // proto::DebugTaskDefinition {
+        //     adapter: self.adapter.to_string(),
+        //     request: Some(match &self.request {
+        //         DebugRequest::Launch(config) => {
+        //             // proto::debug_task_definition::Request::DebugLaunchRequest(
+        //             //     proto::DebugLaunchRequest {
+        //             //         program: config.program.clone(),
+        //             //         cwd: config.cwd.as_ref().map(|c| c.to_string_lossy().to_string()),
+        //             //         args: config.args.clone(),
+        //             //         env: config
+        //             //             .env
+        //             //             .iter()
+        //             //             .map(|(k, v)| (k.clone(), v.clone()))
+        //             //             .collect(),
+        //             //     },
+        //             // );
+        //             // todo!()
+        //         }
+        //         DebugRequest::Attach(attach_request) => {
+        //             // proto::debug_task_definition::Request::DebugAttachRequest(
+        //             //     proto::DebugAttachRequest {
+        //             //         process_id: attach_request.process_id.unwrap_or_default(),
+        //             //     },
+        //             // );
+        //             // todo!()
+        //         }
+        //     }),
+        //     label: self.label.to_string(),
+        //     initialize_args: Some(self.config.to_string()),
+        //     tcp_connection: self.tcp_connection.as_ref().map(|t| t.to_proto()),
+        //     stop_on_entry: self.stop_on_entry,
+        // };
+        todo!()
     }
 
     pub fn from_proto(proto: proto::DebugTaskDefinition) -> Result<Self> {
@@ -203,7 +210,7 @@ impl DebugTaskDefinition {
             .ok_or_else(|| anyhow::anyhow!("request is required"))?;
         Ok(Self {
             label: proto.label.into(),
-            initialize_args: proto.initialize_args.map(|v| v.into()),
+            config: proto.initialize_args.map(|v| v.into()).unwrap_or_default(),
             tcp_connection: proto
                 .tcp_connection
                 .map(TcpArgumentsTemplate::from_proto)
@@ -214,7 +221,8 @@ impl DebugTaskDefinition {
                 proto::debug_task_definition::Request::DebugAttachRequest(config) => {
                     DebugRequest::Attach(AttachRequest {
                         process_id: Some(config.process_id),
-                    })
+                    });
+                    todo!()
                 }
 
                 proto::debug_task_definition::Request::DebugLaunchRequest(config) => {
@@ -223,7 +231,8 @@ impl DebugTaskDefinition {
                         cwd: config.cwd.map(|cwd| cwd.into()),
                         args: config.args,
                         env: Default::default(),
-                    })
+                    });
+                    todo!()
                 }
             },
         })
@@ -410,6 +419,8 @@ pub async fn fetch_latest_adapter_version_from_github(
 #[async_trait(?Send)]
 pub trait DebugAdapter: 'static + Send + Sync {
     fn name(&self) -> DebugAdapterName;
+
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugScenario) -> DebugScenario;
 
     async fn get_binary(
         &self,

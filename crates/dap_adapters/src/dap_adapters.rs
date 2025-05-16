@@ -27,7 +27,7 @@ use php::PhpDebugAdapter;
 use python::PythonDebugAdapter;
 use ruby::RubyDebugAdapter;
 use serde_json::{Value, json};
-use task::TcpArgumentsTemplate;
+use task::{DebugScenario, TcpArgumentsTemplate, ZedDebugScenario};
 
 pub fn init(cx: &mut App) {
     cx.update_default_global(|registry: &mut DapRegistry, _cx| {

@@ -1,5 +1,8 @@
 use crate::*;
-use dap::{DebugRequest, StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
+use dap::{
+    DebugRequest, StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
+    adapters::DebugTaskDefinition,
+};
 use gpui::{AsyncApp, SharedString};
 use language::LanguageName;
 use std::{collections::HashMap, ffi::OsStr, path::PathBuf, sync::OnceLock};
@@ -17,37 +20,46 @@ impl PythonDebugAdapter {
     const LANGUAGE_NAME: &'static str = "Python";
 
     fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
-        let mut args = json!({
-            "request": match config.request {
-                DebugRequest::Launch(_) => "launch",
-                DebugRequest::Attach(_) => "attach",
-            },
-            "subProcess": true,
-            "redirectOutput": true,
-        });
-        let map = args.as_object_mut().unwrap();
-        match &config.request {
-            DebugRequest::Attach(attach) => {
-                map.insert("processId".into(), attach.process_id.into());
-            }
-            DebugRequest::Launch(launch) => {
-                map.insert("program".into(), launch.program.clone().into());
-                map.insert("args".into(), launch.args.clone().into());
-                if !launch.env.is_empty() {
-                    map.insert("env".into(), launch.env_json());
-                }
+        // let args = json!({
+        //     "request": match config.request {
+        //         DebugRequest::Launch(_) => "launch",
+        //         DebugRequest::Attach(_) => "attach",
+        //     },
+        //     "subProcess": true,
+        //     "redirectOutput": true,
+        // });
 
-                if let Some(stop_on_entry) = config.stop_on_entry {
-                    map.insert("stopOnEntry".into(), stop_on_entry.into());
-                }
-                if let Some(cwd) = launch.cwd.as_ref() {
-                    map.insert("cwd".into(), cwd.to_string_lossy().into_owned().into());
-                }
-            }
-        }
+        // let map = args.as_object_mut().unwrap();
+        // match &config.request {
+        //     DebugRequest::Attach(attach) => {
+        //         map.insert("processId".into(), attach.process_id.into());
+        //     }
+        //     DebugRequest::Launch(launch) => {
+        //         map.insert("program".into(), launch.program.clone().into());
+        //         map.insert("args".into(), launch.args.clone().into());
+        //         if !launch.env.is_empty() {
+        //             map.insert("env".into(), launch.env_json());
+        //         }
+
+        //         if let Some(stop_on_entry) = config.stop_on_entry {
+        //             map.insert("stopOnEntry".into(), stop_on_entry.into());
+        //         }
+        //         if let Some(cwd) = launch.cwd.as_ref() {
+        //             map.insert("cwd".into(), cwd.to_string_lossy().into_owned().into());
+        //         }
+        //     }
+        // }
+        //
+        // let mut adapter_config = config.config.clone();
+        // util::merge_json_value_into(args, &mut adapter_config);
+        let request = match config.request {
+            task::Request::Launch => StartDebuggingRequestArgumentsRequest::Launch,
+            task::Request::Attach => StartDebuggingRequestArgumentsRequest::Attach,
+        };
+
         StartDebuggingRequestArguments {
-            configuration: args,
-            request: config.request.to_dap(),
+            configuration: config.config.clone(),
+            request,
         }
     }
     async fn fetch_latest_adapter_version(
@@ -168,6 +180,221 @@ impl DebugAdapter for PythonDebugAdapter {
 
     fn adapter_language_name(&self) -> Option<LanguageName> {
         Some(SharedString::new_static("Python").into())
+    }
+
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugScenario) -> DebugScenario {
+        let mut args = json!({
+            "request": match zed_scenario.request {
+                DebugRequest::Launch(_) => "launch",
+                DebugRequest::Attach(_) => "attach",
+            },
+            "subProcess": true,
+            "redirectOutput": true,
+        });
+
+        let map = args.as_object_mut().unwrap();
+        match &zed_scenario.request {
+            DebugRequest::Attach(attach) => {
+                map.insert("processId".into(), attach.process_id.into());
+            }
+            DebugRequest::Launch(launch) => {
+                map.insert("program".into(), launch.program.clone().into());
+                map.insert("args".into(), launch.args.clone().into());
+                if !launch.env.is_empty() {
+                    map.insert("env".into(), launch.env_json());
+                }
+
+                if let Some(stop_on_entry) = zed_scenario.stop_on_entry {
+                    map.insert("stopOnEntry".into(), stop_on_entry.into());
+                }
+                if let Some(cwd) = launch.cwd.as_ref() {
+                    map.insert("cwd".into(), cwd.to_string_lossy().into_owned().into());
+                }
+            }
+        }
+
+        DebugScenario {
+            adapter: zed_scenario.adapter,
+            label: zed_scenario.label,
+            config: args,
+            build: None,
+            request: Some(match zed_scenario.request {
+                DebugRequest::Launch(_) => task::Request::Launch,
+                DebugRequest::Attach(_) => task::Request::Attach,
+            }),
+            tcp_connection: None,
+            stop_on_entry: zed_scenario.stop_on_entry,
+        }
+    }
+
+    fn dap_schema(&self) -> serde_json::Value {
+        json!({
+            "properties": {
+                "module": {
+                    "type": "string",
+                    "description": "Name of the module to be debugged."
+                },
+                "program": {
+                    "type": "string",
+                    "description": "Absolute path to the program."
+                },
+                "code": {
+                    "type": "string",
+                    "description": "Code to execute in string form. Example: \"import debugpy;print(debugpy.__version__)\""
+                },
+                "python": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Path python executable and interpreter arguments. Example: [\"/usr/bin/python\", \"-E\"]"
+                },
+                "args": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Command line arguments passed to the program."
+                },
+                "console": {
+                    "type": "string",
+                    "enum": ["internalConsole", "integratedTerminal", "externalTerminal"],
+                    "default": "integratedTerminal",
+                    "description": "Sets where to launch the debug target. Default is \"integratedTerminal\"."
+                },
+                "cwd": {
+                    "type": "string",
+                    "description": "Absolute path to the working directory of the program being debugged."
+                },
+                "env": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    },
+                    "description": "Environment variables defined as a key value pair."
+                },
+
+                "django": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "When true enables Django templates. Default is false."
+                },
+                "gevent": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "When true enables debugging of gevent monkey-patched code. Default is false."
+                },
+                "jinja": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "When true enables Jinja2 template debugging (e.g. Flask). Default is false."
+                },
+                "justMyCode": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "When true debug only user-written code. To debug standard library or anything outside of \"cwd\" use false. Default is true."
+                },
+                "logToFile": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "When true enables logging of debugger events to a log file(s). Default is false."
+                },
+                "pathMappings": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["localRoot", "remoteRoot"],
+                        "properties": {
+                            "localRoot": {
+                                "type": "string",
+                                "description": "Local path"
+                            },
+                            "remoteRoot": {
+                                "type": "string",
+                                "description": "Remote path"
+                            }
+                        }
+                    },
+                    "description": "Map of local and remote paths. Example: [{\"localRoot\": \"local path\", \"remoteRoot\": \"remote path\"}, ...]"
+                },
+                "pyramid": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "When true enables debugging Pyramid applications. Default is false."
+                },
+                "redirectOutput": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "When true redirects output to debug console. Default is false."
+                },
+                "showReturnValue": {
+                    "type": "boolean",
+                    "description": "Shows return value of functions when stepping. The return value is added to the response to Variables Request"
+                },
+                "stopOnEntry": {
+                    "type": "boolean",
+                    "description": "When true debugger stops at first line of user code. When false debugger does not stop until breakpoint, exception or pause."
+                },
+                "subProcess": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "When true enables debugging multiprocess applications. Default is true."
+                },
+                "sudo": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "When true runs program under elevated permissions (on Unix). Default is false."
+                },
+
+                "label": {
+                    "type": "string",
+                    "description": "The name of the debug configuration"
+                },
+                "build": {
+                    "oneOf": [
+                        { "type": "string" },
+                        { "type": "object" }
+                    ],
+                    "description": "A task to run prior to spawning the debuggee"
+                },
+                "tcp_connection": {
+                    "type": "object",
+                    "properties": {
+                        "port": {
+                            "type": "integer",
+                            "description": "The port that the debug adapter is listening on"
+                        },
+                        "host": {
+                            "type": "string",
+                            "description": "The host that the debug adapter is listening to (e.g. 127.0.0.1)"
+                        },
+                        "timeout": {
+                            "type": "integer",
+                            "description": "Timeout in milliseconds to connect to the debug adapter"
+                        }
+                    },
+                    "description": "TCP connection information for connecting to an externally started debug adapter"
+                }
+            },
+            "allOf": [
+                {
+                    "oneOf": [
+                        {
+                            "required": ["module"],
+                            "title": "Debug Python Module"
+                        },
+                        {
+                            "required": ["program"],
+                            "title": "Debug Python Program"
+                        },
+                        {
+                            "required": ["code"],
+                            "title": "Debug Python Code"
+                        }
+                    ]
+                }
+            ]
+        })
     }
 
     async fn get_binary(

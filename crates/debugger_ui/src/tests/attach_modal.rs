@@ -36,7 +36,7 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
                 process_id: Some(10),
             }),
             label: "label".into(),
-            initialize_args: None,
+            config: None,
             tcp_connection: None,
             stop_on_entry: None,
         },
@@ -112,7 +112,7 @@ async fn test_show_attach_modal_and_select_process(
 
                         request: dap::DebugRequest::Attach(AttachRequest::default()),
                         label: "attach example".into(),
-                        initialize_args: None,
+                        config: None,
                         tcp_connection: Some(TcpArgumentsTemplate::default()),
                         stop_on_entry: None,
                     },

@@ -8,7 +8,7 @@ use util::ResultExt as _;
 
 use crate::{
     AttachRequest, DebugRequest, DebugScenario, DebugTaskFile, EnvVariableReplacer, LaunchRequest,
-    TcpArgumentsTemplate, VariableName,
+    TcpArgumentsTemplate, VariableName, debug_format,
 };
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -52,30 +52,30 @@ impl VsCodeDebugTaskDefinition {
             build: None,
             request: match self.request {
                 Request::Launch => {
-                    let cwd = self.cwd.map(|cwd| PathBuf::from(replacer.replace(&cwd)));
-                    let program = self.program.ok_or_else(|| {
-                        anyhow!("vscode debug launch configuration does not define a program")
-                    })?;
-                    let program = replacer.replace(&program);
-                    let args = self
-                        .args
-                        .into_iter()
-                        .map(|arg| replacer.replace(&arg))
-                        .collect();
-                    let env = self
-                        .env
-                        .into_iter()
-                        .filter_map(|(k, v)| v.map(|v| (k, v)))
-                        .collect();
-                    DebugRequest::Launch(LaunchRequest {
-                        program,
-                        cwd,
-                        args,
-                        env,
-                    })
-                    .into()
+                    // let cwd = self.cwd.map(|cwd| PathBuf::from(replacer.replace(&cwd)));
+                    // let program = self.program.ok_or_else(|| {
+                    //     anyhow!("vscode debug launch configuration does not define a program")
+                    // })?;
+                    // let program = replacer.replace(&program);
+                    // let args = self
+                    //     .args
+                    //     .into_iter()
+                    //     .map(|arg| replacer.replace(&arg))
+                    //     .collect();
+                    // let env = self
+                    //     .env
+                    //     .into_iter()
+                    //     .filter_map(|(k, v)| v.map(|v| (k, v)))
+                    //     .collect();
+                    // DebugRequest::Launch(LaunchRequest {
+                    //     program,
+                    //     cwd,
+                    //     args,
+                    //     env,
+                    // })
+                    Some(debug_format::Request::Launch)
                 }
-                Request::Attach => DebugRequest::Attach(AttachRequest { process_id: None }).into(),
+                Request::Attach => Some(debug_format::Request::Attach),
             },
             adapter: task_type_to_adapter_name(&self.r#type),
             // TODO host?
@@ -86,7 +86,7 @@ impl VsCodeDebugTaskDefinition {
             }),
             stop_on_entry: self.stop_on_entry,
             // TODO
-            initialize_args: None,
+            config: serde_json::Value::Null,
         };
         Ok(definition)
     }

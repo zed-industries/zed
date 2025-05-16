@@ -3,6 +3,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
+use dap::DapRegistry;
 use futures::StreamExt;
 use gpui::{App, AsyncApp};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
@@ -85,8 +86,10 @@ impl JsonLspAdapter {
             },
             cx,
         );
+
+        let adapter_schemas = cx.global::<DapRegistry>().adapters_schema();
         let tasks_schema = task::TaskTemplates::generate_json_schema();
-        let debug_schema = task::DebugTaskFile::generate_json_schema();
+        let debug_schema = task::DebugTaskFile::generate_json_schema(&adapter_schemas);
         let snippets_schema = snippet_provider::format::VsSnippetsFile::generate_json_schema();
         let tsconfig_schema = serde_json::Value::from_str(TSCONFIG_SCHEMA).unwrap();
         let package_json_schema = serde_json::Value::from_str(PACKAGE_JSON_SCHEMA).unwrap();

@@ -4,7 +4,9 @@ use collections::FxHashMap;
 use gpui::{App, Global, SharedString};
 use language::LanguageName;
 use parking_lot::RwLock;
-use task::{DebugRequest, DebugScenario, SpawnInTerminal, TaskTemplate};
+use task::{
+    AdapterSchema, AdapterSchemas, DebugRequest, DebugScenario, SpawnInTerminal, TaskTemplate,
+};
 
 use crate::{
     adapters::{DebugAdapter, DebugAdapterName},
@@ -71,6 +73,19 @@ impl DapRegistry {
             _previous_value.is_none(),
             "Attempted to insert a new debug locator when one is already registered"
         );
+    }
+
+    pub fn adapters_schema(&self) -> task::AdapterSchemas {
+        let mut schemas = AdapterSchemas(vec![]);
+
+        for (name, adapter) in self.0.read().adapters.iter() {
+            schemas.0.push(AdapterSchema {
+                adapter: name.clone().into(),
+                schema: adapter.dap_schema(),
+            });
+        }
+
+        schemas
     }
 
     pub fn add_inline_value_provider(

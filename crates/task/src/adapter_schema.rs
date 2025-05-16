@@ -35,14 +35,14 @@ impl AdapterSchemas {
             })
             .collect::<Vec<_>>();
 
-        let schema = json!({
+        let schema = serde_json_lenient::json!({
             "$schema": "http://json-schema.org/draft-07/schema#",
             "title": "Debug Adapter Configurations",
             "description": "Configuration for debug adapters. Schema changes based on the selected adapter.",
             "type": "array",
             "items": {
                 "type": "object",
-                "required": ["adapter"],
+                "required": ["adapter", "label"],
                 "properties": {
                     "adapter": {
                         "type": "string",
@@ -53,7 +53,7 @@ impl AdapterSchemas {
                         "description": "The name of the debug configuration"
                     },
                 },
-                "oneOf": adapter_conditions
+                "allOf": adapter_conditions
             }
         });
 

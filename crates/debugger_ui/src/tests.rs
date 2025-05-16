@@ -143,7 +143,7 @@ pub fn start_debug_session<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
             adapter: "fake-adapter".into(),
             request: DebugRequest::Launch(Default::default()),
             label: "test".into(),
-            initialize_args: None,
+            config: None,
             tcp_connection: None,
             stop_on_entry: None,
         },

@@ -21,21 +21,22 @@ impl PhpDebugAdapter {
         &self,
         config: &DebugTaskDefinition,
     ) -> Result<dap::StartDebuggingRequestArguments> {
-        match &config.request {
-            dap::DebugRequest::Attach(_) => {
-                anyhow::bail!("php adapter does not support attaching")
-            }
-            dap::DebugRequest::Launch(launch_config) => Ok(dap::StartDebuggingRequestArguments {
-                configuration: json!({
-                    "program": launch_config.program,
-                    "cwd": launch_config.cwd,
-                    "args": launch_config.args,
-                    "env": launch_config.env_json(),
-                    "stopOnEntry": config.stop_on_entry.unwrap_or_default(),
-                }),
-                request: config.request.to_dap(),
-            }),
-        }
+        // match &config.request {
+        //     dap::DebugRequest::Attach(_) => {
+        //         anyhow::bail!("php adapter does not support attaching")
+        //     }
+        //     dap::DebugRequest::Launch(launch_config) => Ok(dap::StartDebuggingRequestArguments {
+        //         configuration: json!({
+        //             "program": launch_config.program,
+        //             "cwd": launch_config.cwd,
+        //             "args": launch_config.args,
+        //             "env": launch_config.env_json(),
+        //             "stopOnEntry": config.stop_on_entry.unwrap_or_default(),
+        //         }),
+        //         request: config.request.to_dap(),
+        //     }),
+        // }
+        todo!()
     }
 
     async fn fetch_latest_adapter_version(
@@ -122,6 +123,10 @@ impl DebugAdapter for PhpDebugAdapter {
 
     fn adapter_language_name(&self) -> Option<LanguageName> {
         Some(SharedString::new_static("PHP").into())
+    }
+
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugScenario) -> DebugScenario {
+        todo!()
     }
 
     async fn get_binary(

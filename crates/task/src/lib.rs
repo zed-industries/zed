@@ -16,9 +16,10 @@ use std::borrow::Cow;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+pub use adapter_schema::{AdapterSchema, AdapterSchemas};
 pub use debug_format::{
     AttachRequest, BuildTaskDefinition, DebugRequest, DebugScenario, DebugTaskFile, LaunchRequest,
-    TcpArgumentsTemplate,
+    Request, TcpArgumentsTemplate, ZedDebugScenario,
 };
 pub use task_template::{
     DebugArgsRequest, HideStrategy, RevealStrategy, TaskTemplate, TaskTemplates,

@@ -1395,7 +1395,7 @@ async fn test_we_send_arguments_from_user_config(
             env: HashMap::from_iter(vec![("KEY".to_owned(), "VALUE".to_owned())]),
         }),
         label: "test".into(),
-        initialize_args: None,
+        config: None,
         tcp_connection: None,
         stop_on_entry: None,
     };

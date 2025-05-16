@@ -23,7 +23,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
 use project::{ProjectPath, TaskContexts, TaskSourceKind, task_store::TaskStore};
 use settings::Settings;
-use task::{DebugScenario, LaunchRequest};
+use task::{DebugScenario, LaunchRequest, ZedDebugScenario};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
@@ -211,15 +211,16 @@ impl NewSessionModal {
             None
         };
 
-        Some(DebugScenario {
+        let session_scenario = ZedDebugScenario {
             adapter: debugger.to_owned().into(),
             label,
-            request: Some(request),
-            initialize_args: None,
-            tcp_connection: None,
+            request: request,
             stop_on_entry,
-            build: None,
-        })
+        };
+
+        cx.global::<DapRegistry>()
+            .adapter(&session_scenario.adapter)
+            .map(|adapter| adapter.config_from_zed_format(session_scenario))
     }
 
     fn start_new_session(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -878,7 +879,7 @@ impl AttachMode {
             adapter: debugger.unwrap_or(DebugAdapterName("".into())),
             label: "Attach New Session Setup".into(),
             request: dap::DebugRequest::Attach(task::AttachRequest { process_id: None }),
-            initialize_args: None,
+            config: serde_json::Value::Null,
             tcp_connection: None,
             stop_on_entry: Some(false),
         };
@@ -943,11 +944,12 @@ impl DebugScenarioDelegate {
                 .request
                 .as_ref()
                 .and_then(|request| match request {
-                    DebugRequest::Launch(launch) => launch
-                        .program
-                        .rsplit_once(".")
-                        .and_then(|split| languages.language_name_for_extension(split.1))
-                        .map(|name| TaskSourceKind::Language { name: name.into() }),
+                    // DebugRequest::Launch(launch) => launch
+                    //     .program
+                    //     .rsplit_once(".")
+                    //     .and_then(|split| languages.language_name_for_extension(split.1))
+                    //     .map(|name| TaskSourceKind::Language { name: name.into() }),
+                    // todo!()
                     _ => None,
                 })
                 .or_else(|| {
@@ -1108,18 +1110,19 @@ impl PickerDelegate for DebugScenarioDelegate {
             })
             .unwrap_or_default();
 
-        if let Some(launch_config) =
-            debug_scenario
-                .request
-                .as_mut()
-                .and_then(|request| match request {
-                    DebugRequest::Launch(launch) => Some(launch),
-                    _ => None,
-                })
-        {
-            let (program, _) = resolve_paths(launch_config.program.clone(), String::new());
-            launch_config.program = program;
-        }
+        // if let Some(launch_config) =
+        //     debug_scenario
+        //         .request
+        //         .as_mut()
+        //         .and_then(|request| match request {
+        //             DebugRequest::Launch(launch) => Some(launch),
+        //             _ => None,
+        //         })
+        // {
+        //     let (program, _) = resolve_paths(launch_config.program.clone(), String::new());
+        //     launch_config.program = program;
+        // }
+        // todo!()
 
         self.debug_panel
             .update(cx, |panel, cx| {

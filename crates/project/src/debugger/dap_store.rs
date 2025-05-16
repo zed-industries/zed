@@ -417,9 +417,9 @@ impl DapStore {
                     })?
                     .await?;
 
-                if let Some(args) = definition.initialize_args {
-                    merge_json_value_into(args, &mut binary.request_args.configuration);
-                }
+                dbg!(&binary.request_args);
+
+                merge_json_value_into(definition.config, &mut binary.request_args.configuration);
 
                 session
                     .update(cx, |session, cx| {
