@@ -132,6 +132,7 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 ### Mistral {#mistral}
 
 > 🔨Supports tool use
+
 1. Visit the Mistral platform and [create an API key](https://console.mistral.ai/api-keys/)
 2. Open the configuration view (`assistant: show configuration`) and navigate to the Mistral section
 3. Enter your Mistral API key
