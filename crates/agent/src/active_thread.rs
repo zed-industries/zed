@@ -2028,9 +2028,6 @@ impl ActiveThread {
                                     )
                                 }),
                         )
-                        .when(editing_message_state.is_none(), |this| {
-                            this.tooltip(Tooltip::text("Click To Edit"))
-                        })
                         .on_click(cx.listener({
                             let message_segments = message.segments.clone();
                             move |this, _, window, cx| {
@@ -2070,6 +2067,16 @@ impl ActiveThread {
             });
 
         let panel_background = cx.theme().colors().panel_background;
+
+        let backdrop = div()
+            .id("backdrop")
+            .stop_mouse_events_except_scroll()
+            .absolute()
+            .inset_0()
+            .size_full()
+            .bg(panel_background)
+            .opacity(0.8)
+            .on_click(cx.listener(Self::handle_cancel_click));
 
         v_flex()
             .w_full()
@@ -2240,15 +2247,7 @@ impl ActiveThread {
             })
             .when(after_editing_message, |parent| {
                 // Backdrop to dim out the whole thread below the editing user message
-                parent.relative().child(
-                    div()
-                        .stop_mouse_events_except_scroll()
-                        .absolute()
-                        .inset_0()
-                        .size_full()
-                        .bg(panel_background)
-                        .opacity(0.8),
-                )
+                parent.relative().child(backdrop)
             })
             .into_any()
     }
