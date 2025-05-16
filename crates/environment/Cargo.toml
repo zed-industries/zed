@@ -18,9 +18,7 @@ test-support = []
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
-futures.workspace = true
 paths.workspace = true
-semver.workspace = true
 smol.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

@@ -4859,9 +4859,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "futures 0.3.31",
  "paths",
- "semver",
  "serde_json",
  "smol",
  "tokio",
