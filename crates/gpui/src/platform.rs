@@ -435,6 +435,10 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
     fn on_moved(&self, callback: Box<dyn FnMut()>);
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>);
+    fn on_hit_test_window_drag(&self, callback: Box<dyn FnMut() -> bool>);
+    fn on_hit_test_window_close(&self, callback: Box<dyn FnMut() -> bool>);
+    fn on_hit_test_window_max(&self, callback: Box<dyn FnMut() -> bool>);
+    fn on_hit_test_window_min(&self, callback: Box<dyn FnMut() -> bool>);
     fn on_close(&self, callback: Box<dyn FnOnce()>);
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn draw(&self, scene: &Scene);

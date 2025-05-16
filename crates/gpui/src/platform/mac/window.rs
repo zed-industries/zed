@@ -1137,6 +1137,22 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().close_callback = Some(callback);
     }
 
+    fn on_hit_test_window_drag(&self, callback: Box<dyn FnMut() -> bool>) {
+        unimplemented!()
+    }
+
+    fn on_hit_test_window_close(&self, callback: Box<dyn FnMut() -> bool>) {
+        unimplemented!()
+    }
+
+    fn on_hit_test_window_max(&self, callback: Box<dyn FnMut() -> bool>) {
+        unimplemented!()
+    }
+
+    fn on_hit_test_window_min(&self, callback: Box<dyn FnMut() -> bool>) {
+        unimplemented!()
+    }
+
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().appearance_changed_callback = Some(callback);
     }

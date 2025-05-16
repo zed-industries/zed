@@ -145,6 +145,7 @@ impl Render for TitleBar {
 
         h_flex()
             .id("titlebar")
+            .window_drag_area()
             .w_full()
             .h(height)
             .map(|this| {
