@@ -20451,6 +20451,16 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
     .await;
 
     let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let worktree_id = workspace
+        .update(cx, |workspace, _window, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        })
+        .unwrap();
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
@@ -20472,18 +20482,18 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
         },
     );
 
-    let _window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-    let _buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp("/a/first.rs", cx)
+    let editor = workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.open_path((worktree_id, "first.rs"), None, true, window, cx)
         })
+        .unwrap()
         .await
+        .unwrap()
+        .downcast::<Editor>()
         .unwrap();
-    cx.executor().start_waiting();
-
     let fake_server = fake_servers.next().await.unwrap();
-    fake_server.set_request_handler::<lsp::request::DocumentDiagnosticRequest, _, _>(
-        move |params, _| {
+    let mut first_request = fake_server
+        .set_request_handler::<lsp::request::DocumentDiagnosticRequest, _, _>(move |params, _| {
             counter.fetch_add(1, atomic::Ordering::Release);
             assert_eq!(
                 params.text_document.uri,
@@ -20500,57 +20510,63 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
                     }),
                 ))
             }
-        },
-    );
+        });
 
-    // Opening file should trigger diagnostics
-    cx.executor().run_until_parked();
-    cx.executor().advance_clock(Duration::from_millis(300));
+    cx.executor()
+        .advance_clock(DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT + Duration::from_millis(10));
     cx.executor().run_until_parked();
     assert_eq!(
         diagnostic_requests.load(atomic::Ordering::Acquire),
         1,
         "Opening file should trigger diagnostic request"
     );
+    first_request
+        .next()
+        .await
+        .expect("should have sent the first diagnostics pull request");
 
     // Editing should trigger diagnostics
-    // cx.update_editor(|editor, window, cx| editor.handle_input("2", window, cx));
-    // cx.executor().run_until_parked();
-    // cx.executor().advance_clock(Duration::from_millis(300));
-    // cx.executor().run_until_parked();
-    // assert_eq!(
-    //     diagnostic_requests.load(atomic::Ordering::Acquire),
-    //     2,
-    //     "Editing should trigger diagnostic request"
-    // );
+    editor.update_in(cx, |editor, window, cx| {
+        editor.handle_input("2", window, cx)
+    });
+    cx.executor()
+        .advance_clock(DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT + Duration::from_millis(10));
+    cx.executor().run_until_parked();
+    assert_eq!(
+        diagnostic_requests.load(atomic::Ordering::Acquire),
+        2,
+        "Editing should trigger diagnostic request"
+    );
 
-    // // Moving cursor should not trigger diagnostic request
-    // cx.update_editor(|editor, window, cx| {
-    //     editor.change_selections(None, window, cx, |s| {
-    //         s.select_ranges([Point::new(0, 0)..Point::new(0, 0)])
-    //     });
-    // });
-    // cx.executor().run_until_parked();
-    // cx.executor().advance_clock(Duration::from_millis(300));
-    // cx.executor().run_until_parked();
-    // assert_eq!(
-    //     diagnostic_requests.load(atomic::Ordering::Acquire),
-    //     2,
-    //     "Cursor movement should not trigger diagnostic request"
-    // );
+    // Moving cursor should not trigger diagnostic request
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(None, window, cx, |s| {
+            s.select_ranges([Point::new(0, 0)..Point::new(0, 0)])
+        });
+    });
+    cx.executor()
+        .advance_clock(DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT + Duration::from_millis(10));
+    cx.executor().run_until_parked();
+    assert_eq!(
+        diagnostic_requests.load(atomic::Ordering::Acquire),
+        2,
+        "Cursor movement should not trigger diagnostic request"
+    );
 
-    // // Multiple rapid edits should be debounced
-    // for _ in 0..5 {
-    //     cx.update_editor(|editor, window, cx| editor.handle_input("x", window, cx));
-    // }
-    // cx.executor().run_until_parked();
-    // cx.executor().advance_clock(Duration::from_millis(300));
-    // cx.executor().run_until_parked();
+    // Multiple rapid edits should be debounced
+    for _ in 0..5 {
+        editor.update_in(cx, |editor, window, cx| {
+            editor.handle_input("x", window, cx)
+        });
+    }
+    cx.executor()
+        .advance_clock(DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT + Duration::from_millis(10));
+    cx.executor().run_until_parked();
 
-    // let final_requests = diagnostic_requests.load(atomic::Ordering::Acquire);
-    // assert!(
-    //     final_requests <= 4,
-    //     "Multiple rapid edits should be debounced (got {} requests)",
-    //     final_requests
-    // );
+    let final_requests = diagnostic_requests.load(atomic::Ordering::Acquire);
+    assert!(
+        final_requests <= 4,
+        "Multiple rapid edits should be debounced (got {} requests)",
+        final_requests
+    );
 }

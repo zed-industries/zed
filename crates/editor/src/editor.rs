@@ -228,7 +228,7 @@ pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
 const SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
 #[doc(hidden)]
-pub const DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
+pub const DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(30);
 
 pub(crate) const CODE_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(5);
