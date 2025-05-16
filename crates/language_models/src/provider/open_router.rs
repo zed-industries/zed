@@ -157,7 +157,7 @@ impl State {
                         &entry.id,
                         Some(&entry.name),
                         Some(max_tokens),
-                        entry.supports_tool_calls,
+                        Some(entry.supports_tool_calls),
                         entry.excels_at_coding,
                     )
                 })
@@ -247,7 +247,7 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
                 name: model.name.clone(),
                 display_name: model.display_name.clone(),
                 max_tokens: model.max_tokens,
-                supports_tool_calls: false,
+                supports_tools: Some(false),
                 excels_at_coding: false,
             });
         }

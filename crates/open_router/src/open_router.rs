@@ -46,12 +46,13 @@ impl From<Role> for String {
     }
 }
 
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Model {
     pub name: String,
     pub display_name: Option<String>,
     pub max_tokens: usize,
-    pub supports_tool_calls: bool,
+    pub supports_tools: Option<bool>,
     pub excels_at_coding: bool,
 }
 
@@ -61,7 +62,7 @@ impl Model {
             "openrouter/auto",
             Some("Auto Router"),
             Some(2000000),
-            true,
+            Some(true),
             true,
         )
     }
@@ -74,14 +75,14 @@ impl Model {
         name: &str,
         display_name: Option<&str>,
         max_tokens: Option<usize>,
-        supports_tool_calls: bool,
+        supports_tools: Option<bool>,
         excels_at_coding: bool,
     ) -> Self {
         Self {
             name: name.to_owned(),
             display_name: display_name.map(|s| s.to_owned()),
             max_tokens: max_tokens.unwrap_or(2000000),
-            supports_tool_calls,
+            supports_tools,
             excels_at_coding,
         }
     }
@@ -103,7 +104,7 @@ impl Model {
     }
 
     pub fn supports_tool_calls(&self) -> bool {
-        self.supports_tool_calls
+        self.supports_tools.unwrap_or(false)
     }
 
     pub fn excels_at_coding(&self) -> bool {
