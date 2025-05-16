@@ -2583,7 +2583,7 @@ impl Thread {
             .read(cx)
             .current_user()
             .map(|user| user.github_login.clone());
-        let client = self.project.read(cx).client().clone();
+        let client = self.project.read(cx).client();
         let serialize_task = self.serialize(cx);
 
         cx.background_executor()

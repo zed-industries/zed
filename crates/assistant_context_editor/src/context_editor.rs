@@ -3044,7 +3044,7 @@ fn invoked_slash_command_fold_placeholder(
                 .gap_2()
                 .bg(cx.theme().colors().surface_background)
                 .rounded_sm()
-                .child(Label::new(format!("/{}", command.name.clone())))
+                .child(Label::new(format!("/{}", command.name)))
                 .map(|parent| match &command.status {
                     InvokedSlashCommandStatus::Running(_) => {
                         parent.child(Icon::new(IconName::ArrowCircle).with_animation(
