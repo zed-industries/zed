@@ -3652,7 +3652,7 @@ impl Project {
             let mut buffer_count = 0;
             let mut limit_reached = false;
             let query = Arc::new(query);
-            let mut chunks = matching_buffers_rx.ready_chunks(64);
+            let chunks = matching_buffers_rx.ready_chunks(64);
 
             // Now that we know what paths match the query, we will load at most
             // 64 buffers at a time to avoid overwhelming the main thread. For each
@@ -4391,7 +4391,7 @@ impl Project {
         envelope: TypedEnvelope<proto::LanguageServerPromptRequest>,
         mut cx: AsyncApp,
     ) -> Result<proto::LanguageServerPromptResponse> {
-        let (tx, mut rx) = smol::channel::bounded(1);
+        let (tx, rx) = smol::channel::bounded(1);
         let actions: Vec<_> = envelope
             .payload
             .actions

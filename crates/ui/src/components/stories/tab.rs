@@ -9,12 +9,12 @@ use crate::{Indicator, Tab};
 pub struct TabStory;
 
 impl Render for TabStory {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        Story::container()
-            .child(Story::title_for::<Tab>())
-            .child(Story::label("Default"))
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        Story::container(cx)
+            .child(Story::title_for::<Tab>(cx))
+            .child(Story::label("Default", cx))
             .child(h_flex().child(Tab::new("tab_1").child("Tab 1")))
-            .child(Story::label("With indicator"))
+            .child(Story::label("With indicator", cx))
             .child(
                 h_flex().child(
                     Tab::new("tab_1")
@@ -22,7 +22,7 @@ impl Render for TabStory {
                         .child("Tab 1"),
                 ),
             )
-            .child(Story::label("With close button"))
+            .child(Story::label("With close button", cx))
             .child(
                 h_flex().child(
                     Tab::new("tab_1")
@@ -37,13 +37,13 @@ impl Render for TabStory {
                         .child("Tab 1"),
                 ),
             )
-            .child(Story::label("List of tabs"))
+            .child(Story::label("List of tabs", cx))
             .child(
                 h_flex()
                     .child(Tab::new("tab_1").child("Tab 1"))
                     .child(Tab::new("tab_2").child("Tab 2")),
             )
-            .child(Story::label("List of tabs with first tab selected"))
+            .child(Story::label("List of tabs with first tab selected", cx))
             .child(
                 h_flex()
                     .child(
@@ -64,7 +64,7 @@ impl Render for TabStory {
                     )
                     .child(Tab::new("tab_4").position(TabPosition::Last).child("Tab 4")),
             )
-            .child(Story::label("List of tabs with last tab selected"))
+            .child(Story::label("List of tabs with last tab selected", cx))
             .child(
                 h_flex()
                     .child(
@@ -89,7 +89,7 @@ impl Render for TabStory {
                             .child("Tab 4"),
                     ),
             )
-            .child(Story::label("List of tabs with second tab selected"))
+            .child(Story::label("List of tabs with second tab selected", cx))
             .child(
                 h_flex()
                     .child(

@@ -81,12 +81,12 @@ dependencies = [
  "http_client",
  "indexed_docs",
  "indoc",
+ "inventory",
  "itertools 0.14.0",
  "jsonschema",
  "language",
  "language_model",
  "language_model_selector",
- "linkme",
  "log",
  "lsp",
  "markdown",
@@ -2793,6 +2793,7 @@ dependencies = [
  "anyhow",
  "async-recursion 0.3.2",
  "async-tungstenite",
+ "base64 0.22.1",
  "chrono",
  "clock",
  "cocoa 0.26.0",
@@ -2804,6 +2805,7 @@ dependencies = [
  "gpui_tokio",
  "http_client",
  "http_client_tls",
+ "httparse",
  "log",
  "parking_lot",
  "paths",
@@ -2824,6 +2826,7 @@ dependencies = [
  "time",
  "tiny_http",
  "tokio",
+ "tokio-native-tls",
  "tokio-socks",
  "url",
  "util",
@@ -5086,6 +5089,7 @@ dependencies = [
  "task",
  "toml 0.8.20",
  "util",
+ "wasi-preview1-component-adapter-provider",
  "wasm-encoder 0.221.3",
  "wasmparser 0.221.3",
  "wit-component 0.221.3",
@@ -8181,26 +8185,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1dfa36d52c581e9ec783a7ce2a5e0143da6237be5811a0b3153fedfdbe9f780"
 dependencies = [
  "memchr",
-]
-
-[[package]]
-name = "linkme"
-version = "0.3.32"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22d227772b5999ddc0690e733f734f95ca05387e329c4084fe65678c51198ffe"
-dependencies = [
- "linkme-impl",
-]
-
-[[package]]
-name = "linkme-impl"
-version = "0.3.32"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71a98813fa0073a317ed6a8055dcd4722a49d9b862af828ee68449adb799b6be"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.100",
 ]
 
 [[package]]
@@ -15712,7 +15696,6 @@ dependencies = [
  "gpui",
  "icons",
  "itertools 0.14.0",
- "linkme",
  "menu",
  "serde",
  "settings",
@@ -15744,7 +15727,6 @@ name = "ui_macros"
 version = "0.1.0"
 dependencies = [
  "convert_case 0.8.0",
- "linkme",
  "proc-macro2",
  "quote",
  "syn 1.0.109",
@@ -16262,6 +16244,12 @@ checksum = "9683f9a5a998d873c0d21fcbe3c083009670149a8fab228644b8bd36b2c48cb3"
 dependencies = [
  "wit-bindgen-rt 0.39.0",
 ]
+
+[[package]]
+name = "wasi-preview1-component-adapter-provider"
+version = "29.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dcd9f21bbde82ba59e415a8725e6ad0d0d7e9e460b1a3ccbca5bdee952c1a324"
 
 [[package]]
 name = "wasite"

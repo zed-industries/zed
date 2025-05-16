@@ -5,16 +5,14 @@ You can use it for various tasks, such as generating code, asking questions abou
 
 To open the Agent Panel, use the `agent: new thread` action in [the Command Palette](../getting-started.md#command-palette) or click the ✨ (sparkles) icon in the status bar.
 
-If you're using the Agent Panel for the first time, you'll need to [configure at least one LLM provider](./custom-api-keys.md#providers).
+If you're using the Agent Panel for the first time, you'll need to [configure at least one LLM provider](./ai/configuration.md).
 
 ## Overview {#overview}
 
-After you've configured some LLM providers, you're ready to start working with the Agent Panel.
-
-Type at the message editor and hit `enter` to submit your prompt to the LLM.
+After you've configured a LLM provider, type at the message editor and hit `enter` to submit your prompt.
 If you need extra room to type, you can expand the message editor with {#kb agent::ExpandMessageEditor}.
 
-You should start to see the responses stream in with indications of which [tools](./tools.md) the AI is using to fulfill your prompt.
+You should start to see the responses stream in with indications of [which tools](./tools.md) the AI is using to fulfill your prompt.
 For example, if the AI chooses to perform an edit, you will see a card with the diff.
 
 ### Editing Messages {#editing-messages}

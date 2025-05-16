@@ -64,7 +64,6 @@ pub enum DapStoreEvent {
     RemoteHasInitialized,
 }
 
-#[allow(clippy::large_enum_variant)]
 enum DapStoreMode {
     Local(LocalDapStore),
     Ssh(SshDapStore),
