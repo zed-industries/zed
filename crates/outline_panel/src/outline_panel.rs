@@ -646,7 +646,7 @@ struct ActiveItem {
     item_handle: Box<dyn WeakItemHandle>,
     active_editor: WeakEntity<Editor>,
     _buffer_search_subscription: Subscription,
-    _editor_subscrpiption: Subscription,
+    _editor_subscription: Subscription,
 }
 
 #[derive(Debug)]
@@ -680,16 +680,25 @@ impl OutlinePanel {
         workspace: WeakEntity<Workspace>,
         mut cx: AsyncWindowContext,
     ) -> anyhow::Result<Entity<Self>> {
-        let serialized_panel = cx
-            .background_spawn(async move { KEY_VALUE_STORE.read_kvp(OUTLINE_PANEL_KEY) })
-            .await
-            .context("loading outline panel")
-            .log_err()
+        let serialized_panel = match workspace
+            .read_with(&cx, |workspace, _| {
+                OutlinePanel::serialization_key(workspace)
+            })
+            .ok()
             .flatten()
-            .map(|panel| serde_json::from_str::<SerializedOutlinePanel>(&panel))
-            .transpose()
-            .log_err()
-            .flatten();
+        {
+            Some(serialization_key) => cx
+                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
+                .await
+                .context("loading outline panel")
+                .log_err()
+                .flatten()
+                .map(|panel| serde_json::from_str::<SerializedOutlinePanel>(&panel))
+                .transpose()
+                .log_err()
+                .flatten(),
+            None => None,
+        };
 
         workspace.update_in(&mut cx, |workspace, window, cx| {
             let panel = Self::new(workspace, window, cx);
@@ -845,14 +854,32 @@ impl OutlinePanel {
         outline_panel
     }
 
+    fn serialization_key(workspace: &Workspace) -> Option<String> {
+        workspace
+            .database_id()
+            .map(|id| i64::from(id).to_string())
+            .or(workspace.session_id())
+            .map(|id| format!("{}-{:?}", OUTLINE_PANEL_KEY, id))
+    }
+
     fn serialize(&mut self, cx: &mut Context<Self>) {
+        let Some(serialization_key) = self
+            .workspace
+            .update(cx, |workspace, _| {
+                OutlinePanel::serialization_key(workspace)
+            })
+            .ok()
+            .flatten()
+        else {
+            return;
+        };
         let width = self.width;
         let active = Some(self.active);
         self.pending_serialization = cx.background_spawn(
             async move {
                 KEY_VALUE_STORE
                     .write_kvp(
-                        OUTLINE_PANEL_KEY.into(),
+                        serialization_key,
                         serde_json::to_string(&SerializedOutlinePanel { width, active })?,
                     )
                     .await?;
@@ -1593,7 +1620,7 @@ impl OutlinePanel {
                                     .get(&external_file.buffer_id)
                                     .into_iter()
                                     .flat_map(|excerpts| {
-                                        excerpts.iter().map(|(excerpt_id, _)| {
+                                        excerpts.keys().map(|excerpt_id| {
                                             CollapsedEntry::Excerpt(
                                                 external_file.buffer_id,
                                                 *excerpt_id,
@@ -1614,7 +1641,7 @@ impl OutlinePanel {
                             entries.extend(
                                 self.excerpts.get(&file.buffer_id).into_iter().flat_map(
                                     |excerpts| {
-                                        excerpts.iter().map(|(excerpt_id, _)| {
+                                        excerpts.keys().map(|excerpt_id| {
                                             CollapsedEntry::Excerpt(file.buffer_id, *excerpt_id)
                                         })
                                     },
@@ -2962,7 +2989,7 @@ impl OutlinePanel {
         );
         self.active_item = Some(ActiveItem {
             _buffer_search_subscription: buffer_search_subscription,
-            _editor_subscrpiption: subscribe_for_editor_events(&new_active_editor, window, cx),
+            _editor_subscription: subscribe_for_editor_events(&new_active_editor, window, cx),
             item_handle: new_active_item.downgrade_item(),
             active_editor: new_active_editor.downgrade(),
         });
@@ -4803,10 +4830,12 @@ impl Panel for OutlinePanel {
             .unwrap_or_else(|| OutlinePanelSettings::get_global(cx).default_width)
     }
 
-    fn set_size(&mut self, size: Option<Pixels>, _: &mut Window, cx: &mut Context<Self>) {
+    fn set_size(&mut self, size: Option<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         self.width = size;
-        self.serialize(cx);
         cx.notify();
+        cx.defer_in(window, |this, _, cx| {
+            this.serialize(cx);
+        });
     }
 
     fn icon(&self, _: &Window, cx: &App) -> Option<IconName> {
@@ -4962,7 +4991,7 @@ impl Render for OutlinePanel {
                         .border_color(cx.theme().colors().border)
                         .gap_0p5()
                         .child(Label::new("Searching:").color(Color::Muted))
-                        .child(Label::new(format!("'{}'", search_state.query))),
+                        .child(Label::new(search_state.query.to_string())),
                 )
             })
             .child(self.render_main_contents(query, show_indent_guides, indent_size, window, cx))

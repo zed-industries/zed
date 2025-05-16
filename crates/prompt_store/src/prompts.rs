@@ -60,6 +60,8 @@ struct PromptTemplateContext {
 
     #[serde(flatten)]
     model: ModelContext,
+
+    has_tools: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -328,6 +330,7 @@ impl PromptBuilder {
         let template_context = PromptTemplateContext {
             project: context.clone(),
             model: model_context.clone(),
+            has_tools: !model_context.available_tools.is_empty(),
         };
 
         self.handlebars
@@ -439,10 +442,6 @@ impl PromptBuilder {
         self.handlebars
             .lock()
             .render("terminal_assistant_prompt", &context)
-    }
-
-    pub fn generate_suggest_edits_prompt(&self) -> Result<String, RenderError> {
-        self.handlebars.lock().render("suggest_edits", &())
     }
 }
 

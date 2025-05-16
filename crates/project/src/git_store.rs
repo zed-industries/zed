@@ -3790,13 +3790,9 @@ impl Repository {
 
     pub fn branches(&mut self) -> oneshot::Receiver<Result<Vec<Branch>>> {
         let id = self.id;
-        self.send_job(None, move |repo, cx| async move {
+        self.send_job(None, move |repo, _| async move {
             match repo {
-                RepositoryState::Local { backend, .. } => {
-                    let backend = backend.clone();
-                    cx.background_spawn(async move { backend.branches().await })
-                        .await
-                }
+                RepositoryState::Local { backend, .. } => backend.branches().await,
                 RepositoryState::Remote { project_id, client } => {
                     let response = client
                         .request(proto::GitGetBranches {
@@ -4282,9 +4278,9 @@ impl Repository {
                             }));
                         }
                         let mut cursor = prev_statuses.cursor::<PathProgress>(&());
-                        for path in changed_paths.iter() {
+                        for path in changed_paths.into_iter() {
                             if cursor.seek_forward(&PathTarget::Path(&path), Bias::Left, &()) {
-                                changed_path_statuses.push(Edit::Remove(PathKey(path.0.clone())));
+                                changed_path_statuses.push(Edit::Remove(PathKey(path.0)));
                             }
                         }
                         changed_path_statuses
@@ -4460,7 +4456,7 @@ fn deserialize_blame_buffer_response(
 fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
     proto::Branch {
         is_head: branch.is_head,
-        name: branch.name.to_string(),
+        ref_name: branch.ref_name.to_string(),
         unix_timestamp: branch
             .most_recent_commit
             .as_ref()
@@ -4489,7 +4485,7 @@ fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
 fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
     git::repository::Branch {
         is_head: proto.is_head,
-        name: proto.name.clone().into(),
+        ref_name: proto.ref_name.clone().into(),
         upstream: proto
             .upstream
             .as_ref()

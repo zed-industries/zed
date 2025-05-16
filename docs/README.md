@@ -4,11 +4,13 @@ Welcome to Zed's documentation.
 
 This is built on push to `main` and published automatically to [https://zed.dev/docs](https://zed.dev/docs).
 
-To preview the docs locally you will need to install [mdBook](https://rust-lang.github.io/mdBook/) (`cargo install mdbook`) and then run:
+To preview the docs locally you will need to install [mdBook](https://rust-lang.github.io/mdBook/) (`cargo install mdbook@0.4.40`) and then run:
 
 ```sh
 mdbook serve docs
 ```
+
+It's important to note the version number above. For an unknown reason, as of 2025-04-23, running 0.4.48 will cause odd URL behavior that breaks docs.
 
 Before committing, verify that the docs are formatted in the way prettier expects with:
 

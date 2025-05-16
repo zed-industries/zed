@@ -121,6 +121,12 @@ pub trait Extension: Send + Sync + 'static {
         project: Arc<dyn ProjectDelegate>,
     ) -> Result<Command>;
 
+    async fn context_server_configuration(
+        &self,
+        context_server_id: Arc<str>,
+        project: Arc<dyn ProjectDelegate>,
+    ) -> Result<Option<ContextServerConfiguration>>;
+
     async fn suggest_docs_packages(&self, provider: Arc<str>) -> Result<Vec<String>>;
 
     async fn index_docs(
@@ -129,6 +135,13 @@ pub trait Extension: Send + Sync + 'static {
         package_name: Arc<str>,
         kv_store: Arc<dyn KeyValueStoreDelegate>,
     ) -> Result<()>;
+
+    async fn get_dap_binary(
+        &self,
+        dap_name: Arc<str>,
+        config: DebugTaskDefinition,
+        user_installed_path: Option<PathBuf>,
+    ) -> Result<DebugAdapterBinary>;
 }
 
 pub fn parse_wasm_extension_version(

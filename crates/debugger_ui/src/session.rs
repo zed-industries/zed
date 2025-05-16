@@ -1,30 +1,30 @@
 pub mod running;
 
-use std::sync::OnceLock;
-
+use crate::{StackTraceView, debugger_panel::DebugPanel, persistence::SerializedLayout};
 use dap::client::SessionId;
-use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity};
+use gpui::{
+    App, Axis, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
+};
 use project::Project;
 use project::debugger::session::Session;
 use project::worktree_store::WorktreeStore;
-use rpc::proto::{self, PeerId};
+use rpc::proto;
 use running::RunningState;
+use std::{cell::OnceCell, sync::OnceLock};
 use ui::{Indicator, prelude::*};
 use workspace::{
-    FollowableItem, ViewId, Workspace,
+    CollaboratorId, FollowableItem, ViewId, Workspace,
     item::{self, Item},
 };
-
-use crate::debugger_panel::DebugPanel;
-use crate::persistence::SerializedPaneLayout;
 
 pub struct DebugSession {
     remote_id: Option<workspace::ViewId>,
     running_state: Entity<RunningState>,
     label: OnceLock<SharedString>,
+    stack_trace_view: OnceCell<Entity<StackTraceView>>,
     _debug_panel: WeakEntity<DebugPanel>,
     _worktree_store: WeakEntity<WorktreeStore>,
-    _workspace: WeakEntity<Workspace>,
+    workspace: WeakEntity<Workspace>,
     _subscriptions: [Subscription; 1],
 }
 
@@ -40,7 +40,8 @@ impl DebugSession {
         workspace: WeakEntity<Workspace>,
         session: Entity<Session>,
         _debug_panel: WeakEntity<DebugPanel>,
-        serialized_pane_layout: Option<SerializedPaneLayout>,
+        serialized_layout: Option<SerializedLayout>,
+        dock_axis: Axis,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
@@ -49,7 +50,8 @@ impl DebugSession {
                 session.clone(),
                 project.clone(),
                 workspace.clone(),
-                serialized_pane_layout,
+                serialized_layout,
+                dock_axis,
                 window,
                 cx,
             )
@@ -63,13 +65,40 @@ impl DebugSession {
             running_state,
             label: OnceLock::new(),
             _debug_panel,
+            stack_trace_view: OnceCell::new(),
             _worktree_store: project.read(cx).worktree_store().downgrade(),
-            _workspace: workspace,
+            workspace,
         })
     }
 
     pub(crate) fn session_id(&self, cx: &App) -> SessionId {
         self.running_state.read(cx).session_id()
+    }
+
+    pub(crate) fn stack_trace_view(
+        &mut self,
+        project: &Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> &Entity<StackTraceView> {
+        let workspace = self.workspace.clone();
+        let running_state = self.running_state.clone();
+
+        self.stack_trace_view.get_or_init(|| {
+            let stackframe_list = running_state.read(cx).stack_frame_list().clone();
+
+            let stack_frame_view = cx.new(|cx| {
+                StackTraceView::new(
+                    workspace.clone(),
+                    project.clone(),
+                    stackframe_list,
+                    window,
+                    cx,
+                )
+            });
+
+            stack_frame_view
+        })
     }
 
     pub fn session(&self, cx: &App) -> Entity<Session> {
@@ -100,14 +129,14 @@ impl DebugSession {
     pub(crate) fn label_element(&self, cx: &App) -> AnyElement {
         let label = self.label(cx);
 
+        let is_terminated = self
+            .running_state
+            .read(cx)
+            .session()
+            .read(cx)
+            .is_terminated();
         let icon = {
-            if self
-                .running_state
-                .read(cx)
-                .session()
-                .read(cx)
-                .is_terminated()
-            {
+            if is_terminated {
                 Some(Indicator::dot().color(Color::Error))
             } else {
                 match self
@@ -128,7 +157,11 @@ impl DebugSession {
             .gap_2()
             .when_some(icon, |this, indicator| this.child(indicator))
             .justify_between()
-            .child(Label::new(label))
+            .child(
+                Label::new(label)
+                    .size(LabelSize::Small)
+                    .when(is_terminated, |this| this.strikethrough()),
+            )
             .into_any_element()
     }
 }
@@ -189,9 +222,9 @@ impl FollowableItem for DebugSession {
         Task::ready(Ok(()))
     }
 
-    fn set_leader_peer_id(
+    fn set_leader_id(
         &mut self,
-        _leader_peer_id: Option<PeerId>,
+        _leader_id: Option<CollaboratorId>,
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) {

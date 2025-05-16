@@ -36,7 +36,7 @@ use crate::{
     ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
     Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, ScaledPixels, Scene,
     ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SvgSize, Task, TaskLabel, Window,
-    point, px, size,
+    hash, point, px, size,
 };
 use anyhow::Result;
 use async_task::Runnable;
@@ -78,7 +78,7 @@ pub(crate) use test::*;
 pub(crate) use windows::*;
 
 #[cfg(any(test, feature = "test-support"))]
-pub use test::TestScreenCaptureSource;
+pub use test::{TestDispatcher, TestScreenCaptureSource};
 
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> BackgroundExecutor {
@@ -595,7 +595,7 @@ impl PlatformTextSystem for NoopTextSystem {
                 .unwrap()
                 .width
             / metrics.units_per_em as f32;
-        let mut glyphs = SmallVec::default();
+        let mut glyphs = Vec::new();
         for (ix, c) in text.char_indices() {
             if let Some(glyph) = self.glyph_for_char(FontId(0), c) {
                 glyphs.push(ShapedGlyph {
@@ -1499,6 +1499,20 @@ impl ImageFormat {
             ImageFormat::Tiff => "image/tiff",
         }
     }
+
+    /// Returns the ImageFormat for the given mime type
+    pub fn from_mime_type(mime_type: &str) -> Option<Self> {
+        match mime_type {
+            "image/png" => Some(Self::Png),
+            "image/jpeg" | "image/jpg" => Some(Self::Jpeg),
+            "image/webp" => Some(Self::Webp),
+            "image/gif" => Some(Self::Gif),
+            "image/svg+xml" => Some(Self::Svg),
+            "image/bmp" => Some(Self::Bmp),
+            "image/tiff" | "image/tif" => Some(Self::Tiff),
+            _ => None,
+        }
+    }
 }
 
 /// An image, with a format and certain bytes
@@ -1509,7 +1523,7 @@ pub struct Image {
     /// The raw image bytes
     pub bytes: Vec<u8>,
     /// The unique ID for the image
-    pub id: u64,
+    id: u64,
 }
 
 impl Hash for Image {
@@ -1521,10 +1535,15 @@ impl Hash for Image {
 impl Image {
     /// An empty image containing no data
     pub fn empty() -> Self {
+        Self::from_bytes(ImageFormat::Png, Vec::new())
+    }
+
+    /// Create an image from a format and bytes
+    pub fn from_bytes(format: ImageFormat, bytes: Vec<u8>) -> Self {
         Self {
-            format: ImageFormat::Png,
-            bytes: Vec::new(),
-            id: 0,
+            id: hash(&bytes),
+            format,
+            bytes,
         }
     }
 

@@ -169,6 +169,11 @@ messages!(
     (LspExtRunnablesResponse, Background),
     (LspExtSwitchSourceHeader, Background),
     (LspExtSwitchSourceHeaderResponse, Background),
+    (LspExtGoToParentModule, Background),
+    (LspExtGoToParentModuleResponse, Background),
+    (LspExtCancelFlycheck, Background),
+    (LspExtRunFlycheck, Background),
+    (LspExtClearFlycheck, Background),
     (MarkNotificationRead, Foreground),
     (MoveChannel, Foreground),
     (MultiLspQuery, Background),
@@ -300,6 +305,7 @@ messages!(
     (DebugAdapterBinary, Background),
     (RunDebugLocators, Background),
     (DebugRequest, Background),
+    (LogToDebugConsole, Background),
 );
 
 request_messages!(
@@ -422,6 +428,10 @@ request_messages!(
     (CreateContext, CreateContextResponse),
     (SynchronizeContexts, SynchronizeContextsResponse),
     (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
+    (LspExtGoToParentModule, LspExtGoToParentModuleResponse),
+    (LspExtCancelFlycheck, Ack),
+    (LspExtRunFlycheck, Ack),
+    (LspExtClearFlycheck, Ack),
     (AddWorktree, AddWorktreeResponse),
     (ShutdownRemoteServer, Ack),
     (RemoveWorktree, Ack),
@@ -544,6 +554,10 @@ entity_messages!(
     UpdateContext,
     SynchronizeContexts,
     LspExtSwitchSourceHeader,
+    LspExtGoToParentModule,
+    LspExtCancelFlycheck,
+    LspExtRunFlycheck,
+    LspExtClearFlycheck,
     LanguageServerLog,
     Toast,
     HideToast,
@@ -578,6 +592,7 @@ entity_messages!(
     ToggleBreakpoint,
     RunDebugLocators,
     GetDebugAdapterBinary,
+    LogToDebugConsole,
 );
 
 entity_messages!(

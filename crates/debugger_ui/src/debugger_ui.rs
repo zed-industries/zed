@@ -7,14 +7,17 @@ use new_session_modal::NewSessionModal;
 use project::debugger::{self, breakpoint_store::SourceBreakpoint};
 use session::DebugSession;
 use settings::Settings;
+use stack_trace_view::StackTraceView;
 use util::maybe;
-use workspace::{ShutdownDebugAdapters, Workspace};
+use workspace::{ItemHandle, ShutdownDebugAdapters, Workspace};
 
 pub mod attach_modal;
 pub mod debugger_panel;
+mod dropdown_menus;
 mod new_session_modal;
 mod persistence;
 pub(crate) mod session;
+mod stack_trace_view;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod tests;
@@ -24,7 +27,7 @@ actions!(
     [
         Start,
         Continue,
-        Disconnect,
+        Detach,
         Pause,
         Restart,
         StepInto,
@@ -34,7 +37,6 @@ actions!(
         Stop,
         ToggleIgnoreBreakpoints,
         ClearAllBreakpoints,
-        CreateDebuggingSession,
         FocusConsole,
         FocusVariables,
         FocusBreakpointList,
@@ -42,6 +44,7 @@ actions!(
         FocusModules,
         FocusLoadedSources,
         FocusTerminal,
+        ShowStackTrace,
     ]
 );
 
@@ -148,32 +151,39 @@ pub fn init(cx: &mut App) {
                     },
                 )
                 .register_action(
-                    |workspace: &mut Workspace, _: &CreateDebuggingSession, window, cx| {
-                        if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
-                            let weak_panel = debug_panel.downgrade();
-                            let weak_workspace = cx.weak_entity();
+                    |workspace: &mut Workspace, _: &ShowStackTrace, window, cx| {
+                        let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
+                            return;
+                        };
 
-                            workspace.toggle_modal(window, cx, |window, cx| {
-                                NewSessionModal::new(
-                                    debug_panel.read(cx).past_debug_definition.clone(),
-                                    weak_panel,
-                                    weak_workspace,
-                                    window,
-                                    cx,
-                                )
+                        if let Some(existing) = workspace.item_of_type::<StackTraceView>(cx) {
+                            let is_active = workspace
+                                .active_item(cx)
+                                .is_some_and(|item| item.item_id() == existing.item_id());
+                            workspace.activate_item(&existing, true, !is_active, window, cx);
+                        } else {
+                            let Some(active_session) = debug_panel.read(cx).active_session() else {
+                                return;
+                            };
+
+                            let project = workspace.project();
+
+                            let stack_trace_view = active_session.update(cx, |session, cx| {
+                                session.stack_trace_view(project, window, cx).clone()
                             });
+
+                            workspace.add_item_to_active_pane(
+                                Box::new(stack_trace_view),
+                                None,
+                                true,
+                                window,
+                                cx,
+                            );
                         }
                     },
                 )
                 .register_action(|workspace: &mut Workspace, _: &Start, window, cx| {
-                    tasks_ui::toggle_modal(
-                        workspace,
-                        None,
-                        task::TaskModal::DebugModal,
-                        window,
-                        cx,
-                    )
-                    .detach();
+                    NewSessionModal::show(workspace, window, cx);
                 });
         })
     })

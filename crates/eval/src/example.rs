@@ -12,6 +12,7 @@ use crate::{
 };
 use agent::{ContextLoadResult, Thread, ThreadEvent};
 use anyhow::{Result, anyhow};
+use assistant_settings::AgentProfileId;
 use async_trait::async_trait;
 use buffer_diff::DiffHunkStatus;
 use collections::HashMap;
@@ -46,6 +47,8 @@ pub struct ExampleMetadata {
     pub revision: String,
     pub language_server: Option<LanguageServer>,
     pub max_assertions: Option<usize>,
+    pub profile_id: AgentProfileId,
+    pub existing_thread_json: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -119,6 +122,7 @@ impl ExampleContext {
                     text.to_string(),
                     ContextLoadResult::default(),
                     None,
+                    Vec::new(),
                     cx,
                 );
             })
@@ -160,7 +164,11 @@ impl ExampleContext {
             if left == right {
                 Ok(())
             } else {
-                println!("{}{:#?} != {:#?}", self.log_prefix, left, right);
+                println!(
+                    "{}{}",
+                    self.log_prefix,
+                    pretty_assertions::Comparison::new(&left, &right)
+                );
                 Err(anyhow::Error::from(FailedAssertion(message.clone())))
             },
             message,
@@ -229,9 +237,11 @@ impl ExampleContext {
                         tx.try_send(Err(anyhow!(err.clone()))).ok();
                     }
                 },
-                ThreadEvent::StreamedAssistantText(_, _)
+                ThreadEvent::NewRequest
+                | ThreadEvent::StreamedAssistantText(_, _)
                 | ThreadEvent::StreamedAssistantThinking(_, _)
-                | ThreadEvent::UsePendingTools { .. } => {}
+                | ThreadEvent::UsePendingTools { .. }
+                | ThreadEvent::CompletionCanceled => {}
                 ThreadEvent::ToolFinished {
                     tool_use_id,
                     pending_tool_use,
@@ -261,6 +271,12 @@ impl ExampleContext {
                 ThreadEvent::InvalidToolInput { .. } => {
                     println!("{log_prefix} invalid tool input");
                 }
+                ThreadEvent::MissingToolUse {
+                    tool_use_id: _,
+                    ui_text,
+                } => {
+                    println!("{log_prefix} {ui_text}");
+                }
                 ThreadEvent::ToolConfirmationNeeded => {
                     panic!(
                         "{}Bug: Tool confirmation should not be required in eval",
@@ -276,7 +292,6 @@ impl ExampleContext {
                 | ThreadEvent::ReceivedTextChunk
                 | ThreadEvent::StreamedToolUse { .. }
                 | ThreadEvent::CheckpointChanged
-                | ThreadEvent::UsageUpdated(_)
                 | ThreadEvent::CancelEditing => {
                     tx.try_send(Ok(())).ok();
                     if std::env::var("ZED_EVAL_DEBUG").is_ok() {
@@ -334,8 +349,8 @@ impl ExampleContext {
     }
 
     pub fn edits(&self) -> HashMap<Arc<Path>, FileEdits> {
-        self.app
-            .read_entity(&self.agent_thread, |thread, cx| {
+        self.agent_thread
+            .read_with(&self.app, |thread, cx| {
                 let action_log = thread.action_log().read(cx);
                 HashMap::from_iter(action_log.changed_buffers(cx).into_iter().map(
                     |(buffer, diff)| {
@@ -463,12 +478,16 @@ impl Response {
         tool_name: &'static str,
         cx: &mut ExampleContext,
     ) -> Result<&ToolUse> {
-        let result = self.messages.iter().find_map(|msg| {
+        let result = self.find_tool_call(tool_name);
+        cx.assert_some(result, format!("called `{}`", tool_name))
+    }
+
+    pub fn find_tool_call(&self, tool_name: &str) -> Option<&ToolUse> {
+        self.messages.iter().rev().find_map(|msg| {
             msg.tool_use
                 .iter()
                 .find(|tool_use| tool_use.name == tool_name)
-        });
-        cx.assert_some(result, format!("called `{}`", tool_name))
+        })
     }
 
     #[allow(dead_code)]
@@ -503,16 +522,16 @@ impl ToolUse {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct FileEdits {
-    hunks: Vec<FileEditHunk>,
+    pub hunks: Vec<FileEditHunk>,
 }
 
-#[derive(Debug)]
-struct FileEditHunk {
-    base_text: String,
-    text: String,
-    status: DiffHunkStatus,
+#[derive(Debug, Eq, PartialEq)]
+pub struct FileEditHunk {
+    pub base_text: String,
+    pub text: String,
+    pub status: DiffHunkStatus,
 }
 
 impl FileEdits {

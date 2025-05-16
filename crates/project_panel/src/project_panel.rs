@@ -592,16 +592,25 @@ impl ProjectPanel {
         workspace: WeakEntity<Workspace>,
         mut cx: AsyncWindowContext,
     ) -> Result<Entity<Self>> {
-        let serialized_panel = cx
-            .background_spawn(async move { KEY_VALUE_STORE.read_kvp(PROJECT_PANEL_KEY) })
-            .await
-            .map_err(|e| anyhow!("Failed to load project panel: {}", e))
-            .log_err()
+        let serialized_panel = match workspace
+            .read_with(&cx, |workspace, _| {
+                ProjectPanel::serialization_key(workspace)
+            })
+            .ok()
             .flatten()
-            .map(|panel| serde_json::from_str::<SerializedProjectPanel>(&panel))
-            .transpose()
-            .log_err()
-            .flatten();
+        {
+            Some(serialization_key) => cx
+                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
+                .await
+                .map_err(|e| anyhow!("Failed to load project panel: {}", e))
+                .log_err()
+                .flatten()
+                .map(|panel| serde_json::from_str::<SerializedProjectPanel>(&panel))
+                .transpose()
+                .log_err()
+                .flatten(),
+            None => None,
+        };
 
         workspace.update_in(&mut cx, |workspace, window, cx| {
             let panel = ProjectPanel::new(workspace, window, cx);
@@ -673,13 +682,31 @@ impl ProjectPanel {
             .or_insert(diagnostic_severity);
     }
 
+    fn serialization_key(workspace: &Workspace) -> Option<String> {
+        workspace
+            .database_id()
+            .map(|id| i64::from(id).to_string())
+            .or(workspace.session_id())
+            .map(|id| format!("{}-{:?}", PROJECT_PANEL_KEY, id))
+    }
+
     fn serialize(&mut self, cx: &mut Context<Self>) {
+        let Some(serialization_key) = self
+            .workspace
+            .update(cx, |workspace, _| {
+                ProjectPanel::serialization_key(workspace)
+            })
+            .ok()
+            .flatten()
+        else {
+            return;
+        };
         let width = self.width;
         self.pending_serialization = cx.background_spawn(
             async move {
                 KEY_VALUE_STORE
                     .write_kvp(
-                        PROJECT_PANEL_KEY.into(),
+                        serialization_key,
                         serde_json::to_string(&SerializedProjectPanel { width })?,
                     )
                     .await?;
@@ -1346,6 +1373,10 @@ impl ProjectPanel {
     }
 
     fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        if cx.stop_active_drag(window) {
+            return;
+        }
+
         let previous_edit_state = self.edit_state.take();
         self.update_visible_entries(None, cx);
         self.marked_entries.clear();
@@ -2823,12 +2854,9 @@ impl ProjectPanel {
                 }
                 let precedes_new_entry = if let Some(new_entry_id) = new_entry_parent_id {
                     entry.id == new_entry_id || {
-                        self.ancestors.get(&entry.id).map_or(false, |entries| {
-                            entries
-                                .ancestors
-                                .iter()
-                                .any(|entry_id| *entry_id == new_entry_id)
-                        })
+                        self.ancestors
+                            .get(&entry.id)
+                            .map_or(false, |entries| entries.ancestors.contains(&new_entry_id))
                     }
                 } else {
                     false
@@ -2855,13 +2883,7 @@ impl ProjectPanel {
                 }
                 let worktree_abs_path = worktree.read(cx).abs_path();
                 let (depth, path) = if Some(entry.entry) == worktree.read(cx).root_entry() {
-                    let Some(path_name) = worktree_abs_path
-                        .file_name()
-                        .with_context(|| {
-                            format!("Worktree abs path has no file name, root entry: {entry:?}")
-                        })
-                        .log_err()
-                    else {
+                    let Some(path_name) = worktree_abs_path.file_name() else {
                         continue;
                     };
                     let path = ArcCow::Borrowed(Path::new(path_name));
@@ -3344,10 +3366,7 @@ impl ProjectPanel {
                                     .ancestors
                                     .get(&entry.id)
                                     .is_some_and(|auto_folded_dirs| {
-                                        auto_folded_dirs
-                                            .ancestors
-                                            .iter()
-                                            .any(|entry_id| *entry_id == edit_state.entry_id)
+                                        auto_folded_dirs.ancestors.contains(&edit_state.entry_id)
                                     })
                         };
 
@@ -4969,10 +4988,12 @@ impl Panel for ProjectPanel {
             .unwrap_or_else(|| ProjectPanelSettings::get_global(cx).default_width)
     }
 
-    fn set_size(&mut self, size: Option<Pixels>, _: &mut Window, cx: &mut Context<Self>) {
+    fn set_size(&mut self, size: Option<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         self.width = size;
-        self.serialize(cx);
         cx.notify();
+        cx.defer_in(window, |this, _, cx| {
+            this.serialize(cx);
+        });
     }
 
     fn icon(&self, _: &Window, cx: &App) -> Option<IconName> {

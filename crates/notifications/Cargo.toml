@@ -28,7 +28,6 @@ collections.workspace = true
 component.workspace = true
 db.workspace = true
 gpui.workspace = true
-linkme.workspace = true
 rpc.workspace = true
 sum_tree.workspace = true
 time.workspace = true

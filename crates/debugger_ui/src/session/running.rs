@@ -7,7 +7,7 @@ pub mod variable_list;
 
 use std::{any::Any, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 
-use crate::persistence::{self, DebuggerPaneItem, SerializedPaneLayout};
+use crate::persistence::{self, DebuggerPaneItem, SerializedLayout};
 
 use super::DebugPanelItemEvent;
 use anyhow::{Result, anyhow};
@@ -15,18 +15,21 @@ use breakpoint_list::BreakpointList;
 use collections::{HashMap, IndexMap};
 use console::Console;
 use dap::{
-    Capabilities, RunInTerminalRequestArguments, Thread, client::SessionId,
+    Capabilities, RunInTerminalRequestArguments, Thread,
+    adapters::{DebugAdapterName, DebugTaskDefinition},
+    client::SessionId,
     debugger_settings::DebuggerSettings,
 };
 use futures::{SinkExt, channel::mpsc};
 use gpui::{
-    Action as _, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
+    Action as _, AnyView, AppContext, Axis, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     NoAction, Pixels, Point, Subscription, Task, WeakEntity,
 };
+use language::Buffer;
 use loaded_source_list::LoadedSourceList;
 use module_list::ModuleList;
 use project::{
-    Project,
+    Project, WorktreeId,
     debugger::session::{Session, SessionEvent, ThreadId, ThreadStatus},
     terminals::TerminalKind,
 };
@@ -34,12 +37,16 @@ use rpc::proto::ViewId;
 use serde_json::Value;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
+use task::{
+    BuildTaskDefinition, DebugScenario, LaunchRequest, ShellBuilder, SpawnInTerminal, TaskContext,
+    substitute_variables_in_map, substitute_variables_in_str,
+};
 use terminal_view::TerminalView;
 use ui::{
-    ActiveTheme, AnyElement, App, ButtonCommon as _, Clickable as _, Context, ContextMenu,
-    DropdownMenu, FluentBuilder, IconButton, IconName, IconSize, InteractiveElement, IntoElement,
-    Label, LabelCommon as _, ParentElement, Render, SharedString, StatefulInteractiveElement,
-    Styled, Tab, Tooltip, VisibleOnHover, VisualContext, Window, div, h_flex, v_flex,
+    ActiveTheme, AnyElement, App, ButtonCommon as _, Clickable as _, Context, FluentBuilder,
+    IconButton, IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon as _,
+    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Tab, Tooltip,
+    VisibleOnHover, VisualContext, Window, div, h_flex, v_flex,
 };
 use util::ResultExt;
 use variable_list::VariableList;
@@ -66,7 +73,14 @@ pub struct RunningState {
     panes: PaneGroup,
     active_pane: Option<Entity<Pane>>,
     pane_close_subscriptions: HashMap<EntityId, Subscription>,
+    dock_axis: Axis,
     _schedule_serialize: Option<Task<()>>,
+}
+
+impl RunningState {
+    pub(crate) fn thread_id(&self) -> Option<ThreadId> {
+        self.thread_id
+    }
 }
 
 impl Render for RunningState {
@@ -110,7 +124,7 @@ impl Render for RunningState {
 
 pub(crate) struct SubView {
     inner: AnyView,
-    pane_focus_handle: FocusHandle,
+    item_focus_handle: FocusHandle,
     kind: DebuggerPaneItem,
     show_indicator: Box<dyn Fn(&App) -> bool>,
     hovered: bool,
@@ -118,7 +132,7 @@ pub(crate) struct SubView {
 
 impl SubView {
     pub(crate) fn new(
-        pane_focus_handle: FocusHandle,
+        item_focus_handle: FocusHandle,
         view: AnyView,
         kind: DebuggerPaneItem,
         show_indicator: Option<Box<dyn Fn(&App) -> bool>>,
@@ -127,7 +141,7 @@ impl SubView {
         cx.new(|_| Self {
             kind,
             inner: view,
-            pane_focus_handle,
+            item_focus_handle,
             show_indicator: show_indicator.unwrap_or(Box::new(|_| false)),
             hovered: false,
         })
@@ -139,7 +153,7 @@ impl SubView {
 }
 impl Focusable for SubView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.pane_focus_handle.clone()
+        self.item_focus_handle.clone()
     }
 }
 impl EventEmitter<()> for SubView {}
@@ -188,9 +202,9 @@ impl Render for SubView {
                 cx.notify();
             }))
             .size_full()
-            // Add border uncoditionally to prevent layout shifts on focus changes.
+            // Add border unconditionally to prevent layout shifts on focus changes.
             .border_1()
-            .when(self.pane_focus_handle.contains_focused(window, cx), |el| {
+            .when(self.item_focus_handle.contains_focused(window, cx), |el| {
                 el.border_color(cx.theme().colors().pane_focused_border)
             })
             .child(self.inner.clone())
@@ -343,6 +357,13 @@ pub(crate) fn new_debugger_pane(
                     .px_2()
                     .border_color(cx.theme().colors().border)
                     .track_focus(&focus_handle)
+                    .on_action(|_: &menu::Cancel, window, cx| {
+                        if cx.stop_active_drag(window) {
+                            return;
+                        } else {
+                            cx.propagate();
+                        }
+                    })
                     .child(
                         h_flex()
                             .w_full()
@@ -499,11 +520,12 @@ impl Focusable for DebugTerminal {
 }
 
 impl RunningState {
-    pub fn new(
+    pub(crate) fn new(
         session: Entity<Session>,
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
-        serialized_pane_layout: Option<SerializedPaneLayout>,
+        serialized_pane_layout: Option<SerializedLayout>,
+        dock_axis: Axis,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -582,7 +604,8 @@ impl RunningState {
         let mut pane_close_subscriptions = HashMap::default();
         let panes = if let Some(root) = serialized_pane_layout.and_then(|serialized_layout| {
             persistence::deserialize_pane_layout(
-                serialized_layout,
+                serialized_layout.panes,
+                dock_axis != serialized_layout.dock_axis,
                 &workspace,
                 &project,
                 &stack_frame_list,
@@ -610,6 +633,7 @@ impl RunningState {
                 &loaded_source_list,
                 &console,
                 &breakpoint_list,
+                dock_axis,
                 &mut pane_close_subscriptions,
                 window,
                 cx,
@@ -636,6 +660,7 @@ impl RunningState {
             loaded_sources_list: loaded_source_list,
             pane_close_subscriptions,
             debug_terminal,
+            dock_axis,
             _schedule_serialize: None,
         }
     }
@@ -665,6 +690,203 @@ impl RunningState {
 
     pub(crate) fn has_pane_at_position(&self, position: Point<Pixels>) -> bool {
         self.panes.pane_at_pixel_position(position).is_some()
+    }
+
+    pub(crate) fn resolve_scenario(
+        &self,
+        scenario: DebugScenario,
+        task_context: TaskContext,
+        buffer: Option<Entity<Buffer>>,
+        worktree_id: Option<WorktreeId>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<DebugTaskDefinition>> {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return Task::ready(Err(anyhow!("no workspace")));
+        };
+        let project = workspace.read(cx).project().clone();
+        let dap_store = project.read(cx).dap_store().downgrade();
+        let task_store = project.read(cx).task_store().downgrade();
+        let weak_project = project.downgrade();
+        let weak_workspace = workspace.downgrade();
+        let is_local = project.read(cx).is_local();
+        cx.spawn_in(window, async move |this, cx| {
+            let DebugScenario {
+                adapter,
+                label,
+                build,
+                request,
+                initialize_args,
+                tcp_connection,
+                stop_on_entry,
+            } = scenario;
+            let build_output = if let Some(build) = build {
+                let (task, locator_name) = match build {
+                    BuildTaskDefinition::Template {
+                        task_template,
+                        locator_name,
+                    } => (task_template, locator_name),
+                    BuildTaskDefinition::ByName(ref label) => {
+                        let Some(task) = task_store.update(cx, |this, cx| {
+                            this.task_inventory().and_then(|inventory| {
+                                inventory.read(cx).task_template_by_label(
+                                    buffer,
+                                    worktree_id,
+                                    &label,
+                                    cx,
+                                )
+                            })
+                        })?
+                        else {
+                            anyhow::bail!("Couldn't find task template for {:?}", build)
+                        };
+                        (task, None)
+                    }
+                };
+                let Some(task) = task.resolve_task("debug-build-task", &task_context) else {
+                    anyhow::bail!("Could not resolve task variables within a debug scenario");
+                };
+
+                let locator_name = if let Some(locator_name) = locator_name {
+                    debug_assert!(request.is_none());
+                    Some(locator_name)
+                } else if request.is_none() {
+                    dap_store
+                        .update(cx, |this, cx| {
+                            this.debug_scenario_for_build_task(
+                                task.original_task().clone(),
+                                adapter.clone().into(),
+                                task.display_label().to_owned().into(),
+                                cx,
+                            )
+                            .and_then(|scenario| {
+                                match scenario.build {
+                                    Some(BuildTaskDefinition::Template {
+                                        locator_name, ..
+                                    }) => locator_name,
+                                    _ => None,
+                                }
+                            })
+                        })
+                        .ok()
+                        .flatten()
+                } else {
+                    None
+                };
+
+                let builder = ShellBuilder::new(is_local, &task.resolved.shell);
+                let command_label = builder.command_label(&task.resolved.command_label);
+                let (command, args) =
+                    builder.build(task.resolved.command.clone(), &task.resolved.args);
+
+                let task_with_shell = SpawnInTerminal {
+                    command_label,
+                    command,
+                    args,
+                    ..task.resolved.clone()
+                };
+                let terminal = project
+                    .update_in(cx, |project, window, cx| {
+                        project.create_terminal(
+                            TerminalKind::Task(task_with_shell.clone()),
+                            window.window_handle(),
+                            cx,
+                        )
+                    })?
+                    .await?;
+
+                let terminal_view = cx.new_window_entity(|window, cx| {
+                    TerminalView::new(
+                        terminal.clone(),
+                        weak_workspace,
+                        None,
+                        weak_project,
+                        false,
+                        window,
+                        cx,
+                    )
+                })?;
+
+                this.update_in(cx, |this, window, cx| {
+                    this.ensure_pane_item(DebuggerPaneItem::Terminal, window, cx);
+                    this.debug_terminal.update(cx, |debug_terminal, cx| {
+                        debug_terminal.terminal = Some(terminal_view);
+                        cx.notify();
+                    });
+                })?;
+
+                let exit_status = terminal
+                    .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
+                    .await
+                    .ok_or_else(|| anyhow!("Failed to wait for completed task"))?;
+
+                if !exit_status.success() {
+                    anyhow::bail!("Build failed");
+                }
+                Some((task.resolved.clone(), locator_name))
+            } else {
+                None
+            };
+            let request = if let Some(request) = request {
+                request
+            } else if let Some((task, locator_name)) = build_output {
+                let locator_name = locator_name
+                    .ok_or_else(|| anyhow!("Could not find a valid locator for a build task"))?;
+                dap_store
+                    .update(cx, |this, cx| {
+                        this.run_debug_locator(&locator_name, task, cx)
+                    })?
+                    .await?
+            } else {
+                return Err(anyhow!("No request or build provided"));
+            };
+            let request = match request {
+                dap::DebugRequest::Launch(launch_request) => {
+                    let cwd = match launch_request.cwd.as_deref().and_then(|path| path.to_str()) {
+                        Some(cwd) => {
+                            let substituted_cwd = substitute_variables_in_str(&cwd, &task_context)
+                                .ok_or_else(|| anyhow!("Failed to substitute variables in cwd"))?;
+                            Some(PathBuf::from(substituted_cwd))
+                        }
+                        None => None,
+                    };
+
+                    let env = substitute_variables_in_map(
+                        &launch_request.env.into_iter().collect(),
+                        &task_context,
+                    )
+                    .ok_or_else(|| anyhow!("Failed to substitute variables in env"))?
+                    .into_iter()
+                    .collect();
+                    let new_launch_request = LaunchRequest {
+                        program: substitute_variables_in_str(
+                            &launch_request.program,
+                            &task_context,
+                        )
+                        .ok_or_else(|| anyhow!("Failed to substitute variables in program"))?,
+                        args: launch_request
+                            .args
+                            .into_iter()
+                            .map(|arg| substitute_variables_in_str(&arg, &task_context))
+                            .collect::<Option<Vec<_>>>()
+                            .ok_or_else(|| anyhow!("Failed to substitute variables in args"))?,
+                        cwd,
+                        env,
+                    };
+
+                    dap::DebugRequest::Launch(new_launch_request)
+                }
+                request @ dap::DebugRequest::Attach(_) => request, // todo(debugger): We should check that process_id is valid and if not show the modal
+            };
+            Ok(DebugTaskDefinition {
+                label,
+                adapter: DebugAdapterName(adapter),
+                request,
+                initialize_args,
+                stop_on_entry,
+                tcp_connection,
+            })
+        })
     }
 
     fn handle_run_in_terminal(
@@ -749,7 +971,15 @@ impl RunningState {
             let terminal = terminal_task.await?;
 
             let terminal_view = cx.new_window_entity(|window, cx| {
-                TerminalView::new(terminal.clone(), workspace, None, weak_project, window, cx)
+                TerminalView::new(
+                    terminal.clone(),
+                    workspace,
+                    None,
+                    weak_project,
+                    false,
+                    window,
+                    cx,
+                )
             })?;
 
             running.update_in(cx, |running, window, cx| {
@@ -904,12 +1134,16 @@ impl RunningState {
                     .timer(Duration::from_millis(100))
                     .await;
 
-                let Some((adapter_name, pane_group)) = this
-                    .update(cx, |this, cx| {
-                        let adapter_name = this.session.read(cx).adapter_name();
+                let Some((adapter_name, pane_layout)) = this
+                    .read_with(cx, |this, cx| {
+                        let adapter_name = this.session.read(cx).adapter();
                         (
                             adapter_name,
-                            persistence::build_serialized_pane_layout(&this.panes.root, cx),
+                            persistence::build_serialized_layout(
+                                &this.panes.root,
+                                this.dock_axis,
+                                cx,
+                            ),
                         )
                     })
                     .ok()
@@ -917,7 +1151,7 @@ impl RunningState {
                     return;
                 };
 
-                persistence::serialize_pane_layout(adapter_name, pane_group)
+                persistence::serialize_pane_layout(adapter_name, pane_layout)
                     .await
                     .log_err();
 
@@ -973,7 +1207,9 @@ impl RunningState {
             .as_ref()
             .and_then(|pane| self.panes.find_pane_in_direction(pane, direction, cx))
         {
-            window.focus(&pane.focus_handle(cx));
+            pane.update(cx, |pane, cx| {
+                pane.focus_active_item(window, cx);
+            })
         } else {
             self.workspace
                 .update(cx, |workspace, cx| {
@@ -983,10 +1219,16 @@ impl RunningState {
         }
     }
 
-    pub(crate) fn go_to_selected_stack_frame(&self, window: &Window, cx: &mut Context<Self>) {
+    pub(crate) fn go_to_selected_stack_frame(&self, window: &mut Window, cx: &mut Context<Self>) {
         if self.thread_id.is_some() {
             self.stack_frame_list
-                .update(cx, |list, cx| list.go_to_selected_stack_frame(window, cx));
+                .update(cx, |list, cx| {
+                    let Some(stack_frame_id) = list.opened_stack_frame_id() else {
+                        return Task::ready(Ok(()));
+                    };
+                    list.go_to_stack_frame(stack_frame_id, window, cx)
+                })
+                .detach();
         }
     }
 
@@ -1003,11 +1245,10 @@ impl RunningState {
     }
 
     pub(crate) fn selected_stack_frame_id(&self, cx: &App) -> Option<dap::StackFrameId> {
-        self.stack_frame_list.read(cx).selected_stack_frame_id()
+        self.stack_frame_list.read(cx).opened_stack_frame_id()
     }
 
-    #[cfg(test)]
-    pub fn stack_frame_list(&self) -> &Entity<StackFrameList> {
+    pub(crate) fn stack_frame_list(&self) -> &Entity<StackFrameList> {
         &self.stack_frame_list
     }
 
@@ -1043,6 +1284,11 @@ impl RunningState {
         &self.variable_list
     }
 
+    #[cfg(test)]
+    pub(crate) fn serialized_layout(&self, cx: &App) -> SerializedLayout {
+        persistence::build_serialized_layout(&self.panes.root, self.dock_axis, cx)
+    }
+
     pub fn capabilities(&self, cx: &App) -> Capabilities {
         self.session().read(cx).capabilities().clone()
     }
@@ -1076,7 +1322,12 @@ impl RunningState {
             .map(|id| self.session().read(cx).thread_status(id))
     }
 
-    fn select_thread(&mut self, thread_id: ThreadId, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn select_thread(
+        &mut self,
+        thread_id: ThreadId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.thread_id.is_some_and(|id| id == thread_id) {
             return;
         }
@@ -1201,11 +1452,7 @@ impl RunningState {
         });
     }
 
-    #[expect(
-        unused,
-        reason = "Support for disconnecting a client is not wired through yet"
-    )]
-    pub fn disconnect_client(&self, cx: &mut Context<Self>) {
+    pub fn detach_client(&self, cx: &mut Context<Self>) {
         self.session().update(cx, |state, cx| {
             state.disconnect_client(cx);
         });
@@ -1217,36 +1464,6 @@ impl RunningState {
         });
     }
 
-    pub(crate) fn thread_dropdown(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<'_, RunningState>,
-    ) -> DropdownMenu {
-        let state = cx.entity();
-        let threads = self.session.update(cx, |this, cx| this.threads(cx));
-        let selected_thread_name = threads
-            .iter()
-            .find(|(thread, _)| self.thread_id.map(|id| id.0) == Some(thread.id))
-            .map(|(thread, _)| thread.name.clone())
-            .unwrap_or("Threads".to_owned());
-        DropdownMenu::new(
-            ("thread-list", self.session_id.0),
-            selected_thread_name,
-            ContextMenu::build_eager(window, cx, move |mut this, _, _| {
-                for (thread, _) in threads {
-                    let state = state.clone();
-                    let thread_id = thread.id;
-                    this = this.entry(thread.name, None, move |window, cx| {
-                        state.update(cx, |state, cx| {
-                            state.select_thread(ThreadId(thread_id), window, cx);
-                        });
-                    });
-                }
-                this
-            }),
-        )
-    }
-
     fn default_pane_layout(
         project: Entity<Project>,
         workspace: &WeakEntity<Workspace>,
@@ -1256,6 +1473,7 @@ impl RunningState {
         loaded_source_list: &Entity<LoadedSourceList>,
         console: &Entity<Console>,
         breakpoints: &Entity<BreakpointList>,
+        dock_axis: Axis,
         subscriptions: &mut HashMap<EntityId, Subscription>,
         window: &mut Window,
         cx: &mut Context<'_, RunningState>,
@@ -1376,7 +1594,7 @@ impl RunningState {
         );
 
         let group_root = workspace::PaneAxis::new(
-            gpui::Axis::Horizontal,
+            dock_axis.invert(),
             [leftmost_pane, center_pane, rightmost_pane]
                 .into_iter()
                 .map(workspace::Member::Pane)
@@ -1384,6 +1602,11 @@ impl RunningState {
         );
 
         Member::Axis(group_root)
+    }
+
+    pub(crate) fn invert_axies(&mut self) {
+        self.dock_axis = self.dock_axis.invert();
+        self.panes.invert_axies();
     }
 }
 

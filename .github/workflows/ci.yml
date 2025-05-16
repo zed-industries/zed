@@ -164,8 +164,18 @@ jobs:
         working-directory: ./docs
         run: |
           pnpm dlx prettier@${PRETTIER_VERSION} . --check || {
-            echo "To fix, run from the root of the zed repo:"
+            echo "To fix, run from the root of the Zed repo:"
             echo "  cd docs && pnpm dlx prettier@${PRETTIER_VERSION} . --write && cd .."
+            false
+          }
+        env:
+          PRETTIER_VERSION: 3.5.0
+
+      - name: Prettier Check on default.json
+        run: |
+          pnpm dlx prettier@${PRETTIER_VERSION} assets/settings/default.json --check || {
+            echo "To fix, run from the root of the Zed repo:"
+            echo "  pnpm dlx prettier@${PRETTIER_VERSION} assets/settings/default.json --write"
             false
           }
         env:

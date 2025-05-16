@@ -1,4 +1,5 @@
 mod app_menus;
+pub mod component_preview;
 pub mod inline_completion_registry;
 #[cfg(target_os = "macos")]
 pub(crate) mod mac_only_instance;
@@ -12,14 +13,15 @@ use agent::AgentDiffToolbar;
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
-use assistant_context_editor::AssistantPanelDelegate;
+use assistant_context_editor::AgentPanelDelegate;
 use breadcrumbs::Breadcrumbs;
 use client::zed_urls;
 use collections::VecDeque;
 use debugger_ui::debugger_panel::DebugPanel;
 use editor::ProposedChangesEditorToolbar;
 use editor::{Editor, MultiBuffer, scroll::Autoscroll};
-use feature_flags::{DebuggerFeatureFlag, FeatureFlagAppExt, FeatureFlagViewExt};
+use feature_flags::{DebuggerFeatureFlag, FeatureFlagViewExt};
+use futures::future::Either;
 use futures::{StreamExt, channel::mpsc, select_biased};
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
@@ -53,7 +55,6 @@ use settings::{
 };
 use std::path::PathBuf;
 use std::sync::atomic::{self, AtomicBool};
-use std::time::Duration;
 use std::{borrow::Cow, path::Path, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use theme::{ActiveTheme, ThemeSettings};
@@ -62,7 +63,7 @@ use util::markdown::MarkdownString;
 use util::{ResultExt, asset_str};
 use uuid::Uuid;
 use vim_mode_setting::VimModeSetting;
-use welcome::{BaseKeymap, MultibufferHint};
+use welcome::{BaseKeymap, DOCS_URL, MultibufferHint};
 use workspace::notifications::{NotificationId, dismiss_app_notification, show_app_notification};
 use workspace::{
     AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
@@ -72,7 +73,7 @@ use workspace::{
 use workspace::{CloseIntent, RestoreBanner};
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
-    OpenAccountSettings, OpenBrowser, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
+    OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
 };
 
 actions!(
@@ -373,9 +374,6 @@ fn initialize_panels(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let assistant2_feature_flag =
-        cx.wait_for_flag_or_timeout::<feature_flags::Assistant2FeatureFlag>(Duration::from_secs(5));
-
     let prompt_builder = prompt_builder.clone();
 
     cx.spawn_in(window, async move |workspace_handle, cx| {
@@ -436,36 +434,20 @@ fn initialize_panels(
             workspace.add_panel(git_panel, window, cx);
         })?;
 
-        let is_assistant2_enabled = if cfg!(test) {
-            false
-        } else {
-            assistant2_feature_flag.await
-        };
-
-        let (assistant_panel, assistant2_panel) = if is_assistant2_enabled {
-            let assistant2_panel =
-                agent::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone())
+        let is_assistant2_enabled = !cfg!(test);
+        let agent_panel = if is_assistant2_enabled {
+            let agent_panel =
+                agent::AgentPanel::load(workspace_handle.clone(), prompt_builder, cx.clone())
                     .await?;
 
-            (None, Some(assistant2_panel))
+            Some(agent_panel)
         } else {
-            let assistant_panel = assistant::AssistantPanel::load(
-                workspace_handle.clone(),
-                prompt_builder.clone(),
-                cx.clone(),
-            )
-            .await?;
-
-            (Some(assistant_panel), None)
+            None
         };
 
         workspace_handle.update_in(cx, |workspace, window, cx| {
-            if let Some(assistant2_panel) = assistant2_panel {
-                workspace.add_panel(assistant2_panel, window, cx);
-            }
-
-            if let Some(assistant_panel) = assistant_panel {
-                workspace.add_panel(assistant_panel, window, cx);
+            if let Some(agent_panel) = agent_panel {
+                workspace.add_panel(agent_panel, window, cx);
             }
 
             // Register the actions that are shared between `assistant` and `assistant2`.
@@ -473,25 +455,16 @@ fn initialize_panels(
             // We need to do this here instead of within the individual `init`
             // functions so that we only register the actions once.
             //
-            // Once we ship `assistant2` we can push this back down into `agent::assistant_panel::init`.
+            // Once we ship `assistant2` we can push this back down into `agent::agent_panel::init`.
             if is_assistant2_enabled {
-                <dyn AssistantPanelDelegate>::set_global(
+                <dyn AgentPanelDelegate>::set_global(
                     Arc::new(agent::ConcreteAssistantPanelDelegate),
                     cx,
                 );
 
                 workspace
-                    .register_action(agent::AssistantPanel::toggle_focus)
+                    .register_action(agent::AgentPanel::toggle_focus)
                     .register_action(agent::InlineAssistant::inline_assist);
-            } else {
-                <dyn AssistantPanelDelegate>::set_global(
-                    Arc::new(assistant::assistant_panel::ConcreteAssistantPanelDelegate),
-                    cx,
-                );
-
-                workspace
-                    .register_action(assistant::AssistantPanel::toggle_focus)
-                    .register_action(assistant::AssistantPanel::inline_assist);
             }
         })?;
 
@@ -508,6 +481,7 @@ fn register_actions(
 ) {
     workspace
         .register_action(about)
+        .register_action(|_, _: &OpenDocs, _, cx| cx.open_url(DOCS_URL))
         .register_action(|_, _: &Minimize, window, _| {
             window.minimize_window();
         })
@@ -729,7 +703,7 @@ fn register_actions(
         })
         .register_action(move |_: &mut Workspace, _: &OpenDebugTasks, window, cx| {
             open_settings_file(
-                paths::debug_tasks_file(),
+                paths::debug_scenarios_file(),
                 || settings::initial_debug_tasks_content().as_ref().into(),
                 window,
                 cx,
@@ -915,7 +889,7 @@ fn initialize_pane(
             toolbar.add_item(migration_banner, window, cx);
             let project_diff_toolbar = cx.new(|cx| ProjectDiffToolbar::new(workspace, cx));
             toolbar.add_item(project_diff_toolbar, window, cx);
-            let agent_diff_toolbar = cx.new(|_cx| AgentDiffToolbar::new());
+            let agent_diff_toolbar = cx.new(AgentDiffToolbar::new);
             toolbar.add_item(agent_diff_toolbar, window, cx);
         })
     });
@@ -1116,58 +1090,84 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
 
 pub fn handle_settings_file_changes(
     mut user_settings_file_rx: mpsc::UnboundedReceiver<String>,
+    mut global_settings_file_rx: mpsc::UnboundedReceiver<String>,
     cx: &mut App,
     settings_changed: impl Fn(Option<anyhow::Error>, &mut App) + 'static,
 ) {
     MigrationNotification::set_global(cx.new(|_| MigrationNotification), cx);
-    let content = cx
+
+    // Helper function to process settings content
+    let process_settings =
+        move |content: String, is_user: bool, store: &mut SettingsStore, cx: &mut App| -> bool {
+            // Apply migrations to both user and global settings
+            let (processed_content, content_migrated) =
+                if let Ok(Some(migrated_content)) = migrate_settings(&content) {
+                    (migrated_content, true)
+                } else {
+                    (content, false)
+                };
+
+            let result = if is_user {
+                store.set_user_settings(&processed_content, cx)
+            } else {
+                store.set_global_settings(&processed_content, cx)
+            };
+
+            if let Err(err) = &result {
+                let settings_type = if is_user { "user" } else { "global" };
+                log::error!("Failed to load {} settings: {err}", settings_type);
+            }
+
+            settings_changed(result.err(), cx);
+
+            content_migrated
+        };
+
+    // Initial load of both settings files
+    let global_content = cx
+        .background_executor()
+        .block(global_settings_file_rx.next())
+        .unwrap();
+    let user_content = cx
         .background_executor()
         .block(user_settings_file_rx.next())
         .unwrap();
-    let user_settings_content = if let Ok(Some(migrated_content)) = migrate_settings(&content) {
-        migrated_content
-    } else {
-        content
-    };
+
     SettingsStore::update_global(cx, |store, cx| {
-        let result = store.set_user_settings(&user_settings_content, cx);
-        if let Err(err) = &result {
-            log::error!("Failed to load user settings: {err}");
-        }
-        settings_changed(result.err(), cx);
+        process_settings(global_content, false, store, cx);
+        process_settings(user_content, true, store, cx);
     });
+
+    // Watch for changes in both files
     cx.spawn(async move |cx| {
-        while let Some(content) = user_settings_file_rx.next().await {
-            let user_settings_content;
-            let content_migrated;
+        let mut settings_streams = futures::stream::select(
+            global_settings_file_rx.map(Either::Left),
+            user_settings_file_rx.map(Either::Right),
+        );
 
-            if let Ok(Some(migrated_content)) = migrate_settings(&content) {
-                user_settings_content = migrated_content;
-                content_migrated = true;
-            } else {
-                user_settings_content = content;
-                content_migrated = false;
-            }
+        while let Some(content) = settings_streams.next().await {
+            let (content, is_user) = match content {
+                Either::Left(content) => (content, false),
+                Either::Right(content) => (content, true),
+            };
 
-            cx.update(|cx| {
-                if let Some(notifier) = MigrationNotification::try_global(cx) {
-                    notifier.update(cx, |_, cx| {
-                        cx.emit(MigrationEvent::ContentChanged {
-                            migration_type: MigrationType::Settings,
-                            migrated: content_migrated,
-                        });
-                    });
-                }
-            })
-            .ok();
             let result = cx.update_global(|store: &mut SettingsStore, cx| {
-                let result = store.set_user_settings(&user_settings_content, cx);
-                if let Err(err) = &result {
-                    log::error!("Failed to load user settings: {err}");
+                let content_migrated = process_settings(content, is_user, store, cx);
+
+                if content_migrated {
+                    if let Some(notifier) = MigrationNotification::try_global(cx) {
+                        notifier.update(cx, |_, cx| {
+                            cx.emit(MigrationEvent::ContentChanged {
+                                migration_type: MigrationType::Settings,
+                                migrated: true,
+                            });
+                        });
+                    }
                 }
-                settings_changed(result.err(), cx);
+
                 cx.refresh_windows();
             });
+
             if result.is_err() {
                 break; // App dropped
             }
@@ -3915,7 +3915,12 @@ mod tests {
                 app_state.fs.clone(),
                 PathBuf::from("/keymap.json"),
             );
-            handle_settings_file_changes(settings_rx, cx, |_, _| {});
+            let global_settings_rx = watch_config_file(
+                &executor,
+                app_state.fs.clone(),
+                PathBuf::from("/global_settings.json"),
+            );
+            handle_settings_file_changes(settings_rx, global_settings_rx, cx, |_, _| {});
             handle_keymap_file_changes(keymap_rx, cx);
         });
         workspace
@@ -4029,7 +4034,12 @@ mod tests {
                 PathBuf::from("/keymap.json"),
             );
 
-            handle_settings_file_changes(settings_rx, cx, |_, _| {});
+            let global_settings_rx = watch_config_file(
+                &executor,
+                app_state.fs.clone(),
+                PathBuf::from("/global_settings.json"),
+            );
+            handle_settings_file_changes(settings_rx, global_settings_rx, cx, |_, _| {});
             handle_keymap_file_changes(keymap_rx, cx);
         });
 
@@ -4249,10 +4259,11 @@ mod tests {
             web_search::init(cx);
             web_search_providers::init(app_state.client.clone(), cx);
             let prompt_builder = PromptBuilder::load(app_state.fs.clone(), false, cx);
-            assistant::init(
+            agent::init(
                 app_state.fs.clone(),
                 app_state.client.clone(),
                 prompt_builder.clone(),
+                app_state.languages.clone(),
                 cx,
             );
             repl::init(app_state.fs.clone(), cx);

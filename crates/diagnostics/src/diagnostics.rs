@@ -14,6 +14,7 @@ use editor::{
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
     scroll::Autoscroll,
 };
+use futures::future::join_all;
 use gpui::{
     AnyElement, AnyView, App, AsyncApp, Context, Entity, EventEmitter, FocusHandle, Focusable,
     Global, InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled,
@@ -22,14 +23,15 @@ use gpui::{
 use language::{
     Bias, Buffer, BufferRow, BufferSnapshot, DiagnosticEntry, Point, ToTreeSitterPoint,
 };
-use lsp::DiagnosticSeverity;
-
-use project::{DiagnosticSummary, Project, ProjectPath, project_settings::ProjectSettings};
+use project::{
+    DiagnosticSummary, Project, ProjectPath,
+    lsp_store::rust_analyzer_ext::{cancel_flycheck, run_flycheck},
+    project_settings::{DiagnosticSeverity, ProjectSettings},
+};
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
-    cmp,
-    cmp::Ordering,
+    cmp::{self, Ordering},
     ops::{Range, RangeInclusive},
     sync::Arc,
     time::Duration,
@@ -45,7 +47,10 @@ use workspace::{
     searchable::SearchableItemHandle,
 };
 
-actions!(diagnostics, [Deploy, ToggleWarnings]);
+actions!(
+    diagnostics,
+    [Deploy, ToggleWarnings, ToggleDiagnosticsRefresh]
+);
 
 #[derive(Default)]
 pub(crate) struct IncludeWarnings(bool);
@@ -68,7 +73,14 @@ pub(crate) struct ProjectDiagnosticsEditor {
     paths_to_update: BTreeSet<ProjectPath>,
     include_warnings: bool,
     update_excerpts_task: Option<Task<Result<()>>>,
+    cargo_diagnostics_fetch: CargoDiagnosticsFetchState,
     _subscription: Subscription,
+}
+
+struct CargoDiagnosticsFetchState {
+    fetch_task: Option<Task<()>>,
+    cancel_task: Option<Task<()>>,
+    diagnostic_sources: Arc<Vec<ProjectPath>>,
 }
 
 impl EventEmitter<EditorEvent> for ProjectDiagnosticsEditor {}
@@ -126,6 +138,7 @@ impl Render for ProjectDiagnosticsEditor {
             .track_focus(&self.focus_handle(cx))
             .size_full()
             .on_action(cx.listener(Self::toggle_warnings))
+            .on_action(cx.listener(Self::toggle_diagnostics_refresh))
             .child(child)
     }
 }
@@ -189,6 +202,14 @@ impl ProjectDiagnosticsEditor {
                 Editor::for_multibuffer(excerpts.clone(), Some(project_handle.clone()), window, cx);
             editor.set_vertical_scroll_margin(5, cx);
             editor.disable_inline_diagnostics();
+            editor.set_max_diagnostics_severity(
+                if include_warnings {
+                    DiagnosticSeverity::Warning
+                } else {
+                    DiagnosticSeverity::Error
+                },
+                cx,
+            );
             editor.set_all_diagnostics_active(cx);
             editor
         });
@@ -210,9 +231,24 @@ impl ProjectDiagnosticsEditor {
         )
         .detach();
         cx.observe_global_in::<IncludeWarnings>(window, |this, window, cx| {
-            this.include_warnings = cx.global::<IncludeWarnings>().0;
+            let include_warnings = cx.global::<IncludeWarnings>().0;
+            this.include_warnings = include_warnings;
+            this.editor.update(cx, |editor, cx| {
+                editor.set_max_diagnostics_severity(
+                    if include_warnings {
+                        DiagnosticSeverity::Warning
+                    } else {
+                        DiagnosticSeverity::Error
+                    },
+                    cx,
+                )
+            });
             this.diagnostics.clear();
-            this.update_all_excerpts(window, cx);
+            this.update_all_diagnostics(false, window, cx);
+        })
+        .detach();
+        cx.observe_release(&cx.entity(), |editor, _, cx| {
+            editor.stop_cargo_diagnostics_fetch(cx);
         })
         .detach();
 
@@ -229,9 +265,14 @@ impl ProjectDiagnosticsEditor {
             editor,
             paths_to_update: Default::default(),
             update_excerpts_task: None,
+            cargo_diagnostics_fetch: CargoDiagnosticsFetchState {
+                fetch_task: None,
+                cancel_task: None,
+                diagnostic_sources: Arc::new(Vec::new()),
+            },
             _subscription: project_event_subscription,
         };
-        this.update_all_excerpts(window, cx);
+        this.update_all_diagnostics(true, window, cx);
         this
     }
 
@@ -239,15 +280,17 @@ impl ProjectDiagnosticsEditor {
         if self.update_excerpts_task.is_some() {
             return;
         }
+
         let project_handle = self.project.clone();
         self.update_excerpts_task = Some(cx.spawn_in(window, async move |this, cx| {
             cx.background_executor()
                 .timer(DIAGNOSTICS_UPDATE_DELAY)
                 .await;
             loop {
-                let Some(path) = this.update(cx, |this, _| {
+                let Some(path) = this.update(cx, |this, cx| {
                     let Some(path) = this.paths_to_update.pop_first() else {
-                        this.update_excerpts_task.take();
+                        this.update_excerpts_task = None;
+                        cx.notify();
                         return None;
                     };
                     Some(path)
@@ -307,6 +350,32 @@ impl ProjectDiagnosticsEditor {
         cx.set_global(IncludeWarnings(!self.include_warnings));
     }
 
+    fn toggle_diagnostics_refresh(
+        &mut self,
+        _: &ToggleDiagnosticsRefresh,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let fetch_cargo_diagnostics = ProjectSettings::get_global(cx)
+            .diagnostics
+            .fetch_cargo_diagnostics();
+
+        if fetch_cargo_diagnostics {
+            if self.cargo_diagnostics_fetch.fetch_task.is_some() {
+                self.stop_cargo_diagnostics_fetch(cx);
+            } else {
+                self.update_all_diagnostics(false, window, cx);
+            }
+        } else {
+            if self.update_excerpts_task.is_some() {
+                self.update_excerpts_task = None;
+            } else {
+                self.update_all_diagnostics(false, window, cx);
+            }
+        }
+        cx.notify();
+    }
+
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.focus_handle.is_focused(window) && !self.multibuffer.read(cx).is_empty() {
             self.editor.focus_handle(cx).focus(window)
@@ -318,6 +387,73 @@ impl ProjectDiagnosticsEditor {
         {
             self.update_stale_excerpts(window, cx);
         }
+    }
+
+    fn update_all_diagnostics(
+        &mut self,
+        first_launch: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let cargo_diagnostics_sources = self.cargo_diagnostics_sources(cx);
+        if cargo_diagnostics_sources.is_empty() {
+            self.update_all_excerpts(window, cx);
+        } else if first_launch && !self.summary.is_empty() {
+            self.update_all_excerpts(window, cx);
+        } else {
+            self.fetch_cargo_diagnostics(Arc::new(cargo_diagnostics_sources), cx);
+        }
+    }
+
+    fn fetch_cargo_diagnostics(
+        &mut self,
+        diagnostics_sources: Arc<Vec<ProjectPath>>,
+        cx: &mut Context<Self>,
+    ) {
+        let project = self.project.clone();
+        self.cargo_diagnostics_fetch.cancel_task = None;
+        self.cargo_diagnostics_fetch.fetch_task = None;
+        self.cargo_diagnostics_fetch.diagnostic_sources = diagnostics_sources.clone();
+        if self.cargo_diagnostics_fetch.diagnostic_sources.is_empty() {
+            return;
+        }
+
+        self.cargo_diagnostics_fetch.fetch_task = Some(cx.spawn(async move |editor, cx| {
+            let mut fetch_tasks = Vec::new();
+            for buffer_path in diagnostics_sources.iter().cloned() {
+                if cx
+                    .update(|cx| {
+                        fetch_tasks.push(run_flycheck(project.clone(), buffer_path, cx));
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+
+            let _ = join_all(fetch_tasks).await;
+            editor
+                .update(cx, |editor, _| {
+                    editor.cargo_diagnostics_fetch.fetch_task = None;
+                })
+                .ok();
+        }));
+    }
+
+    fn stop_cargo_diagnostics_fetch(&mut self, cx: &mut App) {
+        self.cargo_diagnostics_fetch.fetch_task = None;
+        let mut cancel_gasks = Vec::new();
+        for buffer_path in std::mem::take(&mut self.cargo_diagnostics_fetch.diagnostic_sources)
+            .iter()
+            .cloned()
+        {
+            cancel_gasks.push(cancel_flycheck(self.project.clone(), buffer_path, cx));
+        }
+
+        self.cargo_diagnostics_fetch.cancel_task = Some(cx.background_spawn(async move {
+            let _ = join_all(cancel_gasks).await;
+            log::info!("Finished fetching cargo diagnostics");
+        }));
     }
 
     /// Enqueue an update of all excerpts. Updates all paths that either
@@ -370,9 +506,9 @@ impl ProjectDiagnosticsEditor {
         let buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_id = buffer_snapshot.remote_id();
         let max_severity = if self.include_warnings {
-            DiagnosticSeverity::WARNING
+            lsp::DiagnosticSeverity::WARNING
         } else {
-            DiagnosticSeverity::ERROR
+            lsp::DiagnosticSeverity::ERROR
         };
 
         cx.spawn_in(window, async move |this, mut cx| {
@@ -422,20 +558,17 @@ impl ProjectDiagnosticsEditor {
                 })?;
 
                 for item in more {
-                    let insert_pos = blocks
-                        .binary_search_by(|existing| {
-                            match existing.initial_range.start.cmp(&item.initial_range.start) {
-                                Ordering::Equal => item
-                                    .initial_range
-                                    .end
-                                    .cmp(&existing.initial_range.end)
-                                    .reverse(),
-                                other => other,
-                            }
+                    let i = blocks
+                        .binary_search_by(|probe| {
+                            probe
+                                .initial_range
+                                .start
+                                .cmp(&item.initial_range.start)
+                                .then(probe.initial_range.end.cmp(&item.initial_range.end))
+                                .then(Ordering::Greater)
                         })
-                        .unwrap_or_else(|pos| pos);
-
-                    blocks.insert(insert_pos, item);
+                        .unwrap_or_else(|i| i);
+                    blocks.insert(i, item);
                 }
             }
 
@@ -448,10 +581,25 @@ impl ProjectDiagnosticsEditor {
                     &mut cx,
                 )
                 .await;
-                excerpt_ranges.push(ExcerptRange {
-                    context: excerpt_range,
-                    primary: b.initial_range.clone(),
-                })
+                let i = excerpt_ranges
+                    .binary_search_by(|probe| {
+                        probe
+                            .context
+                            .start
+                            .cmp(&excerpt_range.start)
+                            .then(probe.context.end.cmp(&excerpt_range.end))
+                            .then(probe.primary.start.cmp(&b.initial_range.start))
+                            .then(probe.primary.end.cmp(&b.initial_range.end))
+                            .then(cmp::Ordering::Greater)
+                    })
+                    .unwrap_or_else(|i| i);
+                excerpt_ranges.insert(
+                    i,
+                    ExcerptRange {
+                        context: excerpt_range,
+                        primary: b.initial_range.clone(),
+                    },
+                )
             }
 
             this.update_in(cx, |this, window, cx| {
@@ -502,6 +650,7 @@ impl ProjectDiagnosticsEditor {
                                     block.render_block(editor.clone(), bcx)
                                 }),
                                 priority: 1,
+                                render_in_minimap: false,
                             }
                         });
                 let block_ids = this.editor.update(cx, |editor, cx| {
@@ -533,6 +682,30 @@ impl ProjectDiagnosticsEditor {
                 cx.notify()
             })
         })
+    }
+
+    pub fn cargo_diagnostics_sources(&self, cx: &App) -> Vec<ProjectPath> {
+        let fetch_cargo_diagnostics = ProjectSettings::get_global(cx)
+            .diagnostics
+            .fetch_cargo_diagnostics();
+        if !fetch_cargo_diagnostics {
+            return Vec::new();
+        }
+        self.project
+            .read(cx)
+            .worktrees(cx)
+            .filter_map(|worktree| {
+                let _cargo_toml_entry = worktree.read(cx).entry_for_path("Cargo.toml")?;
+                let rust_file_entry = worktree.read(cx).entries(false, 0).find(|entry| {
+                    entry
+                        .path
+                        .extension()
+                        .and_then(|extension| extension.to_str())
+                        == Some("rs")
+                })?;
+                self.project.read(cx).path_for_entry(rust_file_entry.id, cx)
+            })
+            .collect()
     }
 }
 

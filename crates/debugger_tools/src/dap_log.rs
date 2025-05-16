@@ -568,11 +568,11 @@ impl DapLogView {
             .sessions()
             .filter_map(|session| {
                 let session = session.read(cx);
-                session.adapter_name();
+                session.adapter();
                 let client = session.adapter_client()?;
                 Some(DapMenuItem {
                     client_id: client.id(),
-                    client_name: session.adapter_name().to_string(),
+                    client_name: session.adapter().to_string(),
                     has_adapter_logs: client.has_adapter_logs(),
                     selected_entry: self.current_view.map_or(LogKind::Adapter, |(_, kind)| kind),
                 })
@@ -684,7 +684,7 @@ impl Render for DapLogView {
     }
 }
 
-actions!(debug, [OpenDebuggerAdapterLogs]);
+actions!(dev, [OpenDebugAdapterLogs]);
 
 pub fn init(cx: &mut App) {
     let log_store = cx.new(|cx| LogStore::new(cx));
@@ -702,7 +702,7 @@ pub fn init(cx: &mut App) {
         }
 
         let log_store = log_store.clone();
-        workspace.register_action(move |workspace, _: &OpenDebuggerAdapterLogs, window, cx| {
+        workspace.register_action(move |workspace, _: &OpenDebugAdapterLogs, window, cx| {
             let project = workspace.project().read(cx);
             if project.is_local() {
                 workspace.add_item_to_active_pane(

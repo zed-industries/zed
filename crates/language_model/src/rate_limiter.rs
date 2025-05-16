@@ -8,8 +8,6 @@ use std::{
     task::{Context, Poll},
 };
 
-use crate::RequestUsage;
-
 #[derive(Clone)]
 pub struct RateLimiter {
     semaphore: Arc<Semaphore>,
@@ -67,34 +65,6 @@ impl RateLimiter {
                 inner,
                 _guard: guard,
             })
-        }
-    }
-
-    pub fn stream_with_usage<'a, Fut, T>(
-        &self,
-        future: Fut,
-    ) -> impl 'a
-    + Future<
-        Output = Result<(
-            impl Stream<Item = T::Item> + use<Fut, T>,
-            Option<RequestUsage>,
-        )>,
-    >
-    where
-        Fut: 'a + Future<Output = Result<(T, Option<RequestUsage>)>>,
-        T: Stream,
-    {
-        let guard = self.semaphore.acquire_arc();
-        async move {
-            let guard = guard.await;
-            let (inner, usage) = future.await?;
-            Ok((
-                RateLimitGuard {
-                    inner,
-                    _guard: guard,
-                },
-                usage,
-            ))
         }
     }
 }
