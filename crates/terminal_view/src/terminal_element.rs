@@ -288,13 +288,11 @@ impl TerminalElement {
                         let cell_style =
                             TerminalElement::cell_style(&cell, fg, theme, text_style, hyperlink);
 
-                        let layout_cell = text_system
-                            .shape_line(
-                                cell_text.into(),
-                                text_style.font_size.to_pixels(window.rem_size()),
-                                &[cell_style],
-                            )
-                            .unwrap();
+                        let layout_cell = text_system.shape_line(
+                            cell_text.into(),
+                            text_style.font_size.to_pixels(window.rem_size()),
+                            &[cell_style],
+                        );
 
                         cells.push(LayoutCell::new(
                             AlacPoint::new(line_index as i32, cell.point.column.0 as i32),
@@ -813,21 +811,18 @@ impl Element for TerminalElement {
                     let cursor_text = {
                         let str_trxt = cursor_char.to_string();
                         let len = str_trxt.len();
-                        window
-                            .text_system()
-                            .shape_line(
-                                str_trxt.into(),
-                                text_style.font_size.to_pixels(window.rem_size()),
-                                &[TextRun {
-                                    len,
-                                    font: text_style.font(),
-                                    color: theme.colors().terminal_ansi_background,
-                                    background_color: None,
-                                    underline: Default::default(),
-                                    strikethrough: None,
-                                }],
-                            )
-                            .unwrap()
+                        window.text_system().shape_line(
+                            str_trxt.into(),
+                            text_style.font_size.to_pixels(window.rem_size()),
+                            &[TextRun {
+                                len,
+                                font: text_style.font(),
+                                color: theme.colors().terminal_ansi_background,
+                                background_color: None,
+                                underline: Default::default(),
+                                strikethrough: None,
+                            }],
+                        )
                     };
 
                     let focused = self.focused;
@@ -1008,21 +1003,18 @@ impl Element for TerminalElement {
                                     wavy: false,
                                 });
 
-                                let shaped_line = window
-                                    .text_system()
-                                    .shape_line(
-                                        text_to_mark.clone().into(),
-                                        ime_style.font_size.to_pixels(window.rem_size()),
-                                        &[TextRun {
-                                            len: text_to_mark.len(),
-                                            font: ime_style.font(),
-                                            color: ime_style.color,
-                                            background_color: None,
-                                            underline: ime_style.underline,
-                                            strikethrough: None,
-                                        }],
-                                    )
-                                    .unwrap();
+                                let shaped_line = window.text_system().shape_line(
+                                    text_to_mark.clone().into(),
+                                    ime_style.font_size.to_pixels(window.rem_size()),
+                                    &[TextRun {
+                                        len: text_to_mark.len(),
+                                        font: ime_style.font(),
+                                        color: ime_style.color,
+                                        background_color: None,
+                                        underline: ime_style.underline,
+                                        strikethrough: None,
+                                    }],
+                                );
                                 shaped_line
                                     .paint(ime_position, layout.dimensions.line_height, window, cx)
                                     .log_err();
