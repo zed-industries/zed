@@ -5,7 +5,7 @@ mod socks_proxy;
 
 use anyhow::{Context, Result, anyhow};
 use http_client::Url;
-use socks_proxy::{Socks4Identification, Socks5Authorization, SocksVersion};
+use socks_proxy::{Socks4Identification, Socks5Authorization, SocksVersion, parse_socks_proxy};
 use tokio_socks::tcp::{Socks4Stream, Socks5Stream};
 
 pub(crate) async fn connect_with_proxy_stream(
@@ -16,7 +16,7 @@ pub(crate) async fn connect_with_proxy_stream(
         "Connecting to socks proxy: {:?}, with ({:?})",
         proxy, rpc_host
     );
-    let Some((socks_proxy, version)) = parse_socks_proxy(proxy) else {
+    let Some((proxy_url, proxy_type)) = parse_proxy_type(proxy) else {
         // If parsing the proxy URL fails, we must avoid falling back to an insecure connection.
         // SOCKS proxies are often used in contexts where security and privacy are critical,
         // so any fallback could expose users to significant risks.
@@ -24,11 +24,12 @@ pub(crate) async fn connect_with_proxy_stream(
     };
 
     // Connect to proxy and wrap protocol later
-    let stream = tokio::net::TcpStream::connect(socks_proxy)
+    let stream = tokio::net::TcpStream::connect(proxy_url)
         .await
         .context("Failed to connect to socks proxy")?;
 
-    let socks: Box<dyn AsyncReadWrite> = match version {
+    let socks: Box<dyn AsyncReadWrite> = match proxy_type {
+        ProxyType::SocksProxy(socks_proxy) => 
         SocksVersion::V4(None) => {
             let socks = Socks4Stream::connect_with_socket(stream, rpc_host)
                 .await
@@ -58,6 +59,24 @@ pub(crate) async fn connect_with_proxy_stream(
     };
 
     Ok(socks)
+}
+
+enum ProxyType<'t> {
+    SocksProxy(SocksVersion<'t>),
+    HttpProxy,
+}
+
+fn parse_proxy_type<'t>(proxy: &'t Url) -> Option<((String, u16), ProxyType<'t>)> {
+    let scheme = proxy.scheme();
+    let host = proxy.host()?.to_string();
+    let port = proxy.port_or_known_default()?;
+    let proxy_type = match scheme {
+        scheme if scheme.starts_with("socks") => parse_socks_proxy(scheme, proxy),
+        scheme if scheme.starts_with("http") => parse_http_proxy(proxy),
+        _ => None,
+    }?;
+
+    Some(((host, port), proxy_type))
 }
 
 pub(crate) trait AsyncReadWrite:

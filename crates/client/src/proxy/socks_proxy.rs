@@ -22,28 +22,22 @@ pub(super) enum SocksVersion<'a> {
     V5(Option<Socks5Authorization<'a>>),
 }
 
-fn parse_socks_proxy(proxy: &Url) -> Option<((String, u16), SocksVersion<'_>)> {
-    let scheme = proxy.scheme();
-    let socks_version = if scheme.starts_with("socks4") {
+pub(super) fn parse_socks_proxy<'t>(scheme: &str, proxy: &'t Url) -> Option<SocksVersion<'t>> {
+    if scheme.starts_with("socks4") {
         let identification = match proxy.username() {
             "" => None,
             username => Some(Socks4Identification { user_id: username }),
         };
-        SocksVersion::V4(identification)
+        Some(SocksVersion::V4(identification))
     } else if scheme.starts_with("socks") {
         let authorization = proxy.password().map(|password| Socks5Authorization {
             username: proxy.username(),
             password,
         });
-        SocksVersion::V5(authorization)
+        Some(SocksVersion::V5(authorization))
     } else {
-        return None;
-    };
-
-    let host = proxy.host()?.to_string();
-    let port = proxy.port_or_known_default()?;
-
-    Some(((host, port), socks_version))
+        None
+    }
 }
 
 #[cfg(test)]
