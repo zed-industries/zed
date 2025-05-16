@@ -8,12 +8,12 @@ use url::Url;
 use super::AsyncReadWrite;
 
 /// Identification to a Socks V4 Proxy
-struct Socks4Identification<'a> {
+pub(super) struct Socks4Identification<'a> {
     user_id: &'a str,
 }
 
 /// Authorization to a Socks V5 Proxy
-struct Socks5Authorization<'a> {
+pub(super) struct Socks5Authorization<'a> {
     username: &'a str,
     password: &'a str,
 }

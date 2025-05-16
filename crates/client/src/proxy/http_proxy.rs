@@ -14,7 +14,7 @@ pub(super) enum HttpProxyType<'t> {
     HTTPS(Option<HttpProxyAuthorization<'t>>),
 }
 
-struct HttpProxyAuthorization<'t> {
+pub(super) struct HttpProxyAuthorization<'t> {
     username: &'t str,
     password: &'t str,
 }
