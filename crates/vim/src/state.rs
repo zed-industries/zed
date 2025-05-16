@@ -800,7 +800,9 @@ impl VimGlobals {
                 }
             }
             '%' => editor.and_then(|editor| {
-                let selection = editor.selections.newest::<Point>(cx);
+                let selection = editor
+                    .selections
+                    .newest::<Point>(&editor.selections.display_map(cx));
                 if let Some((_, buffer, _)) = editor
                     .buffer()
                     .read(cx)

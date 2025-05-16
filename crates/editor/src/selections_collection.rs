@@ -163,10 +163,10 @@ impl SelectionsCollection {
 
     /// Returns the newest selection, adjusted to take into account the selection line_mode
     pub fn newest_adjusted(&self, cx: &mut App) -> Selection<Point> {
-        let mut selection = self.newest::<Point>(cx);
+        let snapshot = &self.display_map(cx);
+        let mut selection = self.newest::<Point>(&snapshot);
         if self.line_mode {
-            let map = self.display_map(cx);
-            let new_range = map.expand_to_line(selection.range());
+            let new_range = snapshot.expand_to_line(selection.range());
             selection.start = new_range.start;
             selection.end = new_range.end;
         }
@@ -259,21 +259,17 @@ impl SelectionsCollection {
 
     pub fn newest<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &mut App,
+        snapshot: &DisplaySnapshot,
     ) -> Selection<D> {
-        let map = self.display_map(cx);
-        let selection = resolve_selections([self.newest_anchor()], &map)
+        resolve_selections([self.newest_anchor()], snapshot)
             .next()
-            .unwrap();
-        selection
+            .unwrap()
     }
 
-    pub fn newest_display(&self, cx: &mut App) -> Selection<DisplayPoint> {
-        let map = self.display_map(cx);
-        let selection = resolve_selections_display([self.newest_anchor()], &map)
+    pub fn newest_display(&self, snapshot: &DisplaySnapshot) -> Selection<DisplayPoint> {
+        resolve_selections_display([self.newest_anchor()], snapshot)
             .next()
-            .unwrap();
-        selection
+            .unwrap()
     }
 
     pub fn oldest_anchor(&self) -> &Selection<Anchor> {

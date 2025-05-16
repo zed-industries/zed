@@ -845,7 +845,7 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
             6..9
         );
         rename.editor.update(cx, |rename_editor, cx| {
-            let rename_selection = rename_editor.selections.newest::<usize>(cx);
+            let rename_selection = rename_editor.selections.newest::<usize>(&rename_editor.selections.display_map(cx));
             assert_eq!(
                 rename_selection.range(),
                 0..3,
@@ -890,7 +890,7 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
         let lsp_rename_end = rename.range.end.to_offset(&buffer);
         assert_eq!(lsp_rename_start..lsp_rename_end, 6..9);
         rename.editor.update(cx, |rename_editor, cx| {
-            let rename_selection = rename_editor.selections.newest::<usize>(cx);
+            let rename_selection = rename_editor.selections.newest::<usize>(&rename_editor.selections.display_map(cx));
             assert_eq!(
                 rename_selection.range(),
                 1..2,

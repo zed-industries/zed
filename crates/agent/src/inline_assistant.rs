@@ -339,9 +339,12 @@ impl InlineAssistant {
         cx: &mut App,
     ) {
         let (snapshot, initial_selections, newest_selection) = editor.update(cx, |editor, cx| {
+            let snapshot = editor.snapshot(window, cx);
             let selections = editor.selections.all::<Point>(cx);
-            let newest_selection = editor.selections.newest::<Point>(cx);
-            (editor.snapshot(window, cx), selections, newest_selection)
+            let newest_selection = editor
+                .selections
+                .newest::<Point>(&snapshot.display_snapshot);
+            (snapshot, selections, newest_selection)
         });
 
         // Check if there is already an inline assistant that contains the
@@ -785,7 +788,9 @@ impl InlineAssistant {
         if editor.read(cx).selections.count() == 1 {
             let (selection, buffer) = editor.update(cx, |editor, cx| {
                 (
-                    editor.selections.newest::<usize>(cx),
+                    editor
+                        .selections
+                        .newest::<usize>(&editor.selections.display_map(cx)),
                     editor.buffer().read(cx).snapshot(cx),
                 )
             });
@@ -816,7 +821,9 @@ impl InlineAssistant {
         if editor.read(cx).selections.count() == 1 {
             let (selection, buffer) = editor.update(cx, |editor, cx| {
                 (
-                    editor.selections.newest::<usize>(cx),
+                    editor
+                        .selections
+                        .newest::<usize>(&editor.selections.display_map(cx)),
                     editor.buffer().read(cx).snapshot(cx),
                 )
             });

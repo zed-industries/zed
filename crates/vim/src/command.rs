@@ -301,7 +301,9 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         let result = vim.update_editor(window, cx, |vim, editor, window, cx| {
             let snapshot = editor.snapshot(window, cx);
             let buffer_row = action.range.head().buffer_row(vim, editor, window, cx)?;
-            let current = editor.selections.newest::<Point>(cx);
+            let current = editor
+                .selections
+                .newest::<Point>(&editor.selections.display_map(cx));
             let target = snapshot
                 .buffer_snapshot
                 .clip_point(Point::new(buffer_row.0, current.head().column), Bias::Left);
@@ -1338,7 +1340,10 @@ impl OnMatchingLines {
                         });
                         window.dispatch_action(action, cx);
                         cx.defer_in(window, move |editor, window, cx| {
-                            let newest = editor.selections.newest::<Point>(cx).clone();
+                            let newest = editor
+                                .selections
+                                .newest::<Point>(&editor.selections.display_map(cx))
+                                .clone();
                             editor.change_selections(None, window, cx, |s| {
                                 s.select(vec![newest]);
                             });
@@ -1431,7 +1436,9 @@ impl Vim {
         };
         let command = self.update_editor(window, cx, |_, editor, window, cx| {
             let snapshot = editor.snapshot(window, cx);
-            let start = editor.selections.newest_display(cx);
+            let start = editor
+                .selections
+                .newest_display(&editor.selections.display_map(cx));
             let text_layout_details = editor.text_layout_details(window);
             let (mut range, _) = motion
                 .range(
@@ -1478,7 +1485,9 @@ impl Vim {
         };
         let command = self.update_editor(window, cx, |_, editor, window, cx| {
             let snapshot = editor.snapshot(window, cx);
-            let start = editor.selections.newest_display(cx);
+            let start = editor
+                .selections
+                .newest_display(&editor.selections.display_map(cx));
             let range = object
                 .range(&snapshot, start.clone(), around)
                 .unwrap_or(start.range());
@@ -1587,7 +1596,11 @@ impl ShellExec {
                 Point::new(range.start.0, 0)
                     ..snapshot.clip_point(Point::new(range.end.0 + 1, 0), Bias::Right)
             } else {
-                let mut end = editor.selections.newest::<Point>(cx).range().end;
+                let mut end = editor
+                    .selections
+                    .newest::<Point>(&editor.selections.display_map(cx))
+                    .range()
+                    .end;
                 end = snapshot.clip_point(Point::new(end.row + 1, 0), Bias::Right);
                 needs_newline_prefix = end == snapshot.max_point();
                 end..end

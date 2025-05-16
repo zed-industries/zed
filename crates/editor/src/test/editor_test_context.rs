@@ -269,7 +269,10 @@ impl EditorTestContext {
 
     pub fn pixel_position_for(&mut self, display_point: DisplayPoint) -> Point<Pixels> {
         self.update_editor(|editor, window, cx| {
-            let newest_point = editor.selections.newest_display(cx).head();
+            let newest_point = editor
+                .selections
+                .newest_display(&editor.selections.display_map(cx))
+                .head();
             let pixel_position = editor.pixel_position_of_newest_cursor.unwrap();
             let line_height = editor
                 .style()

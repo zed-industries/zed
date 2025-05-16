@@ -767,7 +767,9 @@ impl Vim {
             });
         }
         self.update_editor(window, cx, |_, editor, _, cx| {
-            let latest = editor.selections.newest::<usize>(cx);
+            let latest = editor
+                .selections
+                .newest::<usize>(&editor.selections.display_map(cx));
             start_selection = latest.start;
             end_selection = latest.end;
         });
@@ -788,7 +790,9 @@ impl Vim {
             return;
         }
         self.update_editor(window, cx, |_, editor, window, cx| {
-            let latest = editor.selections.newest::<usize>(cx);
+            let latest = editor
+                .selections
+                .newest::<usize>(&editor.selections.display_map(cx));
             if vim_is_normal {
                 start_selection = latest.start;
                 end_selection = latest.end;

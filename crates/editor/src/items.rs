@@ -591,7 +591,9 @@ impl Item for Editor {
         cx: &mut Context<Self>,
     ) -> bool {
         if let Ok(data) = data.downcast::<NavigationData>() {
-            let newest_selection = self.selections.newest::<Point>(cx);
+            let newest_selection = self
+                .selections
+                .newest::<Point>(&self.selections.display_map(cx));
             let buffer = self.buffer.read(cx).read(cx);
             let offset = if buffer.can_resolve(&data.cursor_anchor) {
                 data.cursor_anchor.to_point(&buffer)
@@ -1513,13 +1515,14 @@ impl SearchableItem for Editor {
 
     fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {
         let setting = EditorSettings::get_global(cx).seed_search_query_from_cursor;
-        let snapshot = &self.snapshot(window, cx).buffer_snapshot;
-        let selection = self.selections.newest::<usize>(cx);
+        let snapshot = &self.snapshot(window, cx);
+        let selection = self.selections.newest::<usize>(&snapshot.display_snapshot);
 
         match setting {
             SeedQuerySetting::Never => String::new(),
             SeedQuerySetting::Selection | SeedQuerySetting::Always if !selection.is_empty() => {
                 let text: String = snapshot
+                    .buffer_snapshot
                     .text_for_range(selection.start..selection.end)
                     .collect();
                 if text.contains('\n') {
@@ -1530,9 +1533,11 @@ impl SearchableItem for Editor {
             }
             SeedQuerySetting::Selection => String::new(),
             SeedQuerySetting::Always => {
-                let (range, kind) = snapshot.surrounding_word(selection.start, true);
+                let (range, kind) = snapshot
+                    .buffer_snapshot
+                    .surrounding_word(selection.start, true);
                 if kind == Some(CharKind::Word) {
-                    let text: String = snapshot.text_for_range(range).collect();
+                    let text: String = snapshot.buffer_snapshot.text_for_range(range).collect();
                     if !text.trim().is_empty() {
                         return text;
                     }

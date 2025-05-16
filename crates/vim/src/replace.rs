@@ -142,7 +142,9 @@ impl Vim {
         self.stop_recording(cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.set_clip_at_line_ends(false, cx);
-            let mut selection = editor.selections.newest_display(cx);
+            let mut selection = editor
+                .selections
+                .newest_display(&editor.selections.display_map(cx));
             let snapshot = editor.snapshot(window, cx);
             object.expand_selection(&snapshot, &mut selection, around);
             let start = snapshot
@@ -188,7 +190,9 @@ impl Vim {
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.set_clip_at_line_ends(false, cx);
             let text_layout_details = editor.text_layout_details(window);
-            let mut selection = editor.selections.newest_display(cx);
+            let mut selection = editor
+                .selections
+                .newest_display(&editor.selections.display_map(cx));
             let snapshot = editor.snapshot(window, cx);
             motion.expand_selection(
                 &snapshot,

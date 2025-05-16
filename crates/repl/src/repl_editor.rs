@@ -463,7 +463,9 @@ fn language_supported(language: &Arc<Language>) -> bool {
 fn get_language(editor: WeakEntity<Editor>, cx: &mut App) -> Option<Arc<Language>> {
     editor
         .update(cx, |editor, cx| {
-            let selection = editor.selections.newest::<usize>(cx);
+            let selection = editor
+                .selections
+                .newest::<usize>(&editor.selections.display_map(cx));
             let buffer = editor.buffer().read(cx).snapshot(cx);
             buffer.language_at(selection.head()).cloned()
         })
