@@ -110,20 +110,18 @@ mod tests {
     #[test]
     fn parse_socks5() {
         let proxy = Url::parse("socks5://proxy.example.com:1080").unwrap();
+        let scheme = proxy.scheme();
 
-        let ((host, port), version) = parse_socks_proxy(&proxy).unwrap();
-        assert_eq!(host, "proxy.example.com");
-        assert_eq!(port, 1080);
+        let version = parse_socks_proxy(scheme, &proxy).unwrap();
         assert!(matches!(version, SocksVersion::V5(None)))
     }
 
     #[test]
     fn parse_socks5_with_authorization() {
         let proxy = Url::parse("socks5://username:password@proxy.example.com:1080").unwrap();
+        let scheme = proxy.scheme();
 
-        let ((host, port), version) = parse_socks_proxy(&proxy).unwrap();
-        assert_eq!(host, "proxy.example.com");
-        assert_eq!(port, 1080);
+        let version = parse_socks_proxy(scheme, &proxy).unwrap();
         assert!(matches!(
             version,
             SocksVersion::V5(Some(Socks5Authorization {
