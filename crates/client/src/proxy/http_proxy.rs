@@ -36,7 +36,10 @@ pub(crate) async fn connect_with_http_proxy(
     http_proxy: HttpProxyType<'_>,
     rpc_host: (&str, u16),
 ) -> Result<Box<dyn AsyncReadWrite>> {
-    http_connect(stream, rpc_host, http_proxy.auth).await
+    match http_proxy {
+        HttpProxyType::HTTP(auth) => http_connect(stream, rpc_host, auth).await,
+        HttpProxyType::HTTPS(auth) => https_connect(stream, rpc_host, auth).await,
+    }
 }
 
 async fn http_connect(
@@ -50,6 +53,14 @@ async fn http_connect(
     stream.flush().await?;
     check_response(&mut stream).await?;
     Ok(Box::new(stream))
+}
+
+async fn https_connect(
+    _stream: TcpStream,
+    _target: (&str, u16),
+    _auth: Option<HttpProxyAuthorization<'_>>,
+) -> Result<Box<dyn AsyncReadWrite>> {
+    Err(anyhow::anyhow!("HTTPS proxy not implemented"))
 }
 
 fn make_request(target: (&str, u16), auth: Option<HttpProxyAuthorization<'_>>) -> String {
@@ -68,7 +79,7 @@ fn make_request(target: (&str, u16), auth: Option<HttpProxyAuthorization<'_>>) -
 }
 
 async fn check_response(stream: &mut BufStream<TcpStream>) -> Result<()> {
-    let response = get_response(stream).await?;
+    let response = recv_response(stream).await?;
     let mut dummy_headers = [EMPTY_HEADER; MAX_RESPONSE_HEADERS];
     let mut parser = Response::new(&mut dummy_headers);
     parser.parse(response.as_bytes())?;
@@ -83,7 +94,7 @@ async fn check_response(stream: &mut BufStream<TcpStream>) -> Result<()> {
 const MAX_RESPONSE_HEADER_LENGTH: usize = 4096;
 const MAX_RESPONSE_HEADERS: usize = 16;
 
-async fn get_response(stream: &mut BufStream<TcpStream>) -> Result<String> {
+async fn recv_response(stream: &mut BufStream<TcpStream>) -> Result<String> {
     let mut response = String::new();
     loop {
         if stream.read_line(&mut response).await? == 0 {
