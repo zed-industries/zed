@@ -89,7 +89,7 @@ mod tests {
         let proxy = Url::parse("socks4://proxy.example.com:1080").unwrap();
         let scheme = proxy.scheme();
 
-        let version = parse_socks_proxy(scheme, &proxy).unwrap();
+        let version = parse_socks_proxy(scheme, &proxy);
         assert!(matches!(version, SocksVersion::V4(None)))
     }
 
@@ -98,7 +98,7 @@ mod tests {
         let proxy = Url::parse("socks4://userid@proxy.example.com:1080").unwrap();
         let scheme = proxy.scheme();
 
-        let version = parse_socks_proxy(scheme, &proxy).unwrap();
+        let version = parse_socks_proxy(scheme, &proxy);
         assert!(matches!(
             version,
             SocksVersion::V4(Some(Socks4Identification { user_id: "userid" }))
@@ -110,7 +110,7 @@ mod tests {
         let proxy = Url::parse("socks5://proxy.example.com:1080").unwrap();
         let scheme = proxy.scheme();
 
-        let version = parse_socks_proxy(scheme, &proxy).unwrap();
+        let version = parse_socks_proxy(scheme, &proxy);
         assert!(matches!(version, SocksVersion::V5(None)))
     }
 
@@ -119,7 +119,7 @@ mod tests {
         let proxy = Url::parse("socks5://username:password@proxy.example.com:1080").unwrap();
         let scheme = proxy.scheme();
 
-        let version = parse_socks_proxy(scheme, &proxy).unwrap();
+        let version = parse_socks_proxy(scheme, &proxy);
         assert!(matches!(
             version,
             SocksVersion::V5(Some(Socks5Authorization {
