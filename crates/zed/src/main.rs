@@ -15,7 +15,7 @@ use editor::Editor;
 use extension::ExtensionHostProxy;
 use extension_host::ExtensionStore;
 use fs::{Fs, RealFs};
-use futures::{StreamExt, channel::oneshot, future};
+use futures::{StreamExt, future};
 use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext as _, Application, AsyncApp, UpdateGlobal as _};
 
@@ -304,6 +304,13 @@ fn main() {
         fs.clone(),
         paths::keymap_file().clone(),
     );
+
+    #[cfg(unix)]
+    app.background_executor()
+        .spawn(async {
+            util::load_shell_from_passwd().log_err();
+        })
+        .detach();
 
     app.on_open_urls({
         let open_listener = open_listener.clone();

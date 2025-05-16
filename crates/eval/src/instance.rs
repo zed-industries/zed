@@ -802,7 +802,7 @@ pub fn repo_path_for_url(repos_dir: &Path, repo_url: &str) -> PathBuf {
 }
 
 pub async fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
-    let output = new_smol_command("git")
+    let output = new_smol_command("git", &environment::inherited())
         .current_dir(repo_path)
         .args(args)
         .output()

@@ -7116,7 +7116,9 @@ async fn test_staging_random_hunks(
         path!("/dir/.git").as_ref(),
         &[("file.txt".into(), index_text.clone())],
     );
-    let repo = fs.open_repo(path!("/dir/.git").as_ref()).unwrap();
+    let repo = fs
+        .open_repo(path!("/dir/.git").as_ref(), ::environment::inherited())
+        .unwrap();
 
     let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
     let buffer = project

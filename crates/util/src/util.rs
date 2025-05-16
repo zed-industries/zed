@@ -26,9 +26,6 @@ use std::{
 };
 use unicase::UniCase;
 
-#[cfg(unix)]
-use anyhow::{Context as _, anyhow};
-
 pub use take_until::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use util_macros::{line_endings, separator, uri};
@@ -259,7 +256,7 @@ where
 }
 
 #[cfg(unix)]
-fn load_shell_from_passwd() -> Result<()> {
+pub fn load_shell_from_passwd() -> Result<()> {
     let buflen = match unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) } {
         n if n < 0 => 1024,
         n => n as usize,
@@ -297,53 +294,6 @@ fn load_shell_from_passwd() -> Result<()> {
 
     let shell = unsafe { std::ffi::CStr::from_ptr(entry.pw_shell).to_str().unwrap() };
     SHELL_FROM_PASSWD.set(shell.to_string()).ok();
-    Ok(())
-}
-
-#[cfg(unix)]
-pub fn load_login_shell_environment() -> Result<()> {
-    load_shell_from_passwd().log_err();
-
-    let marker = "ZED_LOGIN_SHELL_START";
-    let shell = get_system_shell();
-
-    // If possible, we want to `cd` in the user's `$HOME` to trigger programs
-    // such as direnv, asdf, mise, ... to adjust the PATH. These tools often hook
-    // into shell's `cd` command (and hooks) to manipulate env.
-    // We do this so that we get the env a user would have when spawning a shell
-    // in home directory.
-    let shell_cmd_prefix = std::env::var_os("HOME")
-        .and_then(|home| home.into_string().ok())
-        .map(|home| format!("cd '{home}';"));
-
-    let shell_cmd = format!(
-        "{}printf '%s' {marker}; /usr/bin/env;",
-        shell_cmd_prefix.as_deref().unwrap_or("")
-    );
-
-    let output = set_pre_exec_to_start_new_session(
-        std::process::Command::new(&shell).args(["-l", "-i", "-c", &shell_cmd]),
-    )
-    .output()
-    .context("failed to spawn login shell to source login environment variables")?;
-    if !output.status.success() {
-        Err(anyhow!("login shell exited with error"))?;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    if let Some(env_output_start) = stdout.find(marker) {
-        let env_output = &stdout[env_output_start + marker.len()..];
-
-        parse_env_output(env_output, |key, value| unsafe { env::set_var(key, value) });
-
-        log::info!(
-            "set environment variables from shell:{}, path:{}",
-            shell,
-            env::var("PATH").unwrap_or_default(),
-        );
-    }
-
     Ok(())
 }
 
