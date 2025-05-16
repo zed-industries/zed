@@ -3552,7 +3552,7 @@ impl Repository {
         let args = options
             .map(|option| match option {
                 PushOptions::SetUpstream => " --set-upstream",
-                PushOptions::Force => " --force",
+                PushOptions::Force => " --force-with-lease",
             })
             .unwrap_or("");
 
