@@ -168,6 +168,7 @@ Depending on your hardware or use-case you may wish to limit or increase the con
           "name": "qwen2.5-coder",
           "display_name": "qwen 2.5 coder 32K",
           "max_tokens": 32768
+          "supports_tools": true
         }
       ]
     }
@@ -178,6 +179,12 @@ Depending on your hardware or use-case you may wish to limit or increase the con
 If you specify a context length that is too large for your hardware, Ollama will log an error. You can watch these logs by running: `tail -f ~/.ollama/logs/ollama.log` (MacOS) or `journalctl -u ollama -f` (Linux). Depending on the memory available on your machine, you may need to adjust the context length to a smaller value.
 
 You may also optionally specify a value for `keep_alive` for each available model. This can be an integer (seconds) or alternately a string duration like "5m", "10m", "1h", "1d", etc., For example `"keep_alive": "120s"` will allow the remote server to unload the model (freeing up GPU VRAM) after 120seconds.
+
+The `supports_tools` option controls whether or not the model will use additional tools. 
+If the model is tagged with `tools` in the Ollama catalog this option should be supplied, and built in profiles `Ask` and `Write` can be used. 
+If the model is not tagged with `tools` in the Ollama catalog, this
+option can still be supplied with value `true`; however be aware that only the
+`Minimal` built in profile will work.
 
 ### OpenAI {#openai}
 
