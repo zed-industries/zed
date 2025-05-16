@@ -815,8 +815,13 @@ pub struct ListOffset {
 impl Element for List {
     type RequestLayoutState = ();
     type PrepaintState = ListPrepaintState;
+    type DebugState = ();
 
     fn id(&self) -> Option<crate::ElementId> {
+        None
+    }
+
+    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
         None
     }
 

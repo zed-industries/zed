@@ -1108,9 +1108,14 @@ mod element {
     impl Element for PaneAxisElement {
         type RequestLayoutState = ();
         type PrepaintState = PaneAxisLayout;
+        type DebugState = ();
 
         fn id(&self) -> Option<ElementId> {
             Some(self.basis.into())
+        }
+
+        fn source(&self) -> Option<&'static core::panic::Location<'static>> {
+            None
         }
 
         fn request_layout(

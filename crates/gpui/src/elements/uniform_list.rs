@@ -54,7 +54,7 @@ where
             base_style: Box::new(base_style),
 
             #[cfg(debug_assertions)]
-            location: Some(*core::panic::Location::caller()),
+            location: Some(core::panic::Location::caller()),
 
             ..Default::default()
         },
@@ -161,9 +161,14 @@ impl Styled for UniformList {
 impl Element for UniformList {
     type RequestLayoutState = UniformListFrameState;
     type PrepaintState = Option<Hitbox>;
+    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
         self.interactivity.element_id.clone()
+    }
+
+    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
     }
 
     fn request_layout(

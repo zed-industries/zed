@@ -710,8 +710,13 @@ impl MarkdownElement {
 impl Element for MarkdownElement {
     type RequestLayoutState = RenderedMarkdown;
     type PrepaintState = Hitbox;
+    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
         None
     }
 

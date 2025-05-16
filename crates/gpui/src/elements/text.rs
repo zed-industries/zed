@@ -18,8 +18,13 @@ use util::ResultExt;
 impl Element for &'static str {
     type RequestLayoutState = TextLayout;
     type PrepaintState = ();
+    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
         None
     }
 
@@ -77,8 +82,13 @@ impl IntoElement for String {
 impl Element for SharedString {
     type RequestLayoutState = TextLayout;
     type PrepaintState = ();
+    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
         None
     }
 
@@ -220,8 +230,13 @@ impl StyledText {
 impl Element for StyledText {
     type RequestLayoutState = ();
     type PrepaintState = ();
+    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
         None
     }
 
@@ -668,9 +683,14 @@ impl InteractiveText {
 impl Element for InteractiveText {
     type RequestLayoutState = ();
     type PrepaintState = Hitbox;
+    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
         Some(self.element_id.clone())
+    }
+
+    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
     }
 
     fn request_layout(

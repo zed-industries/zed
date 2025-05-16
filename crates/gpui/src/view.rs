@@ -28,9 +28,14 @@ struct ViewCacheKey {
 impl<V: Render> Element for Entity<V> {
     type RequestLayoutState = AnyElement;
     type PrepaintState = ();
+    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
         Some(ElementId::View(self.entity_id()))
+    }
+
+    fn source(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
     }
 
     fn request_layout(
@@ -141,9 +146,14 @@ impl Eq for AnyView {}
 impl Element for AnyView {
     type RequestLayoutState = Option<AnyElement>;
     type PrepaintState = Option<AnyElement>;
+    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
         Some(ElementId::View(self.entity_id()))
+    }
+
+    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
     }
 
     fn request_layout(

@@ -37,7 +37,7 @@ use crate::{
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
-use std::{any::Any, fmt::Debug, mem};
+use std::{any::Any, fmt::Debug, mem, panic};
 
 /// Implemented by types that participate in laying out and painting the contents of a window.
 /// Elements form a tree and are laid out according to web-based layout rules, as implemented by Taffy.
@@ -52,12 +52,20 @@ pub trait Element: 'static + IntoElement {
     /// provided to [`Element::paint`].
     type PrepaintState: 'static;
 
+    /// The type of state that contains information for the debug view for this element.
+    ///
+    /// todo!
+    type DebugState: 'static;
+
     /// If this element has a unique identifier, return it here. This is used to track elements across frames, and
     /// will cause a GlobalElementId to be passed to the request_layout, prepaint, and paint methods.
     ///
     /// The global id can in turn be used to access state that's connected to an element with the same id across
     /// frames. This id must be unique among children of the first containing element with an id.
     fn id(&self) -> Option<ElementId>;
+
+    /// todo!()
+    fn source(&self) -> Option<&'static panic::Location<'static>>;
 
     /// Before an element can be painted, we need to know where it's going to be and how big it is.
     /// Use this method to request a layout from Taffy and initialize the element's state.
@@ -167,21 +175,39 @@ pub trait ParentElement {
 /// An element for rendering components. An implementation detail of the [`IntoElement`] derive macro
 /// for [`RenderOnce`]
 #[doc(hidden)]
-pub struct Component<C: RenderOnce>(Option<C>);
+pub struct Component<C: RenderOnce> {
+    component: Option<C>,
+    #[cfg(debug_assertions)]
+    source: &'static core::panic::Location<'static>,
+}
 
 impl<C: RenderOnce> Component<C> {
     /// Create a new component from the given RenderOnce type.
+    #[track_caller]
     pub fn new(component: C) -> Self {
-        Component(Some(component))
+        Component {
+            component: Some(component),
+            #[cfg(debug_assertions)]
+            source: core::panic::Location::caller(),
+        }
     }
 }
 
 impl<C: RenderOnce> Element for Component<C> {
     type RequestLayoutState = AnyElement;
     type PrepaintState = ();
+    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
         None
+    }
+
+    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
+        #[cfg(debug_assertions)]
+        return Some(self.source);
+
+        #[cfg(not(debug_assertions))]
+        return None;
     }
 
     fn request_layout(
@@ -190,7 +216,12 @@ impl<C: RenderOnce> Element for Component<C> {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let mut element = self.0.take().unwrap().render(window, cx).into_any_element();
+        let mut element = self
+            .component
+            .take()
+            .unwrap()
+            .render(window, cx)
+            .into_any_element();
         let layout_id = element.request_layout(window, cx);
         (layout_id, element)
     }
@@ -230,6 +261,18 @@ impl<C: RenderOnce> IntoElement for Component<C> {
 /// A globally unique identifier for an element, used to track state across frames.
 #[derive(Deref, DerefMut, Default, Debug, Eq, PartialEq, Hash)]
 pub struct GlobalElementId(pub(crate) SmallVec<[ElementId; 32]>);
+
+/// A unique identifier for an element that can be debugged.
+#[cfg(debug_assertions)]
+#[derive(Debug, Eq, PartialEq, Hash)]
+pub struct DebugElementId {
+    global_id: GlobalElementId,
+    source: &'static panic::Location<'static>,
+    instance_id: usize,
+}
+
+#[cfg(not(debug_assertions))]
+pub struct DebugElementId;
 
 trait ElementObject {
     fn inner_element(&mut self) -> &mut dyn Any;
@@ -296,6 +339,25 @@ impl<E: Element> Drawable<E> {
                     window.element_id_stack.push(element_id);
                     GlobalElementId(window.element_id_stack.clone())
                 });
+
+                // todo!()
+                // let debug_id = if let Some(source) = self.element.source() {
+                //     let key = (window.element_id_stack.clone(), source);
+                //     // todo!(avoid cloning when not needed)
+                //     let next_instance_id = window
+                //         .next_instance_id_by_global_element_id
+                //         .entry(key.clone())
+                //         .or_insert(0);
+                //     let instance_id = *next_instance_id;
+                //     *next_instance_id += 1;
+                //     Some(DebugElementId {
+                //         global_id: GlobalElementId(key.0),
+                //         source: key.1,
+                //         instance_id,
+                //     })
+                // } else {
+                //     None
+                // };
 
                 let (layout_id, request_layout) =
                     self.element.request_layout(global_id.as_ref(), window, cx);
@@ -565,8 +627,13 @@ impl AnyElement {
 impl Element for AnyElement {
     type RequestLayoutState = ();
     type PrepaintState = ();
+    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source(&self) -> Option<&'static panic::Location<'static>> {
         None
     }
 
@@ -630,8 +697,13 @@ impl IntoElement for Empty {
 impl Element for Empty {
     type RequestLayoutState = ();
     type PrepaintState = ();
+    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source(&self) -> Option<&'static panic::Location<'static>> {
         None
     }
 

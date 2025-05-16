@@ -100,8 +100,13 @@ impl IntoElement for CompletionDiffElement {
 impl Element for CompletionDiffElement {
     type RequestLayoutState = ();
     type PrepaintState = ();
+    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
         None
     }
 

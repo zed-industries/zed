@@ -222,8 +222,13 @@ mod uniform_list {
     impl Element for IndentGuidesElement {
         type RequestLayoutState = ();
         type PrepaintState = IndentGuidesElementPrepaintState;
+        type DebugState = ();
 
         fn id(&self) -> Option<ElementId> {
+            None
+        }
+
+        fn source(&self) -> Option<&'static core::panic::Location<'static>> {
             None
         }
 

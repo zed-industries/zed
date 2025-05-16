@@ -30,8 +30,13 @@ impl Deferred {
 impl Element for Deferred {
     type RequestLayoutState = ();
     type PrepaintState = ();
+    type DebugState = ();
 
     fn id(&self) -> Option<crate::ElementId> {
+        None
+    }
+
+    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
         None
     }
 

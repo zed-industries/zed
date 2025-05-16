@@ -162,10 +162,14 @@ impl Scrollbar {
 
 impl Element for Scrollbar {
     type RequestLayoutState = ();
-
     type PrepaintState = Hitbox;
+    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
         None
     }
 

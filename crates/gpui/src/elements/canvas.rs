@@ -37,8 +37,13 @@ impl<T: 'static> IntoElement for Canvas<T> {
 impl<T: 'static> Element for Canvas<T> {
     type RequestLayoutState = Style;
     type PrepaintState = Option<T>;
+    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
         None
     }
 

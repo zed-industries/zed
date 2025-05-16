@@ -45,9 +45,14 @@ impl ParentElement for WithRemSize {
 impl Element for WithRemSize {
     type RequestLayoutState = DivFrameState;
     type PrepaintState = Option<Hitbox>;
+    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
         Element::id(&self.div)
+    }
+
+    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
     }
 
     fn request_layout(

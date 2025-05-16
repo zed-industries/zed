@@ -86,8 +86,13 @@ impl ParentElement for Anchored {
 impl Element for Anchored {
     type RequestLayoutState = AnchoredState;
     type PrepaintState = ();
+    type DebugState = ();
 
     fn id(&self) -> Option<crate::ElementId> {
+        None
+    }
+
+    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
         None
     }
 

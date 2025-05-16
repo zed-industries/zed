@@ -1140,7 +1140,7 @@ pub(crate) type ActionListener =
 pub fn div() -> Div {
     #[cfg(debug_assertions)]
     let interactivity = Interactivity {
-        location: Some(*core::panic::Location::caller()),
+        location: Some(core::panic::Location::caller()),
         ..Default::default()
     };
 
@@ -1212,9 +1212,18 @@ impl ParentElement for Div {
 impl Element for Div {
     type RequestLayoutState = DivFrameState;
     type PrepaintState = Option<Hitbox>;
+    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
         self.interactivity.element_id.clone()
+    }
+
+    fn source(&self) -> Option<&'static std::panic::Location<'static>> {
+        #[cfg(debug_assertions)]
+        return self.interactivity.location;
+
+        #[cfg(not(debug_assertions))]
+        None
     }
 
     fn request_layout(
@@ -1404,7 +1413,7 @@ pub struct Interactivity {
     pub(crate) occlude_mouse: bool,
 
     #[cfg(debug_assertions)]
-    pub(crate) location: Option<core::panic::Location<'static>>,
+    pub(crate) location: Option<&'static core::panic::Location<'static>>, // todo!(should this be optional?)
 
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_selector: Option<String>,
@@ -2716,9 +2725,14 @@ where
 {
     type RequestLayoutState = E::RequestLayoutState;
     type PrepaintState = E::PrepaintState;
+    type DebugState = E::DebugState;
 
     fn id(&self) -> Option<ElementId> {
         self.element.id()
+    }
+
+    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
+        self.element.source()
     }
 
     fn request_layout(
@@ -2813,9 +2827,14 @@ where
 {
     type RequestLayoutState = E::RequestLayoutState;
     type PrepaintState = E::PrepaintState;
+    type DebugState = E::DebugState;
 
     fn id(&self) -> Option<ElementId> {
         self.element.id()
+    }
+
+    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
+        self.element.source()
     }
 
     fn request_layout(

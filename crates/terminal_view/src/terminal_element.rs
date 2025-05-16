@@ -576,9 +576,14 @@ impl TerminalElement {
 impl Element for TerminalElement {
     type RequestLayoutState = ();
     type PrepaintState = LayoutState;
+    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
         self.interactivity.element_id.clone()
+    }
+
+    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
     }
 
     fn request_layout(

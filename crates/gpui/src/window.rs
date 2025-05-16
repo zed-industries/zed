@@ -16,7 +16,7 @@ use crate::{
     point, prelude::*, px, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
-use collections::{FxHashMap, FxHashSet};
+use collections::{FxHashMap, FxHashSet, HashMap};
 #[cfg(target_os = "macos")]
 use core_video::pixel_buffer::CVPixelBuffer;
 use derive_more::{Deref, DerefMut};
@@ -37,6 +37,7 @@ use std::{
     marker::PhantomData,
     mem,
     ops::{DerefMut, Range},
+    panic,
     rc::Rc,
     sync::{
         Arc, Weak,
@@ -592,8 +593,15 @@ impl Frame {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum WindowMode {
+    Normal,
+    Inspector,
+}
+
 /// Holds the state for a specific window.
 pub struct Window {
+    mode: WindowMode,
     pub(crate) handle: AnyWindowHandle,
     pub(crate) invalidator: WindowInvalidator,
     pub(crate) removed: bool,
@@ -611,6 +619,8 @@ pub struct Window {
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root: Option<AnyView>,
     pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
+    pub(crate) next_instance_id_by_global_element_id:
+        HashMap<(SmallVec<[ElementId; 32]>, &'static panic::Location<'static>), usize>,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
@@ -885,6 +895,7 @@ impl Window {
         platform_window.map_window().unwrap();
 
         Ok(Window {
+            mode: WindowMode::Normal,
             handle,
             invalidator,
             removed: false,
@@ -898,6 +909,7 @@ impl Window {
             layout_engine: Some(TaffyLayoutEngine::new()),
             root: None,
             element_id_stack: SmallVec::default(),
+            next_instance_id_by_global_element_id: HashMap::default(),
             text_style_stack: Vec::new(),
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
@@ -4069,7 +4081,7 @@ pub enum ElementId {
     FocusHandle(FocusId),
     /// A combination of a name and an integer.
     NamedInteger(SharedString, u64),
-    /// A path
+    /// A path.
     Path(Arc<std::path::Path>),
 }
 

@@ -404,10 +404,14 @@ impl IntoElement for TextElement {
 
 impl Element for TextElement {
     type RequestLayoutState = ();
-
     type PrepaintState = PrepaintState;
+    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
         None
     }
 

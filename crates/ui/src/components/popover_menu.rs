@@ -311,9 +311,14 @@ pub struct PopoverMenuFrameState<M: ManagedView> {
 impl<M: ManagedView> Element for PopoverMenu<M> {
     type RequestLayoutState = PopoverMenuFrameState<M>;
     type PrepaintState = Option<HitboxId>;
+    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
         Some(self.id.clone())
+    }
+
+    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
     }
 
     fn request_layout(

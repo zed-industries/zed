@@ -111,9 +111,14 @@ pub struct PrepaintState {
 impl<M: ManagedView> Element for RightClickMenu<M> {
     type RequestLayoutState = RequestLayoutState;
     type PrepaintState = PrepaintState;
+    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
         Some(self.id.clone())
+    }
+
+    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
     }
 
     fn request_layout(

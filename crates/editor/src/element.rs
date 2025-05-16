@@ -6987,8 +6987,13 @@ impl EditorElement {
 impl Element for EditorElement {
     type RequestLayoutState = ();
     type PrepaintState = EditorLayout;
+    type DebugState = ();
 
     fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
         None
     }
 
