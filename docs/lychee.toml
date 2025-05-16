@@ -1,0 +1,16 @@
+retry_wait_time = 5
+
+accept = ["200..=204", "429"]
+
+max_retries = 5
+
+exclude = [
+    # the flollowing links are rate limited but with 403 instead of 429
+    'https://platform.deepseek.com/api_keys',
+    'https://console.anthropic.com/settings/plans',
+    'https://console.anthropic.com/settings/keys',
+    'https://platform.openai.com/docs/guides/prompt-engineering',
+    'https://platform.openai.com/account/api-keys',
+    'https://platform.openai.com/docs/models',
+    'https://linux.die.net/man/1/sed',
+]
