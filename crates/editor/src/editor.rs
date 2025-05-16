@@ -3920,9 +3920,9 @@ impl Editor {
                     .iter()
                     .map(|selection| {
                         let start_point = selection.start.to_point(&buffer);
-                        let mut indent =
+                        let mut existing_indent =
                             buffer.indent_size_for_line(MultiBufferRow(start_point.row));
-                        indent.len = cmp::min(indent.len, start_point.column);
+                        existing_indent.len = cmp::min(existing_indent.len, start_point.column);
                         let start = selection.start;
                         let end = selection.end;
                         let selection_is_empty = start == end;
@@ -3932,6 +3932,7 @@ impl Editor {
                             doc_delimiter,
                             insert_extra_newline,
                             indent_on_newline,
+                            indent_on_extra_newline,
                         ) = if let Some(language) = &language_scope {
                             let mut insert_extra_newline =
                                 insert_extra_newline_brackets(&buffer, start..end, language)
@@ -3979,6 +3980,7 @@ impl Editor {
                             });
 
                             let mut indent_on_newline = IndentSize::spaces(0);
+                            let mut indent_on_extra_newline = IndentSize::spaces(0);
 
                             let doc_delimiter = maybe!({
                                 if !selection_is_empty {
@@ -4048,12 +4050,21 @@ impl Editor {
                                         .all(|char| line_iter.next() == Some(char));
                                     if end_tag_exists {
                                         let max_point = snapshot.line_len(start_point.row) as usize;
-                                        let cursor_is_before_end_tag = num_of_whitspaces_from_back
+                                        let ordering = (num_of_whitspaces_from_back
                                             + end_tag.len()
-                                            + start_point.column as usize
-                                            <= max_point;
-                                        if cursor_is_before_end_tag && cursor_is_after_start_tag {
-                                            insert_extra_newline = true;
+                                            + start_point.column as usize)
+                                            .cmp(&max_point);
+                                        let cursor_is_before_end_tag =
+                                            ordering != Ordering::Greater;
+                                        if cursor_is_after_start_tag {
+                                            if cursor_is_before_end_tag {
+                                                insert_extra_newline = true;
+                                            }
+                                            let cursor_is_at_start_of_end_tag =
+                                                ordering == Ordering::Equal;
+                                            if cursor_is_at_start_of_end_tag {
+                                                indent_on_extra_newline.len = (*len).into();
+                                            }
                                         }
                                         cursor_is_before_end_tag
                                     } else {
@@ -4078,9 +4089,16 @@ impl Editor {
                                 doc_delimiter,
                                 insert_extra_newline,
                                 indent_on_newline,
+                                indent_on_extra_newline,
                             )
                         } else {
-                            (None, None, false, IndentSize::default())
+                            (
+                                None,
+                                None,
+                                false,
+                                IndentSize::default(),
+                                IndentSize::default(),
+                            )
                         };
 
                         let prevent_auto_indent = doc_delimiter.is_some();
@@ -4090,11 +4108,12 @@ impl Editor {
                             delimiter.as_deref().map(str::len).unwrap_or_default();
                         let mut new_text = String::with_capacity(
                             1 + capacity_for_delimiter
-                                + indent.len as usize
-                                + indent_on_newline.len as usize,
+                                + existing_indent.len as usize
+                                + indent_on_newline.len as usize
+                                + indent_on_extra_newline.len as usize,
                         );
                         new_text.push('\n');
-                        new_text.extend(indent.chars());
+                        new_text.extend(existing_indent.chars());
                         new_text.extend(indent_on_newline.chars());
 
                         if let Some(delimiter) = &delimiter {
@@ -4103,8 +4122,8 @@ impl Editor {
 
                         if insert_extra_newline {
                             new_text.push('\n');
-                            new_text.extend(indent.chars());
-                            new_text.extend(indent_on_newline.chars());
+                            new_text.extend(existing_indent.chars());
+                            new_text.extend(indent_on_extra_newline.chars());
                         }
 
                         let anchor = buffer.anchor_after(end);
