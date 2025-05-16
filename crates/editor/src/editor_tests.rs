@@ -2755,7 +2755,7 @@ async fn test_newline_comments(cx: &mut TestAppContext) {
 
     let language = Arc::new(Language::new(
         LanguageConfig {
-            line_comments: vec!["//".into()],
+            line_comments: vec!["// ".into()],
             ..LanguageConfig::default()
         },
         None,
@@ -2770,7 +2770,29 @@ async fn test_newline_comments(cx: &mut TestAppContext) {
         cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
         cx.assert_editor_state(indoc! {"
         // Foo
+        // ˇ
+    "});
+        // Ensure that we add comment prefix when existing line contains space
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(
+            indoc! {"
+        // Foo
+        //s
+        // ˇ
+    "}
+            .replace("s", " ") // s is used as space placeholder to prevent format on save
+            .as_str(),
+        );
+        // Ensure that we add comment prefix when existing line does not contain space
+        cx.set_state(indoc! {"
+        // Foo
         //ˇ
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        // Foo
+        //
+        // ˇ
     "});
         // Ensure that if cursor is before the comment start, we do not actually insert a comment prefix.
         cx.set_state(indoc! {"
