@@ -35,7 +35,6 @@ itertools.workspace = true
 language.workspace = true
 language_model.workspace = true
 linkify.workspace = true
-linkme.workspace = true
 log.workspace = true
 markdown.workspace = true
 menu.workspace = true

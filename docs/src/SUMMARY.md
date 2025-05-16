@@ -48,11 +48,11 @@
 - [Text Threads](./ai/text-threads.md)
 - [Rules](./ai/rules.md)
 - [Model Context Protocol](./ai/mcp.md)
+- [Configuration](./ai/configuration.md)
 - [Subscription](./ai/subscription.md)
   - [Plans and Usage](./ai/plans-and-usage.md)
   - [Billing](./ai/billing.md)
   - [Models](./ai/models.md)
-- [Use Your Own API Keys](./ai/custom-api-keys.md)
 - [Privacy and Security](./ai/privacy-and-security.md)
   - [AI Improvement](./ai/ai-improvement.md)
 

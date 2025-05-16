@@ -24,7 +24,7 @@ pub struct Terminals {
 }
 
 /// Terminals are opened either for the users shell, or to run a task.
-#[allow(clippy::large_enum_variant)]
+
 #[derive(Debug)]
 pub enum TerminalKind {
     /// Run a shell at the given path (or $HOME if None)

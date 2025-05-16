@@ -538,7 +538,6 @@
       "ctrl-alt-b": "workspace::ToggleRightDock",
       "ctrl-b": "workspace::ToggleLeftDock",
       "ctrl-j": "workspace::ToggleBottomDock",
-      "ctrl-w": "workspace::CloseActiveDock",
       "ctrl-alt-y": "workspace::CloseAllDocks",
       "shift-find": "pane::DeploySearch",
       "ctrl-shift-f": "pane::DeploySearch",
@@ -767,7 +766,7 @@
       "alt-ctrl-r": "project_panel::RevealInFileManager",
       "ctrl-shift-enter": "project_panel::OpenWithSystem",
       "shift-find": "project_panel::NewSearchInDirectory",
-      "ctrl-shift-f": "project_panel::NewSearchInDirectory",
+      "ctrl-alt-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrevious",
       "escape": "menu::Cancel"

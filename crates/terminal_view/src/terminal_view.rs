@@ -52,7 +52,7 @@ use zed_actions::assistant::InlineAssist;
 
 use std::{
     cmp,
-    ops::RangeInclusive,
+    ops::{Range, RangeInclusive},
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -126,6 +126,8 @@ pub struct TerminalView {
     scroll_handle: TerminalScrollHandle,
     show_scrollbar: bool,
     hide_scrollbar_task: Option<Task<()>>,
+    marked_text: Option<String>,
+    marked_range_utf16: Option<Range<usize>>,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
 }
@@ -218,6 +220,8 @@ impl TerminalView {
             show_scrollbar: !Self::should_autohide_scrollbar(cx),
             hide_scrollbar_task: None,
             cwd_serialized: false,
+            marked_text: None,
+            marked_range_utf16: None,
             _subscriptions: vec![
                 focus_in,
                 focus_out,
@@ -225,6 +229,45 @@ impl TerminalView {
             ],
             _terminal_subscriptions: terminal_subscriptions,
         }
+    }
+
+    /// Sets the marked (pre-edit) text from the IME.
+    pub(crate) fn set_marked_text(
+        &mut self,
+        text: String,
+        range: Range<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        self.marked_text = Some(text);
+        self.marked_range_utf16 = Some(range);
+        cx.notify();
+    }
+
+    /// Gets the current marked range (UTF-16).
+    pub(crate) fn marked_text_range(&self) -> Option<Range<usize>> {
+        self.marked_range_utf16.clone()
+    }
+
+    /// Clears the marked (pre-edit) text state.
+    pub(crate) fn clear_marked_text(&mut self, cx: &mut Context<Self>) {
+        if self.marked_text.is_some() {
+            self.marked_text = None;
+            self.marked_range_utf16 = None;
+            cx.notify();
+        }
+    }
+
+    /// Commits (sends) the given text to the PTY. Called by InputHandler::replace_text_in_range.
+    pub(crate) fn commit_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        if !text.is_empty() {
+            self.terminal.update(cx, |term, _| {
+                term.input(text.to_string());
+            });
+        }
+    }
+
+    pub(crate) fn terminal_bounds(&self, cx: &App) -> TerminalBounds {
+        self.terminal.read(cx).last_content().terminal_bounds
     }
 
     pub fn entity(&self) -> &Entity<Terminal> {

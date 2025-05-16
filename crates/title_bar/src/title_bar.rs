@@ -237,7 +237,9 @@ impl Render for TitleBar {
                                     el.child(self.render_user_menu_button(cx))
                                 } else {
                                     el.children(self.render_connection_status(status, cx))
-                                        .child(self.render_sign_in_button(cx))
+                                        .when(TitleBarSettings::get_global(cx).show_sign_in, |el| {
+                                            el.child(self.render_sign_in_button(cx))
+                                        })
                                         .child(self.render_user_menu_button(cx))
                                 }
                             }),
@@ -473,7 +475,7 @@ impl TitleBar {
                 .label_size(LabelSize::Small)
                 .tooltip(Tooltip::text(format!(
                     "{} is sharing this project. Click to follow.",
-                    host_user.github_login.clone()
+                    host_user.github_login
                 )))
                 .on_click({
                     let host_peer_id = host.peer_id;

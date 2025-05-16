@@ -163,8 +163,10 @@ impl AskPassSession {
 #[cfg(unix)]
 fn get_shell_safe_zed_path() -> anyhow::Result<String> {
     let zed_path = std::env::current_exe()
-        .context("Failed to figure out current executable path for use in askpass")?
+        .context("Failed to determine current executable path for use in askpass")?
         .to_string_lossy()
+        // see https://github.com/rust-lang/rust/issues/69343
+        .trim_end_matches(" (deleted)")
         .to_string();
 
     // NOTE: this was previously enabled, however, it caused errors when it shouldn't have
