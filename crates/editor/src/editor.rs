@@ -17918,10 +17918,6 @@ impl Editor {
             .and_then(|lines| lines.last().map(|line| line.range.start));
 
         self.inline_value_cache.refresh_task = cx.spawn(async move |editor, cx| {
-            let snapshot = editor
-                .update(cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))
-                .ok()?;
-
             let inline_values = editor
                 .update(cx, |editor, cx| {
                     let Some(current_execution_position) = current_execution_position else {
@@ -17949,22 +17945,40 @@ impl Editor {
                 .context("refreshing debugger inlays")
                 .log_err()?;
 
-            let (excerpt_id, buffer_id) = snapshot
-                .excerpts()
-                .next()
-                .map(|excerpt| (excerpt.0, excerpt.1.remote_id()))?;
+            let mut buffer_inline_values: HashMap<BufferId, Vec<InlayHint>> = HashMap::default();
+
+            for (buffer_id, inline_value) in inline_values
+                .into_iter()
+                .filter_map(|hint| Some((hint.position.buffer_id?, hint)))
+            {
+                buffer_inline_values
+                    .entry(buffer_id)
+                    .or_default()
+                    .push(inline_value);
+            }
+
             editor
                 .update(cx, |editor, cx| {
-                    let new_inlays = inline_values
-                        .into_iter()
-                        .map(|debugger_value| {
-                            Inlay::debugger_hint(
-                                post_inc(&mut editor.next_inlay_id),
-                                Anchor::in_buffer(excerpt_id, buffer_id, debugger_value.position),
-                                debugger_value.text(),
-                            )
-                        })
-                        .collect::<Vec<_>>();
+                    let snapshot = editor.buffer.read(cx).snapshot(cx);
+                    let mut new_inlays = Vec::default();
+
+                    for (excerpt_id, buffer_snapshot, _) in snapshot.excerpts() {
+                        let buffer_id = buffer_snapshot.remote_id();
+                        buffer_inline_values
+                            .get(&buffer_id)
+                            .into_iter()
+                            .flatten()
+                            .for_each(|hint| {
+                                let inlay = Inlay::debugger_hint(
+                                    post_inc(&mut editor.next_inlay_id),
+                                    Anchor::in_buffer(excerpt_id, buffer_id, hint.position),
+                                    hint.text(),
+                                );
+
+                                new_inlays.push(inlay);
+                            });
+                    }
+
                     let mut inlay_ids = new_inlays.iter().map(|inlay| inlay.id).collect();
                     std::mem::swap(&mut editor.inline_value_cache.inlays, &mut inlay_ids);
 
