@@ -39,9 +39,9 @@ use http_client::HttpClient;
 use itertools::Itertools as _;
 use language::{
     Bias, BinaryStatus, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
-    DiagnosticEntry, DiagnosticSet, Diff, File as _, Language, LanguageName, LanguageRegistry,
-    LanguageToolchainStore, LocalFile, LspAdapter, LspAdapterDelegate, Patch, PointUtf16,
-    TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
+    DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language, LanguageName,
+    LanguageRegistry, LanguageToolchainStore, LocalFile, LspAdapter, LspAdapterDelegate, Patch,
+    PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
     language_settings::{
         FormatOnSave, Formatter, LanguageSettings, SelectedFormatter, language_settings,
     },
@@ -474,9 +474,14 @@ impl LocalLspStore {
                             this.merge_diagnostics(
                                 server_id,
                                 params,
+                                DiagnosticSourceKind::Pushed,
                                 &adapter.disk_based_diagnostic_sources,
-                                // TODO(vs) do not erase pulled diagnostics here
-                                |diagnostic, cx| adapter.retain_old_diagnostic(diagnostic, cx),
+                                |diagnostic, cx| match diagnostic.source_kind {
+                                    DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => {
+                                        adapter.retain_old_diagnostic(diagnostic, cx)
+                                    }
+                                    DiagnosticSourceKind::Pulled => true,
+                                },
                                 cx,
                             )
                             .log_err();
@@ -8897,12 +8902,14 @@ impl LspStore {
         &mut self,
         language_server_id: LanguageServerId,
         params: lsp::PublishDiagnosticsParams,
+        source_kind: DiagnosticSourceKind,
         disk_based_sources: &[String],
         cx: &mut Context<Self>,
     ) -> Result<()> {
         self.merge_diagnostics(
             language_server_id,
             params,
+            source_kind,
             disk_based_sources,
             |_, _| false,
             cx,
@@ -8913,6 +8920,7 @@ impl LspStore {
         &mut self,
         language_server_id: LanguageServerId,
         mut params: lsp::PublishDiagnosticsParams,
+        source_kind: DiagnosticSourceKind,
         disk_based_sources: &[String],
         filter: F,
         cx: &mut Context<Self>,
@@ -8973,6 +8981,7 @@ impl LspStore {
                     range,
                     diagnostic: Diagnostic {
                         source: diagnostic.source.clone(),
+                        source_kind,
                         code: diagnostic.code.clone(),
                         code_description: diagnostic
                             .code_description
@@ -8998,6 +9007,7 @@ impl LspStore {
                                 range,
                                 diagnostic: Diagnostic {
                                     source: diagnostic.source.clone(),
+                                    source_kind,
                                     code: diagnostic.code.clone(),
                                     code_description: diagnostic
                                         .code_description

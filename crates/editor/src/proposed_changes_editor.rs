@@ -523,7 +523,7 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         None
     }
 
-    fn pull_diagnostics(
+    fn update_pull_diagnostics_for_buffer(
         &self,
         _: &Entity<Buffer>,
         _: &mut App,
@@ -531,7 +531,7 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         Task::ready(Ok(Vec::new()))
     }
 
-    fn update_diagnostics(
+    fn update_pull_diagnostics(
         &self,
         _: Vec<LspPullDiagnostics>,
         _: &mut App,

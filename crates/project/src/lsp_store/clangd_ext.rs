@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ::serde::{Deserialize, Serialize};
 use gpui::WeakEntity;
-use language::{CachedLspAdapter, Diagnostic};
+use language::{CachedLspAdapter, Diagnostic, DiagnosticSourceKind};
 use lsp::LanguageServer;
 use util::ResultExt as _;
 
@@ -74,6 +74,7 @@ pub fn register_notifications(
                     this.merge_diagnostics(
                         server_id,
                         mapped_diagnostics,
+                        DiagnosticSourceKind::Pushed,
                         &adapter.disk_based_diagnostic_sources,
                         |diag, _| !is_inactive_region(diag),
                         cx,

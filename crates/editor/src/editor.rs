@@ -108,9 +108,10 @@ pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 use language::{
     AutoindentMode, BracketMatch, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CursorShape, DiagnosticEntry, DiffOptions, DocumentationConfig, EditPredictionsMode,
-    EditPreview, HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point,
-    Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
+    CursorShape, DiagnosticEntry, DiagnosticSourceKind, DiffOptions, DocumentationConfig,
+    EditPredictionsMode, EditPreview, HighlightedText, IndentKind, IndentSize, Language,
+    OffsetRangeExt, Point, Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
+    WordsQuery,
     language_settings::{
         self, InlayHintSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
         all_language_settings, language_settings,
@@ -15491,7 +15492,7 @@ impl Editor {
             let Ok(mut pull_diagnostics_tasks) = cx.update(|_, cx| {
                 buffers
                     .into_iter()
-                    .map(|buffer| project.pull_diagnostics(&buffer, cx))
+                    .map(|buffer| project.update_pull_diagnostics_for_buffer(&buffer, cx))
                     .collect::<FuturesUnordered<_>>()
             }) else {
                 return;
@@ -15500,7 +15501,7 @@ impl Editor {
             while let Some(pull_task) = pull_diagnostics_tasks.next().await {
                 if let Some(new_diagnostics) = pull_task.log_err() {
                     let Ok(update_task) =
-                        cx.update(|_, cx| project.update_diagnostics(new_diagnostics, cx))
+                        cx.update(|_, cx| project.update_pull_diagnostics(new_diagnostics, cx))
                     else {
                         return;
                     };
@@ -19844,13 +19845,13 @@ pub trait SemanticsProvider {
         cx: &mut App,
     ) -> Option<Task<Result<ProjectTransaction>>>;
 
-    fn pull_diagnostics(
+    fn update_pull_diagnostics_for_buffer(
         &self,
         buffer: &Entity<Buffer>,
         cx: &mut App,
     ) -> Task<Result<Vec<LspPullDiagnostics>>>;
 
-    fn update_diagnostics(
+    fn update_pull_diagnostics(
         &self,
         diagnostics: Vec<LspPullDiagnostics>,
         cx: &mut App,
@@ -20366,7 +20367,7 @@ impl SemanticsProvider for Entity<Project> {
         }))
     }
 
-    fn pull_diagnostics(
+    fn update_pull_diagnostics_for_buffer(
         &self,
         buffer: &Entity<Buffer>,
         cx: &mut App,
@@ -20378,7 +20379,7 @@ impl SemanticsProvider for Entity<Project> {
         })
     }
 
-    fn update_diagnostics(
+    fn update_pull_diagnostics(
         &self,
         diagnostics: Vec<LspPullDiagnostics>,
         cx: &mut App,
@@ -20395,16 +20396,21 @@ impl SemanticsProvider for Entity<Project> {
                     let Some(uri) = diagnostics_set.uri.clone() else {
                         continue;
                     };
-                    // TODO(vs) this will overwrite the pushed diagnostics
                     lsp_store
-                        .update_diagnostics(
+                        .merge_diagnostics(
                             diagnostics_set.server_id,
                             lsp::PublishDiagnosticsParams {
                                 uri,
                                 diagnostics: diagnostics_set.diagnostics.clone(),
                                 version: None,
                             },
+                            DiagnosticSourceKind::Pulled,
                             disk_based_sources,
+                            |old_diagnostic, cx| {
+                                // TODO(vs) this will overwrite the pushed diagnostics
+                                // TODO(vs) need to track responses' unchanged and partial
+                                false
+                            },
                             cx,
                         )
                         .log_err();

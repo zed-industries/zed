@@ -15,8 +15,8 @@ use collections::HashSet;
 use futures::future;
 use gpui::{App, AsyncApp, Entity, Task};
 use language::{
-    Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, OffsetRangeExt, PointUtf16,
-    ToOffset, ToPointUtf16, Transaction, Unclipped,
+    Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, DiagnosticSourceKind,
+    OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
     language_settings::{InlayHintKind, LanguageSettings, language_settings},
     point_from_lsp, point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
@@ -3878,7 +3878,8 @@ impl LspCommand for GetDocumentDiagnostics {
                                     if let lsp::DocumentDiagnosticReportKind::Full(full_report) =
                                         report
                                     {
-                                        // TODO(vs): this is will overwrite pushed diagnostics
+                                        // TODO(vs): remove this entirely, and do it once, not in the converter
+                                        // do it in the `fn update_pull_diagnostics`
                                         Some(store.update_diagnostics(
                                             server_id,
                                             lsp::PublishDiagnosticsParams {
@@ -3886,6 +3887,7 @@ impl LspCommand for GetDocumentDiagnostics {
                                                 uri,
                                                 version: None,
                                             },
+                                            DiagnosticSourceKind::Pulled,
                                             &language_server_adapter.disk_based_diagnostic_sources,
                                             cx,
                                         ))
