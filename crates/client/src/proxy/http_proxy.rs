@@ -110,3 +110,34 @@ async fn recv_response(stream: &mut BufStream<TcpStream>) -> Result<String> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use url::Url;
+
+    use super::{HttpProxyAuthorization, HttpProxyType, parse_http_proxy};
+
+    #[test]
+    fn test_parse_http_proxy() {
+        let proxy = Url::parse("http://proxy.example.com:1080").unwrap();
+        let scheme = proxy.scheme();
+
+        let version = parse_http_proxy(scheme, &proxy);
+        assert!(matches!(version, HttpProxyType::HTTP(None)))
+    }
+
+    #[test]
+    fn test_parse_http_proxy_with_auth() {
+        let proxy = Url::parse("http://username:password@proxy.example.com:1080").unwrap();
+        let scheme = proxy.scheme();
+
+        let version = parse_http_proxy(scheme, &proxy);
+        assert!(matches!(
+            version,
+            HttpProxyType::HTTP(Some(HttpProxyAuthorization {
+                username: "username",
+                password: "password"
+            }))
+        ))
+    }
+}
