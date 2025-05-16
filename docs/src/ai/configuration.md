@@ -14,6 +14,7 @@ Here's an overview of the supported providers and tool call support:
 | [Anthropic](#anthropic)                         | ✅                 |
 | [GitHub Copilot Chat](#github-copilot-chat)     | In Some Cases      |
 | [Google AI](#google-ai)                         | ✅                 |
+| [Mistral](#mistral)                             | ✅                 |
 | [Ollama](#ollama)                               | ✅                 |
 | [OpenAI](#openai)                               | ✅                 |
 | [DeepSeek](#deepseek)                           | 🚫                 |
@@ -127,6 +128,43 @@ By default Zed will use `stable` versions of models, but you can use specific ve
 ```
 
 Custom models will be listed in the model dropdown in the Agent Panel.
+
+### Mistral {#mistral}
+
+> 🔨Supports tool use
+1. Visit the Mistral platform and [create an API key](https://console.mistral.ai/api-keys/)
+2. Open the configuration view (`assistant: show configuration`) and navigate to the Mistral section
+3. Enter your Mistral API key
+
+The Mistral API key will be saved in your keychain.
+
+Zed will also use the `MISTRAL_API_KEY` environment variable if it's defined.
+
+#### Mistral Custom Models {#mistral-custom-models}
+
+The Zed Assistant comes pre-configured with several Mistral models (codestral-latest, mistral-large-latest, mistral-medium-latest, mistral-small-latest, open-mistral-nemo, and open-codestral-mamba). All the default models support tool use. If you wish to use alternate models or customize their parameters, you can do so by adding the following to your Zed `settings.json`:
+
+```json
+{
+  "language_models": {
+    "mistral": {
+      "api_url": "https://api.mistral.ai/v1",
+      "available_models": [
+        {
+          "name": "mistral-tiny-latest",
+          "display_name": "Mistral Tiny",
+          "max_tokens": 32000,
+          "max_output_tokens": 4096,
+          "max_completion_tokens": 1024,
+          "supports_tools": true
+        }
+      ]
+    }
+  }
+}
+```
+
+Custom models will be listed in the model dropdown in the assistant panel.
 
 ### Ollama {#ollama}
 
