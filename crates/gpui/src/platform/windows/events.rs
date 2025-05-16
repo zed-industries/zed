@@ -292,39 +292,36 @@ fn handle_mouse_move_msg(
 ) -> Option<isize> {
     start_tracking_mouse(handle, &state_ptr, TME_LEAVE);
 
-    // TODO:
     let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.input.take() {
-        let scale_factor = lock.scale_factor;
-        drop(lock);
-        let pressed_button = match MODIFIERKEYS_FLAGS(wparam.loword() as u32) {
-            flags if flags.contains(MK_LBUTTON) => Some(MouseButton::Left),
-            flags if flags.contains(MK_RBUTTON) => Some(MouseButton::Right),
-            flags if flags.contains(MK_MBUTTON) => Some(MouseButton::Middle),
-            flags if flags.contains(MK_XBUTTON1) => {
-                Some(MouseButton::Navigate(NavigationDirection::Back))
-            }
-            flags if flags.contains(MK_XBUTTON2) => {
-                Some(MouseButton::Navigate(NavigationDirection::Forward))
-            }
-            _ => None,
-        };
-        let x = lparam.signed_loword() as f32;
-        let y = lparam.signed_hiword() as f32;
-        let event = MouseMoveEvent {
-            position: logical_point(x, y, scale_factor),
-            pressed_button,
-            modifiers: current_modifiers(),
-        };
-        let result = if callback(PlatformInput::MouseMove(event)).default_prevented {
-            Some(0)
-        } else {
-            Some(1)
-        };
-        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
-        return result;
-    }
-    Some(1)
+    let Some(mut func) = lock.callbacks.input.take() else {
+        return Some(1);
+    };
+    let scale_factor = lock.scale_factor;
+    drop(lock);
+
+    let pressed_button = match MODIFIERKEYS_FLAGS(wparam.loword() as u32) {
+        flags if flags.contains(MK_LBUTTON) => Some(MouseButton::Left),
+        flags if flags.contains(MK_RBUTTON) => Some(MouseButton::Right),
+        flags if flags.contains(MK_MBUTTON) => Some(MouseButton::Middle),
+        flags if flags.contains(MK_XBUTTON1) => {
+            Some(MouseButton::Navigate(NavigationDirection::Back))
+        }
+        flags if flags.contains(MK_XBUTTON2) => {
+            Some(MouseButton::Navigate(NavigationDirection::Forward))
+        }
+        _ => None,
+    };
+    let x = lparam.signed_loword() as f32;
+    let y = lparam.signed_hiword() as f32;
+    let input = PlatformInput::MouseMove(MouseMoveEvent {
+        position: logical_point(x, y, scale_factor),
+        pressed_button,
+        modifiers: current_modifiers(),
+    });
+    let handled = !func(input).propagate;
+    state_ptr.state.borrow_mut().callbacks.input = Some(func);
+
+    if handled { Some(0) } else { Some(1) }
 }
 
 fn handle_mouse_leave_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
@@ -560,6 +557,7 @@ fn handle_mouse_wheel_msg(
         false => lock.system_settings.mouse_wheel_settings.wheel_scroll_lines,
     };
     drop(lock);
+
     let wheel_distance =
         (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_amount as f32;
     let mut cursor_point = POINT {
@@ -601,6 +599,7 @@ fn handle_mouse_horizontal_wheel_msg(
     let scale_factor = lock.scale_factor;
     let wheel_scroll_chars = lock.system_settings.mouse_wheel_settings.wheel_scroll_chars;
     drop(lock);
+
     let wheel_distance =
         (-wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_chars as f32;
     let mut cursor_point = POINT {
