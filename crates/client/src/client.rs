@@ -1,7 +1,7 @@
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
-mod socks;
+mod proxy;
 pub mod telemetry;
 pub mod user;
 pub mod zed_urls;
@@ -24,13 +24,13 @@ use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use parking_lot::RwLock;
 use postage::watch;
+use proxy::connect_socks_proxy_stream;
 use rand::prelude::*;
 use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
-use socks::connect_socks_proxy_stream;
 use std::pin::Pin;
 use std::{
     any::TypeId,
