@@ -19,6 +19,7 @@ test-support = ["clock/test-support", "collections/test-support", "gpui/test-sup
 anyhow.workspace = true
 async-recursion = "0.3"
 async-tungstenite = { workspace = true, features = ["tokio", "tokio-rustls-manual-roots"] }
+base64.workspace = true
 chrono = { workspace = true, features = ["serde"] }
 clock.workspace = true
 collections.workspace = true
@@ -29,6 +30,7 @@ gpui.workspace = true
 gpui_tokio.workspace = true
 http_client.workspace = true
 http_client_tls.workspace = true
+httparse = "1.10"
 log.workspace = true
 paths.workspace = true
 parking_lot.workspace = true
