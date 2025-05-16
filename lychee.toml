@@ -8,7 +8,7 @@ timeout = 45
 
 exclude = [
     # staging server
-    'https://staging-collab.zed.dev/'
+    'https://staging-collab.zed.dev/',
 
     # the flollowing links are rate limited or use bot detection and respond with 403 instead of 429
     'https://openai.com',
