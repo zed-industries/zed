@@ -22,18 +22,16 @@ pub(crate) async fn connect_with_proxy_stream(
     // Connect to proxy and wrap protocol later
     let stream = tokio::net::TcpStream::connect((proxy_domain.as_str(), proxy_port))
         .await
-        .context("Failed to connect to socks proxy")?;
+        .context("Failed to connect to proxy")?;
 
-    let socks: Box<dyn AsyncReadWrite> = match proxy_type {
-        ProxyType::SocksProxy(socks_version) => {
-            connect_with_socks_proxy(stream, socks_version, rpc_host).await?
-        }
-        ProxyType::HttpProxy(http_proxy) => {
-            connect_with_http_proxy(stream, http_proxy, rpc_host, proxy_domain.as_str()).await?
+    let proxy_stream = match proxy_type {
+        ProxyType::SocksProxy(proxy) => connect_with_socks_proxy(stream, proxy, rpc_host).await?,
+        ProxyType::HttpProxy(proxy) => {
+            connect_with_http_proxy(stream, proxy, rpc_host, &proxy_domain).await?
         }
     };
 
-    Ok(socks)
+    Ok(proxy_stream)
 }
 
 enum ProxyType<'t> {

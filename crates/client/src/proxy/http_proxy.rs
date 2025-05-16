@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use base64::Engine;
 use httparse::{EMPTY_HEADER, Response};
 use tokio::{
@@ -42,6 +42,7 @@ pub(crate) async fn connect_with_http_proxy(
         HttpProxyType::HTTP(auth) => http_connect(stream, rpc_host, auth).await,
         HttpProxyType::HTTPS(auth) => https_connect(stream, rpc_host, auth, proxy_domain).await,
     }
+    .context("error connecting to http/https proxy")
 }
 
 async fn http_connect<T>(
