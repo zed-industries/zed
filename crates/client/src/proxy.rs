@@ -12,7 +12,7 @@ pub(crate) async fn connect_with_proxy_stream(
     proxy: &Url,
     rpc_host: (&str, u16),
 ) -> Result<Box<dyn AsyncReadWrite>> {
-    let Some((proxy_url, proxy_type)) = parse_proxy_type(proxy) else {
+    let Some(((proxy_domain, proxy_port), proxy_type)) = parse_proxy_type(proxy) else {
         // If parsing the proxy URL fails, we must avoid falling back to an insecure connection.
         // SOCKS proxies are often used in contexts where security and privacy are critical,
         // so any fallback could expose users to significant risks.
@@ -20,7 +20,7 @@ pub(crate) async fn connect_with_proxy_stream(
     };
 
     // Connect to proxy and wrap protocol later
-    let stream = tokio::net::TcpStream::connect(proxy_url)
+    let stream = tokio::net::TcpStream::connect((proxy_domain.as_str(), proxy_port))
         .await
         .context("Failed to connect to socks proxy")?;
 
@@ -29,7 +29,7 @@ pub(crate) async fn connect_with_proxy_stream(
             connect_with_socks_proxy(stream, socks_version, rpc_host).await?
         }
         ProxyType::HttpProxy(http_proxy) => {
-            connect_with_http_proxy(stream, http_proxy, rpc_host).await?
+            connect_with_http_proxy(stream, http_proxy, rpc_host, proxy_domain.as_str()).await?
         }
     };
 

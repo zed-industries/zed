@@ -5,6 +5,7 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufStream},
     net::TcpStream,
 };
+use tokio_native_tls::{TlsConnector, native_tls};
 use url::Url;
 
 use super::AsyncReadWrite;
@@ -35,18 +36,22 @@ pub(crate) async fn connect_with_http_proxy(
     stream: TcpStream,
     http_proxy: HttpProxyType<'_>,
     rpc_host: (&str, u16),
+    proxy_domain: &str,
 ) -> Result<Box<dyn AsyncReadWrite>> {
     match http_proxy {
         HttpProxyType::HTTP(auth) => http_connect(stream, rpc_host, auth).await,
-        HttpProxyType::HTTPS(auth) => https_connect(stream, rpc_host, auth).await,
+        HttpProxyType::HTTPS(auth) => https_connect(stream, rpc_host, auth, proxy_domain).await,
     }
 }
 
-async fn http_connect(
-    stream: TcpStream,
+async fn http_connect<T>(
+    stream: T,
     target: (&str, u16),
     auth: Option<HttpProxyAuthorization<'_>>,
-) -> Result<Box<dyn AsyncReadWrite>> {
+) -> Result<Box<dyn AsyncReadWrite>>
+where
+    T: AsyncReadWrite,
+{
     let mut stream = BufStream::new(stream);
     let request = make_request(target, auth);
     stream.write_all(request.as_bytes()).await?;
@@ -55,12 +60,18 @@ async fn http_connect(
     Ok(Box::new(stream))
 }
 
-async fn https_connect(
-    _stream: TcpStream,
-    _target: (&str, u16),
-    _auth: Option<HttpProxyAuthorization<'_>>,
-) -> Result<Box<dyn AsyncReadWrite>> {
-    Err(anyhow::anyhow!("HTTPS proxy not implemented"))
+async fn https_connect<T>(
+    stream: T,
+    target: (&str, u16),
+    auth: Option<HttpProxyAuthorization<'_>>,
+    proxy_domain: &str,
+) -> Result<Box<dyn AsyncReadWrite>>
+where
+    T: AsyncReadWrite,
+{
+    let tls_connector = TlsConnector::from(native_tls::TlsConnector::new()?);
+    let stream = tls_connector.connect(proxy_domain, stream).await?;
+    http_connect(stream, target, auth).await
 }
 
 fn make_request(target: (&str, u16), auth: Option<HttpProxyAuthorization<'_>>) -> String {
@@ -78,7 +89,10 @@ fn make_request(target: (&str, u16), auth: Option<HttpProxyAuthorization<'_>>) -
     request
 }
 
-async fn check_response(stream: &mut BufStream<TcpStream>) -> Result<()> {
+async fn check_response<T>(stream: &mut BufStream<T>) -> Result<()>
+where
+    T: AsyncReadWrite,
+{
     let response = recv_response(stream).await?;
     let mut dummy_headers = [EMPTY_HEADER; MAX_RESPONSE_HEADERS];
     let mut parser = Response::new(&mut dummy_headers);
@@ -94,7 +108,10 @@ async fn check_response(stream: &mut BufStream<TcpStream>) -> Result<()> {
 const MAX_RESPONSE_HEADER_LENGTH: usize = 4096;
 const MAX_RESPONSE_HEADERS: usize = 16;
 
-async fn recv_response(stream: &mut BufStream<TcpStream>) -> Result<String> {
+async fn recv_response<T>(stream: &mut BufStream<T>) -> Result<String>
+where
+    T: AsyncReadWrite,
+{
     let mut response = String::new();
     loop {
         if stream.read_line(&mut response).await? == 0 {

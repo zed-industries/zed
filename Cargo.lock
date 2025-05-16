@@ -2825,6 +2825,7 @@ dependencies = [
  "time",
  "tiny_http",
  "tokio",
+ "tokio-native-tls",
  "tokio-socks",
  "url",
  "util",
