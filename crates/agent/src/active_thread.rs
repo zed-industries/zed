@@ -3417,6 +3417,7 @@ impl Render for ActiveThread {
         v_flex()
             .size_full()
             .relative()
+            .bg(cx.theme().colors().panel_background)
             .on_mouse_move(cx.listener(|this, _, _, cx| {
                 this.show_scrollbar = true;
                 this.hide_scrollbar_later(cx);
