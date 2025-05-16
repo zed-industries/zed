@@ -319,14 +319,20 @@ pub fn init(cx: &mut App) {
                         return;
                     }
                 }
-                
+
                 // No window exists, create a new one
-                open_new(Default::default(), app_state, cx, |workspace, window, cx| {
-                    let handle = cx.entity().downgrade();
-                    workspace.toggle_modal(window, cx, |window, cx| {
-                        RemoteServerProjects::new(window, cx, handle)
-                    });
-                }).detach();
+                open_new(
+                    Default::default(),
+                    app_state,
+                    cx,
+                    |workspace, window, cx| {
+                        let handle = cx.entity().downgrade();
+                        workspace.toggle_modal(window, cx, |window, cx| {
+                            RemoteServerProjects::new(window, cx, handle)
+                        });
+                    },
+                )
+                .detach();
             }
         }
     });

@@ -34,10 +34,10 @@ pub fn init(cx: &mut App) {
     cx.observe_new(RecentProjects::register).detach();
     cx.observe_new(RemoteServerProjects::register).detach();
     cx.observe_new(DisconnectedOverlay::register).detach();
-    
+
     // Initialize remote_servers module
     remote_servers::init(cx);
-    
+
     // Register app-level action for OpenRecent
     cx.on_action({
         move |action: &OpenRecent, cx: &mut App| {
@@ -51,12 +51,18 @@ pub fn init(cx: &mut App) {
                         return;
                     }
                 }
-                
+
                 // No window exists, create a new one
                 let create_new_window = action.create_new_window;
-                open_new(Default::default(), app_state, cx, move |workspace, window, cx| {
-                    RecentProjects::open(workspace, create_new_window, window, cx);
-                }).detach();
+                open_new(
+                    Default::default(),
+                    app_state,
+                    cx,
+                    move |workspace, window, cx| {
+                        RecentProjects::open(workspace, create_new_window, window, cx);
+                    },
+                )
+                .detach();
             }
         }
     });
