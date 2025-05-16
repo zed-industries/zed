@@ -421,6 +421,11 @@ impl HitboxId {
     pub fn is_hovered(&self, window: &Window) -> bool {
         window.mouse_hit_test.0.contains(self)
     }
+
+    /// todo!("what can we name this?")
+    pub fn is_top_hit(&self, window: &Window) -> bool {
+        window.mouse_hit_test.0.first() == Some(self)
+    }
 }
 
 /// A rectangular region that potentially blocks hitboxes inserted prior.
@@ -442,6 +447,11 @@ impl Hitbox {
     /// Checks if the hitbox is currently hovered.
     pub fn is_hovered(&self, window: &Window) -> bool {
         self.id.is_hovered(window)
+    }
+
+    /// todo!("what can we name this?")
+    pub fn is_top_hit(&self, window: &Window) -> bool {
+        self.id.is_top_hit(window)
     }
 }
 
@@ -602,9 +612,12 @@ impl Frame {
     }
 }
 
+/// The window mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum WindowMode {
+pub enum WindowMode {
+    /// A normal window.
     Normal,
+    /// A window in inspector mode.
     Inspector,
 }
 
@@ -1463,6 +1476,16 @@ impl Window {
     /// Show the platform character palette.
     pub fn show_character_palette(&self) {
         self.platform_window.show_character_palette();
+    }
+
+    /// Returns the mode of the window.
+    pub fn mode(&self) -> WindowMode {
+        self.mode
+    }
+
+    /// Sets the mode of the window.
+    pub fn set_mode(&mut self, mode: WindowMode) {
+        self.mode = mode;
     }
 
     /// The scale factor of the display associated with the window. For example, it could

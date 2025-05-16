@@ -21,7 +21,8 @@ use crate::{
     HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
-    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, point, px, size,
+    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowMode, fill, point, px,
+    size,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -1525,7 +1526,7 @@ impl Interactivity {
                     window.with_content_mask(
                         style.overflow_mask(bounds, window.rem_size()),
                         |window| {
-                            let hitbox = if self.should_insert_hitbox(&style) {
+                            let hitbox = if self.should_insert_hitbox(&style, window) {
                                 Some(window.insert_hitbox(bounds, self.occlude_mouse))
                             } else {
                                 None
@@ -1542,7 +1543,7 @@ impl Interactivity {
         )
     }
 
-    fn should_insert_hitbox(&self, style: &Style) -> bool {
+    fn should_insert_hitbox(&self, style: &Style, window: &Window) -> bool {
         self.occlude_mouse
             || style.mouse_cursor.is_some()
             || self.group.is_some()
@@ -1559,6 +1560,7 @@ impl Interactivity {
             || self.drag_listener.is_some()
             || !self.drop_listeners.is_empty()
             || self.tooltip_builder.is_some()
+            || window.mode() == WindowMode::Inspector
     }
 
     fn clamp_scroll_position(
@@ -1683,10 +1685,12 @@ impl Interactivity {
                                     self.paint_keyboard_listeners(window, cx);
                                     f(&style, window, cx);
 
-                                    if hitbox.is_some() {
+                                    if let Some(hitbox) = hitbox {
                                         if let Some(group) = self.group.as_ref() {
                                             GroupHitboxes::pop(group, cx);
                                         }
+
+                                        self.paint_debug(hitbox, window);
                                     }
                                 },
                             );
@@ -1697,6 +1701,16 @@ impl Interactivity {
                 ((), element_state)
             },
         );
+    }
+
+    fn paint_debug(&self, hitbox: &Hitbox, window: &mut Window) {
+        if window.mode() != WindowMode::Inspector {
+            return;
+        }
+
+        if hitbox.is_top_hit(window) {
+            window.paint_quad(fill(hitbox.bounds, crate::rgba(0xff00ff80)));
+        }
     }
 
     #[cfg(debug_assertions)]

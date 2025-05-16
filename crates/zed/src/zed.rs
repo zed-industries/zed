@@ -481,6 +481,15 @@ fn register_actions(
 ) {
     workspace
         .register_action(about)
+        .register_action(
+            |_workspace, _: &zed_actions::dev::ToggleInspector, window, cx| {
+                let new_mode = match window.mode() {
+                    gpui::WindowMode::Normal => gpui::WindowMode::Inspector,
+                    gpui::WindowMode::Inspector => gpui::WindowMode::Normal,
+                };
+                window.set_mode(new_mode);
+            },
+        )
         .register_action(|_, _: &OpenDocs, _, cx| cx.open_url(DOCS_URL))
         .register_action(|_, _: &Minimize, window, _| {
             window.minimize_window();
