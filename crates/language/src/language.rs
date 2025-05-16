@@ -755,6 +755,12 @@ pub struct LanguageConfig {
     /// A list of preferred debuggers for this language.
     #[serde(default)]
     pub debuggers: IndexSet<SharedString>,
+    /// A character to add as a prefix when a new line is added to a documentation block.
+    #[serde(default)]
+    pub documentation_comment_prefix: Option<Arc<str>>,
+    /// Returns string documentation block of this language should start with.
+    #[serde(default)]
+    pub documentation_block: Option<Vec<Arc<str>>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -883,6 +889,8 @@ impl Default for LanguageConfig {
             completion_query_characters: Default::default(),
             debuggers: Default::default(),
             significant_indentation: Default::default(),
+            documentation_comment_prefix: None,
+            documentation_block: None,
         }
     }
 }
@@ -1802,6 +1810,23 @@ impl LanguageScope {
             .unwrap_or(false)
     }
 
+    /// A character to add as a prefix when a new line is added to a documentation block.
+    ///
+    /// Used for documentation styles that require a leading character on each line,
+    /// such as the asterisk in JSDoc, Javadoc, etc.
+    pub fn documentation_comment_prefix(&self) -> Option<&Arc<str>> {
+        self.language.config.documentation_comment_prefix.as_ref()
+    }
+
+    /// Returns prefix and suffix for documentation block of this language.
+    pub fn documentation_block(&self) -> &[Arc<str>] {
+        self.language
+            .config
+            .documentation_block
+            .as_ref()
+            .map_or([].as_slice(), |e| e.as_slice())
+    }
+
     /// Returns a list of bracket pairs for a given language with an additional
     /// piece of information about whether the particular bracket pair is currently active for a given language.
     pub fn brackets(&self) -> impl Iterator<Item = (&BracketPair, bool)> {
@@ -1833,9 +1858,9 @@ impl LanguageScope {
     pub fn language_allowed(&self, name: &LanguageServerName) -> bool {
         let config = &self.language.config;
         let opt_in_servers = &config.scope_opt_in_language_servers;
-        if opt_in_servers.iter().any(|o| *o == *name) {
+        if opt_in_servers.contains(name) {
             if let Some(over) = self.config_override() {
-                over.opt_into_language_servers.iter().any(|o| *o == *name)
+                over.opt_into_language_servers.contains(name)
             } else {
                 false
             }

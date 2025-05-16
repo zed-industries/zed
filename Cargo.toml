@@ -594,6 +594,7 @@ url = "2.2"
 urlencoding = "2.1.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 walkdir = "2.3"
+wasi-preview1-component-adapter-provider = "29"
 wasm-encoder = "0.221"
 wasmparser = "0.221"
 wasmtime = { version = "29", default-features = false, features = [
@@ -786,6 +787,9 @@ let_underscore_future = "allow"
 # in Rust it can be very tedious to reduce argument count without
 # running afoul of the borrow checker.
 too_many_arguments = "allow"
+
+# We often have large enum variants yet we rarely actually bother with splitting them up.
+large_enum_variant = "allow"
 
 [workspace.metadata.cargo-machete]
 ignored = [

@@ -1311,7 +1311,7 @@ pub struct ActiveDiagnosticGroup {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-#[allow(clippy::large_enum_variant)]
+
 pub(crate) enum ActiveDiagnostic {
     None,
     All,
@@ -3930,12 +3930,12 @@ impl Editor {
                         let (comment_delimiter, insert_extra_newline) = if let Some(language) =
                             &language_scope
                         {
-                            let insert_extra_newline =
+                            let mut insert_extra_newline =
                                 insert_extra_newline_brackets(&buffer, start..end, language)
                                     || insert_extra_newline_tree_sitter(&buffer, start..end);
 
                             // Comment extension on newline is allowed only for cursor selections
-                            let comment_delimiter = maybe!({
+                            let mut comment_delimiter = maybe!({
                                 if !selection_is_empty {
                                     return None;
                                 }
@@ -3974,6 +3974,93 @@ impl Editor {
                                     None
                                 }
                             });
+
+                            if comment_delimiter.is_none() {
+                                comment_delimiter = maybe!({
+                                    if !selection_is_empty {
+                                        return None;
+                                    }
+
+                                    if !multi_buffer.language_settings(cx).extend_comment_on_newline
+                                    {
+                                        return None;
+                                    }
+
+                                    let doc_block = language.documentation_block();
+                                    let doc_block_prefix = doc_block.first()?;
+                                    let doc_block_suffix = doc_block.last()?;
+
+                                    let doc_comment_prefix =
+                                        language.documentation_comment_prefix()?;
+
+                                    let (snapshot, range) = buffer
+                                        .buffer_line_for_row(MultiBufferRow(start_point.row))?;
+
+                                    let cursor_is_after_prefix = {
+                                        let doc_block_prefix_len = doc_block_prefix.len();
+                                        let max_len_of_delimiter = std::cmp::max(
+                                            doc_comment_prefix.len(),
+                                            doc_block_prefix_len,
+                                        );
+                                        let index_of_first_non_whitespace = snapshot
+                                            .chars_for_range(range.clone())
+                                            .take_while(|c| c.is_whitespace())
+                                            .count();
+                                        let doc_line_candidate = snapshot
+                                            .chars_for_range(range.clone())
+                                            .skip(index_of_first_non_whitespace)
+                                            .take(max_len_of_delimiter)
+                                            .collect::<String>();
+                                        if doc_line_candidate.starts_with(doc_block_prefix.as_ref())
+                                        {
+                                            index_of_first_non_whitespace + doc_block_prefix_len
+                                                <= start_point.column as usize
+                                        } else if doc_line_candidate
+                                            .starts_with(doc_comment_prefix.as_ref())
+                                        {
+                                            index_of_first_non_whitespace + doc_comment_prefix.len()
+                                                <= start_point.column as usize
+                                        } else {
+                                            false
+                                        }
+                                    };
+
+                                    let cursor_is_before_suffix_if_exits = {
+                                        let whitespace_char_from_last = snapshot
+                                            .reversed_chars_for_range(range.clone())
+                                            .take_while(|c| c.is_whitespace())
+                                            .count();
+                                        let mut line_rev_iter = snapshot
+                                            .reversed_chars_for_range(range)
+                                            .skip(whitespace_char_from_last);
+                                        let suffix_exists = doc_block_suffix
+                                            .chars()
+                                            .rev()
+                                            .all(|char| line_rev_iter.next() == Some(char));
+                                        if suffix_exists {
+                                            let max_point =
+                                                snapshot.line_len(start_point.row) as usize;
+                                            let cursor_is_before_suffix = whitespace_char_from_last
+                                                + doc_block_suffix.len()
+                                                + start_point.column as usize
+                                                <= max_point;
+                                            if cursor_is_before_suffix {
+                                                insert_extra_newline = true;
+                                            }
+                                            cursor_is_before_suffix
+                                        } else {
+                                            true
+                                        }
+                                    };
+
+                                    if cursor_is_after_prefix && cursor_is_before_suffix_if_exits {
+                                        Some(doc_comment_prefix.clone())
+                                    } else {
+                                        None
+                                    }
+                                });
+                            }
+
                             (comment_delimiter, insert_extra_newline)
                         } else {
                             (None, false)
@@ -3987,11 +4074,14 @@ impl Editor {
                             String::with_capacity(1 + capacity_for_delimiter + indent.len as usize);
                         new_text.push('\n');
                         new_text.extend(indent.chars());
+
                         if let Some(delimiter) = &comment_delimiter {
                             new_text.push_str(delimiter);
                         }
+
                         if insert_extra_newline {
-                            new_text = new_text.repeat(2);
+                            new_text.push('\n');
+                            new_text.extend(indent.chars());
                         }
 
                         let anchor = buffer.anchor_after(end);
@@ -20188,8 +20278,8 @@ impl EditorSnapshot {
         let participant_indices = collaboration_hub.user_participant_indices(cx);
         let collaborators_by_peer_id = collaboration_hub.collaborators(cx);
         let collaborators_by_replica_id = collaborators_by_peer_id
-            .iter()
-            .map(|(_, collaborator)| (collaborator.replica_id, collaborator))
+            .values()
+            .map(|collaborator| (collaborator.replica_id, collaborator))
             .collect::<HashMap<_, _>>();
         self.buffer_snapshot
             .selections_in_range(range, false)
