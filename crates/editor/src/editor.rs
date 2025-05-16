@@ -107,9 +107,9 @@ pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 use language::{
     AutoindentMode, BracketMatch, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CursorShape, DiagnosticEntry, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText,
-    IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject,
-    TransactionId, TreeSitterOptions, WordsQuery,
+    CursorShape, DiagnosticEntry, DiffOptions, DocumentationConfig, EditPredictionsMode,
+    EditPreview, HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point,
+    Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
         self, InlayHintSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
         all_language_settings, language_settings,
@@ -1311,7 +1311,7 @@ pub struct ActiveDiagnosticGroup {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-#[allow(clippy::large_enum_variant)]
+
 pub(crate) enum ActiveDiagnostic {
     None,
     All,
@@ -3912,7 +3912,7 @@ impl Editor {
     pub fn newline(&mut self, _: &Newline, window: &mut Window, cx: &mut Context<Self>) {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
         self.transact(window, cx, |this, window, cx| {
-            let (edits, selection_fixup_info): (Vec<_>, Vec<_>) = {
+            let (edits_with_flags, selection_info): (Vec<_>, Vec<_>) = {
                 let selections = this.selections.all::<usize>(cx);
                 let multi_buffer = this.buffer.read(cx);
                 let buffer = multi_buffer.snapshot(cx);
@@ -3920,17 +3920,21 @@ impl Editor {
                     .iter()
                     .map(|selection| {
                         let start_point = selection.start.to_point(&buffer);
-                        let mut indent =
+                        let mut existing_indent =
                             buffer.indent_size_for_line(MultiBufferRow(start_point.row));
-                        indent.len = cmp::min(indent.len, start_point.column);
+                        existing_indent.len = cmp::min(existing_indent.len, start_point.column);
                         let start = selection.start;
                         let end = selection.end;
                         let selection_is_empty = start == end;
                         let language_scope = buffer.language_scope_at(start);
-                        let (comment_delimiter, insert_extra_newline) = if let Some(language) =
-                            &language_scope
-                        {
-                            let insert_extra_newline =
+                        let (
+                            comment_delimiter,
+                            doc_delimiter,
+                            insert_extra_newline,
+                            indent_on_newline,
+                            indent_on_extra_newline,
+                        ) = if let Some(language) = &language_scope {
+                            let mut insert_extra_newline =
                                 insert_extra_newline_brackets(&buffer, start..end, language)
                                     || insert_extra_newline_tree_sitter(&buffer, start..end);
 
@@ -3974,39 +3978,182 @@ impl Editor {
                                     None
                                 }
                             });
-                            (comment_delimiter, insert_extra_newline)
+
+                            let mut indent_on_newline = IndentSize::spaces(0);
+                            let mut indent_on_extra_newline = IndentSize::spaces(0);
+
+                            let doc_delimiter = maybe!({
+                                if !selection_is_empty {
+                                    return None;
+                                }
+
+                                if !multi_buffer.language_settings(cx).extend_comment_on_newline {
+                                    return None;
+                                }
+
+                                let DocumentationConfig {
+                                    start: start_tag,
+                                    end: end_tag,
+                                    prefix: delimiter,
+                                    tab_size: len,
+                                } = language.documentation()?;
+
+                                let (snapshot, range) =
+                                    buffer.buffer_line_for_row(MultiBufferRow(start_point.row))?;
+
+                                let num_of_whitespaces = snapshot
+                                    .chars_for_range(range.clone())
+                                    .take_while(|c| c.is_whitespace())
+                                    .count();
+
+                                let cursor_is_after_start_tag = {
+                                    let start_tag_len = start_tag.len();
+                                    let start_tag_line = snapshot
+                                        .chars_for_range(range.clone())
+                                        .skip(num_of_whitespaces)
+                                        .take(start_tag_len)
+                                        .collect::<String>();
+                                    if start_tag_line.starts_with(start_tag.as_ref()) {
+                                        num_of_whitespaces + start_tag_len
+                                            <= start_point.column as usize
+                                    } else {
+                                        false
+                                    }
+                                };
+
+                                let cursor_is_after_delimiter = {
+                                    let delimiter_trim = delimiter.trim_end();
+                                    let delimiter_line = snapshot
+                                        .chars_for_range(range.clone())
+                                        .skip(num_of_whitespaces)
+                                        .take(delimiter_trim.len())
+                                        .collect::<String>();
+                                    if delimiter_line.starts_with(delimiter_trim) {
+                                        num_of_whitespaces + delimiter_trim.len()
+                                            <= start_point.column as usize
+                                    } else {
+                                        false
+                                    }
+                                };
+
+                                let cursor_is_before_end_tag_if_exists = {
+                                    let num_of_whitespaces_rev = snapshot
+                                        .reversed_chars_for_range(range.clone())
+                                        .take_while(|c| c.is_whitespace())
+                                        .count();
+                                    let mut line_iter = snapshot
+                                        .reversed_chars_for_range(range)
+                                        .skip(num_of_whitespaces_rev);
+                                    let end_tag_exists = end_tag
+                                        .chars()
+                                        .rev()
+                                        .all(|char| line_iter.next() == Some(char));
+                                    if end_tag_exists {
+                                        let max_point = snapshot.line_len(start_point.row) as usize;
+                                        let ordering = (num_of_whitespaces_rev
+                                            + end_tag.len()
+                                            + start_point.column as usize)
+                                            .cmp(&max_point);
+                                        let cursor_is_before_end_tag =
+                                            ordering != Ordering::Greater;
+                                        if cursor_is_after_start_tag {
+                                            if cursor_is_before_end_tag {
+                                                insert_extra_newline = true;
+                                            }
+                                            let cursor_is_at_start_of_end_tag =
+                                                ordering == Ordering::Equal;
+                                            if cursor_is_at_start_of_end_tag {
+                                                indent_on_extra_newline.len = (*len).into();
+                                            }
+                                        }
+                                        cursor_is_before_end_tag
+                                    } else {
+                                        true
+                                    }
+                                };
+
+                                if (cursor_is_after_start_tag || cursor_is_after_delimiter)
+                                    && cursor_is_before_end_tag_if_exists
+                                {
+                                    if cursor_is_after_start_tag {
+                                        indent_on_newline.len = (*len).into();
+                                    }
+                                    Some(delimiter.clone())
+                                } else {
+                                    None
+                                }
+                            });
+
+                            (
+                                comment_delimiter,
+                                doc_delimiter,
+                                insert_extra_newline,
+                                indent_on_newline,
+                                indent_on_extra_newline,
+                            )
                         } else {
-                            (None, false)
+                            (
+                                None,
+                                None,
+                                false,
+                                IndentSize::default(),
+                                IndentSize::default(),
+                            )
                         };
 
-                        let capacity_for_delimiter = comment_delimiter
-                            .as_deref()
-                            .map(str::len)
-                            .unwrap_or_default();
-                        let mut new_text =
-                            String::with_capacity(1 + capacity_for_delimiter + indent.len as usize);
+                        let prevent_auto_indent = doc_delimiter.is_some();
+                        let delimiter = comment_delimiter.or(doc_delimiter);
+
+                        let capacity_for_delimiter =
+                            delimiter.as_deref().map(str::len).unwrap_or_default();
+                        let mut new_text = String::with_capacity(
+                            1 + capacity_for_delimiter
+                                + existing_indent.len as usize
+                                + indent_on_newline.len as usize
+                                + indent_on_extra_newline.len as usize,
+                        );
                         new_text.push('\n');
-                        new_text.extend(indent.chars());
-                        if let Some(delimiter) = &comment_delimiter {
+                        new_text.extend(existing_indent.chars());
+                        new_text.extend(indent_on_newline.chars());
+
+                        if let Some(delimiter) = &delimiter {
                             new_text.push_str(delimiter);
                         }
+
                         if insert_extra_newline {
-                            new_text = new_text.repeat(2);
+                            new_text.push('\n');
+                            new_text.extend(existing_indent.chars());
+                            new_text.extend(indent_on_extra_newline.chars());
                         }
 
                         let anchor = buffer.anchor_after(end);
                         let new_selection = selection.map(|_| anchor);
                         (
-                            (start..end, new_text),
+                            ((start..end, new_text), prevent_auto_indent),
                             (insert_extra_newline, new_selection),
                         )
                     })
                     .unzip()
             };
 
-            this.edit_with_autoindent(edits, cx);
+            let mut auto_indent_edits = Vec::new();
+            let mut edits = Vec::new();
+            for (edit, prevent_auto_indent) in edits_with_flags {
+                if prevent_auto_indent {
+                    edits.push(edit);
+                } else {
+                    auto_indent_edits.push(edit);
+                }
+            }
+            if !edits.is_empty() {
+                this.edit(edits, cx);
+            }
+            if !auto_indent_edits.is_empty() {
+                this.edit_with_autoindent(auto_indent_edits, cx);
+            }
+
             let buffer = this.buffer.read(cx).snapshot(cx);
-            let new_selections = selection_fixup_info
+            let new_selections = selection_info
                 .into_iter()
                 .map(|(extra_newline_inserted, new_selection)| {
                     let mut cursor = new_selection.end.to_point(&buffer);
@@ -20188,8 +20335,8 @@ impl EditorSnapshot {
         let participant_indices = collaboration_hub.user_participant_indices(cx);
         let collaborators_by_peer_id = collaboration_hub.collaborators(cx);
         let collaborators_by_replica_id = collaborators_by_peer_id
-            .iter()
-            .map(|(_, collaborator)| (collaborator.replica_id, collaborator))
+            .values()
+            .map(|collaborator| (collaborator.replica_id, collaborator))
             .collect::<HashMap<_, _>>();
         self.buffer_snapshot
             .selections_in_range(range, false)

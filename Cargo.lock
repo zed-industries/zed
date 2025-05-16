@@ -5065,6 +5065,7 @@ dependencies = [
  "task",
  "toml 0.8.20",
  "util",
+ "wasi-preview1-component-adapter-provider",
  "wasm-encoder 0.221.3",
  "wasmparser 0.221.3",
  "wit-component 0.221.3",
@@ -16210,6 +16211,12 @@ checksum = "9683f9a5a998d873c0d21fcbe3c083009670149a8fab228644b8bd36b2c48cb3"
 dependencies = [
  "wit-bindgen-rt 0.39.0",
 ]
+
+[[package]]
+name = "wasi-preview1-component-adapter-provider"
+version = "29.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dcd9f21bbde82ba59e415a8725e6ad0d0d7e9e460b1a3ccbca5bdee952c1a324"
 
 [[package]]
 name = "wasite"

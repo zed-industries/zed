@@ -186,7 +186,6 @@ impl From<AttachRequest> for DebugRequest {
 
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(untagged)]
-#[allow(clippy::large_enum_variant)]
 pub enum BuildTaskDefinition {
     ByName(SharedString),
     Template {
