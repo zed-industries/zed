@@ -8,7 +8,7 @@ use http_client::Url;
 use http_proxy::{HttpProxyType, connect_with_http_proxy, parse_http_proxy};
 use socks_proxy::{SocksVersion, connect_with_socks_proxy, parse_socks_proxy};
 
-pub(crate) async fn connect_with_proxy_stream(
+pub(crate) async fn connect_proxy_stream(
     proxy: &Url,
     rpc_host: (&str, u16),
 ) -> Result<Box<dyn AsyncReadWrite>> {
