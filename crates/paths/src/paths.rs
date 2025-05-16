@@ -417,8 +417,8 @@ pub fn local_vscode_launch_file_relative_path() -> &'static Path {
     Path::new(".vscode/launch.json")
 }
 
-pub fn user_ssh_config_file() -> &'static Path {
-    Path::new("~/.ssh/config")
+pub fn user_ssh_config_file() -> PathBuf {
+    home_dir().join(".ssh/config")
 }
 
 pub fn global_ssh_config_file() -> &'static Path {
