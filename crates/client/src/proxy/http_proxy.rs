@@ -99,11 +99,21 @@ where
     let mut parser = Response::new(&mut dummy_headers);
     parser.parse(response.as_bytes())?;
 
-    if parser.code.is_some_and(|code| code != 200) {
-        return Err(anyhow::anyhow!("Proxy response error"));
+    match parser.code {
+        Some(code) => {
+            if code == 200 {
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!(
+                    "Proxy connection failed with HTTP code: {code}"
+                ))
+            }
+        }
+        None => Err(anyhow::anyhow!(
+            "Proxy connection failed with no HTTP code: {}",
+            parser.reason.unwrap_or("Unknown reason")
+        )),
     }
-
-    Ok(())
 }
 
 const MAX_RESPONSE_HEADER_LENGTH: usize = 4096;
