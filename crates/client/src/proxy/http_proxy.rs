@@ -9,8 +9,9 @@ use url::Url;
 
 use super::AsyncReadWrite;
 
-pub(super) struct HttpProxyContent<'t> {
-    auth: Option<HttpProxyAuthorization<'t>>,
+pub(super) enum HttpProxyType<'t> {
+    HTTP(Option<HttpProxyAuthorization<'t>>),
+    HTTPS(Option<HttpProxyAuthorization<'t>>),
 }
 
 struct HttpProxyAuthorization<'t> {
@@ -18,17 +19,21 @@ struct HttpProxyAuthorization<'t> {
     password: &'t str,
 }
 
-pub(super) fn parse_http_proxy<'t>(proxy: &'t Url) -> Option<HttpProxyContent<'t>> {
+pub(super) fn parse_http_proxy<'t>(scheme: &str, proxy: &'t Url) -> HttpProxyType<'t> {
     let auth = proxy.password().map(|password| HttpProxyAuthorization {
         username: proxy.username(),
         password,
     });
-    Some(HttpProxyContent { auth })
+    if scheme.starts_with("https") {
+        HttpProxyType::HTTPS(auth)
+    } else {
+        HttpProxyType::HTTP(auth)
+    }
 }
 
 pub(crate) async fn connect_with_http_proxy(
     stream: TcpStream,
-    http_proxy: HttpProxyContent<'_>,
+    http_proxy: HttpProxyType<'_>,
     rpc_host: (&str, u16),
 ) -> Result<Box<dyn AsyncReadWrite>> {
     http_connect(stream, rpc_host, http_proxy.auth).await

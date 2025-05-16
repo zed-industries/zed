@@ -5,7 +5,7 @@ mod socks_proxy;
 
 use anyhow::{Context, Result, anyhow};
 use http_client::Url;
-use http_proxy::{HttpProxyContent, connect_with_http_proxy, parse_http_proxy};
+use http_proxy::{HttpProxyType, connect_with_http_proxy, parse_http_proxy};
 use socks_proxy::{SocksVersion, connect_with_socks_proxy, parse_socks_proxy};
 
 pub(crate) async fn connect_with_proxy_stream(
@@ -42,7 +42,7 @@ pub(crate) async fn connect_with_proxy_stream(
 
 enum ProxyType<'t> {
     SocksProxy(SocksVersion<'t>),
-    HttpProxy(HttpProxyContent<'t>),
+    HttpProxy(HttpProxyType<'t>),
 }
 
 fn parse_proxy_type<'t>(proxy: &'t Url) -> Option<((String, u16), ProxyType<'t>)> {
@@ -51,9 +51,11 @@ fn parse_proxy_type<'t>(proxy: &'t Url) -> Option<((String, u16), ProxyType<'t>)
     let port = proxy.port_or_known_default()?;
     let proxy_type = match scheme {
         scheme if scheme.starts_with("socks") => {
-            parse_socks_proxy(scheme, proxy).map(ProxyType::SocksProxy)
+            Some(ProxyType::SocksProxy(parse_socks_proxy(scheme, proxy)))
         }
-        scheme if scheme.starts_with("http") => parse_http_proxy(proxy).map(ProxyType::HttpProxy),
+        scheme if scheme.starts_with("http") => {
+            Some(ProxyType::HttpProxy(parse_http_proxy(scheme, proxy)))
+        }
         _ => None,
     }?;
 

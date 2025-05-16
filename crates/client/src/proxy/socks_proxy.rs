@@ -27,21 +27,19 @@ pub(super) enum SocksVersion<'a> {
     V5(Option<Socks5Authorization<'a>>),
 }
 
-pub(super) fn parse_socks_proxy<'t>(scheme: &str, proxy: &'t Url) -> Option<SocksVersion<'t>> {
+pub(super) fn parse_socks_proxy<'t>(scheme: &str, proxy: &'t Url) -> SocksVersion<'t> {
     if scheme.starts_with("socks4") {
         let identification = match proxy.username() {
             "" => None,
             username => Some(Socks4Identification { user_id: username }),
         };
-        Some(SocksVersion::V4(identification))
-    } else if scheme.starts_with("socks") {
+        SocksVersion::V4(identification)
+    } else {
         let authorization = proxy.password().map(|password| Socks5Authorization {
             username: proxy.username(),
             password,
         });
-        Some(SocksVersion::V5(authorization))
-    } else {
-        None
+        SocksVersion::V5(authorization)
     }
 }
 
