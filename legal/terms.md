@@ -94,11 +94,11 @@ Output is provided "as is" without any warranties or guarantees of functionality
 
 When using Zed AI Services to provide Edit Predictions in connection with certain open source software projects, You may elect to share requests, responses and feedback comments (collectively "Model Improvement Feedback") with Zed, and Zed may use the same to improve Zed Edit Predictions models. You may opt-out of sharing Model Improvement Feedback at any time.
 
-For more information on Zed Edit Predictions please see: [https://zed.dev/docs/ai-improvement](https://zed.dev/docs/ai-improvement)
+For more information on Zed Edit Predictions please see: [https://zed.dev/docs/ai/ai-improvement](https://zed.dev/docs/ai/ai-improvement)
 
 When using Zed AI Services in connection with the Agent Panel, You may elect to share with Zed requests, responses and feedback regarding the Agent Panel and related Output (the “Agent Improvement Feedback”) with Zed, and Zed may use the same to improve the Agent Panel and related Output. Zed will only collect Agent Improvement Feedback when You elect to share the same.
 
-For more information regarding the Agent Panel please see: [https://zed.dev/docs/ai-improvement](https://zed.dev/docs/ai-improvement)
+For more information regarding the Agent Panel please see: [https://zed.dev/docs/ai/ai-improvement](https://zed.dev/docs/ai/ai-improvement)
 
 #### 3.4. Privacy Policy
 
