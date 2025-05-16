@@ -394,6 +394,9 @@ impl StackFrameList {
             .when(is_selected_frame, |this| {
                 this.bg(cx.theme().colors().element_hover)
             })
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.selected_ix = Some(ix);
                 this.activate_selected_entry(window, cx);
@@ -480,6 +483,9 @@ impl StackFrameList {
             .p_1()
             .when(is_selected, |this| {
                 this.bg(cx.theme().colors().element_hover)
+            })
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
             })
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.selected_ix = Some(ix);
