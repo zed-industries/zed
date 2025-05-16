@@ -385,10 +385,10 @@ jobs:
           cp ./.cargo/ci-config.toml ${{ env.CARGO_HOME }}/config.toml
 
       - name: cargo clippy
-        run: ./script/clippy.ps1
+        run: .\script\clippy.ps1
 
       - name: Run tests
-        uses: ./.github/actions/run_tests_windows
+        uses: .\.github\actions\run_tests_windows
 
       - name: Build Zed
         run: cargo build
