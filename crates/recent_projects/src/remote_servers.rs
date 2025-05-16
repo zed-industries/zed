@@ -251,12 +251,16 @@ struct DefaultState {
     add_new_server: NavigableEntry,
     servers: Vec<ProjectEntry>,
 }
+
 impl DefaultState {
     fn new(cx: &mut App) -> Self {
         let handle = ScrollHandle::new();
         let scrollbar = ScrollbarState::new(handle.clone());
         let add_new_server = NavigableEntry::new(&handle, cx);
-        let servers = SshSettings::get_global(cx)
+        let ssh_settings = SshSettings::get_global(cx);
+        // TODO kb need to periodically read from the ssh config file from the background
+        let read_ssh_config = ssh_settings.read_ssh_config;
+        let servers = ssh_settings
             .ssh_connections()
             .map(|connection| {
                 let open_folder = NavigableEntry::new(&handle, cx);
@@ -274,6 +278,7 @@ impl DefaultState {
                 }
             })
             .collect();
+
         Self {
             scrollbar,
             add_new_server,

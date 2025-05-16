@@ -1715,6 +1715,8 @@
   //   }
   // ]
   "ssh_connections": [],
+  // Whether to read ~/.ssh/config for ssh connection sources.
+  "read_ssh_config": true,
   // Configures context servers for use by the agent.
   "context_servers": {},
   "debugger": {
