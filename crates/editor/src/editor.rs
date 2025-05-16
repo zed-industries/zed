@@ -4037,20 +4037,20 @@ impl Editor {
                                 };
 
                                 let cursor_is_before_end_tag_if_exists = {
-                                    let num_of_whitspaces_from_back = snapshot
+                                    let num_of_whitespaces_rev = snapshot
                                         .reversed_chars_for_range(range.clone())
                                         .take_while(|c| c.is_whitespace())
                                         .count();
                                     let mut line_iter = snapshot
                                         .reversed_chars_for_range(range)
-                                        .skip(num_of_whitspaces_from_back);
+                                        .skip(num_of_whitespaces_rev);
                                     let end_tag_exists = end_tag
                                         .chars()
                                         .rev()
                                         .all(|char| line_iter.next() == Some(char));
                                     if end_tag_exists {
                                         let max_point = snapshot.line_len(start_point.row) as usize;
-                                        let ordering = (num_of_whitspaces_from_back
+                                        let ordering = (num_of_whitespaces_rev
                                             + end_tag.len()
                                             + start_point.column as usize)
                                             .cmp(&max_point);
