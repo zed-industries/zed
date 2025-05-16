@@ -2852,6 +2852,19 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         * ˇ
         */
     "});
+        // Ensure that delimiter space is preserved when newline on already
+        // spaced delimiter.
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(
+            indoc! {"
+        /**
+        *s
+        * ˇ
+        */
+    "}
+            .replace("s", " ") // s is used as space placeholder to prevent format on save
+            .as_str(),
+        );
         // Ensure that delimiter space is preserved when space is not
         // on existing delimiter.
         cx.set_state(indoc! {"
