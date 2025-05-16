@@ -216,12 +216,15 @@ impl Project {
 
         let (completion_tx, completion_rx) = bounded(1);
 
-        // Start with the environment that we might have inherited from the Zed CLI.
-        let mut env = this
-            .environment
-            .read(cx)
-            .get_cli_environment()
-            .unwrap_or_default();
+        // Start tasks with the environment that we might have inherited from the Zed CLI.
+        let mut env = if matches!(kind, TerminalKind::Task(_)) {
+            this.environment
+                .read(cx)
+                .get_cli_environment()
+                .unwrap_or_default()
+        } else {
+            HashMap::default()
+        };
         // Then extend it with the explicit env variables from the settings, so they take
         // precedence.
         env.extend(settings.env.clone());
