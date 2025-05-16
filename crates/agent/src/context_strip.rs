@@ -166,7 +166,7 @@ impl ContextStrip {
             }
 
             Some(SuggestedContext::Thread {
-                name: active_thread.summary_or_default(),
+                name: active_thread.summary().or_default(),
                 thread: weak_active_thread,
             })
         } else if let Some(active_context_editor) = panel.active_context_editor() {
@@ -180,7 +180,7 @@ impl ContextStrip {
             }
 
             Some(SuggestedContext::TextThread {
-                name: context.summary_or_default(),
+                name: context.summary().or_default(),
                 context: weak_context,
             })
         } else {
@@ -426,12 +426,25 @@ impl Render for ContextStrip {
             })
             .child(
                 PopoverMenu::new("context-picker")
-                    .menu(move |window, cx| {
-                        context_picker.update(cx, |this, cx| {
-                            this.init(window, cx);
-                        });
+                    .menu({
+                        let context_picker = context_picker.clone();
+                        move |window, cx| {
+                            context_picker.update(cx, |this, cx| {
+                                this.init(window, cx);
+                            });
 
-                        Some(context_picker.clone())
+                            Some(context_picker.clone())
+                        }
+                    })
+                    .on_open({
+                        let context_picker = context_picker.downgrade();
+                        Rc::new(move |window, cx| {
+                            context_picker
+                                .update(cx, |context_picker, cx| {
+                                    context_picker.select_first(window, cx);
+                                })
+                                .ok();
+                        })
                     })
                     .trigger_with_tooltip(
                         IconButton::new("add-context", IconName::Plus)

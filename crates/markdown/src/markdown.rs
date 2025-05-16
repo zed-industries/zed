@@ -113,6 +113,7 @@ struct Options {
 pub enum CodeBlockRenderer {
     Default {
         copy_button: bool,
+        copy_button_on_hover: bool,
         border: bool,
     },
     Custom {
@@ -444,6 +445,7 @@ impl MarkdownElement {
             style,
             code_block_renderer: CodeBlockRenderer::Default {
                 copy_button: true,
+                copy_button_on_hover: false,
                 border: false,
             },
             on_url_click: None,
@@ -815,7 +817,7 @@ impl Element for MarkdownElement {
                                 (CodeBlockRenderer::Default { .. }, _) | (_, true) => {
                                     // This is a parent container that we can position the copy button inside.
                                     builder.push_div(
-                                        div().relative().w_full(),
+                                        div().group("code_block").relative().w_full(),
                                         range,
                                         markdown_end,
                                     );
@@ -1048,7 +1050,6 @@ impl Element for MarkdownElement {
                             copy_button: true, ..
                         } = &self.code_block_renderer
                         {
-                            builder.flush_text();
                             builder.modify_current_div(|el| {
                                 let content_range = parser::extract_code_block_content_range(
                                     parsed_markdown.source()[range.clone()].trim(),
@@ -1064,6 +1065,37 @@ impl Element for MarkdownElement {
                                     cx,
                                 );
                                 el.child(div().absolute().top_1().right_1().w_5().child(codeblock))
+                            });
+                        }
+
+                        if let CodeBlockRenderer::Default {
+                            copy_button_on_hover: true,
+                            ..
+                        } = &self.code_block_renderer
+                        {
+                            builder.modify_current_div(|el| {
+                                let content_range = parser::extract_code_block_content_range(
+                                    parsed_markdown.source()[range.clone()].trim(),
+                                );
+                                let content_range = content_range.start + range.start
+                                    ..content_range.end + range.start;
+
+                                let code = parsed_markdown.source()[content_range].to_string();
+                                let codeblock = render_copy_code_block_button(
+                                    range.end,
+                                    code,
+                                    self.markdown.clone(),
+                                    cx,
+                                );
+                                el.child(
+                                    div()
+                                        .absolute()
+                                        .top_0()
+                                        .right_0()
+                                        .w_5()
+                                        .visible_on_hover("code_block")
+                                        .child(codeblock),
+                                )
                             });
                         }
 

@@ -31,13 +31,13 @@ members = [
     "crates/command_palette",
     "crates/command_palette_hooks",
     "crates/component",
-    "crates/component_preview",
     "crates/context_server",
     "crates/copilot",
     "crates/credentials_provider",
     "crates/dap",
     "crates/dap_adapters",
     "crates/db",
+    "crates/debug_adapter_extension",
     "crates/debugger_tools",
     "crates/debugger_ui",
     "crates/deepseek",
@@ -238,13 +238,13 @@ collections = { path = "crates/collections" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
 component = { path = "crates/component" }
-component_preview = { path = "crates/component_preview" }
 context_server = { path = "crates/context_server" }
 copilot = { path = "crates/copilot" }
 credentials_provider = { path = "crates/credentials_provider" }
 dap = { path = "crates/dap" }
 dap_adapters = { path = "crates/dap_adapters" }
 db = { path = "crates/db" }
+debug_adapter_extension = { path = "crates/debug_adapter_extension" }
 debugger_tools = { path = "crates/debugger_tools" }
 debugger_ui = { path = "crates/debugger_ui" }
 deepseek = { path = "crates/deepseek" }
@@ -465,7 +465,6 @@ jupyter-websocket-client = {  git = "https://github.com/ConradIrwin/runtimed" ,r
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
-linkme = "0.3.31"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "c9c189f1c5dd53c624a419ce35bc77ad6a908d18" }
 markup5ever_rcdom = "0.3.0"
@@ -595,6 +594,7 @@ url = "2.2"
 urlencoding = "2.1.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 walkdir = "2.3"
+wasi-preview1-component-adapter-provider = "29"
 wasm-encoder = "0.221"
 wasmparser = "0.221"
 wasmtime = { version = "29", default-features = false, features = [
@@ -608,7 +608,7 @@ wasmtime-wasi = "29"
 which = "6.0.0"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
-zed_llm_client = "0.8.0"
+zed_llm_client = "0.8.1"
 zstd = "0.11"
 
 [workspace.dependencies.async-stripe]
@@ -788,6 +788,9 @@ let_underscore_future = "allow"
 # running afoul of the borrow checker.
 too_many_arguments = "allow"
 
+# We often have large enum variants yet we rarely actually bother with splitting them up.
+large_enum_variant = "allow"
+
 [workspace.metadata.cargo-machete]
 ignored = [
     "bindgen",
@@ -795,7 +798,6 @@ ignored = [
     "prost_build",
     "serde",
     "component",
-    "linkme",
     "documented",
     "workspace-hack",
 ]

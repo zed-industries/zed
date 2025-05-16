@@ -1,4 +1,5 @@
 mod app_menus;
+pub mod component_preview;
 pub mod inline_completion_registry;
 #[cfg(target_os = "macos")]
 pub(crate) mod mac_only_instance;
@@ -20,6 +21,7 @@ use debugger_ui::debugger_panel::DebugPanel;
 use editor::ProposedChangesEditorToolbar;
 use editor::{Editor, MultiBuffer, scroll::Autoscroll};
 use feature_flags::{DebuggerFeatureFlag, FeatureFlagViewExt};
+use futures::future::Either;
 use futures::{StreamExt, channel::mpsc, select_biased};
 use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
@@ -1088,58 +1090,84 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
 
 pub fn handle_settings_file_changes(
     mut user_settings_file_rx: mpsc::UnboundedReceiver<String>,
+    mut global_settings_file_rx: mpsc::UnboundedReceiver<String>,
     cx: &mut App,
     settings_changed: impl Fn(Option<anyhow::Error>, &mut App) + 'static,
 ) {
     MigrationNotification::set_global(cx.new(|_| MigrationNotification), cx);
-    let content = cx
+
+    // Helper function to process settings content
+    let process_settings =
+        move |content: String, is_user: bool, store: &mut SettingsStore, cx: &mut App| -> bool {
+            // Apply migrations to both user and global settings
+            let (processed_content, content_migrated) =
+                if let Ok(Some(migrated_content)) = migrate_settings(&content) {
+                    (migrated_content, true)
+                } else {
+                    (content, false)
+                };
+
+            let result = if is_user {
+                store.set_user_settings(&processed_content, cx)
+            } else {
+                store.set_global_settings(&processed_content, cx)
+            };
+
+            if let Err(err) = &result {
+                let settings_type = if is_user { "user" } else { "global" };
+                log::error!("Failed to load {} settings: {err}", settings_type);
+            }
+
+            settings_changed(result.err(), cx);
+
+            content_migrated
+        };
+
+    // Initial load of both settings files
+    let global_content = cx
+        .background_executor()
+        .block(global_settings_file_rx.next())
+        .unwrap();
+    let user_content = cx
         .background_executor()
         .block(user_settings_file_rx.next())
         .unwrap();
-    let user_settings_content = if let Ok(Some(migrated_content)) = migrate_settings(&content) {
-        migrated_content
-    } else {
-        content
-    };
+
     SettingsStore::update_global(cx, |store, cx| {
-        let result = store.set_user_settings(&user_settings_content, cx);
-        if let Err(err) = &result {
-            log::error!("Failed to load user settings: {err}");
-        }
-        settings_changed(result.err(), cx);
+        process_settings(global_content, false, store, cx);
+        process_settings(user_content, true, store, cx);
     });
+
+    // Watch for changes in both files
     cx.spawn(async move |cx| {
-        while let Some(content) = user_settings_file_rx.next().await {
-            let user_settings_content;
-            let content_migrated;
+        let mut settings_streams = futures::stream::select(
+            global_settings_file_rx.map(Either::Left),
+            user_settings_file_rx.map(Either::Right),
+        );
 
-            if let Ok(Some(migrated_content)) = migrate_settings(&content) {
-                user_settings_content = migrated_content;
-                content_migrated = true;
-            } else {
-                user_settings_content = content;
-                content_migrated = false;
-            }
+        while let Some(content) = settings_streams.next().await {
+            let (content, is_user) = match content {
+                Either::Left(content) => (content, false),
+                Either::Right(content) => (content, true),
+            };
 
-            cx.update(|cx| {
-                if let Some(notifier) = MigrationNotification::try_global(cx) {
-                    notifier.update(cx, |_, cx| {
-                        cx.emit(MigrationEvent::ContentChanged {
-                            migration_type: MigrationType::Settings,
-                            migrated: content_migrated,
-                        });
-                    });
-                }
-            })
-            .ok();
             let result = cx.update_global(|store: &mut SettingsStore, cx| {
-                let result = store.set_user_settings(&user_settings_content, cx);
-                if let Err(err) = &result {
-                    log::error!("Failed to load user settings: {err}");
+                let content_migrated = process_settings(content, is_user, store, cx);
+
+                if content_migrated {
+                    if let Some(notifier) = MigrationNotification::try_global(cx) {
+                        notifier.update(cx, |_, cx| {
+                            cx.emit(MigrationEvent::ContentChanged {
+                                migration_type: MigrationType::Settings,
+                                migrated: true,
+                            });
+                        });
+                    }
                 }
-                settings_changed(result.err(), cx);
+
                 cx.refresh_windows();
             });
+
             if result.is_err() {
                 break; // App dropped
             }
@@ -3887,7 +3915,12 @@ mod tests {
                 app_state.fs.clone(),
                 PathBuf::from("/keymap.json"),
             );
-            handle_settings_file_changes(settings_rx, cx, |_, _| {});
+            let global_settings_rx = watch_config_file(
+                &executor,
+                app_state.fs.clone(),
+                PathBuf::from("/global_settings.json"),
+            );
+            handle_settings_file_changes(settings_rx, global_settings_rx, cx, |_, _| {});
             handle_keymap_file_changes(keymap_rx, cx);
         });
         workspace
@@ -4001,7 +4034,12 @@ mod tests {
                 PathBuf::from("/keymap.json"),
             );
 
-            handle_settings_file_changes(settings_rx, cx, |_, _| {});
+            let global_settings_rx = watch_config_file(
+                &executor,
+                app_state.fs.clone(),
+                PathBuf::from("/global_settings.json"),
+            );
+            handle_settings_file_changes(settings_rx, global_settings_rx, cx, |_, _| {});
             handle_keymap_file_changes(keymap_rx, cx);
         });
 

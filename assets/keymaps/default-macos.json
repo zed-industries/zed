@@ -290,7 +290,7 @@
       "cmd-shift-a": "agent::ToggleContextPicker",
       "cmd-shift-o": "agent::ToggleNavigationMenu",
       "cmd-shift-i": "agent::ToggleOptionsMenu",
-      "shift-escape": "agent::ExpandMessageEditor",
+      "shift-alt-escape": "agent::ExpandMessageEditor",
       "cmd-alt-e": "agent::RemoveAllContext",
       "cmd-shift-e": "project_panel::ToggleFocus"
     }
@@ -825,7 +825,7 @@
       "alt-cmd-r": "project_panel::RevealInFileManager",
       "ctrl-shift-enter": "project_panel::OpenWithSystem",
       "cmd-alt-backspace": ["project_panel::Delete", { "skip_prompt": false }],
-      "cmd-shift-f": "project_panel::NewSearchInDirectory",
+      "cmd-alt-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrevious",
       "escape": "menu::Cancel"
@@ -1083,6 +1083,13 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-r": "diagnostics::ToggleDiagnosticsRefresh"
+    }
+  },
+  {
+    "context": "DebugConsole > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "menu::Confirm"
     }
   }
 ]

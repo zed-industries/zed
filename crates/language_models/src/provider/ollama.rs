@@ -325,6 +325,10 @@ impl LanguageModel for OllamaLanguageModel {
         self.model.supports_tools.unwrap_or(false)
     }
 
+    fn supports_images(&self) -> bool {
+        false
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto => false,

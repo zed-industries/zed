@@ -14,7 +14,6 @@ proc-macro = true
 
 [dependencies]
 convert_case.workspace = true
-linkme.workspace = true
 proc-macro2.workspace = true
 quote.workspace = true
 syn.workspace = true

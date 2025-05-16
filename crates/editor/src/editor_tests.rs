@@ -52,7 +52,7 @@ use util::{
     uri,
 };
 use workspace::{
-    CloseAllItems, CloseInactiveItems, NavigationEntry, ViewId,
+    CloseActiveItem, CloseAllItems, CloseInactiveItems, NavigationEntry, OpenOptions, ViewId,
     item::{FollowEvent, FollowableItem, Item, ItemHandle},
 };
 
@@ -2755,7 +2755,7 @@ async fn test_newline_comments(cx: &mut TestAppContext) {
 
     let language = Arc::new(Language::new(
         LanguageConfig {
-            line_comments: vec!["//".into()],
+            line_comments: vec!["// ".into()],
             ..LanguageConfig::default()
         },
         None,
@@ -2770,7 +2770,29 @@ async fn test_newline_comments(cx: &mut TestAppContext) {
         cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
         cx.assert_editor_state(indoc! {"
         // Foo
+        // ˇ
+    "});
+        // Ensure that we add comment prefix when existing line contains space
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(
+            indoc! {"
+        // Foo
+        //s
+        // ˇ
+    "}
+            .replace("s", " ") // s is used as space placeholder to prevent format on save
+            .as_str(),
+        );
+        // Ensure that we add comment prefix when existing line does not contain space
+        cx.set_state(indoc! {"
+        // Foo
         //ˇ
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        // Foo
+        //
+        // ˇ
     "});
         // Ensure that if cursor is before the comment start, we do not actually insert a comment prefix.
         cx.set_state(indoc! {"
@@ -2793,6 +2815,177 @@ async fn test_newline_comments(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
     cx.assert_editor_state(indoc! {"
         // Foo
+        ˇ
+    "});
+}
+
+#[gpui::test]
+async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4)
+    });
+
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            documentation: Some(language::DocumentationConfig {
+                start: "/**".into(),
+                end: "*/".into(),
+                prefix: "* ".into(),
+                tab_size: NonZeroU32::new(1).unwrap(),
+            }),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+    {
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+        cx.set_state(indoc! {"
+        /**ˇ
+    "});
+
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        /**
+         * ˇ
+    "});
+        // Ensure that if cursor is before the comment start,
+        // we do not actually insert a comment prefix.
+        cx.set_state(indoc! {"
+        ˇ/**
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+
+        ˇ/**
+    "});
+        // Ensure that if cursor is between it doesn't add comment prefix.
+        cx.set_state(indoc! {"
+        /*ˇ*
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        /*
+        ˇ*
+    "});
+        // Ensure that if suffix exists on same line after cursor it adds new line.
+        cx.set_state(indoc! {"
+        /**ˇ*/
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        /**
+         * ˇ
+         */
+    "});
+        // Ensure that if suffix exists on same line after cursor with space it adds new line.
+        cx.set_state(indoc! {"
+        /**ˇ */
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        /**
+         * ˇ
+         */
+    "});
+        // Ensure that if suffix exists on same line after cursor with space it adds new line.
+        cx.set_state(indoc! {"
+        /** ˇ*/
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(
+            indoc! {"
+        /**s
+         * ˇ
+         */
+    "}
+            .replace("s", " ") // s is used as space placeholder to prevent format on save
+            .as_str(),
+        );
+        // Ensure that delimiter space is preserved when newline on already
+        // spaced delimiter.
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(
+            indoc! {"
+        /**s
+         *s
+         * ˇ
+         */
+    "}
+            .replace("s", " ") // s is used as space placeholder to prevent format on save
+            .as_str(),
+        );
+        // Ensure that delimiter space is preserved when space is not
+        // on existing delimiter.
+        cx.set_state(indoc! {"
+        /**
+         *ˇ
+         */
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        /**
+         *
+         * ˇ
+         */
+    "});
+        // Ensure that if suffix exists on same line after cursor it
+        // doesn't add extra new line if prefix is not on same line.
+        cx.set_state(indoc! {"
+        /**
+        ˇ*/
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        /**
+
+        ˇ*/
+    "});
+        // Ensure that it detects suffix after existing prefix.
+        cx.set_state(indoc! {"
+        /**ˇ/
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        /**
+        ˇ/
+    "});
+        // Ensure that if suffix exists on same line before
+        // cursor it does not add comment prefix.
+        cx.set_state(indoc! {"
+        /** */ˇ
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        /** */
+        ˇ
+    "});
+        // Ensure that if suffix exists on same line before
+        // cursor it does not add comment prefix.
+        cx.set_state(indoc! {"
+        /**
+         *
+         */ˇ
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        /**
+         *
+         */
+         ˇ
+    "});
+    }
+    // Ensure that comment continuations can be disabled.
+    update_test_language_settings(cx, |settings| {
+        settings.defaults.extend_comment_on_newline = Some(false);
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(indoc! {"
+        /**ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        /**
         ˇ
     "});
 }
@@ -2871,7 +3064,8 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
     );
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
-    // when all cursors are to the left of the suggested indent, then auto-indent all.
+    // test when all cursors are not at suggested indent
+    // then simply move to their suggested indent location
     cx.set_state(indoc! {"
         const a: B = (
             c(
@@ -2888,9 +3082,8 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
         );
     "});
 
-    // cursors that are already at the suggested indent level do not move
-    // until other cursors that are to the left of the suggested indent
-    // auto-indent.
+    // test cursor already at suggested indent not moving when
+    // other cursors are yet to reach their suggested indents
     cx.set_state(indoc! {"
         ˇ
         const a: B = (
@@ -2914,8 +3107,7 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
             ˇ)
         );
     "});
-    // once all multi-cursors are at the suggested
-    // indent level, they all insert a soft tab together.
+    // test when all cursors are at suggested indent then tab is inserted
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
     cx.assert_editor_state(indoc! {"
             ˇ
@@ -2926,6 +3118,112 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
                 )
                     ˇ
                 ˇ)
+        );
+    "});
+
+    // test when current indent is less than suggested indent,
+    // we adjust line to match suggested indent and move cursor to it
+    //
+    // when no other cursor is at word boundary, all of them should move
+    cx.set_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+        ˇ
+        ˇ   )
+        ˇ   )
+        );
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+                    ˇ
+                ˇ)
+            ˇ)
+        );
+    "});
+
+    // test when current indent is less than suggested indent,
+    // we adjust line to match suggested indent and move cursor to it
+    //
+    // when some other cursor is at word boundary, it should not move
+    cx.set_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+        ˇ
+        ˇ   )
+           ˇ)
+        );
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+                    ˇ
+                ˇ)
+            ˇ)
+        );
+    "});
+
+    // test when current indent is more than suggested indent,
+    // we just move cursor to current indent instead of suggested indent
+    //
+    // when no other cursor is at word boundary, all of them should move
+    cx.set_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+        ˇ
+        ˇ                )
+        ˇ   )
+        );
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+                    ˇ
+                        ˇ)
+            ˇ)
+        );
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+                        ˇ
+                            ˇ)
+                ˇ)
+        );
+    "});
+
+    // test when current indent is more than suggested indent,
+    // we just move cursor to current indent instead of suggested indent
+    //
+    // when some other cursor is at word boundary, it doesn't move
+    cx.set_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+        ˇ
+        ˇ                )
+            ˇ)
+        );
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+                    ˇ
+                        ˇ)
+            ˇ)
         );
     "});
 
@@ -8900,6 +9198,7 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
                         },
                     })
                     .await
+                    .into_response()
                     .unwrap();
                 Ok(Some(json!(null)))
             }
@@ -16414,7 +16713,7 @@ async fn test_indent_guide_tabs(cx: &mut TestAppContext) {
     assert_indent_guides(
         0..6,
         vec![
-            indent_guide(buffer_id, 1, 6, 0),
+            indent_guide(buffer_id, 1, 5, 0),
             indent_guide(buffer_id, 3, 4, 1),
         ],
         None,
@@ -19153,6 +19452,7 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
                             },
                         )
                         .await
+                        .into_response()
                         .unwrap();
                     Ok(Some(json!(null)))
                 }
@@ -19758,6 +20058,156 @@ async fn test_html_linked_edits_on_completion(cx: &mut TestAppContext) {
     editor.update(cx, |editor, cx| {
         assert_eq!(editor.text(cx), "<head></head>");
     });
+}
+
+#[gpui::test]
+async fn test_invisible_worktree_servers(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "a": {
+                "main.rs": "fn main() {}",
+            },
+            "foo": {
+                "bar": {
+                    "external_file.rs": "pub mod external {}",
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/root/a").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let _fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            ..FakeLspAdapter::default()
+        },
+    );
+    let (workspace, cx) =
+        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let worktree_id = workspace.update(cx, |workspace, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let assert_language_servers_count =
+        |expected: usize, context: &str, cx: &mut VisualTestContext| {
+            project.update(cx, |project, cx| {
+                let current = project
+                    .lsp_store()
+                    .read(cx)
+                    .as_local()
+                    .unwrap()
+                    .language_servers
+                    .len();
+                assert_eq!(expected, current, "{context}");
+            });
+        };
+
+    assert_language_servers_count(
+        0,
+        "No servers should be running before any file is open",
+        cx,
+    );
+    let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    let main_editor = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, "main.rs"),
+                Some(pane.downgrade()),
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+    pane.update(cx, |pane, cx| {
+        let open_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+        open_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                "fn main() {}",
+                "Original main.rs text on initial open",
+            );
+        });
+        assert_eq!(open_editor, main_editor);
+    });
+    assert_language_servers_count(1, "First *.rs file starts a language server", cx);
+
+    let external_editor = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from("/root/foo/bar/external_file.rs"),
+                OpenOptions::default(),
+                window,
+                cx,
+            )
+        })
+        .await
+        .expect("opening external file")
+        .downcast::<Editor>()
+        .expect("downcasted external file's open element to editor");
+    pane.update(cx, |pane, cx| {
+        let open_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+        open_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                "pub mod external {}",
+                "External file is open now",
+            );
+        });
+        assert_eq!(open_editor, external_editor);
+    });
+    assert_language_servers_count(
+        1,
+        "Second, external, *.rs file should join the existing server",
+        cx,
+    );
+
+    pane.update_in(cx, |pane, window, cx| {
+        pane.close_active_item(&CloseActiveItem::default(), window, cx)
+    })
+    .unwrap()
+    .await
+    .unwrap();
+    pane.update_in(cx, |pane, window, cx| {
+        pane.navigate_backward(window, cx);
+    });
+    cx.run_until_parked();
+    pane.update(cx, |pane, cx| {
+        let open_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+        open_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                "pub mod external {}",
+                "External file is open now",
+            );
+        });
+    });
+    assert_language_servers_count(
+        1,
+        "After closing and reopening (with navigate back) of an external file, no extra language servers should appear",
+        cx,
+    );
+
+    cx.update(|_, cx| {
+        workspace::reload(&workspace::Reload::default(), cx);
+    });
+    assert_language_servers_count(
+        1,
+        "After reloading the worktree with local and external files opened, only one project should be started",
+        cx,
+    );
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {

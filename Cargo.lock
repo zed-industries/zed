@@ -81,12 +81,12 @@ dependencies = [
  "http_client",
  "indexed_docs",
  "indoc",
+ "inventory",
  "itertools 0.14.0",
  "jsonschema",
  "language",
  "language_model",
  "language_model_selector",
- "linkme",
  "log",
  "lsp",
  "markdown",
@@ -674,7 +674,6 @@ dependencies = [
  "language",
  "language_model",
  "language_models",
- "linkme",
  "log",
  "markdown",
  "open",
@@ -2793,6 +2792,7 @@ dependencies = [
  "anyhow",
  "async-recursion 0.3.2",
  "async-tungstenite",
+ "base64 0.22.1",
  "chrono",
  "clock",
  "cocoa 0.26.0",
@@ -2804,6 +2804,7 @@ dependencies = [
  "gpui_tokio",
  "http_client",
  "http_client_tls",
+ "httparse",
  "log",
  "parking_lot",
  "paths",
@@ -2824,6 +2825,7 @@ dependencies = [
  "time",
  "tiny_http",
  "tokio",
+ "tokio-native-tls",
  "tokio-socks",
  "url",
  "util",
@@ -3068,6 +3070,7 @@ dependencies = [
  "gpui",
  "http_client",
  "language",
+ "log",
  "menu",
  "notifications",
  "picker",
@@ -3176,37 +3179,10 @@ version = "0.1.0"
 dependencies = [
  "collections",
  "gpui",
- "linkme",
+ "inventory",
  "parking_lot",
  "strum 0.27.1",
  "theme",
- "workspace-hack",
-]
-
-[[package]]
-name = "component_preview"
-version = "0.1.0"
-dependencies = [
- "agent",
- "anyhow",
- "assistant_tool",
- "client",
- "collections",
- "component",
- "db",
- "futures 0.3.31",
- "gpui",
- "indoc",
- "languages",
- "log",
- "notifications",
- "project",
- "prompt_store",
- "serde",
- "ui",
- "ui_input",
- "util",
- "workspace",
  "workspace-hack",
 ]
 
@@ -3335,6 +3311,7 @@ dependencies = [
  "http_client",
  "indoc",
  "inline_completion",
+ "itertools 0.14.0",
  "language",
  "log",
  "lsp",
@@ -3344,11 +3321,9 @@ dependencies = [
  "paths",
  "project",
  "rpc",
- "schemars",
  "serde",
  "serde_json",
  "settings",
- "strum 0.27.1",
  "task",
  "theme",
  "ui",
@@ -3534,9 +3509,9 @@ dependencies = [
 
 [[package]]
 name = "cosmic-text"
-version = "0.13.2"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e418dd4f5128c3e93eab12246391c54a20c496811131f85754dc8152ee207892"
+checksum = "3e1ecbb5db9a4c2ee642df67bcfa8f044dd867dbbaa21bfab139cbc204ffbf67"
 dependencies = [
  "bitflags 2.9.0",
  "fontdb 0.16.2",
@@ -4162,6 +4137,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "debug_adapter_extension"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "dap",
+ "extension",
+ "gpui",
+ "workspace-hack",
+]
+
+[[package]]
 name = "debugger_tools"
 version = "0.1.0"
 dependencies = [
@@ -4194,6 +4181,7 @@ dependencies = [
  "editor",
  "env_logger 0.11.8",
  "feature_flags",
+ "file_icons",
  "futures 0.3.31",
  "fuzzy",
  "gpui",
@@ -4209,6 +4197,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "shlex",
  "sysinfo",
  "task",
  "tasks_ui",
@@ -4340,7 +4329,6 @@ dependencies = [
  "gpui",
  "indoc",
  "language",
- "linkme",
  "log",
  "lsp",
  "markdown",
@@ -5064,6 +5052,7 @@ dependencies = [
  "async-tar",
  "async-trait",
  "collections",
+ "dap",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -5076,8 +5065,10 @@ dependencies = [
  "semantic_version",
  "serde",
  "serde_json",
+ "task",
  "toml 0.8.20",
  "util",
+ "wasi-preview1-component-adapter-provider",
  "wasm-encoder 0.221.3",
  "wasmparser 0.221.3",
  "wit-component 0.221.3",
@@ -5119,6 +5110,7 @@ dependencies = [
  "client",
  "collections",
  "ctor",
+ "dap",
  "env_logger 0.11.8",
  "extension",
  "fs",
@@ -5171,6 +5163,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "language",
+ "log",
  "num-format",
  "picker",
  "project",
@@ -6035,7 +6028,6 @@ dependencies = [
  "language",
  "language_model",
  "linkify",
- "linkme",
  "log",
  "markdown",
  "menu",
@@ -7251,7 +7243,6 @@ dependencies = [
  "lsp",
  "paths",
  "project",
- "proto",
  "regex",
  "serde_json",
  "settings",
@@ -7259,7 +7250,6 @@ dependencies = [
  "telemetry",
  "theme",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
  "zed_actions",
@@ -8172,26 +8162,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1dfa36d52c581e9ec783a7ce2a5e0143da6237be5811a0b3153fedfdbe9f780"
 dependencies = [
  "memchr",
-]
-
-[[package]]
-name = "linkme"
-version = "0.3.32"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22d227772b5999ddc0690e733f734f95ca05387e329c4084fe65678c51198ffe"
-dependencies = [
- "linkme-impl",
-]
-
-[[package]]
-name = "linkme-impl"
-version = "0.3.32"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71a98813fa0073a317ed6a8055dcd4722a49d9b862af828ee68449adb799b6be"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.100",
 ]
 
 [[package]]
@@ -9116,7 +9086,6 @@ dependencies = [
  "component",
  "db",
  "gpui",
- "linkme",
  "rpc",
  "settings",
  "sum_tree",
@@ -10065,7 +10034,7 @@ name = "perplexity"
 version = "0.1.0"
 dependencies = [
  "serde",
- "zed_extension_api 0.5.0",
+ "zed_extension_api 0.6.0",
 ]
 
 [[package]]
@@ -15697,7 +15666,6 @@ dependencies = [
  "gpui",
  "icons",
  "itertools 0.14.0",
- "linkme",
  "menu",
  "serde",
  "settings",
@@ -15718,7 +15686,6 @@ dependencies = [
  "component",
  "editor",
  "gpui",
- "linkme",
  "settings",
  "theme",
  "ui",
@@ -15730,7 +15697,6 @@ name = "ui_macros"
 version = "0.1.0"
 dependencies = [
  "convert_case 0.8.0",
- "linkme",
  "proc-macro2",
  "quote",
  "syn 1.0.109",
@@ -16248,6 +16214,12 @@ checksum = "9683f9a5a998d873c0d21fcbe3c083009670149a8fab228644b8bd36b2c48cb3"
 dependencies = [
  "wit-bindgen-rt 0.39.0",
 ]
+
+[[package]]
+name = "wasi-preview1-component-adapter-provider"
+version = "29.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dcd9f21bbde82ba59e415a8725e6ad0d0d7e9e460b1a3ccbca5bdee952c1a324"
 
 [[package]]
 name = "wasite"
@@ -16951,7 +16923,6 @@ dependencies = [
  "gpui",
  "install_cli",
  "language",
- "linkme",
  "picker",
  "project",
  "schemars",
@@ -18045,7 +18016,6 @@ dependencies = [
  "aho-corasick",
  "anstream",
  "arrayvec",
- "async-compression",
  "async-std",
  "async-tungstenite",
  "aws-config",
@@ -18553,7 +18523,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.187.0"
+version = "0.188.0"
 dependencies = [
  "activity_indicator",
  "agent",
@@ -18563,6 +18533,7 @@ dependencies = [
  "assets",
  "assistant_context_editor",
  "assistant_settings",
+ "assistant_tool",
  "assistant_tools",
  "async-watch",
  "audio",
@@ -18579,7 +18550,7 @@ dependencies = [
  "collab_ui",
  "collections",
  "command_palette",
- "component_preview",
+ "component",
  "copilot",
  "dap",
  "dap_adapters",
@@ -18605,6 +18576,7 @@ dependencies = [
  "gpui_tokio",
  "http_client",
  "image_viewer",
+ "indoc",
  "inline_completion_button",
  "install_cli",
  "journal",
@@ -18617,6 +18589,7 @@ dependencies = [
  "languages",
  "libc",
  "log",
+ "markdown",
  "markdown_preview",
  "menu",
  "migrator",
@@ -18668,6 +18641,7 @@ dependencies = [
  "tree-sitter-md",
  "tree-sitter-rust",
  "ui",
+ "ui_input",
  "ui_prompt",
  "url",
  "urlencoding",
@@ -18719,7 +18693,7 @@ dependencies = [
 
 [[package]]
 name = "zed_extension_api"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -18742,9 +18716,9 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.8.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a23b2fd00776b0c55072f389654910ceb501eb0083d7f78905ab0e5cc86949ec"
+checksum = "16d993fc42f9ec43ab76fa46c6eb579a66e116bb08cd2bc9a67f3afcaa05d39d"
 dependencies = [
  "anyhow",
  "serde",
@@ -18779,7 +18753,7 @@ dependencies = [
 name = "zed_test_extension"
 version = "0.1.0"
 dependencies = [
- "zed_extension_api 0.5.0",
+ "zed_extension_api 0.6.0",
 ]
 
 [[package]]
@@ -18952,6 +18926,7 @@ dependencies = [
  "paths",
  "postage",
  "project",
+ "proto",
  "regex",
  "release_channel",
  "reqwest_client",

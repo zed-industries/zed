@@ -64,7 +64,6 @@ pub enum DapStoreEvent {
     RemoteHasInitialized,
 }
 
-#[allow(clippy::large_enum_variant)]
 enum DapStoreMode {
     Local(LocalDapStore),
     Ssh(SshDapStore),
@@ -577,6 +576,17 @@ impl DapStore {
         let snapshot = buffer_handle.read(cx).snapshot();
         let all_variables = session.read(cx).variables_by_stack_frame_id(stack_frame_id);
 
+        fn format_value(mut value: String) -> String {
+            const LIMIT: usize = 100;
+
+            if value.len() > LIMIT {
+                value.truncate(LIMIT);
+                value.push_str("...");
+            }
+
+            format!(": {}", value)
+        }
+
         cx.spawn(async move |_, cx| {
             let mut inlay_hints = Vec::with_capacity(inline_value_locations.len());
             for inline_value_location in inline_value_locations.iter() {
@@ -597,7 +607,7 @@ impl DapStore {
 
                         inlay_hints.push(InlayHint {
                             position,
-                            label: InlayHintLabel::String(format!(": {}", variable.value)),
+                            label: InlayHintLabel::String(format_value(variable.value.clone())),
                             kind: Some(InlayHintKind::Type),
                             padding_left: false,
                             padding_right: false,
@@ -620,7 +630,7 @@ impl DapStore {
                         if let Some(response) = eval_task.await.log_err() {
                             inlay_hints.push(InlayHint {
                                 position,
-                                label: InlayHintLabel::String(format!(": {}", response.result)),
+                                label: InlayHintLabel::String(format_value(response.result)),
                                 kind: Some(InlayHintKind::Type),
                                 padding_left: false,
                                 padding_right: false,

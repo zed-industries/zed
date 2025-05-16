@@ -534,10 +534,24 @@ pub enum RequestContent {
     ToolResult {
         tool_use_id: String,
         is_error: bool,
-        content: String,
+        content: ToolResultContent,
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
     },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ToolResultContent {
+    Plain(String),
+    Multipart(Vec<ToolResultPart>),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ToolResultPart {
+    Text { text: String },
+    Image { source: ImageSource },
 }
 
 #[derive(Debug, Serialize, Deserialize)]

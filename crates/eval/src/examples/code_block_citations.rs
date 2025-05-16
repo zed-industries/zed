@@ -22,6 +22,7 @@ impl Example for CodeBlockCitations {
             }),
             max_assertions: None,
             profile_id: AgentProfileId::default(),
+            existing_thread_json: None,
         }
     }
 
