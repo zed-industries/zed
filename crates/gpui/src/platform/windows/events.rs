@@ -292,6 +292,7 @@ fn handle_mouse_move_msg(
 ) -> Option<isize> {
     start_tracking_mouse(handle, &state_ptr, TME_LEAVE);
 
+    // TODO:
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
@@ -956,30 +957,24 @@ fn handle_nc_mouse_move_msg(
     start_tracking_mouse(handle, &state_ptr, TME_LEAVE | TME_NONCLIENT);
 
     let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.input.take() {
-        let scale_factor = lock.scale_factor;
-        drop(lock);
-        let mut cursor_point = POINT {
-            x: lparam.signed_loword().into(),
-            y: lparam.signed_hiword().into(),
-        };
-        unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-        let event = MouseMoveEvent {
-            position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
-            pressed_button: None,
-            modifiers: current_modifiers(),
-        };
-        let result = if callback(PlatformInput::MouseMove(event)).default_prevented {
-            Some(0)
-        } else {
-            Some(1)
-        };
-        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
+    let mut func = lock.callbacks.input.take()?;
+    let scale_factor = lock.scale_factor;
+    drop(lock);
 
-        result
-    } else {
-        None
-    }
+    let mut cursor_point = POINT {
+        x: lparam.signed_loword().into(),
+        y: lparam.signed_hiword().into(),
+    };
+    unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
+    let input = PlatformInput::MouseMove(MouseMoveEvent {
+        position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
+        pressed_button: None,
+        modifiers: current_modifiers(),
+    });
+    let handled = !func(input).propagate;
+    state_ptr.state.borrow_mut().callbacks.input = Some(func);
+
+    if handled { Some(0) } else { None }
 }
 
 fn handle_nc_mouse_down_msg(
