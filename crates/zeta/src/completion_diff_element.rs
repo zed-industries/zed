@@ -113,6 +113,7 @@ impl Element for CompletionDiffElement {
     fn request_layout(
         &mut self,
         _id: Option<&gpui::GlobalElementId>,
+        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
@@ -124,6 +125,7 @@ impl Element for CompletionDiffElement {
         _id: Option<&gpui::GlobalElementId>,
         _bounds: gpui::Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
+        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
@@ -136,6 +138,7 @@ impl Element for CompletionDiffElement {
         _bounds: gpui::Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
+        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {

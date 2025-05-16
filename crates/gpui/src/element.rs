@@ -53,8 +53,6 @@ pub trait Element: 'static + IntoElement {
     type PrepaintState: 'static;
 
     /// The type of state that contains information for the debug view for this element.
-    ///
-    /// todo!
     type DebugState: 'static;
 
     /// If this element has a unique identifier, return it here. This is used to track elements across frames, and
@@ -72,6 +70,7 @@ pub trait Element: 'static + IntoElement {
     fn request_layout(
         &mut self,
         id: Option<&GlobalElementId>,
+        debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState);
@@ -83,6 +82,7 @@ pub trait Element: 'static + IntoElement {
         id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
+        debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState;
@@ -95,6 +95,7 @@ pub trait Element: 'static + IntoElement {
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
+        debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     );
@@ -213,6 +214,7 @@ impl<C: RenderOnce> Element for Component<C> {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -231,6 +233,7 @@ impl<C: RenderOnce> Element for Component<C> {
         _id: Option<&GlobalElementId>,
         _: Bounds<Pixels>,
         element: &mut AnyElement,
+        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -243,6 +246,7 @@ impl<C: RenderOnce> Element for Component<C> {
         _: Bounds<Pixels>,
         element: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
+        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -265,14 +269,26 @@ pub struct GlobalElementId(pub(crate) SmallVec<[ElementId; 32]>);
 /// A unique identifier for an element that can be debugged.
 #[cfg(debug_assertions)]
 #[derive(Debug, Eq, PartialEq, Hash)]
-pub struct DebugElementId {
+pub(crate) struct DebugElementId {
     global_id: GlobalElementId,
     source: &'static panic::Location<'static>,
     instance_id: usize,
 }
 
+#[cfg(debug_assertions)]
+impl Clone for DebugElementId {
+    fn clone(&self) -> Self {
+        Self {
+            global_id: GlobalElementId(self.global_id.0.clone()),
+            source: self.source,
+            instance_id: self.instance_id,
+        }
+    }
+}
+
 #[cfg(not(debug_assertions))]
-pub struct DebugElementId;
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub(crate) struct DebugElementId;
 
 trait ElementObject {
     fn inner_element(&mut self) -> &mut dyn Any;
@@ -305,17 +321,20 @@ enum ElementDrawPhase<RequestLayoutState, PrepaintState> {
     RequestLayout {
         layout_id: LayoutId,
         global_id: Option<GlobalElementId>,
+        debug_id: Option<DebugElementId>,
         request_layout: RequestLayoutState,
     },
     LayoutComputed {
         layout_id: LayoutId,
         global_id: Option<GlobalElementId>,
+        debug_id: Option<DebugElementId>,
         available_space: Size<AvailableSpace>,
         request_layout: RequestLayoutState,
     },
     Prepaint {
         node_id: DispatchNodeId,
         global_id: Option<GlobalElementId>,
+        debug_id: Option<DebugElementId>,
         bounds: Bounds<Pixels>,
         request_layout: RequestLayoutState,
         prepaint: PrepaintState,
@@ -360,11 +379,21 @@ impl<E: Element> Drawable<E> {
                     None
                 };
 
-                let debug_state = debug_id
-                    .and_then(|debug_id| window.debug_state.element_states.remove(&debug_id));
+                let mut debug_state = debug_id
+                    .as_ref()
+                    .and_then(|debug_id| window.debug_state.element_states.remove(&debug_id))
+                    .map(|state| *state.downcast().unwrap());
 
                 let (layout_id, request_layout) =
-                    self.element.request_layout(global_id.as_ref(), window, cx);
+                    self.element
+                        .request_layout(global_id.as_ref(), &mut debug_state, window, cx);
+
+                if let Some((debug_id, debug_state)) = debug_id.as_ref().zip(debug_state) {
+                    window
+                        .debug_state
+                        .element_states
+                        .insert(debug_id.clone(), Box::new(debug_state));
+                }
 
                 if global_id.is_some() {
                     window.element_id_stack.pop();
@@ -373,6 +402,7 @@ impl<E: Element> Drawable<E> {
                 self.phase = ElementDrawPhase::RequestLayout {
                     layout_id,
                     global_id,
+                    debug_id,
                     request_layout,
                 };
                 layout_id
@@ -386,11 +416,13 @@ impl<E: Element> Drawable<E> {
             ElementDrawPhase::RequestLayout {
                 layout_id,
                 global_id,
+                debug_id,
                 mut request_layout,
             }
             | ElementDrawPhase::LayoutComputed {
                 layout_id,
                 global_id,
+                debug_id,
                 mut request_layout,
                 ..
             } => {
@@ -399,16 +431,29 @@ impl<E: Element> Drawable<E> {
                     debug_assert_eq!(global_id.as_ref().unwrap().0, window.element_id_stack);
                 }
 
+                let mut debug_state = debug_id
+                    .as_ref()
+                    .and_then(|debug_id| window.debug_state.element_states.remove(&debug_id))
+                    .map(|state| *state.downcast().unwrap());
+
                 let bounds = window.layout_bounds(layout_id);
                 let node_id = window.next_frame.dispatch_tree.push_node();
                 let prepaint = self.element.prepaint(
                     global_id.as_ref(),
                     bounds,
                     &mut request_layout,
+                    &mut debug_state,
                     window,
                     cx,
                 );
                 window.next_frame.dispatch_tree.pop_node();
+
+                if let Some((debug_id, debug_state)) = debug_id.as_ref().zip(debug_state) {
+                    window
+                        .debug_state
+                        .element_states
+                        .insert(debug_id.clone(), Box::new(debug_state));
+                }
 
                 if global_id.is_some() {
                     window.element_id_stack.pop();
@@ -417,6 +462,7 @@ impl<E: Element> Drawable<E> {
                 self.phase = ElementDrawPhase::Prepaint {
                     node_id,
                     global_id,
+                    debug_id,
                     bounds,
                     request_layout,
                     prepaint,
@@ -435,6 +481,7 @@ impl<E: Element> Drawable<E> {
             ElementDrawPhase::Prepaint {
                 node_id,
                 global_id,
+                debug_id,
                 bounds,
                 mut request_layout,
                 mut prepaint,
@@ -445,15 +492,28 @@ impl<E: Element> Drawable<E> {
                     debug_assert_eq!(global_id.as_ref().unwrap().0, window.element_id_stack);
                 }
 
+                let mut debug_state = debug_id
+                    .as_ref()
+                    .and_then(|debug_id| window.debug_state.element_states.remove(&debug_id))
+                    .map(|state| *state.downcast().unwrap());
+
                 window.next_frame.dispatch_tree.set_active_node(node_id);
                 self.element.paint(
                     global_id.as_ref(),
                     bounds,
                     &mut request_layout,
                     &mut prepaint,
+                    &mut debug_state,
                     window,
                     cx,
                 );
+
+                if let Some((debug_id, debug_state)) = debug_id.as_ref().zip(debug_state) {
+                    window
+                        .debug_state
+                        .element_states
+                        .insert(debug_id.clone(), Box::new(debug_state));
+                }
 
                 if global_id.is_some() {
                     window.element_id_stack.pop();
@@ -480,12 +540,14 @@ impl<E: Element> Drawable<E> {
             ElementDrawPhase::RequestLayout {
                 layout_id,
                 global_id,
+                debug_id,
                 request_layout,
             } => {
                 window.compute_layout(layout_id, available_space, cx);
                 self.phase = ElementDrawPhase::LayoutComputed {
                     layout_id,
                     global_id,
+                    debug_id,
                     available_space,
                     request_layout,
                 };
@@ -494,6 +556,7 @@ impl<E: Element> Drawable<E> {
             ElementDrawPhase::LayoutComputed {
                 layout_id,
                 global_id,
+                debug_id,
                 available_space: prev_available_space,
                 request_layout,
             } => {
@@ -503,6 +566,7 @@ impl<E: Element> Drawable<E> {
                 self.phase = ElementDrawPhase::LayoutComputed {
                     layout_id,
                     global_id,
+                    debug_id,
                     available_space,
                     request_layout,
                 };
@@ -644,6 +708,7 @@ impl Element for AnyElement {
     fn request_layout(
         &mut self,
         _: Option<&GlobalElementId>,
+        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -656,6 +721,7 @@ impl Element for AnyElement {
         _: Option<&GlobalElementId>,
         _: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
+        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -668,6 +734,7 @@ impl Element for AnyElement {
         _: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
+        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -714,6 +781,7 @@ impl Element for Empty {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -725,6 +793,7 @@ impl Element for Empty {
         _id: Option<&GlobalElementId>,
         _bounds: Bounds<Pixels>,
         _state: &mut Self::RequestLayoutState,
+        _debug_state: &mut Option<Self::DebugState>,
         _window: &mut Window,
         _cx: &mut App,
     ) {
@@ -736,6 +805,7 @@ impl Element for Empty {
         _bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
+        _debug_state: &mut Option<Self::DebugState>,
         _window: &mut Window,
         _cx: &mut App,
     ) {

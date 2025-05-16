@@ -31,6 +31,7 @@ impl Element for &'static str {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -44,6 +45,7 @@ impl Element for &'static str {
         _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         text_layout: &mut Self::RequestLayoutState,
+        _debug_state: &mut Option<Self::DebugState>,
         _window: &mut Window,
         _cx: &mut App,
     ) {
@@ -56,6 +58,7 @@ impl Element for &'static str {
         _bounds: Bounds<Pixels>,
         text_layout: &mut TextLayout,
         _: &mut (),
+        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -94,9 +97,8 @@ impl Element for SharedString {
 
     fn request_layout(
         &mut self,
-
         _id: Option<&GlobalElementId>,
-
+        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -110,6 +112,7 @@ impl Element for SharedString {
         _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         text_layout: &mut Self::RequestLayoutState,
+        _debug_state: &mut Option<Self::DebugState>,
         _window: &mut Window,
         _cx: &mut App,
     ) {
@@ -122,6 +125,7 @@ impl Element for SharedString {
         _bounds: Bounds<Pixels>,
         text_layout: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
+        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -243,6 +247,7 @@ impl Element for StyledText {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -261,6 +266,7 @@ impl Element for StyledText {
         _id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
+        _debug_state: &mut Option<Self::DebugState>,
         _window: &mut Window,
         _cx: &mut App,
     ) {
@@ -273,6 +279,7 @@ impl Element for StyledText {
         _bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
+        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -696,10 +703,11 @@ impl Element for InteractiveText {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
+        debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        self.text.request_layout(None, window, cx)
+        self.text.request_layout(None, debug_state, window, cx)
     }
 
     fn prepaint(
@@ -707,6 +715,7 @@ impl Element for InteractiveText {
         global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         state: &mut Self::RequestLayoutState,
+        debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> Hitbox {
@@ -726,7 +735,8 @@ impl Element for InteractiveText {
                     }
                 }
 
-                self.text.prepaint(None, bounds, state, window, cx);
+                self.text
+                    .prepaint(None, bounds, state, debug_state, window, cx);
                 let hitbox = window.insert_hitbox(bounds, false);
                 (hitbox, interactive_state)
             },
@@ -739,6 +749,7 @@ impl Element for InteractiveText {
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         hitbox: &mut Hitbox,
+        debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -873,7 +884,8 @@ impl Element for InteractiveText {
                     );
                 }
 
-                self.text.paint(None, bounds, &mut (), &mut (), window, cx);
+                self.text
+                    .paint(None, bounds, &mut (), &mut (), debug_state, window, cx);
 
                 ((), interactive_state)
             },

@@ -1121,6 +1121,7 @@ mod element {
         fn request_layout(
             &mut self,
             _global_id: Option<&GlobalElementId>,
+            _debug_state: &mut Option<Self::DebugState>,
             window: &mut Window,
             cx: &mut App,
         ) -> (gpui::LayoutId, Self::RequestLayoutState) {
@@ -1139,6 +1140,7 @@ mod element {
             global_id: Option<&GlobalElementId>,
             bounds: Bounds<Pixels>,
             _state: &mut Self::RequestLayoutState,
+            _debug_state: &mut Option<Self::DebugState>,
             window: &mut Window,
             cx: &mut App,
         ) -> PaneAxisLayout {
@@ -1232,6 +1234,7 @@ mod element {
             bounds: gpui::Bounds<ui::prelude::Pixels>,
             _: &mut Self::RequestLayoutState,
             layout: &mut Self::PrepaintState,
+            _debug_state: &mut Option<Self::DebugState>,
             window: &mut Window,
             cx: &mut App,
         ) {

@@ -1229,6 +1229,7 @@ impl Element for Div {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -1260,6 +1261,7 @@ impl Element for Div {
         global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
+        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Hitbox> {
@@ -1329,6 +1331,7 @@ impl Element for Div {
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,
+        _debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -2738,10 +2741,11 @@ where
     fn request_layout(
         &mut self,
         id: Option<&GlobalElementId>,
+        debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        self.element.request_layout(id, window, cx)
+        self.element.request_layout(id, debug_state, window, cx)
     }
 
     fn prepaint(
@@ -2749,10 +2753,12 @@ where
         id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         state: &mut Self::RequestLayoutState,
+        debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> E::PrepaintState {
-        self.element.prepaint(id, bounds, state, window, cx)
+        self.element
+            .prepaint(id, bounds, state, debug_state, window, cx)
     }
 
     fn paint(
@@ -2761,11 +2767,12 @@ where
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
+        debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {
         self.element
-            .paint(id, bounds, request_layout, prepaint, window, cx)
+            .paint(id, bounds, request_layout, prepaint, debug_state, window, cx)
     }
 }
 
@@ -2840,10 +2847,11 @@ where
     fn request_layout(
         &mut self,
         id: Option<&GlobalElementId>,
+        debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        self.element.request_layout(id, window, cx)
+        self.element.request_layout(id, debug_state, window, cx)
     }
 
     fn prepaint(
@@ -2851,10 +2859,12 @@ where
         id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         state: &mut Self::RequestLayoutState,
+        debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) -> E::PrepaintState {
-        self.element.prepaint(id, bounds, state, window, cx)
+        self.element
+            .prepaint(id, bounds, state, debug_state, window, cx)
     }
 
     fn paint(
@@ -2863,11 +2873,19 @@ where
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
+        debug_state: &mut Option<Self::DebugState>,
         window: &mut Window,
         cx: &mut App,
     ) {
-        self.element
-            .paint(id, bounds, request_layout, prepaint, window, cx);
+        self.element.paint(
+            id,
+            bounds,
+            request_layout,
+            prepaint,
+            debug_state,
+            window,
+            cx,
+        );
     }
 }
 

@@ -235,6 +235,7 @@ mod uniform_list {
         fn request_layout(
             &mut self,
             _id: Option<&gpui::GlobalElementId>,
+            _debug_state: &mut Option<Self::DebugState>,
             window: &mut Window,
             cx: &mut App,
         ) -> (gpui::LayoutId, Self::RequestLayoutState) {
@@ -246,6 +247,7 @@ mod uniform_list {
             _id: Option<&gpui::GlobalElementId>,
             _bounds: Bounds<Pixels>,
             _request_layout: &mut Self::RequestLayoutState,
+            _debug_state: &mut Option<Self::DebugState>,
             window: &mut Window,
             _cx: &mut App,
         ) -> Self::PrepaintState {
@@ -272,6 +274,7 @@ mod uniform_list {
             _bounds: Bounds<Pixels>,
             _request_layout: &mut Self::RequestLayoutState,
             prepaint: &mut Self::PrepaintState,
+            _debug_state: &mut Option<Self::DebugState>,
             window: &mut Window,
             _cx: &mut App,
         ) {
