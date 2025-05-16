@@ -26,4 +26,9 @@ pub(crate) async fn connect_with_http_proxy(
     http_proxy: HttpProxyContent<'_>,
     rpc_host: (&str, u16),
 ) -> Result<Box<dyn AsyncReadWrite>> {
+    match http_proxy.auth {
+        Some(HttpProxyAuthorization { username, password }) => {}
+        None => {}
+    }
+    Err(anyhow::anyhow!("Not implemented"))
 }
