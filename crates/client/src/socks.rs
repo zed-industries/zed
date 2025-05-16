@@ -27,6 +27,10 @@ pub(crate) async fn connect_socks_proxy_stream(
     proxy: &Url,
     rpc_host: (&str, u16),
 ) -> Result<Box<dyn AsyncReadWrite>> {
+    println!(
+        "Connecting to socks proxy: {:?}, with ({:?})",
+        proxy, rpc_host
+    );
     let Some((socks_proxy, version)) = parse_socks_proxy(proxy) else {
         // If parsing the proxy URL fails, we must avoid falling back to an insecure connection.
         // SOCKS proxies are often used in contexts where security and privacy are critical,
