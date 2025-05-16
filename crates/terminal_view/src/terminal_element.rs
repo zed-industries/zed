@@ -1003,21 +1003,18 @@ impl Element for TerminalElement {
                                     wavy: false,
                                 });
 
-                                let shaped_line = window
-                                    .text_system()
-                                    .shape_line(
-                                        text_to_mark.clone().into(),
-                                        ime_style.font_size.to_pixels(window.rem_size()),
-                                        &[TextRun {
-                                            len: text_to_mark.len(),
-                                            font: ime_style.font(),
-                                            color: ime_style.color,
-                                            background_color: None,
-                                            underline: ime_style.underline,
-                                            strikethrough: None,
-                                        }],
-                                    )
-                                    .unwrap();
+                                let shaped_line = window.text_system().shape_line(
+                                    text_to_mark.clone().into(),
+                                    ime_style.font_size.to_pixels(window.rem_size()),
+                                    &[TextRun {
+                                        len: text_to_mark.len(),
+                                        font: ime_style.font(),
+                                        color: ime_style.color,
+                                        background_color: None,
+                                        underline: ime_style.underline,
+                                        strikethrough: None,
+                                    }],
+                                );
                                 shaped_line
                                     .paint(ime_position, layout.dimensions.line_height, window, cx)
                                     .log_err();
