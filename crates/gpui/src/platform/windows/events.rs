@@ -439,14 +439,10 @@ fn handle_keyup_msg(
     };
     drop(lock);
 
-    let result = if func(input).default_prevented {
-        Some(0)
-    } else {
-        Some(1)
-    };
+    let handled = !func(input).propagate;
     state_ptr.state.borrow_mut().callbacks.input = Some(func);
 
-    result
+    if handled { Some(0) } else { Some(1) }
 }
 
 fn handle_char_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
@@ -479,32 +475,31 @@ fn handle_mouse_down_msg(
 ) -> Option<isize> {
     unsafe { SetCapture(handle) };
     let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.input.take() {
-        let x = lparam.signed_loword() as f32;
-        let y = lparam.signed_hiword() as f32;
-        let physical_point = point(DevicePixels(x as i32), DevicePixels(y as i32));
-        let click_count = lock.click_state.update(button, physical_point);
-        let scale_factor = lock.scale_factor;
-        drop(lock);
+    let Some(mut func) = lock.callbacks.input.take() else {
+        return Some(1);
+    };
+    let x = lparam.signed_loword() as f32;
+    let y = lparam.signed_hiword() as f32;
+    let physical_point = point(DevicePixels(x as i32), DevicePixels(y as i32));
+    let click_count = lock.click_state.update(button, physical_point);
+    let scale_factor = lock.scale_factor;
+    drop(lock);
 
-        let event = MouseDownEvent {
-            button,
-            position: logical_point(x, y, scale_factor),
-            modifiers: current_modifiers(),
-            click_count,
-            first_mouse: false,
-        };
-        let result = if callback(PlatformInput::MouseDown(event)).default_prevented {
-            Some(0)
-        } else {
-            Some(1)
-        };
-        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
-
-        result
+    let event = MouseDownEvent {
+        button,
+        position: logical_point(x, y, scale_factor),
+        modifiers: current_modifiers(),
+        click_count,
+        first_mouse: false,
+    };
+    let result = if callback(PlatformInput::MouseDown(event)).default_prevented {
+        Some(0)
     } else {
         Some(1)
-    }
+    };
+    state_ptr.state.borrow_mut().callbacks.input = Some(callback);
+
+    result
 }
 
 fn handle_mouse_up_msg(
