@@ -5,7 +5,7 @@ mod socks_proxy;
 
 use anyhow::{Context, Result, anyhow};
 use http_client::Url;
-use http_proxy::{HttpProxyContent, parse_http_proxy};
+use http_proxy::{HttpProxyContent, connect_with_http_proxy, parse_http_proxy};
 use socks_proxy::{SocksVersion, connect_with_socks_proxy, parse_socks_proxy};
 
 pub(crate) async fn connect_with_proxy_stream(
@@ -32,7 +32,9 @@ pub(crate) async fn connect_with_proxy_stream(
         ProxyType::SocksProxy(socks_version) => {
             connect_with_socks_proxy(stream, socks_version, rpc_host).await?
         }
-        ProxyType::HttpProxy(http_proxy) => connect_with_http_proxy()?,
+        ProxyType::HttpProxy(http_proxy) => {
+            connect_with_http_proxy(stream, http_proxy, rpc_host).await?
+        }
     };
 
     Ok(socks)

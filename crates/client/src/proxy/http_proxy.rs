@@ -1,4 +1,8 @@
+use anyhow::Result;
+use tokio::net::TcpStream;
 use url::Url;
+
+use super::AsyncReadWrite;
 
 pub(super) struct HttpProxyContent<'t> {
     auth: Option<HttpProxyAuthorization<'t>>,
@@ -15,4 +19,11 @@ pub(super) fn parse_http_proxy<'t>(proxy: &'t Url) -> Option<HttpProxyContent<'t
         password,
     });
     Some(HttpProxyContent { auth })
+}
+
+pub(crate) async fn connect_with_http_proxy(
+    stream: TcpStream,
+    http_proxy: HttpProxyContent<'_>,
+    rpc_host: (&str, u16),
+) -> Result<Box<dyn AsyncReadWrite>> {
 }
