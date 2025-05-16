@@ -1,14 +1,15 @@
 use gpui::{
-    App, Application, Bounds, Context, SharedString, Window, WindowBounds, WindowOptions, div,
-    prelude::*, px, rgb, size,
+    App, Application, Bounds, Context, SharedString, Window, WindowBounds, WindowOptions, button,
+    div, prelude::*, px, rgb, size,
 };
 
 struct HelloWorld {
     text: SharedString,
+    count: usize,
 }
 
 impl Render for HelloWorld {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
@@ -23,6 +24,14 @@ impl Render for HelloWorld {
             .text_xl()
             .text_color(rgb(0xffffff))
             .child(format!("Hello, {}!", &self.text))
+            .child(
+                button("counter-button", format!("Count: {}", &self.count)).on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        this.count += 1;
+                        cx.notify();
+                    },
+                )),
+            )
             .child(
                 div()
                     .flex()
@@ -97,6 +106,7 @@ fn main() {
             |_, cx| {
                 cx.new(|_| HelloWorld {
                     text: "World".into(),
+                    count: 0,
                 })
             },
         )

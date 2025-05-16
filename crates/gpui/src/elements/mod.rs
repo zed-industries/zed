@@ -1,5 +1,6 @@
 mod anchored;
 mod animation;
+mod button;
 mod canvas;
 mod deferred;
 mod div;
@@ -13,6 +14,7 @@ mod uniform_list;
 
 pub use anchored::*;
 pub use animation::*;
+pub use button::*;
 pub use canvas::*;
 pub use deferred::*;
 pub use div::*;

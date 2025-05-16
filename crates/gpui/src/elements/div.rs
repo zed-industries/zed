@@ -2877,8 +2877,8 @@ where
 /// Contrary to [ScrollHandle::scroll_to_item], an anchored element does not have to be an immediate child of the parent.
 #[derive(Clone)]
 pub struct ScrollAnchor {
-    handle: ScrollHandle,
-    last_origin: Rc<RefCell<Point<Pixels>>>,
+    pub(super) handle: ScrollHandle,
+    pub(super) last_origin: Rc<RefCell<Point<Pixels>>>,
 }
 
 impl ScrollAnchor {
