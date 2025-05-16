@@ -474,6 +474,90 @@ async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_remove_trailing_whitespace_in_strings(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    let text = [
+        "function test() { ",                                      // trailing
+        "    // A line with trailing whitespace    ",              // trailing
+        "    let str = \"This string has trailing spaces    \";",  //
+        "    let str2 = \"No trailing spaces\";",                  //
+        "    ",                                                    // trailing
+        "    console.log(\"Some trailing spaces    \");",          //
+        "    // Another regular line with spaces ",                // trailing
+        "} ",                                                      // trailing
+    ].join("\n");
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(javascript_lang()), cx));
+
+    // Spawn a task to format the buffer's whitespace
+    let format = buffer.update(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx)).await;
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.apply_diff(format, cx);
+
+        let expected = [
+            "function test() {",                                       // removed
+            "    // A line with trailing whitespace",                  // removed
+            "    let str = \"This string has trailing spaces    \";",  //
+            "    let str2 = \"No trailing spaces\";",                  //
+            "",                                                        // removed
+            "    console.log(\"Some trailing spaces    \");",          //
+            "    // Another regular line with spaces",                 // removed
+            "}",                                                       // removed
+        ].join("\n");
+
+        assert_eq!(buffer.text(), expected,
+            "Trailing whitespace should be removed everywhere except in string literals");
+    });
+}
+
+#[gpui::test]
+async fn test_remove_trailing_whitespace_in_multiline_strings(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    let text = [
+        "fn main() {",                                               //
+        "    // Line with trailing whitespace    ",                  // trailing
+        "    let multiline = \"First line    ",                      // trailing (in string)
+        "    Second line with trailing spaces    ",                  // trailing (in string)
+        "    Third line\";",                                         //
+        "    ",                                                      // trailing
+        "    println!(\"Hello\");    ",                              // trailing
+        "    ",                                                      // trailing
+        "    let another = r\"Raw string with trailing spaces    ",  // trailing (in string)
+        "        and another line    \";",                           //
+        "}    ",                                                     // trailing
+    ].join("\n");
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
+
+    // Spawn a task to format the buffer's whitespace
+    let format = buffer.update(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx)).await;
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.apply_diff(format, cx);
+
+        let expected = [
+            "fn main() {",                                               //
+            "    // Line with trailing whitespace",                      // removed
+            "    let multiline = \"First line    ",                      // preserved in string
+            "    Second line with trailing spaces    ",                  // preserved in string
+            "    Third line\";",                                         //
+            "",                                                          // removed
+            "    println!(\"Hello\");",                                  // removed
+            "",                                                          // removed
+            "    let another = r\"Raw string with trailing spaces    ",  // preserved in string
+            "        and another line    \";",                           // preserved in string
+            "}"                                                          // removed
+        ].join("\n");
+
+        assert_eq!(buffer.text(), expected,
+            "Trailing whitespace should be removed everywhere except in string literals");
+    });
+}
+
+#[gpui::test]
 async fn test_reparse(cx: &mut gpui::TestAppContext) {
     let text = "fn a() {}";
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
