@@ -3927,14 +3927,14 @@ impl Editor {
                         let end = selection.end;
                         let selection_is_empty = start == end;
                         let language_scope = buffer.language_scope_at(start);
-                        let (delimiter, insert_extra_newline, prevent_auto_indent) =
+                        let (comment_delimiter, doc_delimiter, insert_extra_newline) =
                             if let Some(language) = &language_scope {
                                 let mut insert_extra_newline =
                                     insert_extra_newline_brackets(&buffer, start..end, language)
                                         || insert_extra_newline_tree_sitter(&buffer, start..end);
 
                                 // Comment extension on newline is allowed only for cursor selections
-                                let mut delimiter = maybe!({
+                                let comment_delimiter = maybe!({
                                     if !selection_is_empty {
                                         return None;
                                     }
@@ -3976,104 +3976,100 @@ impl Editor {
                                     }
                                 });
 
-                                let mut prevent_auto_indent = false;
-                                if delimiter.is_none() {
-                                    delimiter = maybe!({
-                                        if !selection_is_empty {
-                                            return None;
-                                        }
+                                let doc_delimiter = maybe!({
+                                    if !selection_is_empty {
+                                        return None;
+                                    }
 
-                                        if !multi_buffer
-                                            .language_settings(cx)
-                                            .extend_comment_on_newline
-                                        {
-                                            return None;
-                                        }
+                                    if !multi_buffer.language_settings(cx).extend_comment_on_newline
+                                    {
+                                        return None;
+                                    }
 
-                                        let block = language.documentation_block();
-                                        let block_start = block.first()?;
-                                        let block_end = block.last()?;
+                                    let block = language.documentation_block();
+                                    let block_start = block.first()?;
+                                    let block_end = block.last()?;
 
-                                        let delimiter = language.documentation_comment_prefix()?;
+                                    let delimiter = language.documentation_comment_prefix()?;
 
-                                        let (snapshot, range) = buffer
-                                            .buffer_line_for_row(MultiBufferRow(start_point.row))?;
+                                    let (snapshot, range) = buffer
+                                        .buffer_line_for_row(MultiBufferRow(start_point.row))?;
 
-                                        let cursor_is_after_block_start = {
-                                            let block_start_len = block_start.len();
-                                            let num_of_whitespaces = snapshot
-                                                .chars_for_range(range.clone())
-                                                .take_while(|c| c.is_whitespace())
-                                                .count();
-                                            let block_start_line = snapshot
+                                    let cursor_is_after_block_start = {
+                                        let block_start_len = block_start.len();
+                                        let num_of_whitespaces = snapshot
+                                            .chars_for_range(range.clone())
+                                            .take_while(|c| c.is_whitespace())
+                                            .count();
+                                        let block_start_line = snapshot
+                                            .chars_for_range(range.clone())
+                                            .skip(num_of_whitespaces)
+                                            .take(block_start_len)
+                                            .collect::<String>();
+                                        if block_start_line.starts_with(block_start.as_ref()) {
+                                            num_of_whitespaces + block_start_len
+                                                <= start_point.column as usize
+                                        } else {
+                                            let delimiter_trimmed = delimiter.trim();
+                                            let start_line = snapshot
                                                 .chars_for_range(range.clone())
                                                 .skip(num_of_whitespaces)
-                                                .take(block_start_len)
+                                                .take(delimiter_trimmed.len())
                                                 .collect::<String>();
-                                            if block_start_line.starts_with(block_start.as_ref()) {
-                                                num_of_whitespaces + block_start_len
+                                            if start_line.starts_with(delimiter_trimmed) {
+                                                num_of_whitespaces + delimiter_trimmed.len()
                                                     <= start_point.column as usize
                                             } else {
-                                                let delimiter_trimmed = delimiter.trim();
-                                                let start_line = snapshot
-                                                    .chars_for_range(range.clone())
-                                                    .skip(num_of_whitespaces)
-                                                    .take(delimiter_trimmed.len())
-                                                    .collect::<String>();
-                                                if start_line.starts_with(delimiter_trimmed) {
-                                                    num_of_whitespaces + delimiter_trimmed.len()
-                                                        <= start_point.column as usize
-                                                } else {
-                                                    false
-                                                }
+                                                false
                                             }
-                                        };
-
-                                        let cursor_is_before_end_if_exists = {
-                                            let num_of_whitspaces = snapshot
-                                                .reversed_chars_for_range(range.clone())
-                                                .take_while(|c| c.is_whitespace())
-                                                .count();
-                                            let mut line_iter = snapshot
-                                                .reversed_chars_for_range(range)
-                                                .skip(num_of_whitspaces);
-                                            let block_end_exists = block_end
-                                                .chars()
-                                                .rev()
-                                                .all(|char| line_iter.next() == Some(char));
-                                            if block_end_exists {
-                                                let max_point =
-                                                    snapshot.line_len(start_point.row) as usize;
-                                                let cursor_is_before_block_end = num_of_whitspaces
-                                                    + block_end.len()
-                                                    + start_point.column as usize
-                                                    <= max_point;
-                                                if cursor_is_before_block_end
-                                                    && cursor_is_after_block_start
-                                                {
-                                                    insert_extra_newline = true;
-                                                }
-                                                cursor_is_before_block_end
-                                            } else {
-                                                true
-                                            }
-                                        };
-
-                                        if cursor_is_after_block_start
-                                            && cursor_is_before_end_if_exists
-                                        {
-                                            prevent_auto_indent = true;
-                                            Some(delimiter.clone())
-                                        } else {
-                                            None
                                         }
-                                    });
-                                }
+                                    };
 
-                                (delimiter, insert_extra_newline, prevent_auto_indent)
+                                    let cursor_is_before_end_if_exists = {
+                                        let num_of_whitspaces = snapshot
+                                            .reversed_chars_for_range(range.clone())
+                                            .take_while(|c| c.is_whitespace())
+                                            .count();
+                                        let mut line_iter = snapshot
+                                            .reversed_chars_for_range(range)
+                                            .skip(num_of_whitspaces);
+                                        let block_end_exists = block_end
+                                            .chars()
+                                            .rev()
+                                            .all(|char| line_iter.next() == Some(char));
+                                        if block_end_exists {
+                                            let max_point =
+                                                snapshot.line_len(start_point.row) as usize;
+                                            let cursor_is_before_block_end = num_of_whitspaces
+                                                + block_end.len()
+                                                + start_point.column as usize
+                                                <= max_point;
+                                            if cursor_is_before_block_end
+                                                && cursor_is_after_block_start
+                                            {
+                                                insert_extra_newline = true;
+                                            }
+                                            cursor_is_before_block_end
+                                        } else {
+                                            true
+                                        }
+                                    };
+
+                                    if cursor_is_after_block_start && cursor_is_before_end_if_exists
+                                    {
+                                        Some(delimiter.clone())
+                                    } else {
+                                        None
+                                    }
+                                });
+
+                                (comment_delimiter, doc_delimiter, insert_extra_newline)
                             } else {
-                                (None, false, false)
+                                (None, None, false)
                             };
+
+                        let prevent_auto_indent = doc_delimiter.is_some();
+                        let delimiter = comment_delimiter.or(doc_delimiter);
 
                         let capacity_for_delimiter =
                             delimiter.as_deref().map(str::len).unwrap_or_default();
