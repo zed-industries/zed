@@ -6,7 +6,8 @@ use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelToolChoice, LanguageModelToolUse, MessageContent, StopReason,
+    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
+    StopReason,
 };
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -291,10 +292,17 @@ impl LmStudioLanguageModel {
                         }
                     }
                     MessageContent::ToolResult(tool_result) => {
-                        messages.push(lmstudio::ChatMessage::Tool {
-                            content: tool_result.content.to_string(),
-                            tool_call_id: tool_result.tool_use_id.to_string(),
-                        });
+                        match &tool_result.content {
+                            LanguageModelToolResultContent::Text(text) => {
+                                messages.push(lmstudio::ChatMessage::Tool {
+                                    content: text.to_string(),
+                                    tool_call_id: tool_result.tool_use_id.to_string(),
+                                });
+                            }
+                            LanguageModelToolResultContent::Image(_) => {
+                                // no support for images for now
+                            }
+                        };
                     }
                 }
             }
