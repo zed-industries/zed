@@ -1,5 +1,6 @@
 pub mod disconnected_overlay;
 mod remote_servers;
+mod ssh_config;
 mod ssh_connections;
 pub use ssh_connections::{is_connecting_over_ssh, open_ssh_project};
 
@@ -10,12 +11,13 @@ use gpui::{
     Subscription, Task, WeakEntity, Window,
 };
 use ordered_float::OrderedFloat;
+use paths::global_ssh_config_file;
 use picker::{
     Picker, PickerDelegate,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
 };
 pub use remote_servers::RemoteServerProjects;
-use settings::Settings;
+use settings::{Settings, SettingsStore, watch_config_file};
 pub use ssh_connections::SshSettings;
 use std::{
     path::{Path, PathBuf},
@@ -39,7 +41,14 @@ pub fn init(cx: &mut App) {
 pub struct RecentProjects {
     pub picker: Entity<Picker<RecentProjectsDelegate>>,
     rem_width: f32,
-    _subscription: Subscription,
+    ssh_config_updates: Task<()>,
+    ssh_config: Option<SshConfigServers>,
+    _subscriptions: Vec<Subscription>,
+}
+
+#[derive(Debug)]
+struct SshConfigServers {
+    hostnames: Vec<String>,
 }
 
 impl ModalView for RecentProjects {}
@@ -59,7 +68,27 @@ impl RecentProjects {
                 Picker::uniform_list(delegate, window, cx)
             }
         });
-        let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
+        let picker_dismiss_subscription =
+            cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
+        let mut read_ssh_config = SshSettings::get_global(cx).read_ssh_config;
+        let ssh_config_updates = if read_ssh_config {
+            spawn_ssh_config_watch(cx)
+        } else {
+            Task::ready(())
+        };
+        let settings_change_subscription =
+            cx.observe_global_in::<SettingsStore>(window, move |recent_projects, _, cx| {
+                let new_read_ssh_config = SshSettings::get_global(cx).read_ssh_config;
+                if read_ssh_config != new_read_ssh_config {
+                    read_ssh_config = new_read_ssh_config;
+                    if read_ssh_config {
+                        recent_projects.ssh_config_updates = spawn_ssh_config_watch(cx);
+                    } else {
+                        recent_projects.ssh_config = None;
+                        recent_projects.ssh_config_updates = Task::ready(());
+                    }
+                }
+            });
         // We do not want to block the UI on a potentially lengthy call to DB, so we're gonna swap
         // out workspace locations once the future runs to completion.
         cx.spawn_in(window, async move |this, cx| {
@@ -80,7 +109,9 @@ impl RecentProjects {
         Self {
             picker,
             rem_width,
-            _subscription,
+            _subscriptions: vec![picker_dismiss_subscription, settings_change_subscription],
+            ssh_config_updates,
+            ssh_config: None,
         }
     }
 
@@ -116,6 +147,38 @@ impl RecentProjects {
             Self::new(delegate, 34., window, cx)
         })
     }
+}
+
+fn spawn_ssh_config_watch(cx: &Context<RecentProjects>) -> Task<()> {
+    // let user_ssh_config_watcher = watch_config_file(
+    //     cx.background_executor(),
+    //     fs,
+    //     user_ssh_config_file().to_owned(),
+    // );
+    // let global_ssh_config_watcher = watch_config_file(
+    //     cx.background_executor(),
+    //     fs,
+    //     global_ssh_config_file().to_owned(),
+    // );
+
+    // TODO kb select, reparse, update the data
+    /*
+
+    A basic parser could just go line looking for [\t ]*Host (.*) and combining any lines that end with \:
+
+    Host something
+    HostName whatever.tld
+
+    Host linux bsd host3
+      User bjorn
+
+    Host \
+           somehost \
+    anotherhost
+    Hostname 192.168.3.3
+    */
+    // TODO kb
+    Task::ready(())
 }
 
 impl EventEmitter<DismissEvent> for RecentProjects {}
