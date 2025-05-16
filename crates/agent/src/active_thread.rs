@@ -1721,13 +1721,12 @@ impl ActiveThread {
             .on_action(cx.listener(Self::cancel_editing_message))
             .on_action(cx.listener(Self::confirm_editing_message))
             .capture_action(cx.listener(Self::paste))
-            .px_neg_0p5()
             .min_h_6()
             .w_full()
             .flex_grow()
             .gap_2()
             .child(state.context_strip.clone())
-            .child(EditorElement::new(
+            .child(div().pt(px(-3.)).px_neg_0p5().child(EditorElement::new(
                 &state.editor,
                 EditorStyle {
                     background: colors.editor_background,
@@ -1736,7 +1735,7 @@ impl ActiveThread {
                     syntax: cx.theme().syntax().clone(),
                     ..Default::default()
                 },
-            ))
+            )))
     }
 
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
