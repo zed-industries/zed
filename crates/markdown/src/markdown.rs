@@ -1,7 +1,12 @@
 pub mod parser;
 mod path_range;
 
+use base64::Engine as _;
+use log::Level;
+pub use path_range::{LineCol, PathWithRange};
+
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::iter;
 use std::mem;
@@ -13,10 +18,10 @@ use std::time::Duration;
 
 use gpui::{
     AnyElement, App, BorderStyle, Bounds, ClipboardItem, CursorStyle, DispatchPhase, Edges, Entity,
-    FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, KeyContext,
-    Length, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Point, Stateful,
-    StrikethroughStyle, StyleRefinement, StyledText, Task, TextLayout, TextRun, TextStyle,
-    TextStyleRefinement, actions, point, quad,
+    FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, Image,
+    ImageFormat, KeyContext, Length, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent,
+    Point, Stateful, StrikethroughStyle, StyleRefinement, StyledText, Task, TextLayout, TextRun,
+    TextStyle, TextStyleRefinement, actions, img, point, quad,
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
@@ -91,6 +96,7 @@ pub struct Markdown {
     pressed_link: Option<RenderedLink>,
     autoscroll_request: Option<usize>,
     parsed_markdown: ParsedMarkdown,
+    images_by_source_offset: HashMap<usize, Arc<Image>>,
     should_reparse: bool,
     pending_parse: Option<Task<Option<()>>>,
     focus_handle: FocusHandle,
@@ -107,6 +113,7 @@ struct Options {
 pub enum CodeBlockRenderer {
     Default {
         copy_button: bool,
+        copy_button_on_hover: bool,
         border: bool,
     },
     Custom {
@@ -147,6 +154,7 @@ impl Markdown {
             pressed_link: None,
             autoscroll_request: None,
             should_reparse: false,
+            images_by_source_offset: Default::default(),
             parsed_markdown: ParsedMarkdown::default(),
             pending_parse: None,
             focus_handle,
@@ -170,6 +178,7 @@ impl Markdown {
             autoscroll_request: None,
             should_reparse: false,
             parsed_markdown: ParsedMarkdown::default(),
+            images_by_source_offset: Default::default(),
             pending_parse: None,
             focus_handle,
             language_registry: None,
@@ -215,6 +224,7 @@ impl Markdown {
     }
 
     pub fn escape(s: &str) -> Cow<str> {
+        // Valid to use bytes since multi-byte UTF-8 doesn't use ASCII chars.
         let count = s
             .bytes()
             .filter(|c| *c == b'\n' || c.is_ascii_punctuation())
@@ -267,19 +277,23 @@ impl Markdown {
         }
 
         let source = self.source.clone();
-        let parse_text_only = self.options.parse_links_only;
+        let should_parse_links_only = self.options.parse_links_only;
         let language_registry = self.language_registry.clone();
         let fallback = self.fallback_code_block_language.clone();
         let parsed = cx.background_spawn(async move {
-            if parse_text_only {
-                return anyhow::Ok(ParsedMarkdown {
-                    events: Arc::from(parse_links_only(source.as_ref())),
-                    source,
-                    languages_by_name: TreeMap::default(),
-                    languages_by_path: TreeMap::default(),
-                });
+            if should_parse_links_only {
+                return anyhow::Ok((
+                    ParsedMarkdown {
+                        events: Arc::from(parse_links_only(source.as_ref())),
+                        source,
+                        languages_by_name: TreeMap::default(),
+                        languages_by_path: TreeMap::default(),
+                    },
+                    Default::default(),
+                ));
             }
             let (events, language_names, paths) = parse_markdown(&source);
+            let mut images_by_source_offset = HashMap::default();
             let mut languages_by_name = TreeMap::default();
             let mut languages_by_path = TreeMap::default();
             if let Some(registry) = language_registry.as_ref() {
@@ -302,20 +316,52 @@ impl Markdown {
                     }
                 }
             }
-            anyhow::Ok(ParsedMarkdown {
-                source,
-                events: Arc::from(events),
-                languages_by_name,
-                languages_by_path,
-            })
+
+            for (range, event) in &events {
+                if let MarkdownEvent::Start(MarkdownTag::Image { dest_url, .. }) = event {
+                    if let Some(data_url) = dest_url.strip_prefix("data:") {
+                        let Some((mime_info, data)) = data_url.split_once(',') else {
+                            continue;
+                        };
+                        let Some((mime_type, encoding)) = mime_info.split_once(';') else {
+                            continue;
+                        };
+                        let Some(format) = ImageFormat::from_mime_type(mime_type) else {
+                            continue;
+                        };
+                        let is_base64 = encoding == "base64";
+                        if is_base64 {
+                            if let Some(bytes) = base64::prelude::BASE64_STANDARD
+                                .decode(data)
+                                .log_with_level(Level::Debug)
+                            {
+                                let image = Arc::new(Image::from_bytes(format, bytes));
+                                images_by_source_offset.insert(range.start, image);
+                            }
+                        }
+                    }
+                }
+            }
+
+            anyhow::Ok((
+                ParsedMarkdown {
+                    source,
+                    events: Arc::from(events),
+                    languages_by_name,
+                    languages_by_path,
+                },
+                images_by_source_offset,
+            ))
         });
 
         self.should_reparse = false;
         self.pending_parse = Some(cx.spawn(async move |this, cx| {
             async move {
-                let parsed = parsed.await?;
+                let (parsed, images_by_source_offset) = parsed.await?;
+
                 this.update(cx, |this, cx| {
                     this.parsed_markdown = parsed;
+                    this.images_by_source_offset = images_by_source_offset;
                     this.pending_parse.take();
                     if this.should_reparse {
                         this.parse(cx);
@@ -399,6 +445,7 @@ impl MarkdownElement {
             style,
             code_block_renderer: CodeBlockRenderer::Default {
                 copy_button: true,
+                copy_button_on_hover: false,
                 border: false,
             },
             on_url_click: None,
@@ -678,7 +725,9 @@ impl Element for MarkdownElement {
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
         );
-        let parsed_markdown = &self.markdown.read(cx).parsed_markdown;
+        let markdown = self.markdown.read(cx);
+        let parsed_markdown = &markdown.parsed_markdown;
+        let images = &markdown.images_by_source_offset;
         let markdown_end = if let Some(last) = parsed_markdown.events.last() {
             last.0.end
         } else {
@@ -686,11 +735,29 @@ impl Element for MarkdownElement {
         };
 
         let mut current_code_block_metadata = None;
-
+        let mut current_img_block_range: Option<Range<usize>> = None;
         for (range, event) in parsed_markdown.events.iter() {
+            // Skip alt text for images that rendered
+            if let Some(current_img_block_range) = &current_img_block_range {
+                if current_img_block_range.end > range.end {
+                    continue;
+                }
+            }
+
             match event {
                 MarkdownEvent::Start(tag) => {
                     match tag {
+                        MarkdownTag::Image { .. } => {
+                            if let Some(image) = images.get(&range.start) {
+                                current_img_block_range = Some(range.clone());
+                                builder.modify_current_div(|el| {
+                                    el.items_center()
+                                        .flex()
+                                        .flex_row()
+                                        .child(img(image.clone()))
+                                });
+                            }
+                        }
                         MarkdownTag::Paragraph => {
                             builder.push_div(
                                 div().when(!self.style.height_is_multiple_of_line_height, |el| {
@@ -750,7 +817,7 @@ impl Element for MarkdownElement {
                                 (CodeBlockRenderer::Default { .. }, _) | (_, true) => {
                                     // This is a parent container that we can position the copy button inside.
                                     builder.push_div(
-                                        div().relative().w_full(),
+                                        div().group("code_block").relative().w_full(),
                                         range,
                                         markdown_end,
                                     );
@@ -938,6 +1005,9 @@ impl Element for MarkdownElement {
                     }
                 }
                 MarkdownEvent::End(tag) => match tag {
+                    MarkdownTagEnd::Image => {
+                        current_img_block_range.take();
+                    }
                     MarkdownTagEnd::Paragraph => {
                         builder.pop_div();
                     }
@@ -980,7 +1050,6 @@ impl Element for MarkdownElement {
                             copy_button: true, ..
                         } = &self.code_block_renderer
                         {
-                            builder.flush_text();
                             builder.modify_current_div(|el| {
                                 let content_range = parser::extract_code_block_content_range(
                                     parsed_markdown.source()[range.clone()].trim(),
@@ -996,6 +1065,37 @@ impl Element for MarkdownElement {
                                     cx,
                                 );
                                 el.child(div().absolute().top_1().right_1().w_5().child(codeblock))
+                            });
+                        }
+
+                        if let CodeBlockRenderer::Default {
+                            copy_button_on_hover: true,
+                            ..
+                        } = &self.code_block_renderer
+                        {
+                            builder.modify_current_div(|el| {
+                                let content_range = parser::extract_code_block_content_range(
+                                    parsed_markdown.source()[range.clone()].trim(),
+                                );
+                                let content_range = content_range.start + range.start
+                                    ..content_range.end + range.start;
+
+                                let code = parsed_markdown.source()[content_range].to_string();
+                                let codeblock = render_copy_code_block_button(
+                                    range.end,
+                                    code,
+                                    self.markdown.clone(),
+                                    cx,
+                                );
+                                el.child(
+                                    div()
+                                        .absolute()
+                                        .top_0()
+                                        .right_0()
+                                        .w_5()
+                                        .visible_on_hover("code_block")
+                                        .child(codeblock),
+                                )
                             });
                         }
 
@@ -1048,7 +1148,18 @@ impl Element for MarkdownElement {
                     builder.pop_text_style();
                 }
                 MarkdownEvent::Html => {
-                    builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
+                    let html = &parsed_markdown.source[range.clone()];
+                    if html.starts_with("<!--") {
+                        builder.html_comment = true;
+                    }
+                    if html.trim_end().ends_with("-->") {
+                        builder.html_comment = false;
+                        continue;
+                    }
+                    if builder.html_comment {
+                        continue;
+                    }
+                    builder.push_text(html, range.clone());
                 }
                 MarkdownEvent::InlineHtml => {
                     builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
@@ -1265,6 +1376,7 @@ struct MarkdownElementBuilder {
     pending_line: PendingLine,
     rendered_links: Vec<RenderedLink>,
     current_source_index: usize,
+    html_comment: bool,
     base_text_style: TextStyle,
     text_style_stack: Vec<TextStyleRefinement>,
     code_block_stack: Vec<Option<Arc<Language>>>,
@@ -1292,6 +1404,7 @@ impl MarkdownElementBuilder {
             pending_line: PendingLine::default(),
             rendered_links: Vec::new(),
             current_source_index: 0,
+            html_comment: false,
             base_text_style,
             text_style_stack: Vec::new(),
             code_block_stack: Vec::new(),
@@ -1704,6 +1817,23 @@ mod tests {
         assert_mappings(
             &render_markdown("\"hey\"", cx),
             vec![vec![(0, 0), (3, 1), (4, 2), (5, 3), (6, 4), (9, 5)]],
+        );
+
+        // HTML Comments are ignored
+        assert_mappings(
+            &render_markdown(
+                "<!--\nrdoc-file=string.c\n- str.intern   -> symbol\n- str.to_sym   -> symbol\n-->\nReturns",
+                cx,
+            ),
+            vec![vec![
+                (0, 78),
+                (1, 79),
+                (2, 80),
+                (3, 81),
+                (4, 82),
+                (5, 83),
+                (6, 84),
+            ]],
         );
     }
 

@@ -1,5 +1,6 @@
 use std::{
     borrow::{Borrow, Cow},
+    collections::BTreeMap,
     sync::atomic::{self, AtomicBool},
 };
 
@@ -50,7 +51,7 @@ impl<'a> Matcher<'a> {
 
     /// Filter and score fuzzy match candidates. Results are returned unsorted, in the same order as
     /// the input candidates.
-    pub fn match_candidates<C, R, F, T>(
+    pub(crate) fn match_candidates<C, R, F, T>(
         &mut self,
         prefix: &[char],
         lowercase_prefix: &[char],
@@ -65,6 +66,7 @@ impl<'a> Matcher<'a> {
     {
         let mut candidate_chars = Vec::new();
         let mut lowercase_candidate_chars = Vec::new();
+        let mut extra_lowercase_chars = BTreeMap::new();
 
         for candidate in candidates {
             if !candidate.borrow().has_chars(self.query_char_bag) {
@@ -77,9 +79,14 @@ impl<'a> Matcher<'a> {
 
             candidate_chars.clear();
             lowercase_candidate_chars.clear();
-            for c in candidate.borrow().to_string().chars() {
+            extra_lowercase_chars.clear();
+            for (i, c) in candidate.borrow().to_string().chars().enumerate() {
                 candidate_chars.push(c);
-                lowercase_candidate_chars.append(&mut c.to_lowercase().collect::<Vec<_>>());
+                let mut char_lowercased = c.to_lowercase().collect::<Vec<_>>();
+                if char_lowercased.len() > 1 {
+                    extra_lowercase_chars.insert(i, char_lowercased.len() - 1);
+                }
+                lowercase_candidate_chars.append(&mut char_lowercased);
             }
 
             if !self.find_last_positions(lowercase_prefix, &lowercase_candidate_chars) {
@@ -97,6 +104,7 @@ impl<'a> Matcher<'a> {
                 &lowercase_candidate_chars,
                 prefix,
                 lowercase_prefix,
+                &extra_lowercase_chars,
             );
 
             if score > 0.0 {
@@ -131,24 +139,25 @@ impl<'a> Matcher<'a> {
     fn score_match(
         &mut self,
         path: &[char],
-        path_cased: &[char],
+        path_lowercased: &[char],
         prefix: &[char],
         lowercase_prefix: &[char],
+        extra_lowercase_chars: &BTreeMap<usize, usize>,
     ) -> f64 {
         let score = self.recursive_score_match(
             path,
-            path_cased,
+            path_lowercased,
             prefix,
             lowercase_prefix,
             0,
             0,
             self.query.len() as f64,
+            extra_lowercase_chars,
         ) * self.query.len() as f64;
 
         if score <= 0.0 {
             return 0.0;
         }
-
         let path_len = prefix.len() + path.len();
         let mut cur_start = 0;
         let mut byte_ix = 0;
@@ -163,8 +172,17 @@ impl<'a> Matcher<'a> {
                 byte_ix += ch.len_utf8();
                 char_ix += 1;
             }
-            cur_start = match_char_ix + 1;
+
             self.match_positions[i] = byte_ix;
+
+            let matched_ch = prefix
+                .get(match_char_ix)
+                .or_else(|| path.get(match_char_ix - prefix.len()))
+                .unwrap();
+            byte_ix += matched_ch.len_utf8();
+
+            cur_start = match_char_ix + 1;
+            char_ix = match_char_ix + 1;
         }
 
         score
@@ -173,12 +191,13 @@ impl<'a> Matcher<'a> {
     fn recursive_score_match(
         &mut self,
         path: &[char],
-        path_cased: &[char],
+        path_lowercased: &[char],
         prefix: &[char],
         lowercase_prefix: &[char],
         query_idx: usize,
         path_idx: usize,
         cur_score: f64,
+        extra_lowercase_chars: &BTreeMap<usize, usize>,
     ) -> f64 {
         use std::path::MAIN_SEPARATOR;
 
@@ -198,17 +217,32 @@ impl<'a> Matcher<'a> {
         let query_char = self.lowercase_query[query_idx];
         let limit = self.last_positions[query_idx];
 
+        let max_valid_index = (prefix.len() + path_lowercased.len()).saturating_sub(1);
+        let safe_limit = limit.min(max_valid_index);
+
         let mut last_slash = 0;
-        for j in path_idx..=limit {
+        for j in path_idx..=safe_limit {
+            let extra_lowercase_chars_count = extra_lowercase_chars
+                .iter()
+                .take_while(|(i, _)| i < &&j)
+                .map(|(_, increment)| increment)
+                .sum::<usize>();
+            let j_regular = j - extra_lowercase_chars_count;
+
             let path_char = if j < prefix.len() {
                 lowercase_prefix[j]
             } else {
-                path_cased[j - prefix.len()]
+                let path_index = j - prefix.len();
+                if path_index < path_lowercased.len() {
+                    path_lowercased[path_index]
+                } else {
+                    continue;
+                }
             };
             let is_path_sep = path_char == MAIN_SEPARATOR;
 
             if query_idx == 0 && is_path_sep {
-                last_slash = j;
+                last_slash = j_regular;
             }
 
             #[cfg(not(target_os = "windows"))]
@@ -218,18 +252,18 @@ impl<'a> Matcher<'a> {
             #[cfg(target_os = "windows")]
             let need_to_score = query_char == path_char || (is_path_sep && query_char == '_');
             if need_to_score {
-                let curr = if j < prefix.len() {
-                    prefix[j]
+                let curr = if j_regular < prefix.len() {
+                    prefix[j_regular]
                 } else {
-                    path[j - prefix.len()]
+                    path[j_regular - prefix.len()]
                 };
 
                 let mut char_score = 1.0;
                 if j > path_idx {
-                    let last = if j - 1 < prefix.len() {
-                        prefix[j - 1]
+                    let last = if j_regular - 1 < prefix.len() {
+                        prefix[j_regular - 1]
                     } else {
-                        path[j - 1 - prefix.len()]
+                        path[j_regular - 1 - prefix.len()]
                     };
 
                     if last == MAIN_SEPARATOR {
@@ -279,17 +313,18 @@ impl<'a> Matcher<'a> {
 
                 let new_score = self.recursive_score_match(
                     path,
-                    path_cased,
+                    path_lowercased,
                     prefix,
                     lowercase_prefix,
                     query_idx + 1,
                     j + 1,
                     next_score,
+                    extra_lowercase_chars,
                 ) * multiplier;
 
                 if new_score > score {
                     score = new_score;
-                    best_position = j;
+                    best_position = j_regular;
                     // Optimization: can't score better than 1.
                     if new_score == 1.0 {
                         break;
@@ -468,6 +503,89 @@ mod tests {
                 ("αβγδ/bcde", vec![10, 11, 12]),
                 ("c1️⃣2️⃣3️⃣/d4️⃣5️⃣6️⃣/e7️⃣8️⃣9️⃣/f", vec![0, 23, 46]),
             ]
+        );
+    }
+
+    #[test]
+    fn match_unicode_path_entries() {
+        let mixed_unicode_paths = vec![
+            "İolu/oluş",
+            "İstanbul/code",
+            "Athens/Şanlıurfa",
+            "Çanakkale/scripts",
+            "paris/Düzce_İl",
+            "Berlin_Önemli_Ğündem",
+            "KİTAPLIK/london/dosya",
+            "tokyo/kyoto/fuji",
+            "new_york/san_francisco",
+        ];
+
+        assert_eq!(
+            match_single_path_query("İo/oluş", false, &mixed_unicode_paths),
+            vec![("İolu/oluş", vec![0, 2, 4, 6, 8, 10, 12])]
+        );
+
+        assert_eq!(
+            match_single_path_query("İst/code", false, &mixed_unicode_paths),
+            vec![("İstanbul/code", vec![0, 2, 4, 6, 8, 10, 12, 14])]
+        );
+
+        assert_eq!(
+            match_single_path_query("athens/şa", false, &mixed_unicode_paths),
+            vec![("Athens/Şanlıurfa", vec![0, 1, 2, 3, 4, 5, 6, 7, 9])]
+        );
+
+        assert_eq!(
+            match_single_path_query("BerlinÖĞ", false, &mixed_unicode_paths),
+            vec![("Berlin_Önemli_Ğündem", vec![0, 1, 2, 3, 4, 5, 7, 15])]
+        );
+
+        assert_eq!(
+            match_single_path_query("tokyo/fuji", false, &mixed_unicode_paths),
+            vec![("tokyo/kyoto/fuji", vec![0, 1, 2, 3, 4, 5, 12, 13, 14, 15])]
+        );
+
+        let mixed_script_paths = vec![
+            "résumé_Москва",
+            "naïve_київ_implementation",
+            "café_北京_app",
+            "東京_über_driver",
+            "déjà_vu_cairo",
+            "seoul_piñata_game",
+            "voilà_istanbul_result",
+        ];
+
+        assert_eq!(
+            match_single_path_query("résmé", false, &mixed_script_paths),
+            vec![("résumé_Москва", vec![0, 1, 3, 5, 6])]
+        );
+
+        assert_eq!(
+            match_single_path_query("café北京", false, &mixed_script_paths),
+            vec![("café_北京_app", vec![0, 1, 2, 3, 6, 9])]
+        );
+
+        assert_eq!(
+            match_single_path_query("ista", false, &mixed_script_paths),
+            vec![("voilà_istanbul_result", vec![7, 8, 9, 10])]
+        );
+
+        let complex_paths = vec![
+            "document_📚_library",
+            "project_👨‍👩‍👧‍👦_family",
+            "flags_🇯🇵🇺🇸🇪🇺_world",
+            "code_😀😃😄😁_happy",
+            "photo_👩‍👩‍👧‍👦_album",
+        ];
+
+        assert_eq!(
+            match_single_path_query("doc📚lib", false, &complex_paths),
+            vec![("document_📚_library", vec![0, 1, 2, 9, 14, 15, 16])]
+        );
+
+        assert_eq!(
+            match_single_path_query("codehappy", false, &complex_paths),
+            vec![("code_😀😃😄😁_happy", vec![0, 1, 2, 3, 22, 23, 24, 25, 26])]
         );
     }
 

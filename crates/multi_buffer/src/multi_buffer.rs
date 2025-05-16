@@ -1686,7 +1686,10 @@ impl MultiBuffer {
         let mut counts: Vec<usize> = Vec::new();
         for range in expanded_ranges {
             if let Some(last_range) = merged_ranges.last_mut() {
-                debug_assert!(last_range.context.start <= range.context.start);
+                debug_assert!(
+                    last_range.context.start <= range.context.start,
+                    "Last range: {last_range:?} Range: {range:?}"
+                );
                 if last_range.context.end >= range.context.start {
                     last_range.context.end = range.context.end.max(last_range.context.end);
                     *counts.last_mut().unwrap() += 1;
@@ -2631,6 +2634,11 @@ impl MultiBuffer {
 
     pub fn all_diff_hunks_expanded(&self) -> bool {
         self.snapshot.borrow().all_diff_hunks_expanded
+    }
+
+    pub fn set_all_diff_hunks_collapsed(&mut self, cx: &mut Context<Self>) {
+        self.snapshot.borrow_mut().all_diff_hunks_expanded = false;
+        self.expand_or_collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], false, cx);
     }
 
     pub fn has_multiple_hunks(&self, cx: &App) -> bool {
@@ -5785,7 +5793,7 @@ impl MultiBufferSnapshot {
                 line_indent.len(tab_size) / tab_size
                     + ((line_indent.len(tab_size) % tab_size) > 0) as u32
             } else {
-                current_depth
+                0
             };
 
             match depth.cmp(&current_depth) {

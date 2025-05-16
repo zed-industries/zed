@@ -655,11 +655,59 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
         },
         syntax: cx.theme().syntax().clone(),
         selection_background_color: { cx.theme().players().local().selection },
-        height_is_multiple_of_line_height: true,
         heading: StyleRefinement::default()
             .font_weight(FontWeight::BOLD)
             .text_base()
             .mt(rems(1.))
+            .mb_0(),
+        ..Default::default()
+    }
+}
+
+pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+    let settings = ThemeSettings::get_global(cx);
+    let ui_font_family = settings.ui_font.family.clone();
+    let ui_font_fallbacks = settings.ui_font.fallbacks.clone();
+    let buffer_font_family = settings.buffer_font.family.clone();
+    let buffer_font_fallbacks = settings.buffer_font.fallbacks.clone();
+
+    let mut base_text_style = window.text_style();
+    base_text_style.refine(&TextStyleRefinement {
+        font_family: Some(ui_font_family.clone()),
+        font_fallbacks: ui_font_fallbacks,
+        color: Some(cx.theme().colors().editor_foreground),
+        ..Default::default()
+    });
+    MarkdownStyle {
+        base_text_style,
+        code_block: StyleRefinement::default().my(rems(1.)).font_buffer(cx),
+        inline_code: TextStyleRefinement {
+            background_color: Some(cx.theme().colors().editor_background.opacity(0.5)),
+            font_family: Some(buffer_font_family),
+            font_fallbacks: buffer_font_fallbacks,
+            ..Default::default()
+        },
+        rule_color: cx.theme().colors().border,
+        block_quote_border_color: Color::Muted.color(cx),
+        block_quote: TextStyleRefinement {
+            color: Some(Color::Muted.color(cx)),
+            ..Default::default()
+        },
+        link: TextStyleRefinement {
+            color: Some(cx.theme().colors().editor_foreground),
+            underline: Some(gpui::UnderlineStyle {
+                thickness: px(1.),
+                color: Some(cx.theme().colors().editor_foreground),
+                wavy: false,
+            }),
+            ..Default::default()
+        },
+        syntax: cx.theme().syntax().clone(),
+        selection_background_color: { cx.theme().players().local().selection },
+        height_is_multiple_of_line_height: true,
+        heading: StyleRefinement::default()
+            .font_weight(FontWeight::BOLD)
+            .text_base()
             .mb_0(),
         ..Default::default()
     }
@@ -836,6 +884,7 @@ impl InfoPopover {
                 *keyboard_grace = false;
                 cx.stop_propagation();
             })
+            .p_2()
             .when_some(self.parsed_content.clone(), |this, markdown| {
                 this.child(
                     div()
@@ -843,12 +892,12 @@ impl InfoPopover {
                         .overflow_y_scroll()
                         .max_w(max_size.width)
                         .max_h(max_size.height)
-                        .p_2()
                         .track_scroll(&self.scroll_handle)
                         .child(
                             MarkdownElement::new(markdown, hover_markdown_style(window, cx))
                                 .code_block_renderer(markdown::CodeBlockRenderer::Default {
                                     copy_button: false,
+                                    copy_button_on_hover: false,
                                     border: false,
                                 })
                                 .on_url_click(open_markdown_url),
@@ -951,7 +1000,7 @@ impl DiagnosticPopover {
                     .child(
                         MarkdownElement::new(
                             self.markdown.clone(),
-                            hover_markdown_style(window, cx),
+                            diagnostics_markdown_style(window, cx),
                         )
                         .on_url_click(move |link, window, cx| {
                             if let Some(renderer) = GlobalDiagnosticRenderer::global(cx) {

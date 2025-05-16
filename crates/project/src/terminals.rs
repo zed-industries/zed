@@ -24,7 +24,7 @@ pub struct Terminals {
 }
 
 /// Terminals are opened either for the users shell, or to run a task.
-#[allow(clippy::large_enum_variant)]
+
 #[derive(Debug)]
 pub enum TerminalKind {
     /// Run a shell at the given path (or $HOME if None)
@@ -514,7 +514,7 @@ impl Project {
         terminal_handle: &Entity<Terminal>,
         cx: &mut App,
     ) {
-        terminal_handle.update(cx, |terminal, _| terminal.input_bytes(command.into_bytes()));
+        terminal_handle.update(cx, |terminal, _| terminal.input(command));
     }
 
     pub fn local_terminal_handles(&self) -> &Vec<WeakEntity<terminal::Terminal>> {

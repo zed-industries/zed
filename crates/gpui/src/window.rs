@@ -2100,14 +2100,14 @@ impl Window {
         let (task, is_first) = cx.fetch_asset::<A>(source);
         task.clone().now_or_never().or_else(|| {
             if is_first {
-                let entity = self.current_view();
+                let entity_id = self.current_view();
                 self.spawn(cx, {
                     let task = task.clone();
                     async move |cx| {
                         task.await;
 
                         cx.on_next_frame(move |_, cx| {
-                            cx.notify(entity);
+                            cx.notify(entity_id);
                         });
                     }
                 })
@@ -2116,6 +2116,16 @@ impl Window {
 
             None
         })
+    }
+
+    /// Asynchronously load an asset, if the asset hasn't finished loading or doesn't exist this will return None.
+    /// Your view will not be re-drawn once the asset has finished loading.
+    ///
+    /// Note that the multiple calls to this method will only result in one `Asset::load` call at a
+    /// time.
+    pub fn get_asset<A: Asset>(&mut self, source: &A::Source, cx: &mut App) -> Option<A::Output> {
+        let (task, _) = cx.fetch_asset::<A>(source);
+        task.clone().now_or_never()
     }
     /// Obtain the current element offset. This method should only be called during the
     /// prepaint phase of element drawing.
@@ -2876,14 +2886,18 @@ impl Window {
     }
 
     /// Executes the provided function with the specified image cache.
-    pub(crate) fn with_image_cache<F, R>(&mut self, image_cache: AnyImageCache, f: F) -> R
+    pub fn with_image_cache<F, R>(&mut self, image_cache: Option<AnyImageCache>, f: F) -> R
     where
         F: FnOnce(&mut Self) -> R,
     {
-        self.image_cache_stack.push(image_cache);
-        let result = f(self);
-        self.image_cache_stack.pop();
-        result
+        if let Some(image_cache) = image_cache {
+            self.image_cache_stack.push(image_cache);
+            let result = f(self);
+            self.image_cache_stack.pop();
+            result
+        } else {
+            f(self)
+        }
     }
 
     /// Sets an input handler, such as [`ElementInputHandler`][element_input_handler], which interfaces with the

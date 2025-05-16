@@ -1,0 +1,20 @@
+[package]
+name = "debug_adapter_extension"
+version = "0.1.0"
+license = "GPL-3.0-or-later"
+publish.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+dap.workspace = true
+extension.workspace = true
+gpui.workspace = true
+workspace-hack = { version = "0.1", path = "../../tooling/workspace-hack" }
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/debug_adapter_extension.rs"

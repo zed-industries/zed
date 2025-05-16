@@ -1,5 +1,6 @@
 use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
-use gpui::AsyncApp;
+use gpui::{AsyncApp, SharedString};
+use language::LanguageName;
 use std::{collections::HashMap, ffi::OsStr, path::PathBuf};
 
 use crate::*;
@@ -19,7 +20,8 @@ impl GoDebugAdapter {
             dap::DebugRequest::Launch(launch_config) => json!({
                 "program": launch_config.program,
                 "cwd": launch_config.cwd,
-                "args": launch_config.args
+                "args": launch_config.args,
+                "env": launch_config.env_json()
             }),
         };
 
@@ -42,45 +44,16 @@ impl DebugAdapter for GoDebugAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
+    fn adapter_language_name(&self) -> Option<LanguageName> {
+        Some(SharedString::new_static("Go").into())
+    }
+
     async fn get_binary(
         &self,
         delegate: &dyn DapDelegate,
         config: &DebugTaskDefinition,
-        user_installed_path: Option<PathBuf>,
-        cx: &mut AsyncApp,
-    ) -> Result<DebugAdapterBinary> {
-        self.get_installed_binary(delegate, config, user_installed_path, cx)
-            .await
-    }
-
-    async fn fetch_latest_adapter_version(
-        &self,
-        _delegate: &dyn DapDelegate,
-    ) -> Result<AdapterVersion> {
-        unimplemented!("This adapter is used from path for now");
-    }
-
-    async fn install_binary(
-        &self,
-        version: AdapterVersion,
-        delegate: &dyn DapDelegate,
-    ) -> Result<()> {
-        adapters::download_adapter_from_github(
-            self.name(),
-            version,
-            adapters::DownloadedFileType::Zip,
-            delegate,
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn get_installed_binary(
-        &self,
-        delegate: &dyn DapDelegate,
-        config: &DebugTaskDefinition,
-        _: Option<PathBuf>,
-        _: &mut AsyncApp,
+        _user_installed_path: Option<PathBuf>,
+        _cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let delve_path = delegate
             .which(OsStr::new("dlv"))

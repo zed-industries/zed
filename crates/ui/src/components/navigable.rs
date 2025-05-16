@@ -19,14 +19,14 @@ pub struct NavigableEntry {
 
 impl NavigableEntry {
     /// Creates a new [NavigableEntry] for a given scroll handle.
-    pub fn new(scroll_handle: &ScrollHandle, cx: &mut App) -> Self {
+    pub fn new(scroll_handle: &ScrollHandle, cx: &App) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
             scroll_anchor: Some(ScrollAnchor::for_handle(scroll_handle.clone())),
         }
     }
     /// Create a new [NavigableEntry] that cannot be scrolled to.
-    pub fn focusable(cx: &mut App) -> Self {
+    pub fn focusable(cx: &App) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
             scroll_anchor: None,

@@ -15,10 +15,10 @@ publish = false
 
 ### BEGIN HAKARI SECTION
 [dependencies]
+ahash = { version = "0.8", features = ["serde"] }
 aho-corasick = { version = "1" }
 anstream = { version = "0.6" }
 arrayvec = { version = "0.7", features = ["serde"] }
-async-compression = { version = "0.4", default-features = false, features = ["deflate", "deflate64", "futures-io", "gzip"] }
 async-std = { version = "1", features = ["attributes", "unstable"] }
 async-tungstenite = { version = "0.29", features = ["tokio-rustls-manual-roots"] }
 aws-config = { version = "1", features = ["behavior-version-latest"] }
@@ -33,7 +33,8 @@ aws-smithy-types = { version = "1", default-features = false, features = ["byte-
 base64 = { version = "0.22" }
 base64ct = { version = "1", default-features = false, features = ["std"] }
 bigdecimal = { version = "0.4", features = ["serde"] }
-bit-set = { version = "0.8" }
+bit-set = { version = "0.8", default-features = false, features = ["std"] }
+bit-vec = { version = "0.8", default-features = false, features = ["std"] }
 bitflags = { version = "2", default-features = false, features = ["serde", "std"] }
 bstr = { version = "1" }
 bytemuck = { version = "1", default-features = false, features = ["aarch64_simd", "derive", "extern_crate_alloc"] }
@@ -60,10 +61,13 @@ futures-sink = { version = "0.3" }
 futures-task = { version = "0.3", default-features = false, features = ["std"] }
 futures-util = { version = "0.3", features = ["channel", "io-compat", "sink"] }
 getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["std"] }
+half = { version = "2", features = ["num-traits"] }
+handlebars = { version = "4", features = ["rust-embed"] }
 hashbrown-3575ec1268b04181 = { package = "hashbrown", version = "0.15", features = ["serde"] }
 hashbrown-582f2526e08bb6a0 = { package = "hashbrown", version = "0.14", features = ["raw"] }
 hmac = { version = "0.12", default-features = false, features = ["reset"] }
 hyper = { version = "0.14", features = ["client", "http1", "http2", "runtime", "server", "stream"] }
+idna = { version = "1" }
 indexmap = { version = "2", features = ["serde"] }
 lazy_static = { version = "1", default-features = false, features = ["spin_no_std"] }
 libc = { version = "0.2", features = ["extra_traits"] }
@@ -77,6 +81,8 @@ miniz_oxide = { version = "0.8", features = ["simd"] }
 nom = { version = "7" }
 num-bigint = { version = "0.4" }
 num-integer = { version = "0.1", features = ["i128"] }
+num-iter = { version = "0.1", default-features = false, features = ["i128", "std"] }
+num-rational = { version = "0.4", features = ["num-bigint-std"] }
 num-traits = { version = "0.2", features = ["i128", "libm"] }
 once_cell = { version = "1" }
 percent-encoding = { version = "2" }
@@ -90,6 +96,7 @@ regex = { version = "1" }
 regex-automata = { version = "0.4" }
 regex-syntax = { version = "0.8" }
 rust_decimal = { version = "1", default-features = false, features = ["maths", "serde", "std"] }
+rustc-hash = { version = "1" }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["fs", "net", "std"] }
 rustls = { version = "0.23", features = ["ring"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["aws-lc-rs", "ring", "std"] }
@@ -124,10 +131,10 @@ wasmtime-cranelift = { version = "29", default-features = false, features = ["co
 wasmtime-environ = { version = "29", default-features = false, features = ["compile", "component-model", "demangle", "gc-drc"] }
 
 [build-dependencies]
+ahash = { version = "0.8", features = ["serde"] }
 aho-corasick = { version = "1" }
 anstream = { version = "0.6" }
 arrayvec = { version = "0.7", features = ["serde"] }
-async-compression = { version = "0.4", default-features = false, features = ["deflate", "deflate64", "futures-io", "gzip"] }
 async-std = { version = "1", features = ["attributes", "unstable"] }
 async-tungstenite = { version = "0.29", features = ["tokio-rustls-manual-roots"] }
 aws-config = { version = "1", features = ["behavior-version-latest"] }
@@ -142,7 +149,8 @@ aws-smithy-types = { version = "1", default-features = false, features = ["byte-
 base64 = { version = "0.22" }
 base64ct = { version = "1", default-features = false, features = ["std"] }
 bigdecimal = { version = "0.4", features = ["serde"] }
-bit-set = { version = "0.8" }
+bit-set = { version = "0.8", default-features = false, features = ["std"] }
+bit-vec = { version = "0.8", default-features = false, features = ["std"] }
 bitflags = { version = "2", default-features = false, features = ["serde", "std"] }
 bstr = { version = "1" }
 bytemuck = { version = "1", default-features = false, features = ["aarch64_simd", "derive", "extern_crate_alloc"] }
@@ -170,11 +178,14 @@ futures-sink = { version = "0.3" }
 futures-task = { version = "0.3", default-features = false, features = ["std"] }
 futures-util = { version = "0.3", features = ["channel", "io-compat", "sink"] }
 getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["std"] }
+half = { version = "2", features = ["num-traits"] }
+handlebars = { version = "4", features = ["rust-embed"] }
 hashbrown-3575ec1268b04181 = { package = "hashbrown", version = "0.15", features = ["serde"] }
 hashbrown-582f2526e08bb6a0 = { package = "hashbrown", version = "0.14", features = ["raw"] }
 heck = { version = "0.4", features = ["unicode"] }
 hmac = { version = "0.12", default-features = false, features = ["reset"] }
 hyper = { version = "0.14", features = ["client", "http1", "http2", "runtime", "server", "stream"] }
+idna = { version = "1" }
 indexmap = { version = "2", features = ["serde"] }
 itertools-594e8ee84c453af0 = { package = "itertools", version = "0.13" }
 lazy_static = { version = "1", default-features = false, features = ["spin_no_std"] }
@@ -189,6 +200,8 @@ miniz_oxide = { version = "0.8", features = ["simd"] }
 nom = { version = "7" }
 num-bigint = { version = "0.4" }
 num-integer = { version = "0.1", features = ["i128"] }
+num-iter = { version = "0.1", default-features = false, features = ["i128", "std"] }
+num-rational = { version = "0.4", features = ["num-bigint-std"] }
 num-traits = { version = "0.2", features = ["i128", "libm"] }
 once_cell = { version = "1" }
 percent-encoding = { version = "2" }
@@ -205,6 +218,7 @@ regex = { version = "1" }
 regex-automata = { version = "0.4" }
 regex-syntax = { version = "0.8" }
 rust_decimal = { version = "1", default-features = false, features = ["maths", "serde", "std"] }
+rustc-hash = { version = "1" }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["fs", "net", "std"] }
 rustls = { version = "0.23", features = ["ring"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["aws-lc-rs", "ring", "std"] }
@@ -245,6 +259,7 @@ wasmtime-cranelift = { version = "29", default-features = false, features = ["co
 wasmtime-environ = { version = "29", default-features = false, features = ["compile", "component-model", "demangle", "gc-drc"] }
 
 [target.x86_64-apple-darwin.dependencies]
+codespan-reporting = { version = "0.12" }
 core-foundation = { version = "0.9" }
 core-foundation-sys = { version = "0.8" }
 coreaudio-sys = { version = "0.2", default-features = false, features = ["audio_toolbox", "audio_unit", "core_audio", "core_midi", "open_al"] }
@@ -254,8 +269,11 @@ getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-f
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
-naga = { version = "23", features = ["msl-out", "wgsl-in"] }
+naga = { version = "25", features = ["msl-out", "wgsl-in"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal"] }
+objc2 = { version = "0.6" }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSAttributedString", "NSBundle", "NSCoder", "NSData", "NSDate", "NSDictionary", "NSEnumerator", "NSError", "NSGeometry", "NSNotification", "NSNull", "NSObjCRuntime", "NSObject", "NSProcessInfo", "NSRange", "NSRunLoop", "NSString", "NSURL", "NSUndoManager", "NSValue", "objc2-core-foundation", "std"] }
+objc2-metal = { version = "0.3" }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "param", "pipe", "process", "termios", "time"] }
@@ -271,6 +289,7 @@ tower = { version = "0.5", default-features = false, features = ["timeout", "uti
 
 [target.x86_64-apple-darwin.build-dependencies]
 clang-sys = { version = "1", default-features = false, features = ["clang_11_0", "runtime"] }
+codespan-reporting = { version = "0.12" }
 core-foundation = { version = "0.9" }
 core-foundation-sys = { version = "0.8" }
 coreaudio-sys = { version = "0.2", default-features = false, features = ["audio_toolbox", "audio_unit", "core_audio", "core_midi", "open_al"] }
@@ -280,8 +299,11 @@ getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-f
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
-naga = { version = "23", features = ["msl-out", "wgsl-in"] }
+naga = { version = "25", features = ["msl-out", "wgsl-in"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal"] }
+objc2 = { version = "0.6" }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSAttributedString", "NSBundle", "NSCoder", "NSData", "NSDate", "NSDictionary", "NSEnumerator", "NSError", "NSGeometry", "NSNotification", "NSNull", "NSObjCRuntime", "NSObject", "NSProcessInfo", "NSRange", "NSRunLoop", "NSString", "NSURL", "NSUndoManager", "NSValue", "objc2-core-foundation", "std"] }
+objc2-metal = { version = "0.3" }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 ring = { version = "0.17", features = ["std"] }
@@ -297,6 +319,7 @@ tokio-stream = { version = "0.1", features = ["fs"] }
 tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
 
 [target.aarch64-apple-darwin.dependencies]
+codespan-reporting = { version = "0.12" }
 core-foundation = { version = "0.9" }
 core-foundation-sys = { version = "0.8" }
 coreaudio-sys = { version = "0.2", default-features = false, features = ["audio_toolbox", "audio_unit", "core_audio", "core_midi", "open_al"] }
@@ -306,8 +329,11 @@ getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-f
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
-naga = { version = "23", features = ["msl-out", "wgsl-in"] }
+naga = { version = "25", features = ["msl-out", "wgsl-in"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal"] }
+objc2 = { version = "0.6" }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSAttributedString", "NSBundle", "NSCoder", "NSData", "NSDate", "NSDictionary", "NSEnumerator", "NSError", "NSGeometry", "NSNotification", "NSNull", "NSObjCRuntime", "NSObject", "NSProcessInfo", "NSRange", "NSRunLoop", "NSString", "NSURL", "NSUndoManager", "NSValue", "objc2-core-foundation", "std"] }
+objc2-metal = { version = "0.3" }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "param", "pipe", "process", "termios", "time"] }
@@ -323,6 +349,7 @@ tower = { version = "0.5", default-features = false, features = ["timeout", "uti
 
 [target.aarch64-apple-darwin.build-dependencies]
 clang-sys = { version = "1", default-features = false, features = ["clang_11_0", "runtime"] }
+codespan-reporting = { version = "0.12" }
 core-foundation = { version = "0.9" }
 core-foundation-sys = { version = "0.8" }
 coreaudio-sys = { version = "0.2", default-features = false, features = ["audio_toolbox", "audio_unit", "core_audio", "core_midi", "open_al"] }
@@ -332,8 +359,11 @@ getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-f
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
-naga = { version = "23", features = ["msl-out", "wgsl-in"] }
+naga = { version = "25", features = ["msl-out", "wgsl-in"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal"] }
+objc2 = { version = "0.6" }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSAttributedString", "NSBundle", "NSCoder", "NSData", "NSDate", "NSDictionary", "NSEnumerator", "NSError", "NSGeometry", "NSNotification", "NSNull", "NSObjCRuntime", "NSObject", "NSProcessInfo", "NSRange", "NSRunLoop", "NSString", "NSURL", "NSUndoManager", "NSValue", "objc2-core-foundation", "std"] }
+objc2-metal = { version = "0.3" }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 ring = { version = "0.17", features = ["std"] }
@@ -350,9 +380,10 @@ tower = { version = "0.5", default-features = false, features = ["timeout", "uti
 
 [target.x86_64-unknown-linux-gnu.dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
-ahash = { version = "0.8", default-features = false, features = ["compile-time-rng", "std"] }
+ahash = { version = "0.8", default-features = false, features = ["compile-time-rng"] }
 bytemuck = { version = "1", default-features = false, features = ["min_const_generics"] }
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
+codespan-reporting = { version = "0.12" }
 crypto-common = { version = "0.1", default-features = false, features = ["rand_core", "std"] }
 event-listener-strategy = { version = "0.5" }
 flate2 = { version = "1" }
@@ -367,10 +398,9 @@ itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "xdp"] }
 linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 mio = { version = "1", features = ["net", "os-ext"] }
-naga = { version = "23", features = ["spv-out", "wgsl-in"] }
+naga = { version = "25", features = ["spv-out", "wgsl-in"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
-num-iter = { version = "0.1", default-features = false, features = ["i128", "std"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = { version = "1" }
@@ -393,9 +423,10 @@ zvariant = { version = "5", default-features = false, features = ["enumflags2", 
 
 [target.x86_64-unknown-linux-gnu.build-dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
-ahash = { version = "0.8", default-features = false, features = ["compile-time-rng", "std"] }
+ahash = { version = "0.8", default-features = false, features = ["compile-time-rng"] }
 bytemuck = { version = "1", default-features = false, features = ["min_const_generics"] }
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
+codespan-reporting = { version = "0.12" }
 crypto-common = { version = "0.1", default-features = false, features = ["rand_core", "std"] }
 event-listener-strategy = { version = "0.5" }
 flate2 = { version = "1" }
@@ -410,10 +441,9 @@ itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "xdp"] }
 linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 mio = { version = "1", features = ["net", "os-ext"] }
-naga = { version = "23", features = ["spv-out", "wgsl-in"] }
+naga = { version = "25", features = ["spv-out", "wgsl-in"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
-num-iter = { version = "0.1", default-features = false, features = ["i128", "std"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
@@ -434,9 +464,10 @@ zvariant = { version = "5", default-features = false, features = ["enumflags2", 
 
 [target.aarch64-unknown-linux-gnu.dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
-ahash = { version = "0.8", default-features = false, features = ["compile-time-rng", "std"] }
+ahash = { version = "0.8", default-features = false, features = ["compile-time-rng"] }
 bytemuck = { version = "1", default-features = false, features = ["min_const_generics"] }
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
+codespan-reporting = { version = "0.12" }
 crypto-common = { version = "0.1", default-features = false, features = ["rand_core", "std"] }
 event-listener-strategy = { version = "0.5" }
 flate2 = { version = "1" }
@@ -451,10 +482,9 @@ itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "xdp"] }
 linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 mio = { version = "1", features = ["net", "os-ext"] }
-naga = { version = "23", features = ["spv-out", "wgsl-in"] }
+naga = { version = "25", features = ["spv-out", "wgsl-in"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
-num-iter = { version = "0.1", default-features = false, features = ["i128", "std"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = { version = "1" }
@@ -477,9 +507,10 @@ zvariant = { version = "5", default-features = false, features = ["enumflags2", 
 
 [target.aarch64-unknown-linux-gnu.build-dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
-ahash = { version = "0.8", default-features = false, features = ["compile-time-rng", "std"] }
+ahash = { version = "0.8", default-features = false, features = ["compile-time-rng"] }
 bytemuck = { version = "1", default-features = false, features = ["min_const_generics"] }
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
+codespan-reporting = { version = "0.12" }
 crypto-common = { version = "0.1", default-features = false, features = ["rand_core", "std"] }
 event-listener-strategy = { version = "0.5" }
 flate2 = { version = "1" }
@@ -494,10 +525,9 @@ itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "xdp"] }
 linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 mio = { version = "1", features = ["net", "os-ext"] }
-naga = { version = "23", features = ["spv-out", "wgsl-in"] }
+naga = { version = "25", features = ["spv-out", "wgsl-in"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
-num-iter = { version = "0.1", default-features = false, features = ["i128", "std"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
@@ -517,6 +547,7 @@ zeroize = { version = "1", features = ["zeroize_derive"] }
 zvariant = { version = "5", default-features = false, features = ["enumflags2", "gvariant", "url"] }
 
 [target.x86_64-pc-windows-msvc.dependencies]
+codespan-reporting = { version = "0.12" }
 flate2 = { version = "1" }
 flume = { version = "0.11" }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
@@ -524,7 +555,7 @@ getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-f
 getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["js", "rdrand"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
-naga = { version = "23", features = ["spv-out", "wgsl-in"] }
+naga = { version = "25", features = ["spv-out", "wgsl-in"] }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event"] }
 scopeguard = { version = "1" }
@@ -533,7 +564,7 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["ring"]
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
-winapi = { version = "0.3", default-features = false, features = ["cfg", "consoleapi", "errhandlingapi", "evntrace", "fileapi", "handleapi", "in6addr", "inaddr", "knownfolders", "minwinbase", "ntsecapi", "objbase", "processenv", "processthreadsapi", "shlobj", "std", "sysinfoapi", "winbase", "windef", "winerror", "winioctl"] }
+winapi = { version = "0.3", default-features = false, features = ["cfg", "commapi", "consoleapi", "errhandlingapi", "evntrace", "fileapi", "handleapi", "impl-debug", "impl-default", "in6addr", "inaddr", "ioapiset", "knownfolders", "minwinbase", "minwindef", "namedpipeapi", "ntsecapi", "objbase", "processenv", "processthreadsapi", "shlobj", "std", "synchapi", "sysinfoapi", "timezoneapi", "winbase", "windef", "winerror", "winioctl", "winnt", "winreg", "winsock2", "winuser"] }
 windows-core = { version = "0.61" }
 windows-numerics = { version = "0.2" }
 windows-sys-73dcd821b1037cfd = { package = "windows-sys", version = "0.59", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Globalization", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Security_Authentication_Identity", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Performance", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
@@ -541,6 +572,7 @@ windows-sys-b21d60becc0929df = { package = "windows-sys", version = "0.52", feat
 windows-sys-c8eced492e86ede7 = { package = "windows-sys", version = "0.48", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_Threading", "Win32_System_Time", "Win32_UI_Shell"] }
 
 [target.x86_64-pc-windows-msvc.build-dependencies]
+codespan-reporting = { version = "0.12" }
 flate2 = { version = "1" }
 flume = { version = "0.11" }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
@@ -548,7 +580,7 @@ getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-f
 getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["js", "rdrand"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
-naga = { version = "23", features = ["spv-out", "wgsl-in"] }
+naga = { version = "25", features = ["spv-out", "wgsl-in"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event"] }
@@ -558,7 +590,7 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["ring"]
 tokio-socks = { version = "0.5", features = ["futures-io"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
-winapi = { version = "0.3", default-features = false, features = ["cfg", "consoleapi", "errhandlingapi", "evntrace", "fileapi", "handleapi", "in6addr", "inaddr", "knownfolders", "minwinbase", "ntsecapi", "objbase", "processenv", "processthreadsapi", "shlobj", "std", "sysinfoapi", "winbase", "windef", "winerror", "winioctl"] }
+winapi = { version = "0.3", default-features = false, features = ["cfg", "commapi", "consoleapi", "errhandlingapi", "evntrace", "fileapi", "handleapi", "impl-debug", "impl-default", "in6addr", "inaddr", "ioapiset", "knownfolders", "minwinbase", "minwindef", "namedpipeapi", "ntsecapi", "objbase", "processenv", "processthreadsapi", "shlobj", "std", "synchapi", "sysinfoapi", "timezoneapi", "winbase", "windef", "winerror", "winioctl", "winnt", "winreg", "winsock2", "winuser"] }
 windows-core = { version = "0.61" }
 windows-numerics = { version = "0.2" }
 windows-sys-73dcd821b1037cfd = { package = "windows-sys", version = "0.59", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Globalization", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Security_Authentication_Identity", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Performance", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
@@ -567,9 +599,10 @@ windows-sys-c8eced492e86ede7 = { package = "windows-sys", version = "0.48", feat
 
 [target.x86_64-unknown-linux-musl.dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
-ahash = { version = "0.8", default-features = false, features = ["compile-time-rng", "std"] }
+ahash = { version = "0.8", default-features = false, features = ["compile-time-rng"] }
 bytemuck = { version = "1", default-features = false, features = ["min_const_generics"] }
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
+codespan-reporting = { version = "0.12" }
 crypto-common = { version = "0.1", default-features = false, features = ["rand_core", "std"] }
 event-listener-strategy = { version = "0.5" }
 flate2 = { version = "1" }
@@ -584,10 +617,9 @@ itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "xdp"] }
 linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 mio = { version = "1", features = ["net", "os-ext"] }
-naga = { version = "23", features = ["spv-out", "wgsl-in"] }
+naga = { version = "25", features = ["spv-out", "wgsl-in"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
-num-iter = { version = "0.1", default-features = false, features = ["i128", "std"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = { version = "1" }
@@ -610,9 +642,10 @@ zvariant = { version = "5", default-features = false, features = ["enumflags2", 
 
 [target.x86_64-unknown-linux-musl.build-dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
-ahash = { version = "0.8", default-features = false, features = ["compile-time-rng", "std"] }
+ahash = { version = "0.8", default-features = false, features = ["compile-time-rng"] }
 bytemuck = { version = "1", default-features = false, features = ["min_const_generics"] }
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
+codespan-reporting = { version = "0.12" }
 crypto-common = { version = "0.1", default-features = false, features = ["rand_core", "std"] }
 event-listener-strategy = { version = "0.5" }
 flate2 = { version = "1" }
@@ -627,10 +660,9 @@ itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "xdp"] }
 linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 mio = { version = "1", features = ["net", "os-ext"] }
-naga = { version = "23", features = ["spv-out", "wgsl-in"] }
+naga = { version = "25", features = ["spv-out", "wgsl-in"] }
 nix = { version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
-num-iter = { version = "0.1", default-features = false, features = ["i128", "std"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }

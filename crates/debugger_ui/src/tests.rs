@@ -21,7 +21,11 @@ mod dap_logger;
 #[cfg(test)]
 mod debugger_panel;
 #[cfg(test)]
+mod inline_values;
+#[cfg(test)]
 mod module_list;
+#[cfg(test)]
+mod persistence;
 #[cfg(test)]
 mod stack_frame_list;
 #[cfg(test)]
@@ -43,6 +47,7 @@ pub fn init_test(cx: &mut gpui::TestAppContext) {
         Project::init_settings(cx);
         editor::init(cx);
         crate::init(cx);
+        dap_adapters::init(cx);
     });
 }
 
@@ -118,8 +123,8 @@ pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
         workspace
             .panel::<DebugPanel>(cx)
             .and_then(|panel| panel.read(cx).active_session())
-            .and_then(|session| session.read(cx).mode().as_running().cloned())
-            .map(|running| running.read(cx).session().clone())
+            .map(|session| session.read(cx).running_state().read(cx).session())
+            .cloned()
             .ok_or_else(|| anyhow!("Failed to get active session"))
     })??;
 

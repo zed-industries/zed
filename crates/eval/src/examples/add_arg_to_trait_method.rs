@@ -1,7 +1,7 @@
-use std::{collections::HashSet, path::Path};
+use std::path::Path;
 
 use anyhow::Result;
-use assistant_tools::{CreateFileToolInput, EditFileToolInput, ReadFileToolInput};
+use assistant_settings::AgentProfileId;
 use async_trait::async_trait;
 
 use crate::example::{Example, ExampleContext, ExampleMetadata, JudgeAssertion, LanguageServer};
@@ -20,6 +20,8 @@ impl Example for AddArgToTraitMethod {
                 allow_preexisting_diagnostics: false,
             }),
             max_assertions: None,
+            profile_id: AgentProfileId::default(),
+            existing_thread_json: None,
         }
     }
 
@@ -32,39 +34,7 @@ impl Example for AddArgToTraitMethod {
             "#
         ));
 
-        let response = cx.run_to_end().await?;
-
-        // Reads files before it edits them
-
-        let mut read_files = HashSet::new();
-
-        for tool_use in response.tool_uses() {
-            match tool_use.name.as_str() {
-                "read_file" => {
-                    if let Ok(input) = tool_use.parse_input::<ReadFileToolInput>() {
-                        read_files.insert(input.path);
-                    }
-                }
-                "create_file" => {
-                    if let Ok(input) = tool_use.parse_input::<CreateFileToolInput>() {
-                        read_files.insert(input.path);
-                    }
-                }
-                "edit_file" => {
-                    if let Ok(input) = tool_use.parse_input::<EditFileToolInput>() {
-                        cx.assert(
-                            read_files.contains(input.path.to_str().unwrap()),
-                            format!(
-                                "Read before edit: {}",
-                                &input.path.file_stem().unwrap().to_str().unwrap()
-                            ),
-                        )
-                        .ok();
-                    }
-                }
-                _ => {}
-            }
-        }
+        let _ = cx.run_to_end().await?;
 
         // Adds ignored argument to all but `batch_tool`
 

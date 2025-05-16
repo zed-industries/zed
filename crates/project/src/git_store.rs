@@ -2692,6 +2692,7 @@ impl MergeDetails {
         status: &SumTree<StatusEntry>,
         prev_snapshot: &RepositorySnapshot,
     ) -> Result<(MergeDetails, bool)> {
+        log::debug!("load merge details");
         let message = backend.merge_message().await;
         let heads = backend
             .revparse_batch(vec![
@@ -2709,12 +2710,33 @@ impl MergeDetails {
             .collect::<Vec<_>>();
         let merge_heads_changed = heads != prev_snapshot.merge.heads;
         let conflicted_paths = if merge_heads_changed {
-            TreeSet::from_ordered_entries(
+            let current_conflicted_paths = TreeSet::from_ordered_entries(
                 status
                     .iter()
                     .filter(|entry| entry.status.is_conflicted())
                     .map(|entry| entry.repo_path.clone()),
-            )
+            );
+
+            // It can happen that we run a scan while a lengthy merge is in progress
+            // that will eventually result in conflicts, but before those conflicts
+            // are reported by `git status`. Since for the moment we only care about
+            // the merge heads state for the purposes of tracking conflicts, don't update
+            // this state until we see some conflicts.
+            if heads.iter().any(Option::is_some)
+                && !prev_snapshot.merge.heads.iter().any(Option::is_some)
+                && current_conflicted_paths.is_empty()
+            {
+                log::debug!("not updating merge heads because no conflicts found");
+                return Ok((
+                    MergeDetails {
+                        message: message.map(SharedString::from),
+                        ..prev_snapshot.merge.clone()
+                    },
+                    false,
+                ));
+            }
+
+            current_conflicted_paths
         } else {
             prev_snapshot.merge.conflicted_paths.clone()
         };
@@ -3768,13 +3790,9 @@ impl Repository {
 
     pub fn branches(&mut self) -> oneshot::Receiver<Result<Vec<Branch>>> {
         let id = self.id;
-        self.send_job(None, move |repo, cx| async move {
+        self.send_job(None, move |repo, _| async move {
             match repo {
-                RepositoryState::Local { backend, .. } => {
-                    let backend = backend.clone();
-                    cx.background_spawn(async move { backend.branches().await })
-                        .await
-                }
+                RepositoryState::Local { backend, .. } => backend.branches().await,
                 RepositoryState::Remote { project_id, client } => {
                     let response = client
                         .request(proto::GitGetBranches {
@@ -3998,6 +4016,8 @@ impl Repository {
             Some(GitJobKey::ReloadGitState),
             None,
             |state, mut cx| async move {
+                log::debug!("run scheduled git status scan");
+
                 let Some(this) = this.upgrade() else {
                     return Ok(());
                 };
@@ -4258,9 +4278,9 @@ impl Repository {
                             }));
                         }
                         let mut cursor = prev_statuses.cursor::<PathProgress>(&());
-                        for path in changed_paths.iter() {
+                        for path in changed_paths.into_iter() {
                             if cursor.seek_forward(&PathTarget::Path(&path), Bias::Left, &()) {
-                                changed_path_statuses.push(Edit::Remove(PathKey(path.0.clone())));
+                                changed_path_statuses.push(Edit::Remove(PathKey(path.0)));
                             }
                         }
                         changed_path_statuses
@@ -4436,7 +4456,7 @@ fn deserialize_blame_buffer_response(
 fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
     proto::Branch {
         is_head: branch.is_head,
-        name: branch.name.to_string(),
+        ref_name: branch.ref_name.to_string(),
         unix_timestamp: branch
             .most_recent_commit
             .as_ref()
@@ -4465,7 +4485,7 @@ fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
 fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
     git::repository::Branch {
         is_head: proto.is_head,
-        name: proto.name.clone().into(),
+        ref_name: proto.ref_name.clone().into(),
         upstream: proto
             .upstream
             .as_ref()
@@ -4535,6 +4555,7 @@ async fn compute_snapshot(
     );
     let (merge_details, merge_heads_changed) =
         MergeDetails::load(&backend, &statuses_by_path, &prev_snapshot).await?;
+    log::debug!("new merge details (changed={merge_heads_changed:?}): {merge_details:?}");
 
     if merge_heads_changed
         || branch != prev_snapshot.branch

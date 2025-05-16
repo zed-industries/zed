@@ -307,11 +307,13 @@ impl TestServer {
             );
             language_model::LanguageModelRegistry::test(cx);
             assistant_context_editor::init(client.clone(), cx);
+            assistant_settings::init(cx);
         });
 
         client
             .authenticate_and_connect(false, &cx.to_async())
             .await
+            .into_response()
             .unwrap();
 
         let client = TestClient {
@@ -554,9 +556,6 @@ impl TestServer {
                 migrations_path: None,
                 seed_path: None,
                 stripe_api_key: None,
-                stripe_zed_pro_price_id: None,
-                stripe_zed_pro_trial_price_id: None,
-                stripe_zed_free_price_id: None,
                 supermaven_admin_api_key: None,
                 user_backfiller_github_access_token: None,
                 kinesis_region: None,
@@ -712,6 +711,7 @@ impl TestClient {
         worktree
             .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
+        cx.run_until_parked();
         (project, worktree.read_with(cx, |tree, _| tree.id()))
     }
 

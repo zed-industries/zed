@@ -2,6 +2,7 @@ mod application_menu;
 mod collab;
 mod onboarding_banner;
 mod platforms;
+mod title_bar_settings;
 mod window_controls;
 
 #[cfg(feature = "stories")]
@@ -18,7 +19,6 @@ use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore};
-use feature_flags::{FeatureFlagAppExt, NewBillingFeatureFlag};
 use gpui::{
     Action, AnyElement, App, Context, Corner, Decorations, Element, Entity, InteractiveElement,
     Interactivity, IntoElement, MouseButton, ParentElement, Render, Stateful,
@@ -31,6 +31,7 @@ use settings::Settings as _;
 use smallvec::SmallVec;
 use std::sync::Arc;
 use theme::ActiveTheme;
+use title_bar_settings::TitleBarSettings;
 use ui::{
     Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon, IconName, IconSize,
     IconWithIndicator, Indicator, PopoverMenu, Tooltip, h_flex, prelude::*,
@@ -53,6 +54,8 @@ const BOOK_ONBOARDING: &str = "https://dub.sh/zed-c-onboarding";
 actions!(collab, [ToggleUserMenu, ToggleProjectMenu, SwitchBranch]);
 
 pub fn init(cx: &mut App) {
+    TitleBarSettings::register(cx);
+
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
             return;
@@ -125,6 +128,7 @@ pub struct TitleBar {
 
 impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let title_bar_settings = *TitleBarSettings::get_global(cx);
         let close_action = Box::new(workspace::CloseWindow);
         let height = Self::height(window);
         let supported_controls = window.window_controls();
@@ -188,23 +192,38 @@ impl Render for TitleBar {
                         h_flex()
                             .gap_1()
                             .map(|title_bar| {
-                                let mut render_project_items = true;
+                                let mut render_project_items = title_bar_settings.show_branch_name
+                                    || title_bar_settings.show_project_items;
                                 title_bar
                                     .when_some(self.application_menu.clone(), |title_bar, menu| {
-                                        render_project_items = !menu.read(cx).all_menus_shown();
+                                        render_project_items &= !menu.read(cx).all_menus_shown();
                                         title_bar.child(menu)
                                     })
                                     .when(render_project_items, |title_bar| {
                                         title_bar
-                                            .children(self.render_project_host(cx))
-                                            .child(self.render_project_name(cx))
-                                            .children(self.render_project_branch(cx))
+                                            .when(
+                                                title_bar_settings.show_project_items,
+                                                |title_bar| {
+                                                    title_bar
+                                                        .children(self.render_project_host(cx))
+                                                        .child(self.render_project_name(cx))
+                                                },
+                                            )
+                                            .when(
+                                                title_bar_settings.show_branch_name,
+                                                |title_bar| {
+                                                    title_bar
+                                                        .children(self.render_project_branch(cx))
+                                                },
+                                            )
                                     })
                             })
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()),
                     )
                     .child(self.render_collaborator_list(window, cx))
-                    .child(self.banner.clone())
+                    .when(title_bar_settings.show_onboarding_banner, |title_bar| {
+                        title_bar.child(self.banner.clone())
+                    })
                     .child(
                         h_flex()
                             .gap_1()
@@ -218,7 +237,9 @@ impl Render for TitleBar {
                                     el.child(self.render_user_menu_button(cx))
                                 } else {
                                     el.children(self.render_connection_status(status, cx))
-                                        .child(self.render_sign_in_button(cx))
+                                        .when(TitleBarSettings::get_global(cx).show_sign_in, |el| {
+                                            el.child(self.render_sign_in_button(cx))
+                                        })
                                         .child(self.render_user_menu_button(cx))
                                 }
                             }),
@@ -309,11 +330,11 @@ impl TitleBar {
 
         let banner = cx.new(|cx| {
             OnboardingBanner::new(
-                "Git Onboarding",
-                IconName::GitBranchSmall,
-                "Git Support",
+                "Agentic Onboarding",
+                IconName::ZedAssistant,
+                "Agentic Editing",
                 None,
-                zed_actions::OpenGitIntegrationOnboarding.boxed_clone(),
+                zed_actions::agent::OpenOnboardingModal.boxed_clone(),
                 cx,
             )
         });
@@ -454,7 +475,7 @@ impl TitleBar {
                 .label_size(LabelSize::Small)
                 .tooltip(Tooltip::text(format!(
                     "{} is sharing this project. Click to follow.",
-                    host_user.github_login.clone()
+                    host_user.github_login
                 )))
                 .on_click({
                     let host_peer_id = host.peer_id;
@@ -518,7 +539,7 @@ impl TitleBar {
             let repo = repository.read(cx);
             repo.branch
                 .as_ref()
-                .map(|branch| branch.name.clone())
+                .map(|branch| branch.name())
                 .map(|name| util::truncate_and_trailoff(&name, MAX_BRANCH_NAME_LENGTH))
                 .or_else(|| {
                     repo.head_commit.as_ref().map(|commit| {
@@ -549,7 +570,16 @@ impl TitleBar {
                     let _ = workspace.update(cx, |_this, cx| {
                         window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
                     });
-                }),
+                })
+                .when(
+                    TitleBarSettings::get_global(cx).show_branch_icon,
+                    |branch_button| {
+                        branch_button
+                            .icon(IconName::GitBranch)
+                            .icon_position(IconPosition::Start)
+                            .icon_color(Color::Muted)
+                    },
+                ),
         )
     }
 
@@ -649,6 +679,7 @@ impl TitleBar {
                         client
                             .authenticate_and_connect(true, &cx)
                             .await
+                            .into_response()
                             .notify_async_err(cx);
                     })
                     .detach();
@@ -658,26 +689,28 @@ impl TitleBar {
     pub fn render_user_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
         let user_store = self.user_store.read(cx);
         if let Some(user) = user_store.current_user() {
-            let plan = user_store.current_plan();
+            let has_subscription_period = self.user_store.read(cx).subscription_period().is_some();
+            let plan = self.user_store.read(cx).current_plan().filter(|_| {
+                // Since the user might be on the legacy free plan we filter based on whether we have a subscription period.
+                has_subscription_period
+            });
             PopoverMenu::new("user-menu")
                 .anchor(Corner::TopRight)
                 .menu(move |window, cx| {
-                    ContextMenu::build(window, cx, |menu, _, cx| {
-                        menu.when(cx.has_flag::<NewBillingFeatureFlag>(), |menu| {
-                            menu.action(
-                                format!(
-                                    "Current Plan: {}",
-                                    match plan {
-                                        None => "",
-                                        Some(proto::Plan::Free) => "Free",
-                                        Some(proto::Plan::ZedPro) => "Pro",
-                                        Some(proto::Plan::ZedProTrial) => "Pro (Trial)",
-                                    }
-                                ),
-                                zed_actions::OpenAccountSettings.boxed_clone(),
-                            )
-                            .separator()
-                        })
+                    ContextMenu::build(window, cx, |menu, _, _cx| {
+                        menu.link(
+                            format!(
+                                "Current Plan: {}",
+                                match plan {
+                                    None => "None",
+                                    Some(proto::Plan::Free) => "Zed Free",
+                                    Some(proto::Plan::ZedPro) => "Zed Pro",
+                                    Some(proto::Plan::ZedProTrial) => "Zed Pro (Trial)",
+                                }
+                            ),
+                            zed_actions::OpenAccountSettings.boxed_clone(),
+                        )
+                        .separator()
                         .action("Settings", zed_actions::OpenSettings.boxed_clone())
                         .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
                         .action(
@@ -710,7 +743,7 @@ impl TitleBar {
                             h_flex()
                                 .gap_0p5()
                                 .children(
-                                    workspace::WorkspaceSettings::get_global(cx)
+                                    TitleBarSettings::get_global(cx)
                                         .show_user_picture
                                         .then(|| Avatar::new(user.avatar_uri.clone())),
                                 )

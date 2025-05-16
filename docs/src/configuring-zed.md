@@ -831,6 +831,185 @@ List of `string` values
 
 `boolean` values
 
+## Minimap
+
+- Description: Settings related to the editor's minimap, which provides an overview of your document.
+- Setting: `minimap`
+- Default:
+
+```json
+{
+  "minimap": {
+    "show": "never",
+    "thumb": "always",
+    "thumb_border": "left_open",
+    "current_line_highlight": null
+  }
+}
+```
+
+### Show Mode
+
+- Description: When to show the minimap in the editor.
+- Setting: `show`
+- Default: `never`
+
+**Options**
+
+1. Always show the minimap:
+
+```json
+{
+  "show": "always"
+}
+```
+
+2. Show the minimap if the editor's scrollbars are visible:
+
+```json
+{
+  "show": "auto"
+}
+```
+
+3. Never show the minimap:
+
+```json
+{
+  "show": "never"
+}
+```
+
+### Thumb Display
+
+- Description: When to show the minimap thumb (the visible editor area) in the minimap.
+- Setting: `thumb`
+- Default: `always`
+
+**Options**
+
+1. Show the minimap thumb when hovering over the minimap:
+
+```json
+{
+  "thumb": "hover"
+}
+```
+
+2. Always show the minimap thumb:
+
+```json
+{
+  "thumb": "always"
+}
+```
+
+### Thumb Border
+
+- Description: How the minimap thumb border should look.
+- Setting: `thumb_border`
+- Default: `left_open`
+
+**Options**
+
+1. Display a border on all sides of the thumb:
+
+```json
+{
+  "thumb_border": "full"
+}
+```
+
+2. Display a border on all sides except the left side:
+
+```json
+{
+  "thumb_border": "left_open"
+}
+```
+
+3. Display a border on all sides except the right side:
+
+```json
+{
+  "thumb_border": "right_open"
+}
+```
+
+4. Display a border only on the left side:
+
+```json
+{
+  "thumb_border": "left_only"
+}
+```
+
+5. Display the thumb without any border:
+
+```json
+{
+  "thumb_border": "none"
+}
+```
+
+### Current Line Highlight
+
+- Description: How to highlight the current line in the minimap.
+- Setting: `current_line_highlight`
+- Default: `null`
+
+**Options**
+
+1. Inherit the editor's current line highlight setting:
+
+```json
+{
+  "minimap": {
+    "current_line_highlight": null
+  }
+}
+```
+
+2. Highlight the current line in the minimap:
+
+```json
+{
+  "minimap": {
+    "current_line_highlight": "line"
+  }
+}
+```
+
+or
+
+```json
+{
+  "minimap": {
+    "current_line_highlight": "all"
+  }
+}
+```
+
+3. Do not highlight the current line in the minimap:
+
+```json
+{
+  "minimap": {
+    "current_line_highlight": "gutter"
+  }
+}
+```
+
+or
+
+```json
+{
+  "minimap": {
+    "current_line_highlight": "none"
+  }
+}
+```
+
 ## Editor Tab Bar
 
 - Description: Settings related to the editor's tab bar.
@@ -1034,7 +1213,8 @@ List of `string` values
 "toolbar": {
   "breadcrumbs": true,
   "quick_actions": true,
-  "selections_menu": true
+  "selections_menu": true,
+  "agent_review": true
 },
 ```
 
@@ -1740,6 +1920,16 @@ Example:
 
 `boolean` values
 
+## Hover Popover Delay
+
+- Description: Time to wait in milliseconds before showing the informational hover box.
+- Setting: `hover_popover_delay`
+- Default: `300`
+
+**Options**
+
+`integer` values representing milliseconds
+
 ## Icon Theme
 
 - Description: The icon theme setting can be specified in two forms - either as the name of an icon theme or as an object containing the `mode`, `dark`, and `light` icon themes for files/folders inside Zed.
@@ -2037,11 +2227,23 @@ Or to set a `socks5` proxy:
 
 ## File Finder
 
+### File Icons
+
+- Description: Whether to show file icons in the file finder.
+- Setting: `file_icons`
+- Default: `true`
+
 ### Modal Max Width
 
 - Description: Max-width of the file finder modal. It can take one of these values: `small`, `medium`, `large`, `xlarge`, and `full`.
 - Setting: `modal_max_width`
 - Default: `small`
+
+### Skip Focus For Active In Search
+
+- Description: Determines whether the file finder should skip focus for the active file in search results.
+- Setting: `skip_focus_for_active_in_search`
+- Default: `true`
 
 ## Preferred Line Length
 
@@ -3057,14 +3259,14 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 }
 ```
 
-## Assistant Panel
+## Agent
 
-- Description: Customize assistant panel
-- Setting: `assistant`
+- Description: Customize agent behavior
+- Setting: `agent`
 - Default:
 
 ```json
-"assistant": {
+"agent": {
   "version": "2",
   "enabled": true,
   "button": true,
@@ -3078,7 +3280,8 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "editor_model": {
     "provider": "zed.dev",
     "model": "claude-3-7-sonnet-latest"
-  }
+  },
+  "single_file_review": true,
 }
 ```
 

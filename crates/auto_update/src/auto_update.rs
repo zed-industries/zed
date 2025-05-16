@@ -335,9 +335,13 @@ impl AutoUpdater {
         self.status.clone()
     }
 
-    pub fn dismiss_error(&mut self, cx: &mut Context<Self>) {
+    pub fn dismiss_error(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.status == AutoUpdateStatus::Idle {
+            return false;
+        }
         self.status = AutoUpdateStatus::Idle;
         cx.notify();
+        true
     }
 
     // If you are packaging Zed and need to override the place it downloads SSH remotes from,

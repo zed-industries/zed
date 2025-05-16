@@ -1,13 +1,14 @@
 use crate::*;
-use dap::{
-    DebugRequest, StartDebuggingRequestArguments, adapters::DebugTaskDefinition,
-    adapters::InlineValueProvider,
-};
-use gpui::AsyncApp;
-use std::{collections::HashMap, ffi::OsStr, path::PathBuf};
+use dap::{DebugRequest, StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
+use gpui::{AsyncApp, SharedString};
+use language::LanguageName;
+use std::{collections::HashMap, ffi::OsStr, path::PathBuf, sync::OnceLock};
+use util::ResultExt;
 
 #[derive(Default)]
-pub(crate) struct PythonDebugAdapter;
+pub(crate) struct PythonDebugAdapter {
+    checked: OnceLock<()>,
+}
 
 impl PythonDebugAdapter {
     const ADAPTER_NAME: &'static str = "Debugpy";
@@ -32,6 +33,9 @@ impl PythonDebugAdapter {
             DebugRequest::Launch(launch) => {
                 map.insert("program".into(), launch.program.clone().into());
                 map.insert("args".into(), launch.args.clone().into());
+                if !launch.env.is_empty() {
+                    map.insert("env".into(), launch.env_json());
+                }
 
                 if let Some(stop_on_entry) = config.stop_on_entry {
                     map.insert("stopOnEntry".into(), stop_on_entry.into());
@@ -46,14 +50,6 @@ impl PythonDebugAdapter {
             request: config.request.to_dap(),
         }
     }
-}
-
-#[async_trait(?Send)]
-impl DebugAdapter for PythonDebugAdapter {
-    fn name(&self) -> DebugAdapterName {
-        DebugAdapterName(Self::ADAPTER_NAME.into())
-    }
-
     async fn fetch_latest_adapter_version(
         &self,
         delegate: &dyn DapDelegate,
@@ -162,34 +158,33 @@ impl DebugAdapter for PythonDebugAdapter {
             request_args: self.request_args(config),
         })
     }
-
-    fn inline_value_provider(&self) -> Option<Box<dyn InlineValueProvider>> {
-        Some(Box::new(PythonInlineValueProvider))
-    }
 }
 
-struct PythonInlineValueProvider;
+#[async_trait(?Send)]
+impl DebugAdapter for PythonDebugAdapter {
+    fn name(&self) -> DebugAdapterName {
+        DebugAdapterName(Self::ADAPTER_NAME.into())
+    }
 
-impl InlineValueProvider for PythonInlineValueProvider {
-    fn provide(&self, variables: Vec<(String, lsp_types::Range)>) -> Vec<lsp_types::InlineValue> {
-        variables
-            .into_iter()
-            .map(|(variable, range)| {
-                if variable.contains(".") || variable.contains("[") {
-                    lsp_types::InlineValue::EvaluatableExpression(
-                        lsp_types::InlineValueEvaluatableExpression {
-                            range,
-                            expression: Some(variable),
-                        },
-                    )
-                } else {
-                    lsp_types::InlineValue::VariableLookup(lsp_types::InlineValueVariableLookup {
-                        range,
-                        variable_name: Some(variable),
-                        case_sensitive_lookup: true,
-                    })
-                }
-            })
-            .collect()
+    fn adapter_language_name(&self) -> Option<LanguageName> {
+        Some(SharedString::new_static("Python").into())
+    }
+
+    async fn get_binary(
+        &self,
+        delegate: &dyn DapDelegate,
+        config: &DebugTaskDefinition,
+        user_installed_path: Option<PathBuf>,
+        cx: &mut AsyncApp,
+    ) -> Result<DebugAdapterBinary> {
+        if self.checked.set(()).is_ok() {
+            delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
+            if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
+                self.install_binary(version, delegate).await?;
+            }
+        }
+
+        self.get_installed_binary(delegate, &config, user_installed_path, cx)
+            .await
     }
 }

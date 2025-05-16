@@ -26,8 +26,8 @@ use std::{
 };
 use supermaven::{AccountStatus, Supermaven};
 use ui::{
-    Clickable, ContextMenu, ContextMenuEntry, IconButton, IconButtonShape, Indicator, PopoverMenu,
-    PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
+    Clickable, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconButtonShape,
+    Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
 };
 use workspace::{
     StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
@@ -104,14 +104,8 @@ impl Render for InlineCompletionButton {
                                             )
                                             .on_click(
                                                 "Reinstall Copilot",
-                                                |_, cx| {
-                                                    if let Some(copilot) = Copilot::global(cx) {
-                                                        copilot
-                                                            .update(cx, |copilot, cx| {
-                                                                copilot.reinstall(cx)
-                                                            })
-                                                            .detach();
-                                                    }
+                                                |window, cx| {
+                                                    copilot::reinstall_and_sign_in(window, cx)
                                                 },
                                             ),
                                             cx,
@@ -241,11 +235,17 @@ impl Render for InlineCompletionButton {
 
                 let current_user_terms_accepted =
                     self.user_store.read(cx).current_user_has_accepted_terms();
+                let has_subscription = self.user_store.read(cx).current_plan().is_some()
+                    && self.user_store.read(cx).subscription_period().is_some();
 
-                if !current_user_terms_accepted.unwrap_or(false) {
+                if !has_subscription || !current_user_terms_accepted.unwrap_or(false) {
                     let signed_in = current_user_terms_accepted.is_some();
                     let tooltip_meta = if signed_in {
-                        "Read Terms of Service"
+                        if has_subscription {
+                            "Read Terms of Service"
+                        } else {
+                            "Choose a Plan"
+                        }
                     } else {
                         "Sign in to use"
                     };
@@ -403,10 +403,14 @@ impl InlineCompletionButton {
         let fs = self.fs.clone();
         let line_height = window.line_height();
 
-        if let Some(provider) = self.edit_prediction_provider.as_ref() {
-            if let Some(usage) = provider.usage(cx) {
-                menu = menu.header("Usage");
-                menu = menu.custom_entry(
+        if let Some(usage) = self
+            .edit_prediction_provider
+            .as_ref()
+            .and_then(|provider| provider.usage(cx))
+        {
+            menu = menu.header("Usage");
+            menu = menu
+                .custom_entry(
                     move |_window, cx| {
                         let used_percentage = match usage.limit {
                             UsageLimit::Limited(limit) => {
@@ -435,8 +439,8 @@ impl InlineCompletionButton {
                             .into_any_element()
                     },
                     move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
-                );
-            }
+                )
+                .separator();
         }
 
         menu = menu.header("Show Edit Predictions For");
@@ -462,7 +466,7 @@ impl InlineCompletionButton {
                     menu = menu.item(
                         entry
                             .disabled(true)
-                            .documentation_aside(move |_cx| {
+                            .documentation_aside(DocumentationSide::Left, move |_cx| {
                                 Label::new(format!("Edit predictions cannot be toggled for this buffer because they are disabled for {}", language.name()))
                                     .into_any_element()
                             })
@@ -506,7 +510,7 @@ impl InlineCompletionButton {
                 .item(
                     ContextMenuEntry::new("Eager")
                         .toggleable(IconPosition::Start, eager_mode)
-                        .documentation_aside(move |_| {
+                        .documentation_aside(DocumentationSide::Left, move |_| {
                             Label::new("Display predictions inline when there are no language server completions available.").into_any_element()
                         })
                         .handler({
@@ -519,7 +523,7 @@ impl InlineCompletionButton {
                 .item(
                     ContextMenuEntry::new("Subtle")
                         .toggleable(IconPosition::Start, subtle_mode)
-                        .documentation_aside(move |_| {
+                        .documentation_aside(DocumentationSide::Left, move |_| {
                             Label::new("Display predictions inline only when holding a modifier key (alt by default).").into_any_element()
                         })
                         .handler({
@@ -550,7 +554,7 @@ impl InlineCompletionButton {
                         .toggleable(IconPosition::Start, data_collection.is_enabled())
                         .icon(icon_name)
                         .icon_color(icon_color)
-                        .documentation_aside(move |cx| {
+                        .documentation_aside(DocumentationSide::Left, move |cx| {
                             let (msg, label_color, icon_name, icon_color) = match (is_open_source, is_collecting) {
                                 (true, true) => (
                                     "Project identified as open source, and you're sharing data.",
@@ -631,7 +635,7 @@ impl InlineCompletionButton {
             ContextMenuEntry::new("Configure Excluded Files")
                 .icon(IconName::LockOutlined)
                 .icon_color(Color::Muted)
-                .documentation_aside(|_| {
+                .documentation_aside(DocumentationSide::Left, |_| {
                     Label::new(indoc!{"
                         Open your settings to add sensitive paths for which Zed will never predict edits."}).into_any_element()
                 })
@@ -831,7 +835,7 @@ async fn open_disabled_globs_setting_in_editor(
             });
 
             if !edits.is_empty() {
-                item.edit(edits.iter().cloned(), cx);
+                item.edit(edits, cx);
             }
 
             let text = item.buffer().read(cx).snapshot(cx).text();

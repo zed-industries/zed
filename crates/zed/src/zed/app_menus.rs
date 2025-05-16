@@ -44,6 +44,7 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("Hide Others", super::HideOthers),
                 #[cfg(target_os = "macos")]
                 MenuItem::action("Show All", super::ShowAll),
+                MenuItem::separator(),
                 MenuItem::action("Quit", Quit),
             ],
         },
@@ -95,7 +96,7 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::os_action("Cut", editor::actions::Cut, OsAction::Cut),
                 MenuItem::os_action("Copy", editor::actions::Copy, OsAction::Copy),
-                MenuItem::action("Copy and trim", editor::actions::CopyAndTrim),
+                MenuItem::action("Copy and Trim", editor::actions::CopyAndTrim),
                 MenuItem::os_action("Paste", editor::actions::Paste, OsAction::Paste),
                 MenuItem::separator(),
                 MenuItem::action("Find", search::buffer_search::Deploy::find()),
