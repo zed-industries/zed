@@ -18,7 +18,7 @@ jobs:
           # envs: "MYTOKEN MYTOKEN2"
           usesh: true
           release: 13.5
-          copyback: false
+          copyback: true
           prepare: |
             pkg install -y \
               bash curl jq git \
@@ -33,9 +33,25 @@ jobs:
             rustup-init --profile minimal --default-toolchain none -y
             . "$HOME/.cargo/env"
             ./script/bundle-freebsd
-            # cargo build -p remote_server
-            # target/debug/remote_server --help
-            # target/debug/remote_server version
-            # mkdir -p out/
-            # cp target/debug/remote_server out/
-            # cargo clean
+            mkdir -p out/
+            mv "target/zed-remote-server-freebsd-x86_64.gz" out/
+            rm -rf target/
+            cargo clean
+
+      - name: Upload Artifact to Workflow - zed-remote-server (run-bundling)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: contains(github.event.pull_request.labels.*.name, 'run-bundling')
+        with:
+          name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-freebsd.gz
+          path: out/zed-remote-server-freebsd-x86_64.gz
+
+      - name: Upload Artifacts to release
+        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
+        if: ${{ !(contains(github.event.pull_request.labels.*.name, 'run-bundling')) }}
+        with:
+          draft: true
+          prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
+          files: |
+            out/zed-remote-server-freebsd-x86_64.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
