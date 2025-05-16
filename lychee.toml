@@ -10,7 +10,10 @@ exclude = [
     # staging server
     'https://staging-collab.zed.dev/',
 
-    # the flollowing links are rate limited or use bot detection and respond with 403 instead of 429
+    # slow and unreliable server
+    'https://repology.org',
+
+    # the flollowing websites are rate limited or use bot detection and aren't nice enough to respond with 429
     'https://openai.com',
     'https://claude.ai/download',
     'https://www.perplexity.ai',
@@ -19,4 +22,5 @@ exclude = [
     'https://platform.openai.com',
     'https://linux.die.net/man/1/sed',
     'https://allaboutcookies.org',
+    'https://www.gnu.org'
 ]
