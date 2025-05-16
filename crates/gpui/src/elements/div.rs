@@ -1449,6 +1449,10 @@ impl Interactivity {
         window.with_debug_state(
             debug_id,
             |debug_state: &mut Option<DivInspectorState>, window| {
+                debug_state.get_or_insert_with(|| DivInspectorState {
+                    background: crate::rgb(0xff00ff),
+                });
+
                 window.with_optional_element_state::<InteractiveElementState, _>(
                     global_id,
                     |element_state, window| {

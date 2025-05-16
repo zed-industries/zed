@@ -97,21 +97,16 @@ actions!(
     ]
 );
 
-pub fn init(cx: &mut App) {
-    #[cfg(target_os = "macos")]
-    cx.on_action(|_: &Hide, cx| cx.hide());
-    #[cfg(target_os = "macos")]
-    cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
-    #[cfg(target_os = "macos")]
-    cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
-    cx.on_action(quit);
+struct Inspector {
+    debug_id: gpui::DebugElementId,
+}
 
-    cx.on_action(|_: &RestoreBanner, cx| title_bar::restore_banner(cx));
-
-    cx.register_inspectable(|debug_id, state: &gpui::DivInspectorState, window, cx| {
+impl Render for Inspector {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
+            .occlude()
             .child(Button::new("red", "Red").on_click({
-                let debug_id = debug_id.clone();
+                let debug_id = self.debug_id.clone();
                 move |_event, window, _cx| {
                     window.with_debug_state::<gpui::DivInspectorState, _>(
                         Some(&debug_id),
@@ -124,7 +119,7 @@ pub fn init(cx: &mut App) {
                 }
             }))
             .child(Button::new("green", "Green").on_click({
-                let debug_id = debug_id.clone();
+                let debug_id = self.debug_id.clone();
                 move |_event, window, _cx| {
                     window.with_debug_state::<gpui::DivInspectorState, _>(
                         Some(&debug_id),
@@ -137,7 +132,7 @@ pub fn init(cx: &mut App) {
                 }
             }))
             .child(Button::new("blue", "Blue").on_click({
-                let debug_id = debug_id.clone();
+                let debug_id = self.debug_id.clone();
                 move |_event, window, _cx| {
                     window.with_debug_state::<gpui::DivInspectorState, _>(
                         Some(&debug_id),
@@ -149,8 +144,24 @@ pub fn init(cx: &mut App) {
                     );
                 }
             }))
-            .into_any_element()
-        //
+    }
+}
+
+pub fn init(cx: &mut App) {
+    #[cfg(target_os = "macos")]
+    cx.on_action(|_: &Hide, cx| cx.hide());
+    #[cfg(target_os = "macos")]
+    cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
+    #[cfg(target_os = "macos")]
+    cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
+    cx.on_action(quit);
+
+    cx.on_action(|_: &RestoreBanner, cx| title_bar::restore_banner(cx));
+
+    cx.register_inspectable(|debug_id, state: &gpui::DivInspectorState, window, cx| {
+        let view = cx.new(|cx| Inspector { debug_id });
+
+        view.into_any_element()
     });
 
     if ReleaseChannel::global(cx) == ReleaseChannel::Dev {
