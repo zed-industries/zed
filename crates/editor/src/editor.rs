@@ -107,9 +107,9 @@ pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 use language::{
     AutoindentMode, BracketMatch, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CursorShape, DiagnosticEntry, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText,
-    IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject,
-    TransactionId, TreeSitterOptions, WordsQuery,
+    CursorShape, DiagnosticEntry, DiffOptions, DocumentationConfig, EditPredictionsMode,
+    EditPreview, HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point,
+    Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
         self, InlayHintSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
         all_language_settings, language_settings,
@@ -3986,11 +3986,12 @@ impl Editor {
                                         return None;
                                     }
 
-                                    let block = language.documentation_block();
-                                    let block_start = block.first()?;
-                                    let block_end = block.last()?;
-
-                                    let delimiter = language.documentation_comment_prefix()?;
+                                    let DocumentationConfig {
+                                        start: block_start,
+                                        end: block_end,
+                                        prefix: delimiter,
+                                        tab_size: indent_size,
+                                    } = language.documentation()?;
 
                                     let (snapshot, range) = buffer
                                         .buffer_line_for_row(MultiBufferRow(start_point.row))?;
@@ -4010,14 +4011,14 @@ impl Editor {
                                             num_of_whitespaces + block_start_len
                                                 <= start_point.column as usize
                                         } else {
-                                            let delimiter_trimmed = delimiter.trim();
+                                            let delimiter_trim = delimiter.trim_end();
                                             let start_line = snapshot
                                                 .chars_for_range(range.clone())
                                                 .skip(num_of_whitespaces)
-                                                .take(delimiter_trimmed.len())
+                                                .take(delimiter_trim.len())
                                                 .collect::<String>();
-                                            if start_line.starts_with(delimiter_trimmed) {
-                                                num_of_whitespaces + delimiter_trimmed.len()
+                                            if start_line.starts_with(delimiter_trim) {
+                                                num_of_whitespaces + delimiter_trim.len()
                                                     <= start_point.column as usize
                                             } else {
                                                 false
