@@ -701,6 +701,7 @@ impl RunningState {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<DebugTaskDefinition>> {
+        dbg!(&scenario);
         let Some(workspace) = self.workspace.upgrade() else {
             return Task::ready(Err(anyhow!("no workspace")));
         };

@@ -8,7 +8,7 @@ use dap::{
 };
 use futures::StreamExt;
 use gpui::AsyncApp;
-use task::{DebugRequest, DebugScenario, ZedDebugScenario};
+use task::{DebugRequest, DebugScenario, ZedDebugConfig};
 use util::fs::remove_matching;
 
 use crate::*;
@@ -97,7 +97,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugScenario) -> DebugScenario {
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> DebugScenario {
         let mut configuration = json!({
             "request": match zed_scenario.request {
                 DebugRequest::Launch(_) => "launch",

@@ -138,7 +138,7 @@ impl DebugAdapter for JsDebugAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugScenario) -> DebugScenario {
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> DebugScenario {
         todo!()
     }
 

@@ -24,7 +24,7 @@ use std::{
 };
 use task::{
     AttachRequest, DebugRequest, DebugScenario, LaunchRequest, Request, TcpArgumentsTemplate,
-    ZedDebugScenario,
+    ZedDebugConfig,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -420,7 +420,7 @@ pub async fn fetch_latest_adapter_version_from_github(
 pub trait DebugAdapter: 'static + Send + Sync {
     fn name(&self) -> DebugAdapterName;
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugScenario) -> DebugScenario;
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> DebugScenario;
 
     async fn get_binary(
         &self,

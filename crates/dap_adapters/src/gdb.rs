@@ -4,7 +4,7 @@ use anyhow::{Result, bail};
 use async_trait::async_trait;
 use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
-use task::{DebugRequest, DebugScenario, ZedDebugScenario};
+use task::{DebugRequest, DebugScenario, ZedDebugConfig};
 
 use crate::*;
 
@@ -64,7 +64,7 @@ impl DebugAdapter for GdbDebugAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugScenario) -> DebugScenario {
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> DebugScenario {
         todo!()
     }
 

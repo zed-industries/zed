@@ -49,7 +49,7 @@ impl DebugAdapter for GoDebugAdapter {
         Some(SharedString::new_static("Go").into())
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugScenario) -> DebugScenario {
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> DebugScenario {
         todo!()
     }
 

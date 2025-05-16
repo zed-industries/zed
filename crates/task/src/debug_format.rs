@@ -211,7 +211,7 @@ pub enum Request {
 /// This struct represent a user created debug task from the new session modal
 #[derive(Deserialize, Serialize, PartialEq, Eq, Clone, Debug, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub struct ZedDebugScenario {
+pub struct ZedDebugConfig {
     /// Name of the debug task
     pub label: SharedString,
     /// The debug adapter to use

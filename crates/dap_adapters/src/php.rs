@@ -125,7 +125,7 @@ impl DebugAdapter for PhpDebugAdapter {
         Some(SharedString::new_static("PHP").into())
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugScenario) -> DebugScenario {
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> DebugScenario {
         todo!()
     }
 

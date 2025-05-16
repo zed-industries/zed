@@ -23,7 +23,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
 use project::{ProjectPath, TaskContexts, TaskSourceKind, task_store::TaskStore};
 use settings::Settings;
-use task::{DebugScenario, LaunchRequest, ZedDebugScenario};
+use task::{DebugScenario, LaunchRequest, ZedDebugConfig};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
@@ -211,7 +211,7 @@ impl NewSessionModal {
             None
         };
 
-        let session_scenario = ZedDebugScenario {
+        let session_scenario = ZedDebugConfig {
             adapter: debugger.to_owned().into(),
             label,
             request: request,
@@ -266,12 +266,12 @@ impl NewSessionModal {
         cx: &mut App,
     ) {
         attach.update(cx, |this, cx| {
-            if adapter != &this.definition.adapter {
-                this.definition.adapter = adapter.clone();
+            if adapter.0 != this.definition.adapter {
+                this.definition.adapter = adapter.0.clone();
 
                 this.attach_picker.update(cx, |this, cx| {
                     this.picker.update(cx, |this, cx| {
-                        this.delegate.definition.adapter = adapter.clone();
+                        this.delegate.definition.adapter = adapter.0.clone();
                         this.focus(window, cx);
                     })
                 });
@@ -864,7 +864,7 @@ impl CustomMode {
 
 #[derive(Clone)]
 pub(super) struct AttachMode {
-    pub(super) definition: DebugTaskDefinition,
+    pub(super) definition: ZedDebugConfig,
     pub(super) attach_picker: Entity<AttachModal>,
 }
 
@@ -875,12 +875,10 @@ impl AttachMode {
         window: &mut Window,
         cx: &mut Context<NewSessionModal>,
     ) -> Entity<Self> {
-        let definition = DebugTaskDefinition {
-            adapter: debugger.unwrap_or(DebugAdapterName("".into())),
+        let definition = ZedDebugConfig {
+            adapter: debugger.unwrap_or(DebugAdapterName("".into())).0,
             label: "Attach New Session Setup".into(),
             request: dap::DebugRequest::Attach(task::AttachRequest { process_id: None }),
-            config: serde_json::Value::Null,
-            tcp_connection: None,
             stop_on_entry: Some(false),
         };
         let attach_picker = cx.new(|cx| {
@@ -1123,6 +1121,8 @@ impl PickerDelegate for DebugScenarioDelegate {
         //     launch_config.program = program;
         // }
         // todo!()
+        //
+        debug_scenario.request = Some(task::Request::Launch);
 
         self.debug_panel
             .update(cx, |panel, cx| {

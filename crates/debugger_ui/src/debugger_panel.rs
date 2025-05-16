@@ -73,7 +73,7 @@ impl DebugPanel {
         cx.new(|cx| {
             let project = workspace.project().clone();
 
-            let debug_panel = Self {
+            Self {
                 size: px(300.),
                 sessions: vec![],
                 active_session: None,
@@ -82,9 +82,7 @@ impl DebugPanel {
                 workspace: workspace.weak_handle(),
                 context_menu: None,
                 fs: workspace.app_state().fs.clone(),
-            };
-
-            debug_panel
+            }
         })
     }
 

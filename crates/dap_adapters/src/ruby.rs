@@ -9,7 +9,7 @@ use dap::{
 use gpui::{AsyncApp, SharedString};
 use language::LanguageName;
 use std::path::PathBuf;
-use task::{DebugScenario, ZedDebugScenario};
+use task::{DebugScenario, ZedDebugConfig};
 use util::command::new_smol_command;
 
 use crate::ToDap;
@@ -31,7 +31,7 @@ impl DebugAdapter for RubyDebugAdapter {
         Some(SharedString::new_static("Ruby").into())
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugScenario) -> DebugScenario {
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> DebugScenario {
         todo!()
     }
 
@@ -72,35 +72,36 @@ impl DebugAdapter for RubyDebugAdapter {
         let tcp_connection = definition.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
-        let DebugRequest::Launch(launch) = definition.request.clone() else {
+        let task::Request::Launch = definition.request else {
             anyhow::bail!("rdbg does not yet support attaching");
         };
 
-        let mut arguments = vec![
-            "--open".to_string(),
-            format!("--port={}", port),
-            format!("--host={}", host),
-        ];
-        if delegate.which(launch.program.as_ref()).is_some() {
-            arguments.push("--command".to_string())
-        }
-        arguments.push(launch.program);
-        arguments.extend(launch.args);
+        // let mut arguments = vec![
+        //     "--open".to_string(),
+        //     format!("--port={}", port),
+        //     format!("--host={}", host),
+        // ];
+        // if delegate.which(launch.program.as_ref()).is_some() {
+        //     arguments.push("--command".to_string())
+        // }
+        // arguments.push(launch.program);
+        // arguments.extend(launch.args);
 
-        Ok(DebugAdapterBinary {
-            command: rdbg_path.to_string_lossy().to_string(),
-            arguments,
-            connection: Some(adapters::TcpArguments {
-                host,
-                port,
-                timeout,
-            }),
-            cwd: launch.cwd,
-            envs: launch.env.into_iter().collect(),
-            request_args: StartDebuggingRequestArguments {
-                configuration: serde_json::Value::Object(Default::default()),
-                request: definition.request.to_dap(),
-            },
-        })
+        // Ok(DebugAdapterBinary {
+        //     command: rdbg_path.to_string_lossy().to_string(),
+        //     arguments,
+        //     connection: Some(adapters::TcpArguments {
+        //         host,
+        //         port,
+        //         timeout,
+        //     }),
+        //     cwd: launch.cwd,
+        //     envs: launch.env.into_iter().collect(),
+        //     request_args: StartDebuggingRequestArguments {
+        //         configuration: serde_json::Value::Object(Default::default()),
+        //         request: definition.request.to_dap(),
+        //     },
+        // })
+        todo!()
     }
 }
