@@ -2,6 +2,10 @@ pub mod disconnected_overlay;
 mod remote_servers;
 mod ssh_config;
 mod ssh_connections;
+use futures::{FutureExt as _, select};
+use project::Fs;
+use smol::stream::StreamExt as _;
+use ssh_config::parse_ssh_config_hosts;
 pub use ssh_connections::{is_connecting_over_ssh, open_ssh_project};
 
 use disconnected_overlay::DisconnectedOverlay;
@@ -11,7 +15,7 @@ use gpui::{
     Subscription, Task, WeakEntity, Window,
 };
 use ordered_float::OrderedFloat;
-use paths::global_ssh_config_file;
+use paths::{global_ssh_config_file, user_ssh_config_file};
 use picker::{
     Picker, PickerDelegate,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
@@ -20,6 +24,7 @@ pub use remote_servers::RemoteServerProjects;
 use settings::{Settings, SettingsStore, watch_config_file};
 pub use ssh_connections::SshSettings;
 use std::{
+    collections::BTreeSet,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -48,13 +53,26 @@ pub struct RecentProjects {
 
 #[derive(Debug)]
 struct SshConfigServers {
-    hostnames: Vec<String>,
+    hostnames: BTreeSet<String>,
+}
+
+impl SshConfigServers {
+    fn new(global_hostnames: &BTreeSet<String>, user_hostnames: &BTreeSet<String>) -> Self {
+        Self {
+            hostnames: global_hostnames
+                .iter()
+                .chain(user_hostnames.iter())
+                .cloned()
+                .collect(),
+        }
+    }
 }
 
 impl ModalView for RecentProjects {}
 
 impl RecentProjects {
     fn new(
+        fs: Arc<dyn Fs>,
         delegate: RecentProjectsDelegate,
         rem_width: f32,
         window: &mut Window,
@@ -72,17 +90,18 @@ impl RecentProjects {
             cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
         let mut read_ssh_config = SshSettings::get_global(cx).read_ssh_config;
         let ssh_config_updates = if read_ssh_config {
-            spawn_ssh_config_watch(cx)
+            spawn_ssh_config_watch(fs.clone(), cx)
         } else {
             Task::ready(())
         };
+
         let settings_change_subscription =
             cx.observe_global_in::<SettingsStore>(window, move |recent_projects, _, cx| {
                 let new_read_ssh_config = SshSettings::get_global(cx).read_ssh_config;
                 if read_ssh_config != new_read_ssh_config {
                     read_ssh_config = new_read_ssh_config;
                     if read_ssh_config {
-                        recent_projects.ssh_config_updates = spawn_ssh_config_watch(cx);
+                        recent_projects.ssh_config_updates = spawn_ssh_config_watch(fs.clone(), cx);
                     } else {
                         recent_projects.ssh_config = None;
                         recent_projects.ssh_config_updates = Task::ready(());
@@ -140,45 +159,76 @@ impl RecentProjects {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        let fs = workspace.project().read(cx).fs().clone();
         let weak = cx.entity().downgrade();
         workspace.toggle_modal(window, cx, |window, cx| {
             let delegate = RecentProjectsDelegate::new(weak, create_new_window, true);
 
-            Self::new(delegate, 34., window, cx)
+            Self::new(fs, delegate, 34., window, cx)
         })
     }
 }
 
-fn spawn_ssh_config_watch(cx: &Context<RecentProjects>) -> Task<()> {
-    // let user_ssh_config_watcher = watch_config_file(
-    //     cx.background_executor(),
-    //     fs,
-    //     user_ssh_config_file().to_owned(),
-    // );
-    // let global_ssh_config_watcher = watch_config_file(
-    //     cx.background_executor(),
-    //     fs,
-    //     global_ssh_config_file().to_owned(),
-    // );
+fn spawn_ssh_config_watch(fs: Arc<dyn Fs>, cx: &Context<RecentProjects>) -> Task<()> {
+    let mut user_ssh_config_watcher = watch_config_file(
+        cx.background_executor(),
+        fs.clone(),
+        user_ssh_config_file().to_owned(),
+    );
+    let mut global_ssh_config_watcher = watch_config_file(
+        cx.background_executor(),
+        fs,
+        global_ssh_config_file().to_owned(),
+    );
 
-    // TODO kb select, reparse, update the data
-    /*
+    cx.spawn(async move |recent_project, cx| {
+        let mut global_hosts = BTreeSet::default();
+        let mut user_hosts = BTreeSet::default();
+        let mut running_receivers = 2;
 
-    A basic parser could just go line looking for [\t ]*Host (.*) and combining any lines that end with \:
-
-    Host something
-    HostName whatever.tld
-
-    Host linux bsd host3
-      User bjorn
-
-    Host \
-           somehost \
-    anotherhost
-    Hostname 192.168.3.3
-    */
-    // TODO kb
-    Task::ready(())
+        loop {
+            select! {
+                new_global_file_contents = global_ssh_config_watcher.next().fuse() => {
+                    match new_global_file_contents {
+                        Some(new_global_file_contents) => {
+                            global_hosts = parse_ssh_config_hosts(&new_global_file_contents);
+                            if recent_project.update(cx, |recent_project, cx| {
+                                recent_project.ssh_config = Some(SshConfigServers::new(&global_hosts, &user_hosts));
+                                cx.notify();
+                            }).is_err() {
+                                return;
+                            }
+                        },
+                        None => {
+                            running_receivers -= 1;
+                            if running_receivers == 0 {
+                                return;
+                            }
+                        }
+                    }
+                },
+                new_user_file_contents = user_ssh_config_watcher.next().fuse() => {
+                    match new_user_file_contents {
+                        Some(new_user_file_contents) => {
+                            user_hosts = parse_ssh_config_hosts(&new_user_file_contents);
+                            if recent_project.update(cx, |recent_project, cx| {
+                                recent_project.ssh_config = Some(SshConfigServers::new(&global_hosts, &user_hosts));
+                                cx.notify();
+                            }).is_err() {
+                                return;
+                            }
+                        },
+                        None => {
+                            running_receivers -= 1;
+                            if running_receivers == 0 {
+                                return;
+                            }
+                        }
+                    }
+                },
+            }
+        }
+    })
 }
 
 impl EventEmitter<DismissEvent> for RecentProjects {}

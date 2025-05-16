@@ -12650,6 +12650,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "auto_update",
+ "collections",
  "dap",
  "editor",
  "extension_host",
