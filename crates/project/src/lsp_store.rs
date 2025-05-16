@@ -475,6 +475,7 @@ impl LocalLspStore {
                                 server_id,
                                 params,
                                 &adapter.disk_based_diagnostic_sources,
+                                // TODO(vs) do not erase pulled diagnostics here
                                 |diagnostic, cx| adapter.retain_old_diagnostic(diagnostic, cx),
                                 cx,
                             )

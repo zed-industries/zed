@@ -828,7 +828,7 @@ pub struct LspPullDiagnostics {
 impl Default for LspPullDiagnostics {
     fn default() -> Self {
         Self {
-            // TODO kb is it ok?
+            // TODO(vs) is it ok?
             server_id: LanguageServerId(0),
             uri: None,
             diagnostics: Vec::new(),

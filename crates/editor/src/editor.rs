@@ -1635,7 +1635,7 @@ impl Editor {
                         project::Event::LanguageServerAdded(_, _, _)
                         | project::Event::LanguageServerRemoved(_)
                         | project::Event::RefreshDocumentsDiagnostics => {
-                            editor.refresh_diagnostics(cx);
+                            editor.pull_diagnostics(window, cx);
                         }
                         project::Event::SnippetEdit(id, snippet_edits) => {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
@@ -15472,14 +15472,15 @@ impl Editor {
         });
     }
 
-    fn refresh_diagnostics(&mut self, cx: &mut Context<Self>) -> Option<()> {
+    fn pull_diagnostics(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<()> {
         let project = self.project.as_ref()?.downgrade();
         let buffers = self.buffer.read(cx).all_buffers();
 
         let background_executor = cx.background_executor().clone();
 
-        self.tasks_pull_diagnostics_task = cx.spawn(async move |editor, cx| {
+        self.tasks_pull_diagnostics_task = cx.spawn_in(window, async move |editor, cx| {
             background_executor
+                // TODO(vs) maybe have a settings for this? at least have it under 100ms
                 .timer(DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT)
                 .await;
 
@@ -15487,7 +15488,7 @@ impl Editor {
                 return;
             };
 
-            let Ok(mut pull_diagnostics_tasks) = cx.update(|cx| {
+            let Ok(mut pull_diagnostics_tasks) = cx.update(|_, cx| {
                 buffers
                     .into_iter()
                     .map(|buffer| project.pull_diagnostics(&buffer, cx))
@@ -15499,14 +15500,16 @@ impl Editor {
             while let Some(pull_task) = pull_diagnostics_tasks.next().await {
                 if let Some(new_diagnostics) = pull_task.log_err() {
                     let Ok(update_task) =
-                        cx.update(|cx| project.update_diagnostics(new_diagnostics, cx))
+                        cx.update(|_, cx| project.update_diagnostics(new_diagnostics, cx))
                     else {
                         return;
                     };
                     match update_task.await {
                         Ok(()) => {
                             if editor
-                                .update(cx, |editor, cx| editor.refresh_active_diagnostics(cx))
+                                .update_in(cx, |editor, window, cx| {
+                                    editor.update_diagnostics_state(window, cx);
+                                })
                                 .is_err()
                             {
                                 return;
@@ -18197,7 +18200,8 @@ impl Editor {
             } => {
                 self.scrollbar_marker_state.dirty = true;
                 self.active_indent_guides_state.dirty = true;
-                self.refresh_diagnostics(cx);
+                // TODO(vs) lies, we need to refresh diagnostics everywhere in the pane group
+                self.pull_diagnostics(window, cx);
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(window, cx);
                 self.refresh_selected_text_highlights(true, window, cx);
@@ -18335,13 +18339,17 @@ impl Editor {
             | multi_buffer::Event::BufferDiffChanged => cx.emit(EditorEvent::TitleChanged),
             multi_buffer::Event::Closed => cx.emit(EditorEvent::Closed),
             multi_buffer::Event::DiagnosticsUpdated => {
-                self.refresh_active_diagnostics(cx);
-                self.refresh_inline_diagnostics(true, window, cx);
-                self.scrollbar_marker_state.dirty = true;
-                cx.notify();
+                self.update_diagnostics_state(window, cx);
             }
             _ => {}
         };
+    }
+
+    fn update_diagnostics_state(&mut self, window: &mut Window, cx: &mut Context<'_, Editor>) {
+        self.refresh_active_diagnostics(cx);
+        self.refresh_inline_diagnostics(true, window, cx);
+        self.scrollbar_marker_state.dirty = true;
+        cx.notify();
     }
 
     pub fn start_temporary_diff_override(&mut self) {
@@ -20378,9 +20386,16 @@ impl SemanticsProvider for Entity<Project> {
         self.update(cx, |project, cx| {
             project.lsp_store().update(cx, |lsp_store, cx| {
                 for diagnostics_set in diagnostics {
+                    let adapter =
+                        lsp_store.language_server_adapter_for_id(diagnostics_set.server_id);
+                    let disk_based_sources = adapter
+                        .as_ref()
+                        .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
+                        .unwrap_or(&[]);
                     let Some(uri) = diagnostics_set.uri.clone() else {
                         continue;
                     };
+                    // TODO(vs) this will overwrite the pushed diagnostics
                     lsp_store
                         .update_diagnostics(
                             diagnostics_set.server_id,
@@ -20389,8 +20404,7 @@ impl SemanticsProvider for Entity<Project> {
                                 diagnostics: diagnostics_set.diagnostics.clone(),
                                 version: None,
                             },
-                            // TODO kb need to add r-a sources at least
-                            &[],
+                            disk_based_sources,
                             cx,
                         )
                         .log_err();

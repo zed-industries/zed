@@ -3878,6 +3878,7 @@ impl LspCommand for GetDocumentDiagnostics {
                                     if let lsp::DocumentDiagnosticReportKind::Full(full_report) =
                                         report
                                     {
+                                        // TODO(vs): this is will overwrite pushed diagnostics
                                         Some(store.update_diagnostics(
                                             server_id,
                                             lsp::PublishDiagnosticsParams {
