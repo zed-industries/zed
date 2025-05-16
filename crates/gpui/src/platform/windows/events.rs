@@ -550,46 +550,41 @@ fn handle_mouse_wheel_msg(
 ) -> Option<isize> {
     let modifiers = current_modifiers();
     let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.input.take() {
-        let scale_factor = lock.scale_factor;
-        let wheel_scroll_amount = match modifiers.shift {
-            true => lock.system_settings.mouse_wheel_settings.wheel_scroll_chars,
-            false => lock.system_settings.mouse_wheel_settings.wheel_scroll_lines,
-        };
-        drop(lock);
-        let wheel_distance =
-            (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_amount as f32;
-        let mut cursor_point = POINT {
-            x: lparam.signed_loword().into(),
-            y: lparam.signed_hiword().into(),
-        };
-        unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-        let event = ScrollWheelEvent {
-            position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
-            delta: ScrollDelta::Lines(match modifiers.shift {
-                true => Point {
-                    x: wheel_distance,
-                    y: 0.0,
-                },
-                false => Point {
-                    y: wheel_distance,
-                    x: 0.0,
-                },
-            }),
-            modifiers: current_modifiers(),
-            touch_phase: TouchPhase::Moved,
-        };
-        let result = if callback(PlatformInput::ScrollWheel(event)).default_prevented {
-            Some(0)
-        } else {
-            Some(1)
-        };
-        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
+    let Some(mut func) = lock.callbacks.input.take() else {
+        return Some(1);
+    };
+    let scale_factor = lock.scale_factor;
+    let wheel_scroll_amount = match modifiers.shift {
+        true => lock.system_settings.mouse_wheel_settings.wheel_scroll_chars,
+        false => lock.system_settings.mouse_wheel_settings.wheel_scroll_lines,
+    };
+    drop(lock);
+    let wheel_distance =
+        (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_amount as f32;
+    let mut cursor_point = POINT {
+        x: lparam.signed_loword().into(),
+        y: lparam.signed_hiword().into(),
+    };
+    unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
+    let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
+        position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
+        delta: ScrollDelta::Lines(match modifiers.shift {
+            true => Point {
+                x: wheel_distance,
+                y: 0.0,
+            },
+            false => Point {
+                y: wheel_distance,
+                x: 0.0,
+            },
+        }),
+        modifiers,
+        touch_phase: TouchPhase::Moved,
+    });
+    let handled = !func(input).propagate;
+    state_ptr.state.borrow_mut().callbacks.input = Some(func);
 
-        result
-    } else {
-        Some(1)
-    }
+    if handled { Some(0) } else { Some(1) }
 }
 
 fn handle_mouse_horizontal_wheel_msg(
@@ -599,37 +594,32 @@ fn handle_mouse_horizontal_wheel_msg(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.input.take() {
-        let scale_factor = lock.scale_factor;
-        let wheel_scroll_chars = lock.system_settings.mouse_wheel_settings.wheel_scroll_chars;
-        drop(lock);
-        let wheel_distance =
-            (-wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_chars as f32;
-        let mut cursor_point = POINT {
-            x: lparam.signed_loword().into(),
-            y: lparam.signed_hiword().into(),
-        };
-        unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-        let event = ScrollWheelEvent {
-            position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
-            delta: ScrollDelta::Lines(Point {
-                x: wheel_distance,
-                y: 0.0,
-            }),
-            modifiers: current_modifiers(),
-            touch_phase: TouchPhase::Moved,
-        };
-        let result = if callback(PlatformInput::ScrollWheel(event)).default_prevented {
-            Some(0)
-        } else {
-            Some(1)
-        };
-        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
+    let Some(mut func) = lock.callbacks.input.take() else {
+        return Some(1);
+    };
+    let scale_factor = lock.scale_factor;
+    let wheel_scroll_chars = lock.system_settings.mouse_wheel_settings.wheel_scroll_chars;
+    drop(lock);
+    let wheel_distance =
+        (-wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_chars as f32;
+    let mut cursor_point = POINT {
+        x: lparam.signed_loword().into(),
+        y: lparam.signed_hiword().into(),
+    };
+    unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
+    let event = PlatformInput::ScrollWheel(ScrollWheelEvent {
+        position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
+        delta: ScrollDelta::Lines(Point {
+            x: wheel_distance,
+            y: 0.0,
+        }),
+        modifiers: current_modifiers(),
+        touch_phase: TouchPhase::Moved,
+    });
+    let handled = !func(event).propagate;
+    state_ptr.state.borrow_mut().callbacks.input = Some(func);
 
-        result
-    } else {
-        Some(1)
-    }
+    if handled { Some(0) } else { Some(1) }
 }
 
 fn retrieve_caret_position(state_ptr: &Rc<WindowsWindowStatePtr>) -> Option<POINT> {
@@ -794,10 +784,10 @@ fn handle_activate_msg(
         .executor
         .spawn(async move {
             let mut lock = this.state.borrow_mut();
-            if let Some(mut cb) = lock.callbacks.active_status_change.take() {
+            if let Some(mut func) = lock.callbacks.active_status_change.take() {
                 drop(lock);
-                cb(activated);
-                this.state.borrow_mut().callbacks.active_status_change = Some(cb);
+                func(activated);
+                this.state.borrow_mut().callbacks.active_status_change = Some(func);
             }
         })
         .detach();
