@@ -854,7 +854,7 @@ fn handle_display_change_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>)
     // Because WM_DPICHANGED, WM_MOVE, WM_SIZE will come first, window reposition and resize
     // are handled there.
     // So we only care about if monitor is disconnected.
-    let previous_monitor = state_ptr.as_ref().state.borrow().display;
+    let previous_monitor = state_ptr.state.borrow().display;
     if WindowsDisplay::is_connected(previous_monitor.handle) {
         // we are fine, other display changed
         return None;
@@ -872,7 +872,7 @@ fn handle_display_change_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>)
         return None;
     }
     let new_display = WindowsDisplay::new_with_handle(new_monitor);
-    state_ptr.as_ref().state.borrow_mut().display = new_display;
+    state_ptr.state.borrow_mut().display = new_display;
     Some(0)
 }
 
