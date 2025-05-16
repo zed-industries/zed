@@ -816,13 +816,24 @@ pub const DEFAULT_COMPLETION_CONTEXT: CompletionContext = CompletionContext {
 
 /// An LSP diagnostics associated with a certain language server.
 #[derive(Clone, Debug)]
-pub struct LspDiagnostics {
+pub struct LspPullDiagnostics {
     /// The id of the language server that produced diagnostics.
     pub server_id: LanguageServerId,
     /// URI of the resource,
     pub uri: Option<lsp::Url>,
     /// The diagnostics produced by this language server.
-    pub diagnostics: Option<Vec<lsp::Diagnostic>>,
+    pub diagnostics: Vec<lsp::Diagnostic>,
+}
+
+impl Default for LspPullDiagnostics {
+    fn default() -> Self {
+        Self {
+            // TODO kb is it ok?
+            server_id: LanguageServerId(0),
+            uri: None,
+            diagnostics: Vec::new(),
+        }
+    }
 }
 
 impl Project {
@@ -3658,7 +3669,7 @@ impl Project {
         &mut self,
         buffer_handle: Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<Option<LspDiagnostics>>>> {
+    ) -> Task<Result<Vec<LspPullDiagnostics>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.document_diagnostic(buffer_handle, cx)
         })

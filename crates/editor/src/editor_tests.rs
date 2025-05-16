@@ -20481,7 +20481,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
     cx.executor().start_waiting();
 
     let fake_server = fake_servers.next().await.unwrap();
-    fake_server.handle_request::<lsp::request::DocumentDiagnosticRequest, _, _>(
+    fake_server.set_request_handler::<lsp::request::DocumentDiagnosticRequest, _, _>(
         move |params, _| {
             counter.fetch_add(1, atomic::Ordering::Release);
             assert_eq!(

@@ -4,7 +4,7 @@ pub mod rust_analyzer_ext;
 
 use crate::{
     CodeAction, Completion, CompletionSource, CoreCompletion, Hover, InlayHint, LspAction,
-    LspDiagnostics, ProjectItem, ProjectPath, ProjectTransaction, ResolveState, Symbol,
+    LspPullDiagnostics, ProjectItem, ProjectPath, ProjectTransaction, ResolveState, Symbol,
     ToolchainStore,
     buffer_store::{BufferStore, BufferStoreEvent},
     environment::ProjectEnvironment,
@@ -5717,7 +5717,7 @@ impl LspStore {
         &mut self,
         buffer_handle: Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<Option<LspDiagnostics>>>> {
+    ) -> Task<Result<Vec<LspPullDiagnostics>>> {
         let buffer = buffer_handle.read(cx);
         let buffer_id = buffer.remote_id();
 

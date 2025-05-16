@@ -3,8 +3,8 @@ mod signature_help;
 use crate::{
     CodeAction, CompletionSource, CoreCompletion, DocumentHighlight, DocumentSymbol, Hover,
     HoverBlock, HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart,
-    InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink, LspAction, LspDiagnostics,
-    MarkupContent, PrepareRenameResponse, ProjectTransaction, ResolveState,
+    InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink, LspAction,
+    LspPullDiagnostics, MarkupContent, PrepareRenameResponse, ProjectTransaction, ResolveState,
     lsp_store::{LocalLspStore, LspStore},
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -32,6 +32,7 @@ use serde_json::Value;
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
 use std::{cmp::Reverse, mem, ops::Range, path::Path, str::FromStr, sync::Arc};
 use text::{BufferId, LineEnding};
+use util::ResultExt as _;
 
 pub use signature_help::SignatureHelp;
 
@@ -3801,7 +3802,7 @@ impl GetDocumentDiagnostics {
 
 #[async_trait(?Send)]
 impl LspCommand for GetDocumentDiagnostics {
-    type Response = Option<LspDiagnostics>;
+    type Response = LspPullDiagnostics;
     type LspRequest = lsp::request::DocumentDiagnosticRequest;
     type ProtoRequest = proto::GetDocumentDiagnostics;
 
@@ -3858,10 +3859,6 @@ impl LspCommand for GetDocumentDiagnostics {
                 .and_then(|file| lsp::Url::from_file_path(file.abs_path(cx)).ok())
         })?;
 
-        let Some(uri) = uri else {
-            return Ok(None);
-        };
-
         let language_server_adapter = lsp_store
             .update(&mut cx, |lsp_store, _| {
                 lsp_store.language_server_adapter_for_id(server_id)
@@ -3899,23 +3896,23 @@ impl LspCommand for GetDocumentDiagnostics {
                         })
                         .with_context(|| "Failed to update diagnostics for related documents")?;
 
-                    Ok(Some(LspDiagnostics {
+                    Ok(LspPullDiagnostics {
                         server_id,
-                        uri: Some(uri),
-                        diagnostics: Some(report.full_document_diagnostic_report.items.clone()),
-                    }))
+                        uri,
+                        diagnostics: report.full_document_diagnostic_report.items.clone(),
+                    })
                 }
-                lsp::DocumentDiagnosticReport::Unchanged(_) => Ok(Some(LspDiagnostics {
+                lsp::DocumentDiagnosticReport::Unchanged(_) => Ok(LspPullDiagnostics {
                     server_id,
-                    uri: Some(uri),
-                    diagnostics: None,
-                })),
+                    uri,
+                    diagnostics: Vec::new(),
+                }),
             },
-            lsp::DocumentDiagnosticReportResult::Partial(_) => Ok(Some(LspDiagnostics {
+            lsp::DocumentDiagnosticReportResult::Partial(_) => Ok(LspPullDiagnostics {
                 server_id,
-                uri: Some(uri),
-                diagnostics: None,
-            })),
+                uri,
+                diagnostics: Vec::new(),
+            }),
         }
     }
 
@@ -3948,36 +3945,19 @@ impl LspCommand for GetDocumentDiagnostics {
         _: &clock::Global,
         _: &mut App,
     ) -> proto::GetDocumentDiagnosticsResponse {
-        if let Some(response) = response {
-            let diagnostics = response
-                .diagnostics
-                .map(|diagnostics| {
-                    diagnostics
-                        .into_iter()
-                        .filter_map(|diagnostic| {
-                            match GetDocumentDiagnostics::serialize_lsp_diagnostic(diagnostic) {
-                                Ok(diagnostic) => Some(diagnostic),
-                                Err(error) => {
-                                    log::error!("Failed to serialize diagnostic: {}", error);
-                                    None
-                                }
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-
-            proto::GetDocumentDiagnosticsResponse {
-                server_id: LanguageServerId::to_proto(response.server_id),
-                uri: response.uri.unwrap().to_string(),
-                diagnostics,
-            }
-        } else {
-            proto::GetDocumentDiagnosticsResponse {
-                server_id: 0,
-                uri: Default::default(),
-                diagnostics: Vec::new(),
-            }
+        let diagnostics = response
+            .diagnostics
+            .into_iter()
+            .filter_map(|diagnostic| {
+                GetDocumentDiagnostics::serialize_lsp_diagnostic(diagnostic)
+                    .context("serializing diagnostics")
+                    .log_err()
+            })
+            .collect();
+        proto::GetDocumentDiagnosticsResponse {
+            server_id: LanguageServerId::to_proto(response.server_id),
+            uri: response.uri.unwrap().to_string(),
+            diagnostics,
         }
     }
 
@@ -3988,8 +3968,7 @@ impl LspCommand for GetDocumentDiagnostics {
         _: Entity<Buffer>,
         _: AsyncApp,
     ) -> Result<Self::Response> {
-        let uri = lsp::Url::from_str(response.uri.as_str())
-            .with_context(|| format!("Failed to parse URI: {}", response.uri))?;
+        let uri = lsp::Url::from_str(response.uri.as_str())?;
 
         let diagnostics = response
             .diagnostics
@@ -4005,11 +3984,11 @@ impl LspCommand for GetDocumentDiagnostics {
             })
             .collect();
 
-        Ok(Some(LspDiagnostics {
+        Ok(LspPullDiagnostics {
             server_id: LanguageServerId::from_proto(response.server_id),
             uri: Some(uri),
-            diagnostics: Some(diagnostics),
-        }))
+            diagnostics,
+        })
     }
 
     fn buffer_id_from_proto(message: &proto::GetDocumentDiagnostics) -> Result<BufferId> {
