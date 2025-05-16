@@ -5,8 +5,7 @@ mod socks_proxy;
 
 use anyhow::{Context, Result, anyhow};
 use http_client::Url;
-use socks_proxy::{Socks4Identification, Socks5Authorization, SocksVersion, parse_socks_proxy};
-use tokio_socks::tcp::{Socks4Stream, Socks5Stream};
+use socks_proxy::{SocksVersion, connect_with_socks_proxy, parse_socks_proxy};
 
 pub(crate) async fn connect_with_proxy_stream(
     proxy: &Url,
@@ -29,33 +28,10 @@ pub(crate) async fn connect_with_proxy_stream(
         .context("Failed to connect to socks proxy")?;
 
     let socks: Box<dyn AsyncReadWrite> = match proxy_type {
-        ProxyType::SocksProxy(socks_proxy) => 
-        SocksVersion::V4(None) => {
-            let socks = Socks4Stream::connect_with_socket(stream, rpc_host)
-                .await
-                .context("error connecting to socks")?;
-            Box::new(socks)
+        ProxyType::SocksProxy(socks_version) => {
+            connect_with_socks_proxy(stream, socks_version, rpc_host).await?
         }
-        SocksVersion::V4(Some(Socks4Identification { user_id })) => {
-            let socks = Socks4Stream::connect_with_userid_and_socket(stream, rpc_host, user_id)
-                .await
-                .context("error connecting to socks")?;
-            Box::new(socks)
-        }
-        SocksVersion::V5(None) => {
-            let socks = Socks5Stream::connect_with_socket(stream, rpc_host)
-                .await
-                .context("error connecting to socks")?;
-            Box::new(socks)
-        }
-        SocksVersion::V5(Some(Socks5Authorization { username, password })) => {
-            let socks = Socks5Stream::connect_with_password_and_socket(
-                stream, rpc_host, username, password,
-            )
-            .await
-            .context("error connecting to socks")?;
-            Box::new(socks)
-        }
+        ProxyType::HttpProxy => connect_with_http_proxy()?,
     };
 
     Ok(socks)

@@ -1,16 +1,21 @@
 //! socks proxy
 
+use anyhow::{Context, Result};
+use tokio::net::TcpStream;
+use tokio_socks::tcp::{Socks4Stream, Socks5Stream};
 use url::Url;
 
+use super::AsyncReadWrite;
+
 /// Identification to a Socks V4 Proxy
-pub(super) struct Socks4Identification<'a> {
-    pub(super) user_id: &'a str,
+struct Socks4Identification<'a> {
+    user_id: &'a str,
 }
 
 /// Authorization to a Socks V5 Proxy
-pub(super) struct Socks5Authorization<'a> {
-    pub(super) username: &'a str,
-    pub(super) password: &'a str,
+struct Socks5Authorization<'a> {
+    username: &'a str,
+    password: &'a str,
 }
 
 /// Socks Proxy Protocol Version
@@ -40,6 +45,41 @@ pub(super) fn parse_socks_proxy<'t>(scheme: &str, proxy: &'t Url) -> Option<Sock
     }
 }
 
+pub(super) async fn connect_with_socks_proxy(
+    stream: TcpStream,
+    socks_version: SocksVersion<'_>,
+    rpc_host: (&str, u16),
+) -> Result<Box<dyn AsyncReadWrite>> {
+    match socks_version {
+        SocksVersion::V4(None) => {
+            let socks = Socks4Stream::connect_with_socket(stream, rpc_host)
+                .await
+                .context("error connecting to socks")?;
+            Ok(Box::new(socks))
+        }
+        SocksVersion::V4(Some(Socks4Identification { user_id })) => {
+            let socks = Socks4Stream::connect_with_userid_and_socket(stream, rpc_host, user_id)
+                .await
+                .context("error connecting to socks")?;
+            Ok(Box::new(socks))
+        }
+        SocksVersion::V5(None) => {
+            let socks = Socks5Stream::connect_with_socket(stream, rpc_host)
+                .await
+                .context("error connecting to socks")?;
+            Ok(Box::new(socks))
+        }
+        SocksVersion::V5(Some(Socks5Authorization { username, password })) => {
+            let socks = Socks5Stream::connect_with_password_and_socket(
+                stream, rpc_host, username, password,
+            )
+            .await
+            .context("error connecting to socks")?;
+            Ok(Box::new(socks))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use url::Url;
@@ -49,20 +89,18 @@ mod tests {
     #[test]
     fn parse_socks4() {
         let proxy = Url::parse("socks4://proxy.example.com:1080").unwrap();
+        let scheme = proxy.scheme();
 
-        let ((host, port), version) = parse_socks_proxy(&proxy).unwrap();
-        assert_eq!(host, "proxy.example.com");
-        assert_eq!(port, 1080);
+        let version = parse_socks_proxy(scheme, &proxy).unwrap();
         assert!(matches!(version, SocksVersion::V4(None)))
     }
 
     #[test]
     fn parse_socks4_with_identification() {
         let proxy = Url::parse("socks4://userid@proxy.example.com:1080").unwrap();
+        let scheme = proxy.scheme();
 
-        let ((host, port), version) = parse_socks_proxy(&proxy).unwrap();
-        assert_eq!(host, "proxy.example.com");
-        assert_eq!(port, 1080);
+        let version = parse_socks_proxy(scheme, &proxy).unwrap();
         assert!(matches!(
             version,
             SocksVersion::V4(Some(Socks4Identification { user_id: "userid" }))
