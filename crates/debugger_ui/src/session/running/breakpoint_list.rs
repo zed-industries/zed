@@ -148,7 +148,7 @@ impl Render for BreakpointList {
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
         let old_len = self.breakpoints.len();
-        let breakpoints = self.breakpoint_store.read(cx).all_breakpoints(cx);
+        let breakpoints = self.breakpoint_store.read(cx).all_source_breakpoints(cx);
         self.breakpoints.clear();
         let weak = cx.weak_entity();
         let breakpoints = breakpoints.into_iter().flat_map(|(path, mut breakpoints)| {

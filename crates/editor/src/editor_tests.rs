@@ -18715,7 +18715,7 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -18740,7 +18740,7 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -18762,7 +18762,7 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -18829,7 +18829,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -18850,7 +18850,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -18870,7 +18870,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -18893,7 +18893,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -18916,7 +18916,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -19009,7 +19009,7 @@ async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -19041,7 +19041,7 @@ async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -19077,7 +19077,7 @@ async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 

@@ -62,7 +62,7 @@ use multi_buffer::{
 
 use project::{
     ProjectPath,
-    debugger::breakpoint_store::Breakpoint,
+    debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
     project_settings::{GitGutterSetting, GitHunkStyleSetting, ProjectSettings},
 };
 use settings::Settings;
@@ -2317,7 +2317,7 @@ impl EditorElement {
         gutter_hitbox: &Hitbox,
         display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
         snapshot: &EditorSnapshot,
-        breakpoints: HashMap<DisplayRow, (Anchor, Breakpoint)>,
+        breakpoints: HashMap<DisplayRow, (Anchor, Breakpoint, Option<BreakpointSessionState>)>,
         row_infos: &[RowInfo],
         window: &mut Window,
         cx: &mut App,
@@ -2325,7 +2325,7 @@ impl EditorElement {
         self.editor.update(cx, |editor, cx| {
             breakpoints
                 .into_iter()
-                .filter_map(|(display_row, (text_anchor, bp))| {
+                .filter_map(|(display_row, (text_anchor, bp, state))| {
                     if row_infos
                         .get((display_row.0.saturating_sub(range.start.0)) as usize)
                         .is_some_and(|row_info| {
@@ -2348,7 +2348,7 @@ impl EditorElement {
                         return None;
                     }
 
-                    let button = editor.render_breakpoint(text_anchor, display_row, &bp, cx);
+                    let button = editor.render_breakpoint(text_anchor, display_row, &bp, state, cx);
 
                     let button = prepaint_gutter_button(
                         button,
@@ -2378,7 +2378,7 @@ impl EditorElement {
         gutter_hitbox: &Hitbox,
         display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
         snapshot: &EditorSnapshot,
-        breakpoints: &mut HashMap<DisplayRow, (Anchor, Breakpoint)>,
+        breakpoints: &mut HashMap<DisplayRow, (Anchor, Breakpoint, Option<BreakpointSessionState>)>,
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
@@ -7437,8 +7437,10 @@ impl Element for EditorElement {
                         editor.active_breakpoints(start_row..end_row, window, cx)
                     });
                     if cx.has_flag::<DebuggerFeatureFlag>() {
-                        for display_row in breakpoint_rows.keys() {
-                            active_rows.entry(*display_row).or_default().breakpoint = true;
+                        for (display_row, (_, bp, state)) in &breakpoint_rows {
+                            if bp.is_enabled() && state.is_none_or(|s| s.verified) {
+                                active_rows.entry(*display_row).or_default().breakpoint = true;
+                            }
                         }
                     }
 
@@ -7478,7 +7480,7 @@ impl Element for EditorElement {
                                         let breakpoint = Breakpoint::new_standard();
                                         phantom_breakpoint.collides_with_existing_breakpoint =
                                             false;
-                                        (position, breakpoint)
+                                        (position, breakpoint, None)
                                     });
                             }
                         })
