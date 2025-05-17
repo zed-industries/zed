@@ -99,8 +99,7 @@ fn scroll_editor(
 
     let top_anchor = editor.scroll_manager.anchor().anchor;
     let vertical_scroll_margin = EditorSettings::get_global(cx).vertical_scroll_margin;
-
-    editor.change_selections(None, window, cx, |s| {
+    editor.change_selections_without_nav(None, window, cx, |s| {
         s.move_with(|map, selection| {
             let mut head = selection.head();
             let top = top_anchor.to_display_point(map);
