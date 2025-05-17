@@ -686,6 +686,19 @@ impl Dock {
         }
     }
 
+    pub fn resize_all_panels(
+        &mut self,
+        size: Option<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for entry in &mut self.panel_entries {
+            let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
+            entry.panel.set_size(size, window, cx);
+        }
+        cx.notify();
+    }
+
     pub fn toggle_action(&self) -> Box<dyn Action> {
         match self.position {
             DockPosition::Left => crate::ToggleLeftDock.boxed_clone(),

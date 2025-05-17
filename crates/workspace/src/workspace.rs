@@ -6164,7 +6164,14 @@ fn resize_bottom_dock(
     let size =
         new_size.min(workspace.bounds.bottom() - RESIZE_HANDLE_SIZE - workspace.bounds.top());
     workspace.bottom_dock.update(cx, |bottom_dock, cx| {
-        bottom_dock.resize_active_panel(Some(size), window, cx);
+        if WorkspaceSettings::get_global(cx)
+            .resize_all_panels_in_dock
+            .contains(&DockPosition::Bottom)
+        {
+            bottom_dock.resize_all_panels(Some(size), window, cx);
+        } else {
+            bottom_dock.resize_active_panel(Some(size), window, cx);
+        }
     });
 }
 
@@ -6176,7 +6183,14 @@ fn resize_right_dock(
 ) {
     let size = new_size.max(workspace.bounds.left() - RESIZE_HANDLE_SIZE);
     workspace.right_dock.update(cx, |right_dock, cx| {
-        right_dock.resize_active_panel(Some(size), window, cx);
+        if WorkspaceSettings::get_global(cx)
+            .resize_all_panels_in_dock
+            .contains(&DockPosition::Right)
+        {
+            right_dock.resize_all_panels(Some(size), window, cx);
+        } else {
+            right_dock.resize_active_panel(Some(size), window, cx);
+        }
     });
 }
 
@@ -6189,7 +6203,14 @@ fn resize_left_dock(
     let size = new_size.min(workspace.bounds.right() - RESIZE_HANDLE_SIZE);
 
     workspace.left_dock.update(cx, |left_dock, cx| {
-        left_dock.resize_active_panel(Some(size), window, cx);
+        if WorkspaceSettings::get_global(cx)
+            .resize_all_panels_in_dock
+            .contains(&DockPosition::Left)
+        {
+            left_dock.resize_all_panels(Some(size), window, cx);
+        } else {
+            left_dock.resize_active_panel(Some(size), window, cx);
+        }
     });
 }
 
