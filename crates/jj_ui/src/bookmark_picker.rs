@@ -55,7 +55,7 @@ impl Focusable for BookmarkPicker {
 }
 
 impl Render for BookmarkPicker {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         v_flex().w(rems(34.)).child(self.picker.clone())
     }
 }
@@ -105,7 +105,7 @@ impl PickerDelegate for BookmarkPickerDelegate {
         &mut self,
         ix: usize,
         _window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
+        _cx: &mut Context<Picker<Self>>,
     ) {
         self.selected_index = ix;
     }
@@ -127,13 +127,6 @@ impl PickerDelegate for BookmarkPickerDelegate {
                         bookmark,
                         positions: Vec::new(),
                     })
-                    // .enumerate()
-                    // .map(|(index, candidate)| StringMatch {
-                    //     candidate_id: index,
-                    //     string: candidate.string,
-                    //     positions: Vec::new(),
-                    //     score: 0.0,
-                    // })
                     .collect()
             } else {
                 let candidates = all_bookmarks
@@ -158,7 +151,7 @@ impl PickerDelegate for BookmarkPickerDelegate {
                 .collect()
             };
 
-            this.update(cx, |this, cx| {
+            this.update(cx, |this, _cx| {
                 this.delegate.matches = matches;
             })
             .log_err();
@@ -177,8 +170,8 @@ impl PickerDelegate for BookmarkPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let entry = &self.matches[ix];
 
