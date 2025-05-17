@@ -1341,6 +1341,8 @@ impl ConfigurationView {
         
         let server_name = servers[index].name.clone();
         let new_enabled_state = !servers[index].enabled;
+        let server_id = servers[index].id.clone();
+        let server_url = servers[index].api_url.clone();
         
         // Get the filesystem
         let fs = <dyn fs::Fs>::global(cx);
@@ -1364,6 +1366,12 @@ impl ConfigurationView {
                 }
             }
         });
+        
+        // If the server is being enabled, explicitly fetch models from it
+        if new_enabled_state {
+            log::info!("Server {} was enabled, fetching models", server_name);
+            self.fetch_models_from_server(server_id, server_url, cx);
+        }
         
         // Refresh models
         self.state.update(cx, |state, cx| state.restart_fetch_models_task(cx));
