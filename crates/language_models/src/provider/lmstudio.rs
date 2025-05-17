@@ -155,7 +155,7 @@ impl State {
                                     log::info!("Converting model {} to internal format", id);
                                     lmstudio::Model {
                                         name: local_model.id,
-                                        display_name: Some(format!("{}", id)),
+                                        display_name: Some(format!("{} - {}", id, server.name)),
                                         max_tokens: local_model.max_context_length.unwrap_or(8192),
                                         supports_tools: Some(true),
                                         server_id: Some(server.id.clone()),
@@ -192,8 +192,13 @@ impl State {
                                         .and_then(|m| m.custom_max_tokens);
                                     
                                     AvailableModel {
-                                        name: model.name,
-                                        display_name: model.display_name.clone(),
+                                        name: model.name.clone(),
+                                        display_name: model.display_name.clone()
+                                            .or_else(|| {
+                                                let model_name = model.name.clone();
+                                                let server_name = server.name.clone();
+                                                Some(format!("{} - {}", model_name, server_name))
+                                            }),
                                         server_max_tokens: model.max_tokens,
                                         custom_max_tokens, // Preserve custom value if it exists
                                         max_tokens: 0, // For backward compatibility
@@ -1542,7 +1547,8 @@ impl ConfigurationView {
                         // Convert models to AvailableModel format
                         let models = local_models.into_iter()
                             .map(|local_model| {
-                                let id = local_model.id.clone();
+                                // Store the ID first
+                                let model_id = local_model.id.clone();
                                 // Check if this model already exists to preserve custom settings
                                 let existing_model_data = {
                                     cx.update(|cx| {
@@ -1550,7 +1556,7 @@ impl ConfigurationView {
                                         settings.lmstudio.servers.iter()
                                             .find(|s| s.id == server_id)
                                             .and_then(|s| s.available_models.as_ref())
-                                            .and_then(|models| models.iter().find(|m| m.name == local_model.id))
+                                            .and_then(|models| models.iter().find(|m| m.name == model_id))
                                             .map(|m| (m.custom_max_tokens, m.enabled))
                                     }).unwrap_or(None)
                                 };
@@ -1561,9 +1567,26 @@ impl ConfigurationView {
                                     None => (None, true),
                                 };
                                 
+                                // Get server name for the display
+                                let server_name = cx.update(|cx| {
+                                    let settings = AllLanguageModelSettings::get_global(cx);
+                                    settings.lmstudio.servers.iter()
+                                        .find(|s| s.id == server_id)
+                                        .map(|s| s.name.clone())
+                                        .unwrap_or_else(|| {
+                                            // Use URL as fallback if server not found
+                                            let url_parts: Vec<&str> = server_url.split('/').collect();
+                                            if url_parts.len() >= 3 {
+                                                url_parts[2].to_string()
+                                            } else {
+                                                "Unknown Server".to_string()
+                                            }
+                                        })
+                                }).unwrap_or_else(|_| "Unknown Server".to_string());
+                                
                                 AvailableModel {
-                                    name: local_model.id,
-                                    display_name: Some(id),
+                                    name: model_id.clone(),
+                                    display_name: Some(format!("{} - {}", model_id, server_name)),
                                     server_max_tokens: local_model.max_context_length.unwrap_or(8192),
                                     custom_max_tokens,
                                     max_tokens: 0, // For backward compatibility
@@ -1683,7 +1706,12 @@ impl ConfigurationView {
         let new_model = AvailableModel {
             name: self.new_model_name.trim().to_string(),
             display_name: if self.new_model_display_name.trim().is_empty() {
-                None
+                // If no display name provided, create one with server info
+                let settings = AllLanguageModelSettings::get_global(cx);
+                let server_name = settings.lmstudio.servers.get(server_idx)
+                    .map(|s| s.name.clone())
+                    .unwrap_or_default();
+                Some(format!("{} - {}", self.new_model_name.trim(), server_name))
             } else {
                 Some(self.new_model_display_name.trim().to_string())
             },
