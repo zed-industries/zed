@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, update_settings_file};
 use std::{collections::{BTreeMap, HashSet}, sync::Arc};
 // UI imports
-use ui::{ButtonLike, Indicator, List, prelude::*, ListItem, h_flex, v_flex, div, Label, Button, IconButton, LabelSize, Tooltip};
+use ui::{ButtonLike, Indicator, List, prelude::*, ListItem, h_flex, v_flex, div, Label, Button, IconButton, LabelSize, Tooltip, Switch, SwitchColor, ToggleState};
 use ui_input::SingleLineInput;
 use util::ResultExt;
 
@@ -1941,10 +1941,11 @@ impl ConfigurationView {
                         let index_in_list = server_models.iter().position(|m| m.name == model.name).unwrap_or(0);
                         
                         // Create a unique ID for each button using NamedInteger
-                        let toggle_button = IconButton::new(
+                        let toggle_button = Switch::new(
                             ElementId::NamedInteger("toggle".into(), index_in_list as u64),
-                            if is_enabled { IconName::Check } else { IconName::Circle }
-                        );
+                            if is_enabled { ToggleState::Selected } else { ToggleState::Unselected }
+                        )
+                        .color(SwitchColor::Success);
                         
                         h_flex()
                             .justify_between()
@@ -1994,13 +1995,7 @@ impl ConfigurationView {
                                 .child(
                                     // Add the toggle button 
                                     toggle_button
-                                        .tooltip(if is_enabled {
-                                            Tooltip::text("Disable Model")
-                                        } else {
-                                            Tooltip::text("Enable Model")
-                                        })
-                                        .icon_color(if is_enabled { Color::Success } else { Color::Muted })
-                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                        .on_click(cx.listener(move |this, _toggle_state, _, cx| {
                                             log::info!("Toggle clicked for model: {}", model_name);
                                             this.toggle_model_enabled(server_id.clone(), model_name.clone(), cx);
                                         }))
@@ -2528,7 +2523,38 @@ impl Render for ConfigurationView {
                                                                 .child(
                                                                     v_flex()
                                                                         .gap_1()
-                                                                        .child(Label::new(&server.name))
+                                                                        .child(
+                                                                            h_flex()
+                                                                                .gap_1()
+                                                                                .child(Label::new(&server.name))
+                                                                                .child({
+                                                                                    // Check if server is connected by looking at available_models
+                                                                                    let is_connected = server.enabled && 
+                                                                                        server.available_models.as_ref().map(|models| !models.is_empty()).unwrap_or(false);
+                                                                                    
+                                                                                                                                                                                if server.enabled {
+                                                                                        if is_connected {
+                                                                                            // Connected status
+                                                                                            h_flex()
+                                                                                                .gap_1()
+                                                                                                .child(Indicator::dot().color(Color::Success))
+                                                                                                .child(Label::new("Connected").size(LabelSize::XSmall).color(Color::Success))
+                                                                                        } else {
+                                                                                            // Not connected status
+                                                                                            h_flex()
+                                                                                                .gap_1()
+                                                                                                .child(Indicator::dot().color(Color::Warning))
+                                                                                                .child(Label::new("Not connected").size(LabelSize::XSmall).color(Color::Warning))
+                                                                                        }
+                                                                                    } else {
+                                                                                        // Disabled status
+                                                                                        h_flex()
+                                                                                            .gap_1()
+                                                                                            .child(Indicator::dot().color(Color::Muted))
+                                                                                            .child(Label::new("Disabled").size(LabelSize::XSmall).color(Color::Muted))
+                                                                                    }
+                                                                                })
+                                                                        )
                                                                         .child(
                                                                             Label::new(&server.api_url)
                                                                                 .color(Color::Muted)
@@ -2539,29 +2565,55 @@ impl Render for ConfigurationView {
                                                                     h_flex()
                                                                         .gap_1()
                                                                         .child(
-                                                                            IconButton::new("toggle-server", IconName::Circle)
-                                                                                .on_click(cx.listener(move |this, _, _, cx| {
-                                                                                    this.toggle_server(idx, cx);
-                                                                                }))
-                                                                                .icon_color(if server.enabled { Color::Success } else { Color::Muted })
+                                                                            Switch::new(
+                                                                                ElementId::NamedInteger("toggle-server".into(), idx as u64),
+                                                                                if server.enabled { ToggleState::Selected } else { ToggleState::Unselected }
+                                                                            )
+                                                                            .color(SwitchColor::Success)
+                                                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                                                this.toggle_server(idx, cx);
+                                                                            }))
                                                                         )
-                                                                        .child(
-                                                                            IconButton::new("fetch-models", IconName::Update)
-                                                                                .tooltip(Tooltip::text("Fetch Models"))
-                                                                                .on_click({
-                                                                                    let server_enabled = server.enabled;
-                                                                                    let state = self.state.clone();
-                                                                                    move |_, _, cx| {
-                                                                                        if server_enabled {
-                                                                                            // Refresh this specific server's models via the state
-                                                                                            state.update(cx, |state, cx| {
-                                                                                                state.restart_fetch_models_task(cx);
-                                                                                            });
+                                                                        .child({
+                                                                            // Check if server is connected by looking at available_models
+                                                                            let is_connected = server.enabled && 
+                                                                                server.available_models.as_ref().map(|models| !models.is_empty()).unwrap_or(false);
+                                                                            
+                                                                            if server.enabled && !is_connected {
+                                                                                // Show Connect button for enabled but not connected servers
+                                                                                IconButton::new("connect-server", IconName::Play)
+                                                                                    .tooltip(Tooltip::text("Connect to Server"))
+                                                                                    .on_click(cx.listener({
+                                                                                        let server_id = server.id.clone();
+                                                                                        let server_url = server.api_url.clone();
+                                                                                        move |this, _, _, cx| {
+                                                                                            this.fetch_models_from_server(server_id.clone(), server_url.clone(), cx);
                                                                                         }
-                                                                                    }
-                                                                                })
-                                                                                .icon_color(if server.enabled { Color::Info } else { Color::Muted })
-                                                                        )
+                                                                                    }))
+                                                                                    .icon_color(Color::Warning)
+                                                                            } else {
+                                                                                // Show refresh button for connected servers
+                                                                                IconButton::new("fetch-models", IconName::Update)
+                                                                                    .tooltip(Tooltip::text("Fetch Models"))
+                                                                                    .on_click({
+                                                                                        let server_enabled = server.enabled;
+                                                                                        let state = self.state.clone();
+                                                                                        move |_, _, cx| {
+                                                                                            if server_enabled {
+                                                                                                // Refresh this specific server's models via the state
+                                                                                                state.update(cx, |state, cx| {
+                                                                                                    state.restart_fetch_models_task(cx);
+                                                                                                });
+                                                                                            }
+                                                                                        }
+                                                                                    })
+                                                                                    .icon_color(if server.enabled { 
+                                                                                        if is_connected { Color::Success } else { Color::Info }
+                                                                                    } else { 
+                                                                                        Color::Muted 
+                                                                                    })
+                                                                            }
+                                                                        })
                                                                         .child(
                                                                             IconButton::new("edit-server", IconName::Pencil)
                                                                                 .on_click(cx.listener(move |this, _, _, cx| {
