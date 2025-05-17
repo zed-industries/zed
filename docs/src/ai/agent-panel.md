@@ -5,7 +5,7 @@ You can use it for various tasks, such as generating code, asking questions abou
 
 To open the Agent Panel, use the `agent: new thread` action in [the Command Palette](../getting-started.md#command-palette) or click the ✨ (sparkles) icon in the status bar.
 
-If you're using the Agent Panel for the first time, you'll need to [configure at least one LLM provider](./ai/configuration.md).
+If you're using the Agent Panel for the first time, you'll need to [configure at least one LLM provider](./configuration.md).
 
 ## Overview {#overview}
 
@@ -78,7 +78,7 @@ You can also do this at any time with an ongoing thread via the "Agent Options" 
 
 ## Changing Models {#changing-models}
 
-After you've configured your LLM providers—either via [a custom API key](./custom-api-keys.md) or through [Zed's hosted models](./models.md)—you can switch between them by clicking on the model selector on the message editor or by using the {#kb agent::ToggleModelSelector} keybinding.
+After you've configured your LLM providers—either via [a custom API key](./configuration.md#use-your-own-keys) or through [Zed's hosted models](./models.md)—you can switch between them by clicking on the model selector on the message editor or by using the {#kb agent::ToggleModelSelector} keybinding.
 
 ## Using Tools {#using-tools}
 
