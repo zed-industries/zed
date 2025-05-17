@@ -59,7 +59,9 @@ pub(super) fn refresh_linked_ranges(
         let mut applicable_selections = Vec::new();
         editor
             .update(cx, |editor, cx| {
-                let selections = editor.selections.all::<usize>(cx);
+                let selections = editor
+                    .selections
+                    .all::<usize>(&editor.selections.display_map(cx));
                 let snapshot = editor.buffer.read(cx).snapshot(cx);
                 let buffer = editor.buffer.read(cx);
                 for selection in selections {

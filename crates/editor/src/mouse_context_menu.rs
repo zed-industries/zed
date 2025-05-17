@@ -172,7 +172,6 @@ pub fn deploy_context_menu(
             return;
         };
 
-        let display_map = editor.selections.display_map(cx);
         let buffer = &editor.snapshot(window, cx).buffer_snapshot;
         let anchor = buffer.anchor_before(point.to_point(&display_map));
         if !display_ranges(&display_map, &editor.selections).any(|r| r.contains(&point)) {
@@ -187,7 +186,7 @@ pub fn deploy_context_menu(
         let has_reveal_target = editor.target_file(cx).is_some();
         let has_selections = editor
             .selections
-            .all::<PointUtf16>(cx)
+            .all::<PointUtf16>(&display_map)
             .into_iter()
             .any(|s| !s.is_empty());
         let has_git_repo = anchor.buffer_id.is_some_and(|buffer_id| {

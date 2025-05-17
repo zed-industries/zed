@@ -18622,11 +18622,10 @@ fn add_log_breakpoint_at_cursor(
             }
         })
         .unwrap_or_else(|| {
-            let cursor_position: Point = editor.selections.newest(cx).head();
+            let snapshot = editor.snapshot(window, cx).display_snapshot;
+            let cursor_position: Point = editor.selections.newest(&snapshot).head();
 
-            let breakpoint_position = editor
-                .snapshot(window, cx)
-                .display_snapshot
+            let breakpoint_position = snapshot
                 .buffer_snapshot
                 .anchor_before(Point::new(cursor_position.row, 0));
 
@@ -19536,7 +19535,7 @@ println!("5");
             assert_eq!(
                 editor
                     .selections
-                    .all::<Point>(cx)
+                    .all::<Point>(&editor.selections.display_map(cx))
                     .into_iter()
                     .map(|s| s.range())
                     .collect::<Vec<_>>(),
@@ -19579,7 +19578,7 @@ println!("5");
             assert_eq!(
                 editor
                     .selections
-                    .all::<Point>(cx)
+                    .all::<Point>(&editor.selections.display_map(cx))
                     .into_iter()
                     .map(|s| s.range())
                     .collect::<Vec<_>>(),
@@ -19707,7 +19706,7 @@ println!("5");
             assert_eq!(
                 editor
                     .selections
-                    .all::<Point>(cx)
+                    .all::<Point>(&editor.selections.display_map(cx))
                     .into_iter()
                     .map(|s| s.range())
                     .collect::<Vec<_>>(),
@@ -19733,7 +19732,7 @@ println!("5");
             assert_eq!(
                 editor
                     .selections
-                    .all::<Point>(cx)
+                    .all::<Point>(&editor.selections.display_map(cx))
                     .into_iter()
                     .map(|s| s.range())
                     .collect::<Vec<_>>(),
