@@ -1226,10 +1226,17 @@ impl LocalWorktree {
 
         self.start_background_scanner(scan_requests_rx, path_prefixes_to_scan_rx, cx);
         let always_included_entries = mem::take(&mut self.snapshot.always_included_entries);
-        log::debug!(
-            "refreshing entries for the following always included paths: {:?}",
-            always_included_entries
-        );
+        if always_included_entries.len() > 10 {
+            log::debug!(
+                "refreshing entries for {} always included paths",
+                always_included_entries.len()
+            );
+        } else {
+            log::debug!(
+                "refreshing entries for the following always included paths: {:?}",
+                always_included_entries
+            );
+        }
 
         // Cleans up old always included entries to ensure they get updated properly. Otherwise,
         // nested always included entries may not get updated and will result in out-of-date info.
@@ -2484,11 +2491,8 @@ impl Snapshot {
         update: proto::UpdateWorktree,
         always_included_paths: &PathMatcher,
     ) -> Result<()> {
-        log::debug!(
-            "applying remote worktree update. {} entries updated, {} removed",
-            update.updated_entries.len(),
-            update.removed_entries.len()
-        );
+        log::debug!("applying remote worktree update: {:?}", update);
+        
         self.update_abs_path(
             SanitizedPath::from(PathBuf::from_proto(update.abs_path)),
             update.root_name,
@@ -3943,7 +3947,11 @@ impl BackgroundScanner {
     }
 
     async fn process_scan_request(&self, mut request: ScanRequest, scanning: bool) -> bool {
-        log::debug!("rescanning paths {:?}", request.relative_paths);
+        if request.relative_paths.len() > 10 {
+            log::debug!("rescanning {} paths", request.relative_paths.len());
+        } else {
+            log::debug!("rescanning paths {:?}", request.relative_paths);
+        }
 
         request.relative_paths.sort_unstable();
         self.forcibly_load_paths(&request.relative_paths).await;

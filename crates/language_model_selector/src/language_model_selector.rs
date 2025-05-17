@@ -603,7 +603,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
             ),
             LanguageModelPickerEntry::Model(model_info) => {
                 let active_model = (self.get_active_model)(cx);
-                let active_provider_id = active_model.as_ref().map(|m| m.provider.id());
+                let active_provider_id = active_model.as_ref().map(|m| m.model.provider_id());
                 let active_model_id = active_model.map(|m| m.model.id());
 
                 let is_selected = Some(model_info.model.provider_id()) == active_provider_id
@@ -626,12 +626,22 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                                 .size(IconSize::Small),
                         )
                         .child(
-                            h_flex()
+                            v_flex()
                                 .w_full()
                                 .pl_0p5()
-                                .gap_1p5()
+                                .gap_0p5()
                                 .w(px(240.))
-                                .child(Label::new(model_info.model.name().0.clone()).truncate()),
+                                .child(Label::new(model_info.model.name().0.clone()).truncate())
+                                .child(
+                                    h_flex()
+                                    .gap_1()
+                                    .child(
+                                        Label::new(get_model_details(&model_info.model))
+                                            .color(Color::Muted)
+                                            .size(LabelSize::XSmall)
+                                            .truncate()
+                                    )
+                                ),
                         )
                         .end_slot(div().pr_3().when(is_selected, |this| {
                             this.child(
@@ -701,6 +711,41 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 .into_any(),
         )
     }
+}
+
+fn get_model_details(model: &Arc<dyn LanguageModel>) -> String {
+    let max_tokens = model.max_token_count();
+    
+    // Format the max tokens into a more readable form - show as K if > 1000
+    let max_tokens_str = if max_tokens >= 10000 {
+        format!("{}K", max_tokens / 1000)
+    } else {
+        format!("{}", max_tokens)
+    };
+    
+    // Get server name from telemetry ID if possible
+    let telemetry_id = model.telemetry_id();
+    
+    // For LM Studio models, try to extract server information from name
+    let server_name = if telemetry_id.starts_with("lmstudio/") {
+        // LM Studio models may have server name included in the display name
+        let display_name = model.name().0.to_string();
+        
+        // Check if the display name contains a server identifier with dash separator like "Model Name - Server"
+        if let Some(start_idx) = display_name.rfind(" - ") {
+            // Extract the server name part after the dash
+            let server_part = &display_name[(start_idx + 3)..];
+            return format!("{} · {} tokens", server_part, max_tokens_str);
+        }
+        
+        // If no server info in the name, fall back to provider name
+        model.provider_name().0.to_string()
+    } else {
+        // For non-LM Studio models, use the provider name
+        model.provider_name().0.to_string()
+    };
+    
+    format!("{} · {} tokens", server_name, max_tokens_str)
 }
 
 #[cfg(test)]
