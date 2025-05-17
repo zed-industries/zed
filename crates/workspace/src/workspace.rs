@@ -1707,6 +1707,7 @@ impl Workspace {
                         pane.update_in(cx, |pane, window, cx| {
                             let item = pane.open_item(
                                 project_entry_id,
+                                project_path,
                                 true,
                                 entry.is_preview,
                                 true,
@@ -3091,12 +3092,14 @@ impl Workspace {
             })
         });
 
-        let task = self.load_path(path.into(), window, cx);
+        let project_path = path.into();
+        let task = self.load_path(project_path.clone(), window, cx);
         window.spawn(cx, async move |cx| {
             let (project_entry_id, build_item) = task.await?;
             let result = pane.update_in(cx, |pane, window, cx| {
                 let result = pane.open_item(
                     project_entry_id,
+                    project_path,
                     focus_item,
                     allow_preview,
                     activate,
@@ -3142,7 +3145,8 @@ impl Workspace {
             }
         }
 
-        let task = self.load_path(path.into(), window, cx);
+        let project_path = path.into();
+        let task = self.load_path(project_path.clone(), window, cx);
         cx.spawn_in(window, async move |this, cx| {
             let (project_entry_id, build_item) = task.await?;
             this.update_in(cx, move |this, window, cx| -> Option<_> {
@@ -3156,6 +3160,7 @@ impl Workspace {
                 new_pane.update(cx, |new_pane, cx| {
                     Some(new_pane.open_item(
                         project_entry_id,
+                        project_path,
                         true,
                         allow_preview,
                         true,
