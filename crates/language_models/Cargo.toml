@@ -56,6 +56,7 @@ thiserror.workspace = true
 tiktoken-rs.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 ui.workspace = true
+ui_input.workspace = true
 util.workspace = true
 uuid.workspace = true
 workspace-hack.workspace = true
