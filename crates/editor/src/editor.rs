@@ -12525,7 +12525,7 @@ impl Editor {
 
         let mut new_selections = Vec::new();
 
-        let reversed = self.selections.oldest::<usize>(cx).reversed;
+        let reversed = self.selections.oldest::<usize>(&display_map).reversed;
         let buffer = &display_map.buffer_snapshot;
         let query_matches = select_next_state
             .query

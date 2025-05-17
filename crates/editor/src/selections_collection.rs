@@ -282,13 +282,11 @@ impl SelectionsCollection {
 
     pub fn oldest<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &mut App,
+        snapshot: &DisplaySnapshot,
     ) -> Selection<D> {
-        let map = self.display_map(cx);
-        let selection = resolve_selections([self.oldest_anchor()], &map)
+        resolve_selections([self.oldest_anchor()], &snapshot)
             .next()
-            .unwrap();
-        selection
+            .unwrap()
     }
 
     pub fn first_anchor(&self) -> Selection<Anchor> {

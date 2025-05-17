@@ -1269,11 +1269,11 @@ impl Vim {
 
                 let selections = self.editor().map(|editor| {
                     editor.update(cx, |editor, cx| {
+                        let snapshot = editor.selections.display_map(cx);
+
                         (
-                            editor.selections.oldest::<Point>(cx),
-                            editor
-                                .selections
-                                .newest::<Point>(&editor.selections.display_map(cx)),
+                            editor.selections.oldest::<Point>(&snapshot),
+                            editor.selections.newest::<Point>(&snapshot),
                         )
                     })
                 });
