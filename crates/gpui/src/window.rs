@@ -3,8 +3,8 @@ use crate::{
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Context,
     Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener, DispatchNodeId,
     DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, FontId,
-    Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, InspectorElementId, IsZero,
-    KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
+    Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, Inspector, InspectorElementId,
+    IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
     LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render,
@@ -621,12 +621,12 @@ impl Frame {
 }
 
 /// The window mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum WindowMode {
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum WindowMode {
     /// A normal window.
     Normal,
     /// A window in inspector mode.
-    Inspector,
+    Inspector(Entity<Inspector>),
 }
 
 /// Holds the state for a specific window.
@@ -645,7 +645,6 @@ pub struct Window {
     /// This is used by `with_rem_size` to allow rendering an element tree with
     /// a given rem size.
     rem_size_override_stack: SmallVec<[Pixels; 8]>,
-    pub(crate) inspected_element_id: Option<InspectorElementId>,
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root: Option<AnyView>,
@@ -934,7 +933,6 @@ impl Window {
             text_system,
             rem_size: px(16.),
             rem_size_override_stack: SmallVec::new(),
-            inspected_element_id: None,
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
             root: None,
@@ -1488,14 +1486,35 @@ impl Window {
         self.platform_window.show_character_palette();
     }
 
-    /// Returns the mode of the window.
-    pub fn mode(&self) -> WindowMode {
-        self.mode
+    /// Toggles the inspector mode on this window.
+    pub fn toggle_inspector(&mut self, cx: &mut App) {
+        match self.mode {
+            WindowMode::Normal => {
+                self.mode = WindowMode::Inspector(cx.new(|_| Inspector::new()));
+            }
+            WindowMode::Inspector(_) => self.mode = WindowMode::Normal,
+        }
     }
 
-    /// Sets the mode of the window.
-    pub fn set_mode(&mut self, mode: WindowMode) {
-        self.mode = mode;
+    /// Returns true if the window is in inspector mode.
+    pub fn is_inspecting(&self) -> bool {
+        matches!(self.mode, WindowMode::Inspector(_))
+    }
+
+    /// Sets the given [`InspectorElementId`] as the currently inspected element.
+    pub fn inspect_element(&mut self, id: Option<InspectorElementId>, cx: &mut App) {
+        if let WindowMode::Inspector(inspector) = &self.mode {
+            inspector.update(cx, |inspector, cx| inspector.select(id, cx))
+        }
+    }
+
+    /// Returns the id of the currently inspected element, if any.
+    pub fn inspected_element_id<'a>(&self, cx: &'a App) -> Option<&'a InspectorElementId> {
+        if let WindowMode::Inspector(inspector) = &self.mode {
+            inspector.read(cx).active_element_id()
+        } else {
+            None
+        }
     }
 
     /// The scale factor of the display associated with the window. For example, it could
@@ -1520,12 +1539,6 @@ impl Window {
         self.rem_size = rem_size.into();
     }
 
-    /// Sets the given [`InspectorElementId`] as the currently inspected element.
-    pub fn inspect_element(&mut self, id: Option<InspectorElementId>) {
-        self.inspected_element_id = id;
-        self.refresh();
-    }
-
     /// Acquire a globally unique identifier for the given ElementId.
     /// Only valid for the duration of the provided closure.
     pub fn with_global_id<R>(
@@ -1546,6 +1559,8 @@ impl Window {
         inspector_id: Option<&InspectorElementId>,
         f: impl FnOnce(&mut Option<T>, &mut Self) -> R,
     ) -> R {
+        self.invalidator.debug_assert_paint_or_prepaint();
+
         if let Some(inspector_id) = inspector_id {
             let type_id = TypeId::of::<T>();
 
@@ -1580,6 +1595,39 @@ impl Window {
         } else {
             f(&mut None, self)
         }
+    }
+
+    /// todo!()
+    pub fn update_inspector_state<T: 'static, R>(
+        &mut self,
+        inspector_id: &InspectorElementId,
+        f: impl FnOnce(&mut Option<T>, &mut Self) -> R,
+    ) -> R {
+        let type_id = TypeId::of::<T>();
+
+        let mut inspector_state = self
+            .rendered_frame
+            .inspector_state
+            .element_states
+            .get_mut(&inspector_id)
+            .and_then(|state| state.remove(&type_id))
+            .map(|state| *state.downcast().unwrap());
+
+        let result = f(&mut inspector_state, self);
+
+        if let Some(inspector_state) = inspector_state {
+            self.rendered_frame
+                .inspector_state
+                .element_states
+                // todo!("avoid cloning debug id here")
+                .entry(inspector_id.clone())
+                .or_default()
+                .insert(type_id, Box::new(inspector_state));
+        }
+
+        self.refresh();
+
+        result
     }
 
     /// Executes the provided function with the specified rem size.
@@ -1784,13 +1832,19 @@ impl Window {
             tooltip_element = self.prepaint_tooltip(cx);
         }
 
-        let inspector_elements = match self.mode {
+        let mode = mem::replace(&mut self.mode, WindowMode::Normal);
+        let inspector_element = match mode {
             WindowMode::Normal => None,
-            WindowMode::Inspector => {
-                self.mode = WindowMode::Normal;
-                let inspector_elements = self.prepaint_inspector_elements(cx);
-                self.mode = WindowMode::Inspector;
-                Some(inspector_elements)
+            WindowMode::Inspector(inspector) => {
+                let mut inspector_element = AnyView::from(inspector.clone()).into_any_element();
+                inspector_element.prepaint_as_root(
+                    Point::default(),
+                    self.viewport_size.into(),
+                    self,
+                    cx,
+                );
+                self.mode = WindowMode::Inspector(inspector);
+                Some(inspector_element)
             }
         };
 
@@ -1810,12 +1864,14 @@ impl Window {
             tooltip_element.paint(self, cx);
         }
 
-        if let Some(mut inspector_elements) = inspector_elements {
-            self.mode = WindowMode::Normal;
-            for mut element in inspector_elements {
-                element.paint(self, cx);
+        let mode = mem::replace(&mut self.mode, WindowMode::Normal);
+        match mode {
+            WindowMode::Normal => {}
+            WindowMode::Inspector(inspector) => {
+                let mut inspector_element = inspector_element.unwrap();
+                inspector_element.paint(self, cx);
+                self.mode = WindowMode::Inspector(inspector);
             }
-            self.mode = WindowMode::Inspector;
         }
     }
 
@@ -1950,48 +2006,6 @@ impl Window {
         }
         self.next_frame.deferred_draws = deferred_draws;
         self.element_id_stack.clear();
-    }
-
-    fn prepaint_inspector_elements(&mut self, cx: &mut App) -> SmallVec<[AnyElement; 1]> {
-        let mut debug_elements = SmallVec::new();
-        // todo!("change all 'debug' to 'inspect' nomenclature")
-        if let Some(inspected_element_id) = self.inspected_element_id.take() {
-            if let Some(states_by_type_id) = self
-                .next_frame
-                .inspector_state
-                .element_states
-                .remove(&inspected_element_id)
-            {
-                for (type_id, state) in &states_by_type_id {
-                    if let Some(render_inspector) = cx.inspector_element_registry.remove(&type_id) {
-                        let mut element = (render_inspector)(
-                            inspected_element_id.clone(),
-                            state.as_ref(),
-                            self,
-                            cx,
-                        );
-                        element.prepaint_as_root(
-                            Point::default(),
-                            self.viewport_size.into(),
-                            self,
-                            cx,
-                        );
-                        debug_elements.push(element);
-                        cx.inspector_element_registry
-                            .insert(*type_id, render_inspector);
-                    }
-                }
-
-                self.next_frame
-                    .inspector_state
-                    .element_states
-                    .insert(inspected_element_id.clone(), states_by_type_id);
-            }
-
-            self.inspected_element_id = Some(inspected_element_id);
-        }
-
-        debug_elements
     }
 
     pub(crate) fn prepaint_index(&self) -> PrepaintStateIndex {

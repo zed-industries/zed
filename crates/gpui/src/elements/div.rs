@@ -17,16 +17,14 @@
 
 use crate::{
     Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
-    Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox, HitboxId,
+    Element, ElementId, Entity, Fill, FocusHandle, Global, GlobalElementId, Hitbox, HitboxId,
     InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, Pixels, Point, Render, Rgba, ScrollWheelEvent, SharedString, Size, Style,
-    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowMode, fill, point, px,
-    size,
+    ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
+    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, fill, point, px, size,
 };
 use collections::HashMap;
 use refineable::Refineable;
-use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
@@ -1194,10 +1192,9 @@ pub struct DivFrameState {
 }
 
 /// todo!("document")
-#[derive(Serialize, Deserialize)]
 pub struct DivInspectorState {
     /// todo!("document")
-    pub background: Rgba,
+    pub background: Option<Fill>,
 }
 
 impl Styled for Div {
@@ -1448,66 +1445,67 @@ impl Interactivity {
     ) -> LayoutId {
         window.with_inspector_state(
             inspector_id,
-            |inspector_state: &mut Option<DivInspectorState>, window| {
-                inspector_state.get_or_insert_with(|| DivInspectorState {
-                    background: crate::rgb(0xff00ff),
+            |inspector_state: &mut Option<DivInspectorState>, _window| {
+                let inspector_state = inspector_state.get_or_insert_with(|| DivInspectorState {
+                    background: self.base_style.background.clone(),
                 });
+                if let Some(background) = inspector_state.background.clone() {
+                    self.base_style.background = Some(background);
+                }
+            },
+        );
 
-                window.with_optional_element_state::<InteractiveElementState, _>(
-                    global_id,
-                    |element_state, window| {
-                        let mut element_state =
-                            element_state.map(|element_state| element_state.unwrap_or_default());
+        window.with_optional_element_state::<InteractiveElementState, _>(
+            global_id,
+            |element_state, window| {
+                let mut element_state =
+                    element_state.map(|element_state| element_state.unwrap_or_default());
 
-                        if let Some(element_state) = element_state.as_ref() {
-                            if cx.has_active_drag() {
-                                if let Some(pending_mouse_down) =
-                                    element_state.pending_mouse_down.as_ref()
-                                {
-                                    *pending_mouse_down.borrow_mut() = None;
-                                }
-                                if let Some(clicked_state) = element_state.clicked_state.as_ref() {
-                                    *clicked_state.borrow_mut() = ElementClickedState::default();
-                                }
-                            }
-                        }
-
-                        // Ensure we store a focus handle in our element state if we're focusable.
-                        // If there's an explicit focus handle we're tracking, use that. Otherwise
-                        // create a new handle and store it in the element state, which lives for as
-                        // as frames contain an element with this id.
-                        if self.focusable && self.tracked_focus_handle.is_none() {
-                            if let Some(element_state) = element_state.as_mut() {
-                                self.tracked_focus_handle = Some(
-                                    element_state
-                                        .focus_handle
-                                        .get_or_insert_with(|| cx.focus_handle())
-                                        .clone(),
-                                );
-                            }
-                        }
-
-                        if let Some(scroll_handle) = self.tracked_scroll_handle.as_ref() {
-                            self.scroll_offset = Some(scroll_handle.0.borrow().offset.clone());
-                        } else if self.base_style.overflow.x == Some(Overflow::Scroll)
-                            || self.base_style.overflow.y == Some(Overflow::Scroll)
+                if let Some(element_state) = element_state.as_ref() {
+                    if cx.has_active_drag() {
+                        if let Some(pending_mouse_down) = element_state.pending_mouse_down.as_ref()
                         {
-                            if let Some(element_state) = element_state.as_mut() {
-                                self.scroll_offset = Some(
-                                    element_state
-                                        .scroll_offset
-                                        .get_or_insert_with(Rc::default)
-                                        .clone(),
-                                );
-                            }
+                            *pending_mouse_down.borrow_mut() = None;
                         }
+                        if let Some(clicked_state) = element_state.clicked_state.as_ref() {
+                            *clicked_state.borrow_mut() = ElementClickedState::default();
+                        }
+                    }
+                }
 
-                        let style =
-                            self.compute_style_internal(None, element_state.as_mut(), window, cx);
-                        let layout_id = f(style, window, cx);
-                        (layout_id, element_state)
-                    },
-                )
+                // Ensure we store a focus handle in our element state if we're focusable.
+                // If there's an explicit focus handle we're tracking, use that. Otherwise
+                // create a new handle and store it in the element state, which lives for as
+                // as frames contain an element with this id.
+                if self.focusable && self.tracked_focus_handle.is_none() {
+                    if let Some(element_state) = element_state.as_mut() {
+                        self.tracked_focus_handle = Some(
+                            element_state
+                                .focus_handle
+                                .get_or_insert_with(|| cx.focus_handle())
+                                .clone(),
+                        );
+                    }
+                }
+
+                if let Some(scroll_handle) = self.tracked_scroll_handle.as_ref() {
+                    self.scroll_offset = Some(scroll_handle.0.borrow().offset.clone());
+                } else if self.base_style.overflow.x == Some(Overflow::Scroll)
+                    || self.base_style.overflow.y == Some(Overflow::Scroll)
+                {
+                    if let Some(element_state) = element_state.as_mut() {
+                        self.scroll_offset = Some(
+                            element_state
+                                .scroll_offset
+                                .get_or_insert_with(Rc::default)
+                                .clone(),
+                        );
+                    }
+                }
+
+                let style = self.compute_style_internal(None, element_state.as_mut(), window, cx);
+                let layout_id = f(style, window, cx);
+                (layout_id, element_state)
             },
         )
     }
@@ -1586,7 +1584,7 @@ impl Interactivity {
             || self.drag_listener.is_some()
             || !self.drop_listeners.is_empty()
             || self.tooltip_builder.is_some()
-            || window.mode() == WindowMode::Inspector
+            || window.is_inspecting()
     }
 
     fn clamp_scroll_position(
@@ -1714,7 +1712,12 @@ impl Interactivity {
 
                                     if let Some(hitbox) = hitbox {
                                         if let Some(inspector_id) = inspector_id {
-                                            self.paint_debug(hitbox, inspector_id.clone(), window);
+                                            self.paint_inspector_info(
+                                                hitbox,
+                                                inspector_id.clone(),
+                                                window,
+                                                cx,
+                                            );
                                         }
 
                                         if let Some(group) = self.group.as_ref() {
@@ -1732,13 +1735,18 @@ impl Interactivity {
         );
     }
 
-    fn paint_debug(&self, hitbox: &Hitbox, inspector_id: InspectorElementId, window: &mut Window) {
-        if window.mode() != WindowMode::Inspector {
+    fn paint_inspector_info(
+        &self,
+        hitbox: &Hitbox,
+        inspector_id: InspectorElementId,
+        window: &mut Window,
+        cx: &App,
+    ) {
+        if !window.is_inspecting() {
             return;
         }
 
-        if window.inspected_element_id.as_ref() == Some(&inspector_id) || hitbox.is_top_hit(window)
-        {
+        if window.inspected_element_id(cx) == Some(&inspector_id) || hitbox.is_top_hit(window) {
             window.paint_quad(fill(hitbox.bounds, crate::rgba(0xff00ff80)));
         }
 
@@ -1746,10 +1754,9 @@ impl Interactivity {
             let hitbox = hitbox.clone();
             move |_: &MouseDownEvent, phase, window, cx| {
                 if phase == DispatchPhase::Capture && hitbox.is_top_hit(window) {
-                    dbg!();
                     window.prevent_default();
                     cx.stop_propagation();
-                    window.inspect_element(Some(inspector_id.clone()));
+                    window.inspect_element(Some(inspector_id.clone()), cx);
                 }
             }
         });

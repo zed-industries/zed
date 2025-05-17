@@ -34,12 +34,12 @@ use crate::{
     Action, ActionBuildError, ActionRegistry, Any, AnyElement, AnyView, AnyWindowHandle,
     AppContext, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle,
     DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global,
-    InspectorElementId, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem,
-    OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, Point,
-    PromptBuilder, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
-    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
-    TextSystem, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
-    current_platform, hash, init_app_menus,
+    InspectorElementId, IntoElement, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu,
+    MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
+    PlatformKeyboardLayout, Point, PromptBuilder, PromptHandle, PromptLevel, Render, RenderImage,
+    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
+    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
+    WindowInvalidator, current_platform, hash, init_app_menus,
 };
 
 mod async_context;
@@ -1665,15 +1665,15 @@ impl App {
     }
 
     /// todo!(Document/rename)
-    pub fn register_inspector_element<T: 'static>(
+    pub fn register_inspector_element<T: 'static, R: IntoElement>(
         &mut self,
-        f: impl 'static + Fn(InspectorElementId, &T, &mut Window, &mut App) -> AnyElement,
+        f: impl 'static + Fn(InspectorElementId, &T, &mut Window, &mut App) -> R,
     ) {
         self.inspector_element_registry.insert(
             TypeId::of::<T>(),
             Box::new(move |id, value, window, cx| {
                 let value = value.downcast_ref().unwrap();
-                f(id, value, window, cx)
+                f(id, value, window, cx).into_any_element()
             }),
         );
     }

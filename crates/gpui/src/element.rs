@@ -33,7 +33,8 @@
 
 use crate::{
     App, ArenaBox, AvailableSpace, Bounds, Context, DispatchNodeId, ELEMENT_ARENA, ElementId,
-    FocusHandle, LayoutId, Pixels, Point, Size, Style, Window, util::FluentBuilder,
+    FocusHandle, InspectorElementId, LayoutId, Pixels, Point, Size, Style, Window,
+    util::FluentBuilder,
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
@@ -262,30 +263,6 @@ impl<C: RenderOnce> IntoElement for Component<C> {
 #[derive(Deref, DerefMut, Default, Debug, Eq, PartialEq, Hash)]
 pub struct GlobalElementId(pub(crate) SmallVec<[ElementId; 32]>);
 
-/// A unique identifier for an element that can be debugged.
-#[cfg(debug_assertions)]
-#[derive(Debug, Eq, PartialEq, Hash)]
-pub struct InspectorElementId {
-    global_id: GlobalElementId,
-    source: &'static panic::Location<'static>,
-    instance_id: usize,
-}
-
-#[cfg(debug_assertions)]
-impl Clone for InspectorElementId {
-    fn clone(&self) -> Self {
-        Self {
-            global_id: GlobalElementId(self.global_id.0.clone()),
-            source: self.source,
-            instance_id: self.instance_id,
-        }
-    }
-}
-
-#[cfg(not(debug_assertions))]
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
-pub(crate) struct InspectorElementId;
-
 trait ElementObject {
     fn inner_element(&mut self) -> &mut dyn Any;
 
@@ -355,7 +332,6 @@ impl<E: Element> Drawable<E> {
                     GlobalElementId(window.element_id_stack.clone())
                 });
 
-                // todo!()
                 let inspector_id = if let Some(source) = self.element.source() {
                     let key = (window.element_id_stack.clone(), source);
                     // todo!(avoid cloning when not needed, extract a function in the window)
