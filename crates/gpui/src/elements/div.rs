@@ -1713,12 +1713,12 @@ impl Interactivity {
                                     f(&style, window, cx);
 
                                     if let Some(hitbox) = hitbox {
-                                        if let Some(group) = self.group.as_ref() {
-                                            GroupHitboxes::pop(group, cx);
-                                        }
-
                                         if let Some(inspector_id) = inspector_id {
                                             self.paint_debug(hitbox, inspector_id.clone(), window);
+                                        }
+
+                                        if let Some(group) = self.group.as_ref() {
+                                            GroupHitboxes::pop(group, cx);
                                         }
                                     }
                                 },
@@ -1746,9 +1746,10 @@ impl Interactivity {
             let hitbox = hitbox.clone();
             move |_: &MouseDownEvent, phase, window, cx| {
                 if phase == DispatchPhase::Capture && hitbox.is_top_hit(window) {
+                    dbg!();
                     window.prevent_default();
                     cx.stop_propagation();
-                    window.select_debug_element(Some(inspector_id.clone()));
+                    window.inspect_element(Some(inspector_id.clone()));
                 }
             }
         });

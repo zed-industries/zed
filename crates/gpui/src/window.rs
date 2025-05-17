@@ -1520,8 +1520,8 @@ impl Window {
         self.rem_size = rem_size.into();
     }
 
-    /// Selects the element with the given [`DebugElementId`] as the active debug element.
-    pub fn select_debug_element(&mut self, id: Option<InspectorElementId>) {
+    /// Sets the given [`InspectorElementId`] as the currently inspected element.
+    pub fn inspect_element(&mut self, id: Option<InspectorElementId>) {
         self.inspected_element_id = id;
         self.refresh();
     }

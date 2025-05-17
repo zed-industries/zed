@@ -103,47 +103,61 @@ struct Inspector {
 
 impl Render for Inspector {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex()
-            .occlude()
-            .child(Button::new("red", "Red").on_click({
-                let inspector_id = self.inspector_id.clone();
-                move |_event, window, _cx| {
-                    window.with_inspector_state::<gpui::DivInspectorState, _>(
-                        Some(&inspector_id),
-                        |state, _window| {
-                            if let Some(state) = state {
-                                state.background = gpui::rgb(0xff0000);
-                            }
-                        },
-                    );
-                }
-            }))
-            .child(Button::new("green", "Green").on_click({
-                let inspector_id = self.inspector_id.clone();
-                move |_event, window, _cx| {
-                    window.with_inspector_state::<gpui::DivInspectorState, _>(
-                        Some(&inspector_id),
-                        |state, _window| {
-                            if let Some(state) = state {
-                                state.background = gpui::rgb(0x00ff00);
-                            }
-                        },
-                    );
-                }
-            }))
-            .child(Button::new("blue", "Blue").on_click({
-                let inspector_id = self.inspector_id.clone();
-                move |_event, window, _cx| {
-                    window.with_inspector_state::<gpui::DivInspectorState, _>(
-                        Some(&inspector_id),
-                        |state, _window| {
-                            if let Some(state) = state {
-                                state.background = gpui::rgb(0x0000ff);
-                            }
-                        },
-                    );
-                }
-            }))
+        v_flex().size_full().items_end().child(
+            v_flex()
+                .bg(cx.theme().colors().elevated_surface_background)
+                .p_4()
+                .mt_4()
+                .mr_4()
+                .rounded_lg()
+                .shadow_lg()
+                .occlude()
+                .child(Button::new("red", "Red").on_click({
+                    let inspector_id = self.inspector_id.clone();
+                    move |_event, window, _cx| {
+                        dbg!();
+                        window.with_inspector_state::<gpui::DivInspectorState, _>(
+                            Some(&inspector_id),
+                            |state, _window| {
+                                dbg!();
+                                if let Some(state) = state {
+                                    state.background = gpui::rgb(0xff0000);
+                                }
+                            },
+                        );
+                    }
+                }))
+                .child(Button::new("green", "Green").on_click({
+                    let inspector_id = self.inspector_id.clone();
+                    move |_event, window, _cx| {
+                        dbg!();
+                        window.with_inspector_state::<gpui::DivInspectorState, _>(
+                            Some(&inspector_id),
+                            |state, _window| {
+                                dbg!();
+                                if let Some(state) = state {
+                                    state.background = gpui::rgb(0x00ff00);
+                                }
+                            },
+                        );
+                    }
+                }))
+                .child(Button::new("blue", "Blue").on_click({
+                    let inspector_id = self.inspector_id.clone();
+                    move |_event, window, _cx| {
+                        dbg!();
+                        window.with_inspector_state::<gpui::DivInspectorState, _>(
+                            Some(&inspector_id),
+                            |state, _window| {
+                                dbg!();
+                                if let Some(state) = state {
+                                    state.background = gpui::rgb(0x0000ff);
+                                }
+                            },
+                        );
+                    }
+                })),
+        )
     }
 }
 
@@ -540,7 +554,7 @@ fn register_actions(
     workspace
         .register_action(about)
         .register_action(
-            |_workspace, _: &zed_actions::dev::ToggleInspector, window, cx| {
+            |_workspace, _: &zed_actions::dev::ToggleInspector, window, _cx| {
                 let new_mode = match window.mode() {
                     gpui::WindowMode::Normal => gpui::WindowMode::Inspector,
                     gpui::WindowMode::Inspector => gpui::WindowMode::Normal,

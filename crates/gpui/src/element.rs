@@ -284,7 +284,7 @@ impl Clone for InspectorElementId {
 
 #[cfg(not(debug_assertions))]
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
-pub(crate) struct DebugElementId;
+pub(crate) struct InspectorElementId;
 
 trait ElementObject {
     fn inner_element(&mut self) -> &mut dyn Any;
