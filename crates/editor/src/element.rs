@@ -7434,7 +7434,8 @@ impl Element for EditorElement {
                                 let mut selections = editor
                                     .selections
                                     .disjoint_in_range(start_anchor..end_anchor, cx);
-                                selections.extend(editor.selections.pending(cx));
+                                selections
+                                    .extend(editor.selections.pending(&snapshot.display_snapshot));
 
                                 (selections, selected_buffer_ids)
                             })

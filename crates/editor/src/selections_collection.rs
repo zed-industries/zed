@@ -102,11 +102,9 @@ impl SelectionsCollection {
 
     pub fn pending<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &mut App,
+        snapshot: &DisplaySnapshot,
     ) -> Option<Selection<D>> {
-        let map = self.display_map(cx);
-        let selection = resolve_selections(self.pending_anchor().as_ref(), &map).next();
-        selection
+        resolve_selections(self.pending_anchor().as_ref(), &snapshot).next()
     }
 
     pub(crate) fn pending_mode(&self) -> Option<SelectMode> {
@@ -120,7 +118,7 @@ impl SelectionsCollection {
         let map = self.display_map(cx);
         let disjoint_anchors = &self.disjoint;
         let mut disjoint = resolve_selections::<D, _>(disjoint_anchors.iter(), &map).peekable();
-        let mut pending_opt = self.pending::<D>(cx);
+        let mut pending_opt = self.pending::<D>(&map);
         iter::from_fn(move || {
             if let Some(pending) = pending_opt.as_mut() {
                 while let Some(next_selection) = disjoint.peek() {
