@@ -56,7 +56,9 @@
       "cmd-shift-end": "editor::SelectToEnd",
       "ctrl-f8": "editor::ToggleBreakpoint",
       "ctrl-shift-f8": "editor::EditLogBreakpoint",
-      "cmd-shift-u": "editor::ToggleCase"
+      "cmd-shift-u": "editor::ToggleCase",
+      "cmd-shift-up": "editor::MoveLineUp",
+      "cmd-shift-down": "editor::MoveLineDown"
     }
   },
   {
