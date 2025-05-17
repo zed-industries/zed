@@ -1371,6 +1371,26 @@ impl ConfigurationView {
         if new_enabled_state {
             log::info!("Server {} was enabled, fetching models", server_name);
             self.fetch_models_from_server(server_id, server_url, cx);
+        } else {
+            // If the server is being disabled, immediately update the state to remove its models
+            self.state.update(cx, |state, cx| {
+                let server_id_clone = server_id.clone();
+                log::info!("Server {} was disabled, removing its models", server_name);
+                
+                // Filter out models from the disabled server
+                state.available_models.retain(|model| {
+                    if let Some(model_server_id) = &model.server_id {
+                        if model_server_id == &server_id_clone {
+                            log::info!("Removing model {} from disabled server", model.name);
+                            return false;
+                        }
+                    }
+                    true
+                });
+                
+                // Restart fetch models task to ensure everything is in sync
+                state.restart_fetch_models_task(cx);
+            });
         }
         
         // Refresh models
