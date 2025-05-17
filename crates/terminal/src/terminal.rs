@@ -516,7 +516,7 @@ impl TerminalBuilder {
             while let Some(event) = self.events_rx.next().await {
                 terminal.update(cx, |terminal, cx| {
                     //Process the first event immediately for lowered latency
-                    terminal.process_event(&event, cx);
+                    terminal.process_event(event, cx);
                 })?;
 
                 'outer: loop {
@@ -554,11 +554,11 @@ impl TerminalBuilder {
 
                     terminal.update(cx, |this, cx| {
                         if wakeup {
-                            this.process_event(&AlacTermEvent::Wakeup, cx);
+                            this.process_event(AlacTermEvent::Wakeup, cx);
                         }
 
                         for event in events {
-                            this.process_event(&event, cx);
+                            this.process_event(event, cx);
                         }
                     })?;
                     smol::future::yield_now().await;
@@ -704,10 +704,10 @@ impl TaskStatus {
 }
 
 impl Terminal {
-    fn process_event(&mut self, event: &AlacTermEvent, cx: &mut Context<Self>) {
+    fn process_event(&mut self, event: AlacTermEvent, cx: &mut Context<Self>) {
         match event {
             AlacTermEvent::Title(title) => {
-                self.breadcrumb_text = title.to_string();
+                self.breadcrumb_text = title;
                 cx.emit(Event::BreadcrumbsChanged);
             }
             AlacTermEvent::ResetTitle => {
@@ -715,7 +715,7 @@ impl Terminal {
                 cx.emit(Event::BreadcrumbsChanged);
             }
             AlacTermEvent::ClipboardStore(_, data) => {
-                cx.write_to_clipboard(ClipboardItem::new_string(data.to_string()))
+                cx.write_to_clipboard(ClipboardItem::new_string(data))
             }
             AlacTermEvent::ClipboardLoad(_, format) => {
                 self.write_to_pty(
@@ -726,7 +726,7 @@ impl Terminal {
                     },
                 )
             }
-            AlacTermEvent::PtyWrite(out) => self.write_to_pty(out.clone()),
+            AlacTermEvent::PtyWrite(out) => self.write_to_pty(out),
             AlacTermEvent::TextAreaSizeRequest(format) => {
                 self.write_to_pty(format(self.last_content.terminal_bounds.into()))
             }
@@ -758,13 +758,12 @@ impl Terminal {
                 // Instead of locking, we could store the colors in `self.last_content`. But then
                 // we might respond with out of date value if a "set color" sequence is immediately
                 // followed by a color request sequence.
-                let color = self.term.lock().colors()[*index].unwrap_or_else(|| {
-                    to_alac_rgb(get_color_at_index(*index, cx.theme().as_ref()))
-                });
+                let color = self.term.lock().colors()[index]
+                    .unwrap_or_else(|| to_alac_rgb(get_color_at_index(index, cx.theme().as_ref())));
                 self.write_to_pty(format(color));
             }
             AlacTermEvent::ChildExit(error_code) => {
-                self.register_task_finished(Some(*error_code), cx);
+                self.register_task_finished(Some(error_code), cx);
             }
         }
     }
