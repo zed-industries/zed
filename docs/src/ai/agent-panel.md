@@ -9,11 +9,10 @@ If you're using the Agent Panel for the first time, you'll need to [configure at
 
 ## Overview {#overview}
 
-After you've configured a LLM provider, type at the message editor and hit `enter` to submit your prompt.
+After you've configured one or more LLM providers, type at the message editor and hit `enter` to submit your prompt.
 If you need extra room to type, you can expand the message editor with {#kb agent::ExpandMessageEditor}.
 
 You should start to see the responses stream in with indications of [which tools](./tools.md) the AI is using to fulfill your prompt.
-For example, if the AI chooses to perform an edit, you will see a card with the diff.
 
 ### Editing Messages {#editing-messages}
 
@@ -23,48 +22,48 @@ You can click on the card that contains your message and re-submit it with an ad
 ### Checkpoints {#checkpoints}
 
 Every time the AI performs an edit, you should see a "Restore Checkpoint" button to the top of your message.
-This allows you to return your code base to the state it was in prior to that message.
+This allows you to return your codebase to the state it was in prior to that message.
 This is usually valuable if the AI's edit doesn't go in the right direction.
 
 ### Navigating History {#navigating-history}
 
-To quickly navigate through recently opened threads, use the {#kb agent::ToggleNavigationMenu} binding, when focused on the panel's editor, or click the hamburger icon button at the top left of the panel to open the dropdown that shows you the six most recent interactions with the LLM.
+To quickly navigate through recently opened threads, use the {#kb agent::ToggleNavigationMenu} binding, when focused on the panel's editor, or click the hamburger icon button at the top left of the panel to open the dropdown that shows you the six most recent threads.
 
-The items in this menu work similarly to tabs, and closing them from there doesn't delete the thread; just takes them out of the recent list.
+The items in this menu function similarly to tabs, and closing them doesn’t delete the thread; instead, it simply removes them from the recent list.
 
 You can also view all historical conversations with the `View All` option from within the same menu or by reaching for the {#kb agent::OpenHistory} binding.
 
 ### Following the Agent {#following-the-agent}
 
-Zed is built with collaboration natively integrated into the product.
+Zed is built with collaboration natively integrated.
 This approach extends to collaboration with AI as well.
-
-As soon as you send a prompt to the Agent, click on the "crosshair" icon at the bottom left of the panel to follow along as it reads through your codebase and performs edits.
+To follow the agent navigating across your codebase and performing edits, click on the "crosshair" icon button at the bottom left of the panel.
 
 ### Get Notified {#get-notified}
 
-If you send a prompt to the Agent and then move elsewhere, putting Zed in the background, a notification will pop up at the top right of your monitor indicating that the Agent has completed its work.
+If you send a prompt to the Agent and then move elsewhere, thus putting Zed in the background, a notification will pop up at the top right of your monitor indicating that the Agent has completed its work.
 
-You can customize the notification behavior or turn it off entirely by using the `agent.notify_when_agent_waiting` key.
+You can customize the notification behavior or turn it off entirely by using the `agent.notify_when_agent_waiting` settings key.
 
 ### Reviewing Changes {#reviewing-changes}
 
-If you are using a profile that includes write tools, and the agent has made changes to your project, you'll notice the Agent Panel surfaces the fact that edits have been applied.
+If you are using a profile that includes write tools, and the agent has made changes to your project, you'll notice the Agent Panel surfaces the fact that edits (and how many of them) have been applied.
 
-You can click on the accordion bar that shows up right above the panel's editor see which files have been changed, or click `Review Changes` ({#kb agent::OpenAgentDiff}) to open a multi-buffer to review them.
-Reviewing includes the option to accept or reject each edit, or accept or reject all edits.
+To see which files have been edited, expand the accordion bar that shows up right above the message editor or click the `Review Changes` button ({#kb agent::OpenAgentDiff}), which opens a multi-buffer tab with all changes.
 
-Diffs with changes also appear in individual buffers.
-So, if your active tab had changes added by the AI, you'll see diffs with the same accept/reject controls as in the multi-buffer.
+Reviewing includes the option to accept or reject each or all edits.
+
+Edit diffs also appear in individual buffers.
+So, if your active tab had edits made by the AI, you'll see diffs with the same accept/reject controls as in the multi-buffer.
 
 ## Adding Context {#adding-context}
 
-Although Zed's agent is very efficient at reading through your code base to autonomously pick up relevant files, directories, and other context, manually adding context is still usually encouraged as a way to speed up and improve the AI's response quality.
+Although Zed's agent is very efficient at reading through your codebase to autonomously pick up relevant files, directories, and other context, manually adding context is still encouraged as a way to speed up and improve the AI's response quality.
 
-If you have a tab open when triggering the Agent Panel, that tab will appear as a suggested context in form of a dashed button.
-You can also add other forms of context, like files, rules, and directories, by either typing `@` or hitting the `+` icon button.
+If you have a tab open when opening the Agent Panel, that tab appears as a suggested context in form of a dashed button.
+You can also add other forms of context by either mentioning them with `@` or hitting the `+` icon button.
 
-You can even add previous threads as context with the `@thread` command, or by selecting "Start new from summary" option from the top-right menu in the agent panel to continue a longer conversation and keep it within the size of context window.
+You can even add previous threads as context by mentioning them with `@thread`, or by selecting the "Start New From Summary" option from the top-right menu to continue a longer conversation and keep it within the context window.
 
 Images are also supported, and pasting them over in the panel's editor works.
 
@@ -73,7 +72,7 @@ Images are also supported, and pasting them over in the panel's editor works.
 Zed surfaces how many tokens you are consuming for your currently active thread in the panel's toolbar.
 Depending on how many pieces of context you add, your token consumption can grow rapidly.
 
-With that in mind, once you get close to the model's context window, we'll display a banner on the bottom of the message editor offering to start a new thread with the current one summarized and added as context.
+With that in mind, once you get close to the model's context window, a banner appears on the bottom of the message editor suggesting to start a new thread with the current one summarized and added as context.
 You can also do this at any time with an ongoing thread via the "Agent Options" menu on the top right.
 
 ## Changing Models {#changing-models}
@@ -82,14 +81,14 @@ After you've configured your LLM providers—either via [a custom API key](./con
 
 ## Using Tools {#using-tools}
 
-The new Agent Panel supports tool calling, which enables agentic collaboration with AI.
+The new Agent Panel supports tool calling, which enables agentic editing.
 Zed comes with [several built-in tools](./tools.md) that allow models to perform tasks such as searching through your codebase, editing files, running commands, and others.
 
 You can also extend the set of available tools via [MCP Servers](./mcp.md).
 
 ### Profiles {#profiles}
 
-Profiles introduce a way to group tools.
+Profiles act as a way to group tools.
 Zed offers three built-in profiles and you can create as many custom ones as you want.
 
 #### Built-in Profiles {#built-in-profiles}
@@ -102,10 +101,7 @@ You can explore the exact tools enabled in each profile by clicking on the profi
 
 #### Custom Profiles {#custom-profiles}
 
-You may find yourself in a situation where the built-in profiles don't quite fit your specific needs.
-Zed's Agent Panel allows for building custom profiles.
-
-You can create new profile via the `Configure Profiles…` option in the profile selector.
+You can create a custom profile via the `Configure Profiles…` option in the profile selector.
 From here, you can choose to `Add New Profile` or fork an existing one with your choice of tools and a custom profile name.
 
 You can also override built-in profiles.
