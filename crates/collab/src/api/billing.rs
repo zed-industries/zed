@@ -2,11 +2,11 @@ use anyhow::{Context, anyhow, bail};
 use axum::{
     Extension, Json, Router,
     extract::{self, Query},
+    http::StatusCode,
     routing::{get, post},
 };
 use chrono::{DateTime, SecondsFormat, Utc};
 use collections::HashSet;
-use reqwest::StatusCode;
 use sea_orm::ActiveValue;
 use serde::{Deserialize, Serialize};
 use serde_json::json;

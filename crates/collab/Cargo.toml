@@ -24,8 +24,8 @@ async-tungstenite.workspace = true
 aws-config = { version = "1.1.5" }
 aws-sdk-s3 = { version = "1.15.0" }
 aws-sdk-kinesis = "1.51.0"
-axum = { version = "0.6", features = ["json", "headers", "ws"] }
-axum-extra = { version = "0.4", features = ["erased-json"] }
+axum = { version = "0.8", features = ["ws"] }
+axum-extra = { version = "0.10", features = ["erased-json", "typed-header"] }
 base64.workspace = true
 chrono.workspace = true
 clock.workspace = true
@@ -66,7 +66,7 @@ thiserror.workspace = true
 time.workspace = true
 tokio = { workspace = true, features = ["full"] }
 toml.workspace = true
-tower = "0.4"
+tower = "0.5.2"
 tower-http = { workspace = true, features = ["trace"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json", "registry", "tracing-log"] } # workaround for https://github.com/tokio-rs/tracing/issues/2927
