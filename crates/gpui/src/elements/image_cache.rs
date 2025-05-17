@@ -1,6 +1,6 @@
 use crate::{
-    AnyElement, AnyEntity, App, AppContext, Asset, AssetLogger, Bounds, DebugElementId, Element,
-    ElementId, Entity, GlobalElementId, ImageAssetLoader, ImageCacheError, IntoElement, LayoutId,
+    AnyElement, AnyEntity, App, AppContext, Asset, AssetLogger, Bounds, Element, ElementId, Entity,
+    GlobalElementId, ImageAssetLoader, ImageCacheError, InspectorElementId, IntoElement, LayoutId,
     ParentElement, Pixels, RenderImage, Resource, Style, StyleRefinement, Styled, Task, Window,
     hash,
 };
@@ -110,7 +110,7 @@ impl Element for ImageCacheElement {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _debug_id: Option<&DebugElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -131,7 +131,7 @@ impl Element for ImageCacheElement {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _debug_id: Option<&DebugElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         _bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -145,7 +145,7 @@ impl Element for ImageCacheElement {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _debug_id: Option<&DebugElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         _bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,

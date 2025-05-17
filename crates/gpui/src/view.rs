@@ -1,6 +1,6 @@
 use crate::{
-    AnyElement, AnyEntity, AnyWeakEntity, App, Bounds, ContentMask, Context, DebugElementId,
-    Element, ElementId, Entity, EntityId, GlobalElementId, IntoElement, LayoutId, PaintIndex,
+    AnyElement, AnyEntity, AnyWeakEntity, App, Bounds, ContentMask, Context, Element, ElementId,
+    Entity, EntityId, GlobalElementId, InspectorElementId, IntoElement, LayoutId, PaintIndex,
     Pixels, PrepaintStateIndex, Render, Style, StyleRefinement, TextStyle, WeakEntity,
 };
 use crate::{Empty, Window};
@@ -40,7 +40,7 @@ impl<V: Render> Element for Entity<V> {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _debug_id: Option<&DebugElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -54,7 +54,7 @@ impl<V: Render> Element for Entity<V> {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _debug_id: Option<&DebugElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         _: Bounds<Pixels>,
         element: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -67,7 +67,7 @@ impl<V: Render> Element for Entity<V> {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _debug_id: Option<&DebugElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         _: Bounds<Pixels>,
         element: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
@@ -161,7 +161,7 @@ impl Element for AnyView {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _debug_id: Option<&DebugElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -182,7 +182,7 @@ impl Element for AnyView {
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _debug_id: Option<&DebugElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         element: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -254,7 +254,7 @@ impl Element for AnyView {
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _debug_id: Option<&DebugElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         _bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         element: &mut Self::PrepaintState,

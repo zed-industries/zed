@@ -5,8 +5,8 @@
 //! elements with uniform height.
 
 use crate::{
-    AnyElement, App, AvailableSpace, Bounds, ContentMask, Context, DebugElementId, Element,
-    ElementId, Entity, GlobalElementId, Hitbox, InteractiveElement, Interactivity, IntoElement,
+    AnyElement, App, AvailableSpace, Bounds, ContentMask, Context, Element, ElementId, Entity,
+    GlobalElementId, Hitbox, InspectorElementId, InteractiveElement, Interactivity, IntoElement,
     IsZero, LayoutId, ListSizingBehavior, Pixels, Render, ScrollHandle, Size, StyleRefinement,
     Styled, Window, point, size,
 };
@@ -173,7 +173,7 @@ impl Element for UniformList {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        debug_id: Option<&DebugElementId>,
+        inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -181,7 +181,7 @@ impl Element for UniformList {
         let item_size = self.measure_item(None, window, cx);
         let layout_id = self.interactivity.request_layout(
             global_id,
-            debug_id,
+            inspector_id,
             window,
             cx,
             |style, window, cx| match self.sizing_behavior {
@@ -229,7 +229,7 @@ impl Element for UniformList {
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _debug_id: Option<&DebugElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         frame_state: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -442,7 +442,7 @@ impl Element for UniformList {
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        debug_id: Option<&DebugElementId>,
+        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<crate::Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,
@@ -451,7 +451,7 @@ impl Element for UniformList {
     ) {
         self.interactivity.paint(
             global_id,
-            debug_id,
+            inspector_id,
             bounds,
             hitbox.as_ref(),
             window,

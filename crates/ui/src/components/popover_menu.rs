@@ -323,7 +323,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _debug_id: Option<&gpui::DebugElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
@@ -399,7 +399,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _debug_id: Option<&gpui::DebugElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
         _bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -428,7 +428,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _debug_id: Option<&gpui::DebugElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
         _: Bounds<gpui::Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         child_hitbox: &mut Option<HitboxId>,

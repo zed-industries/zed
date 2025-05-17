@@ -8,8 +8,8 @@
 //! If all of your elements are the same height, see [`UniformList`] for a simpler API
 
 use crate::{
-    AnyElement, App, AvailableSpace, Bounds, ContentMask, DebugElementId, DispatchPhase, Edges,
-    Element, EntityId, FocusHandle, GlobalElementId, Hitbox, IntoElement, Pixels, Point,
+    AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges, Element, EntityId,
+    FocusHandle, GlobalElementId, Hitbox, InspectorElementId, IntoElement, Pixels, Point,
     ScrollWheelEvent, Size, Style, StyleRefinement, Styled, Window, point, px, size,
 };
 use collections::VecDeque;
@@ -827,7 +827,7 @@ impl Element for List {
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _debug_id: Option<&DebugElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
@@ -895,7 +895,7 @@ impl Element for List {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _debug_id: Option<&DebugElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -944,7 +944,7 @@ impl Element for List {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
-        _debug_id: Option<&DebugElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<crate::Pixels>,
         _: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,

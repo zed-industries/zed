@@ -1,6 +1,6 @@
 use crate::{
-    AbsoluteLength, AnyElement, AnyImageCache, App, Asset, AssetLogger, Bounds, DebugElementId,
-    DefiniteLength, Element, ElementId, Entity, GlobalElementId, Hitbox, Image, ImageCache,
+    AbsoluteLength, AnyElement, AnyImageCache, App, Asset, AssetLogger, Bounds, DefiniteLength,
+    Element, ElementId, Entity, GlobalElementId, Hitbox, Image, ImageCache, InspectorElementId,
     InteractiveElement, Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels,
     RenderImage, Resource, SMOOTH_SVG_SCALE_FACTOR, SharedString, SharedUri, StyleRefinement,
     Styled, SvgSize, Task, Window, px, swap_rgba_pa_to_bgra,
@@ -273,7 +273,7 @@ impl Element for Img {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        debug_id: Option<&DebugElementId>,
+        inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -295,7 +295,7 @@ impl Element for Img {
 
             let layout_id = self.interactivity.request_layout(
                 global_id,
-                debug_id,
+                inspector_id,
                 window,
                 cx,
                 |mut style, window, cx| {
@@ -414,7 +414,7 @@ impl Element for Img {
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _debug_id: Option<&DebugElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -439,7 +439,7 @@ impl Element for Img {
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        debug_id: Option<&DebugElementId>,
+        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         layout_state: &mut Self::RequestLayoutState,
         hitbox: &mut Self::PrepaintState,
@@ -449,7 +449,7 @@ impl Element for Img {
         let source = self.source.clone();
         self.interactivity.paint(
             global_id,
-            debug_id,
+            inspector_id,
             bounds,
             hitbox.as_ref(),
             window,

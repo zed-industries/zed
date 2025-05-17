@@ -33,13 +33,13 @@ use util::{ResultExt, debug_panic};
 use crate::{
     Action, ActionBuildError, ActionRegistry, Any, AnyElement, AnyView, AnyWindowHandle,
     AppContext, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle,
-    DebugElementId, DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap,
-    ForegroundExecutor, Global, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu,
-    MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, Point, PromptBuilder, PromptHandle, PromptLevel, Render, RenderImage,
-    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
-    WindowInvalidator, current_platform, hash, init_app_menus,
+    DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global,
+    InspectorElementId, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem,
+    OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, Point,
+    PromptBuilder, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
+    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
+    TextSystem, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
+    current_platform, hash, init_app_menus,
 };
 
 mod async_context;
@@ -271,9 +271,9 @@ pub struct App {
         FxHashMap<EntityId, FxHashMap<WindowId, WindowInvalidator>>,
     pub(crate) tracked_entities: FxHashMap<WindowId, FxHashSet<EntityId>>,
     // todo!(Pull this out into a struct)
-    pub(crate) inspector_registry: FxHashMap<
+    pub(crate) inspector_element_registry: FxHashMap<
         TypeId,
-        Box<dyn Fn(DebugElementId, &dyn Any, &mut Window, &mut App) -> AnyElement>,
+        Box<dyn Fn(InspectorElementId, &dyn Any, &mut Window, &mut App) -> AnyElement>,
     >,
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
@@ -339,7 +339,7 @@ impl App {
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
                 prompt_builder: Some(PromptBuilder::Default),
-                inspector_registry: FxHashMap::default(),
+                inspector_element_registry: FxHashMap::default(),
                 quitting: false,
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
@@ -1665,11 +1665,11 @@ impl App {
     }
 
     /// todo!(Document/rename)
-    pub fn register_inspectable<T: 'static>(
+    pub fn register_inspector_element<T: 'static>(
         &mut self,
-        f: impl 'static + Fn(DebugElementId, &T, &mut Window, &mut App) -> AnyElement,
+        f: impl 'static + Fn(InspectorElementId, &T, &mut Window, &mut App) -> AnyElement,
     ) {
-        self.inspector_registry.insert(
+        self.inspector_element_registry.insert(
             TypeId::of::<T>(),
             Box::new(move |id, value, window, cx| {
                 let value = value.downcast_ref().unwrap();

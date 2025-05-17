@@ -57,19 +57,19 @@ impl Element for WithRemSize {
     fn request_layout(
         &mut self,
         id: Option<&GlobalElementId>,
-        debug_id: Option<&gpui::DebugElementId>,
+        inspector_id: Option<&gpui::InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         window.with_rem_size(Some(self.rem_size), |window| {
-            self.div.request_layout(id, debug_id, window, cx)
+            self.div.request_layout(id, inspector_id, window, cx)
         })
     }
 
     fn prepaint(
         &mut self,
         id: Option<&GlobalElementId>,
-        debug_id: Option<&gpui::DebugElementId>,
+        inspector_id: Option<&gpui::InspectorElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -77,14 +77,14 @@ impl Element for WithRemSize {
     ) -> Self::PrepaintState {
         window.with_rem_size(Some(self.rem_size), |window| {
             self.div
-                .prepaint(id, debug_id, bounds, request_layout, window, cx)
+                .prepaint(id, inspector_id, bounds, request_layout, window, cx)
         })
     }
 
     fn paint(
         &mut self,
         id: Option<&GlobalElementId>,
-        debug_id: Option<&gpui::DebugElementId>,
+        inspector_id: Option<&gpui::InspectorElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
@@ -92,8 +92,15 @@ impl Element for WithRemSize {
         cx: &mut App,
     ) {
         window.with_rem_size(Some(self.rem_size), |window| {
-            self.div
-                .paint(id, debug_id, bounds, request_layout, prepaint, window, cx)
+            self.div.paint(
+                id,
+                inspector_id,
+                bounds,
+                request_layout,
+                prepaint,
+                window,
+                cx,
+            )
         })
     }
 }

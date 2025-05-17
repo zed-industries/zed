@@ -98,7 +98,7 @@ actions!(
 );
 
 struct Inspector {
-    debug_id: gpui::DebugElementId,
+    inspector_id: gpui::InspectorElementId,
 }
 
 impl Render for Inspector {
@@ -106,10 +106,10 @@ impl Render for Inspector {
         v_flex()
             .occlude()
             .child(Button::new("red", "Red").on_click({
-                let debug_id = self.debug_id.clone();
+                let inspector_id = self.inspector_id.clone();
                 move |_event, window, _cx| {
-                    window.with_debug_state::<gpui::DivInspectorState, _>(
-                        Some(&debug_id),
+                    window.with_inspector_state::<gpui::DivInspectorState, _>(
+                        Some(&inspector_id),
                         |state, _window| {
                             if let Some(state) = state {
                                 state.background = gpui::rgb(0xff0000);
@@ -119,10 +119,10 @@ impl Render for Inspector {
                 }
             }))
             .child(Button::new("green", "Green").on_click({
-                let debug_id = self.debug_id.clone();
+                let inspector_id = self.inspector_id.clone();
                 move |_event, window, _cx| {
-                    window.with_debug_state::<gpui::DivInspectorState, _>(
-                        Some(&debug_id),
+                    window.with_inspector_state::<gpui::DivInspectorState, _>(
+                        Some(&inspector_id),
                         |state, _window| {
                             if let Some(state) = state {
                                 state.background = gpui::rgb(0x00ff00);
@@ -132,10 +132,10 @@ impl Render for Inspector {
                 }
             }))
             .child(Button::new("blue", "Blue").on_click({
-                let debug_id = self.debug_id.clone();
+                let inspector_id = self.inspector_id.clone();
                 move |_event, window, _cx| {
-                    window.with_debug_state::<gpui::DivInspectorState, _>(
-                        Some(&debug_id),
+                    window.with_inspector_state::<gpui::DivInspectorState, _>(
+                        Some(&inspector_id),
                         |state, _window| {
                             if let Some(state) = state {
                                 state.background = gpui::rgb(0x0000ff);
@@ -158,11 +158,13 @@ pub fn init(cx: &mut App) {
 
     cx.on_action(|_: &RestoreBanner, cx| title_bar::restore_banner(cx));
 
-    cx.register_inspectable(|debug_id, state: &gpui::DivInspectorState, window, cx| {
-        let view = cx.new(|cx| Inspector { debug_id });
+    cx.register_inspector_element(
+        |inspector_id, state: &gpui::DivInspectorState, window, cx| {
+            let view = cx.new(|cx| Inspector { inspector_id });
 
-        view.into_any_element()
-    });
+            view.into_any_element()
+        },
+    );
 
     if ReleaseChannel::global(cx) == ReleaseChannel::Dev {
         cx.on_action(test_panic);

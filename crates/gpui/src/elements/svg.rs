@@ -1,5 +1,5 @@
 use crate::{
-    App, Bounds, DebugElementId, Element, GlobalElementId, Hitbox, InteractiveElement,
+    App, Bounds, Element, GlobalElementId, Hitbox, InspectorElementId, InteractiveElement,
     Interactivity, IntoElement, LayoutId, Pixels, Point, Radians, SharedString, Size,
     StyleRefinement, Styled, TransformationMatrix, Window, geometry::Negate as _, point, px,
     radians, size,
@@ -52,13 +52,13 @@ impl Element for Svg {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        debug_id: Option<&DebugElementId>,
+        inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let layout_id = self.interactivity.request_layout(
             global_id,
-            debug_id,
+            inspector_id,
             window,
             cx,
             |style, window, cx| window.request_layout(style, None, cx),
@@ -69,7 +69,7 @@ impl Element for Svg {
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _debug_id: Option<&DebugElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -88,7 +88,7 @@ impl Element for Svg {
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        debug_id: Option<&DebugElementId>,
+        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,
@@ -99,7 +99,7 @@ impl Element for Svg {
     {
         self.interactivity.paint(
             global_id,
-            debug_id,
+            inspector_id,
             bounds,
             hitbox.as_ref(),
             window,
