@@ -66,22 +66,47 @@ pub struct DebugPanel {
     focus_handle: FocusHandle,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     fs: Arc<dyn Fs>,
+    _focus_in_subscription: Subscription,
 }
 
 impl DebugPanel {
-    pub fn new(workspace: &Workspace, cx: &mut Context<Workspace>) -> Entity<Self> {
+    pub fn new(
+        workspace: &Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Entity<Self> {
         cx.new(|cx| {
             let project = workspace.project().clone();
+            let focus_handle = cx.focus_handle();
+            let focus_in_subscription =
+                cx.on_focus_in(&focus_handle, window, |this: &mut Self, window, cx| {
+                    let Some(session) = this.active_session.clone() else {
+                        return;
+                    };
+                    let Some(active_pane) = session
+                        .read(cx)
+                        .running_state()
+                        .read(cx)
+                        .active_pane
+                        .clone()
+                    else {
+                        return;
+                    };
+                    active_pane.update(cx, |pane, cx| {
+                        pane.focus_active_item(window, cx);
+                    });
+                });
 
             let debug_panel = Self {
                 size: px(300.),
                 sessions: vec![],
                 active_session: None,
-                focus_handle: cx.focus_handle(),
+                focus_handle,
                 project,
                 workspace: workspace.weak_handle(),
                 context_menu: None,
                 fs: workspace.app_state().fs.clone(),
+                _focus_in_subscription: focus_in_subscription,
             };
 
             debug_panel
@@ -182,8 +207,8 @@ impl DebugPanel {
         cx: &mut AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(async move |cx| {
-            workspace.update(cx, |workspace, cx| {
-                let debug_panel = DebugPanel::new(workspace, cx);
+            workspace.update_in(cx, |workspace, window, cx| {
+                let debug_panel = DebugPanel::new(workspace, window, cx);
 
                 workspace.register_action(|workspace, _: &ClearAllBreakpoints, _, cx| {
                     workspace.project().read(cx).breakpoint_store().update(
