@@ -496,6 +496,10 @@ pub(crate) struct Frame {
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
     pub(crate) hitboxes: Vec<Hitbox>,
+    pub(crate) window_drag_hitboxes: Vec<Hitbox>,
+    pub(crate) window_close_hitboxes: Vec<Hitbox>,
+    pub(crate) window_max_hitboxes: Vec<Hitbox>,
+    pub(crate) window_min_hitboxes: Vec<Hitbox>,
     pub(crate) deferred_draws: Vec<DeferredDraw>,
     pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
     pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
@@ -535,6 +539,10 @@ impl Frame {
             dispatch_tree,
             scene: Scene::default(),
             hitboxes: Vec::new(),
+            window_drag_hitboxes: Vec::new(),
+            window_close_hitboxes: Vec::new(),
+            window_max_hitboxes: Vec::new(),
+            window_min_hitboxes: Vec::new(),
             deferred_draws: Vec::new(),
             input_handlers: Vec::new(),
             tooltip_requests: Vec::new(),
@@ -555,6 +563,10 @@ impl Frame {
         self.tooltip_requests.clear();
         self.cursor_styles.clear();
         self.hitboxes.clear();
+        self.window_drag_hitboxes.clear();
+        self.window_close_hitboxes.clear();
+        self.window_max_hitboxes.clear();
+        self.window_min_hitboxes.clear();
         self.deferred_draws.clear();
         self.focus = None;
     }
@@ -875,6 +887,70 @@ impl Window {
                     .update(&mut cx, |_, window, cx| window.dispatch_event(event, cx))
                     .log_err()
                     .unwrap_or(DispatchEventResult::default())
+            })
+        });
+        platform_window.on_hit_test_window_drag({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, window, _cx| {
+                        for hitbox in &window.rendered_frame.window_drag_hitboxes {
+                            if window.mouse_hit_test.0.contains(&hitbox.id) {
+                                return true;
+                            }
+                        }
+                        false
+                    })
+                    .log_err()
+                    .unwrap_or(false)
+            })
+        });
+        platform_window.on_hit_test_window_close({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, window, _cx| {
+                        for hitbox in &window.rendered_frame.window_close_hitboxes {
+                            if window.mouse_hit_test.0.contains(&hitbox.id) {
+                                return true;
+                            }
+                        }
+                        false
+                    })
+                    .log_err()
+                    .unwrap_or(false)
+            })
+        });
+        platform_window.on_hit_test_window_max({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, window, _cx| {
+                        for hitbox in &window.rendered_frame.window_max_hitboxes {
+                            if window.mouse_hit_test.0.contains(&hitbox.id) {
+                                return true;
+                            }
+                        }
+                        false
+                    })
+                    .log_err()
+                    .unwrap_or(false)
+            })
+        });
+        platform_window.on_hit_test_window_min({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, window, _cx| {
+                        for hitbox in &window.rendered_frame.window_min_hitboxes {
+                            if window.mouse_hit_test.0.contains(&hitbox.id) {
+                                return true;
+                            }
+                        }
+                        false
+                    })
+                    .log_err()
+                    .unwrap_or(false)
             })
         });
 
@@ -2835,6 +2911,38 @@ impl Window {
         };
         self.next_frame.hitboxes.push(hitbox.clone());
         hitbox
+    }
+
+    /// Set a hitbox which will allow dragging of the platform window.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    pub fn insert_window_drag_hitbox(&mut self, hitbox: Hitbox) {
+        self.invalidator.debug_assert_paint();
+        self.next_frame.window_drag_hitboxes.push(hitbox);
+    }
+
+    /// Set a hitbox which will act as the close button of the platform window.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    pub fn insert_window_close_hitbox(&mut self, hitbox: Hitbox) {
+        self.invalidator.debug_assert_paint();
+        self.next_frame.window_close_hitboxes.push(hitbox);
+    }
+
+    /// Set a hitbox which will act as the max button of the platform window.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    pub fn insert_window_max_hitbox(&mut self, hitbox: Hitbox) {
+        self.invalidator.debug_assert_paint();
+        self.next_frame.window_max_hitboxes.push(hitbox);
+    }
+
+    /// Set a hitbox which will act as the min button of the platform window.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    pub fn insert_window_min_hitbox(&mut self, hitbox: Hitbox) {
+        self.invalidator.debug_assert_paint();
+        self.next_frame.window_min_hitboxes.push(hitbox);
     }
 
     /// Sets the key context for the current element. This context will be used to translate

@@ -118,17 +118,11 @@ impl WindowsCaptionButton {
 
 impl RenderOnce for WindowsCaptionButton {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        // todo(windows) report this width to the Windows platform API
-        // NOTE: this is intentionally hard coded. An option to use the 'native' size
-        //       could be added when the width is reported to the Windows platform API
-        //       as this could change between future Windows versions.
-        let width = px(36.);
-
         h_flex()
             .id(self.id)
             .justify_center()
             .content_center()
-            .w(width)
+            .w(px(36.))
             .h_full()
             .text_size(px(10.0))
             .hover(|style| style.bg(self.hover_background_color))
@@ -138,6 +132,21 @@ impl RenderOnce for WindowsCaptionButton {
 
                 style.bg(active_color)
             })
+            .when(
+                matches!(self.icon, WindowsCaptionButtonIcon::Close),
+                |this| this.window_close_area(),
+            )
+            .when(
+                matches!(
+                    self.icon,
+                    WindowsCaptionButtonIcon::Maximize | WindowsCaptionButtonIcon::Restore
+                ),
+                |this| this.window_max_area(),
+            )
+            .when(
+                matches!(self.icon, WindowsCaptionButtonIcon::Minimize),
+                |this| this.window_min_area(),
+            )
             .child(match self.icon {
                 WindowsCaptionButtonIcon::Minimize => "\u{e921}",
                 WindowsCaptionButtonIcon::Restore => "\u{e923}",

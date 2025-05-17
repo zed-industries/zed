@@ -21,6 +21,10 @@ pub(crate) struct TestWindowState {
     platform: Weak<TestPlatform>,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     pub(crate) should_close_handler: Option<Box<dyn FnMut() -> bool>>,
+    hit_test_window_drag_callback: Option<Box<dyn FnMut() -> bool>>,
+    hit_test_window_close_callback: Option<Box<dyn FnMut() -> bool>>,
+    hit_test_window_max_callback: Option<Box<dyn FnMut() -> bool>>,
+    hit_test_window_min_callback: Option<Box<dyn FnMut() -> bool>>,
     input_callback: Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>,
     active_status_change_callback: Option<Box<dyn FnMut(bool)>>,
     hover_status_change_callback: Option<Box<dyn FnMut(bool)>>,
@@ -65,6 +69,10 @@ impl TestWindow {
             title: Default::default(),
             edited: false,
             should_close_handler: None,
+            hit_test_window_drag_callback: None,
+            hit_test_window_close_callback: None,
+            hit_test_window_max_callback: None,
+            hit_test_window_min_callback: None,
             input_callback: None,
             active_status_change_callback: None,
             hover_status_change_callback: None,
@@ -253,6 +261,22 @@ impl PlatformWindow for TestWindow {
     }
 
     fn on_close(&self, _callback: Box<dyn FnOnce()>) {}
+
+    fn on_hit_test_window_drag(&self, callback: Box<dyn FnMut() -> bool>) {
+        self.0.lock().hit_test_window_drag_callback = Some(callback);
+    }
+
+    fn on_hit_test_window_close(&self, callback: Box<dyn FnMut() -> bool>) {
+        self.0.lock().hit_test_window_close_callback = Some(callback);
+    }
+
+    fn on_hit_test_window_max(&self, callback: Box<dyn FnMut() -> bool>) {
+        self.0.lock().hit_test_window_max_callback = Some(callback);
+    }
+
+    fn on_hit_test_window_min(&self, callback: Box<dyn FnMut() -> bool>) {
+        self.0.lock().hit_test_window_min_callback = Some(callback);
+    }
 
     fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {}
 
