@@ -56,7 +56,7 @@ impl JsDebugAdapter {
 
     async fn fetch_latest_adapter_version(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
     ) -> Result<AdapterVersion> {
         let release = latest_github_release(
             &format!("{}/{}", "microsoft", Self::ADAPTER_NPM_NAME),
@@ -82,7 +82,7 @@ impl JsDebugAdapter {
 
     async fn get_installed_binary(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         _: &mut AsyncApp,
@@ -139,7 +139,7 @@ impl DebugAdapter for JsDebugAdapter {
 
     async fn get_binary(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
@@ -151,7 +151,7 @@ impl DebugAdapter for JsDebugAdapter {
                     self.name(),
                     version,
                     adapters::DownloadedFileType::GzipTar,
-                    delegate,
+                    delegate.as_ref(),
                 )
                 .await?;
             }

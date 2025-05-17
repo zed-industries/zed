@@ -141,6 +141,7 @@ pub trait Extension: Send + Sync + 'static {
         dap_name: Arc<str>,
         config: DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
+        worktree: Arc<dyn WorktreeDelegate>,
     ) -> Result<DebugAdapterBinary>;
 }
 

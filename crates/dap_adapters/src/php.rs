@@ -40,7 +40,7 @@ impl PhpDebugAdapter {
 
     async fn fetch_latest_adapter_version(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
     ) -> Result<AdapterVersion> {
         let release = latest_github_release(
             &format!("{}/{}", "xdebug", Self::ADAPTER_PACKAGE_NAME),
@@ -66,7 +66,7 @@ impl PhpDebugAdapter {
 
     async fn get_installed_binary(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         _: &mut AsyncApp,
@@ -126,7 +126,7 @@ impl DebugAdapter for PhpDebugAdapter {
 
     async fn get_binary(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
@@ -138,7 +138,7 @@ impl DebugAdapter for PhpDebugAdapter {
                     self.name(),
                     version,
                     adapters::DownloadedFileType::Vsix,
-                    delegate,
+                    delegate.as_ref(),
                 )
                 .await?;
             }
