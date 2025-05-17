@@ -5,6 +5,7 @@ use gpui::{App, Entity, Global, prelude::*};
 
 use crate::{JujutsuRepository, RealJujutsuRepository};
 
+/// Note: We won't ultimately be storing the jj store in a global, we're just doing this for exploration purposes.
 struct GlobalJujutsuStore(Entity<JujutsuStore>);
 
 impl Global for GlobalJujutsuStore {}
