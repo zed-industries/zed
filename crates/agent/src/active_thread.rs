@@ -1014,6 +1014,7 @@ impl ActiveThread {
                     self.push_message(message_id, &message_segments, window, cx);
                 }
 
+                self.scroll_to_bottom(cx);
                 self.save_thread(cx);
                 cx.notify();
             }
@@ -1027,6 +1028,7 @@ impl ActiveThread {
                     self.edited_message(message_id, &message_segments, window, cx);
                 }
 
+                self.scroll_to_bottom(cx);
                 self.save_thread(cx);
                 cx.notify();
             }
@@ -3407,6 +3409,11 @@ impl ActiveThread {
             .entry((message_id, ix))
             .or_insert(true);
         *is_expanded = !*is_expanded;
+    }
+
+    pub fn scroll_to_bottom(&mut self, cx: &mut Context<Self>) {
+        self.list_state.reset(self.messages.len());
+        cx.notify();
     }
 }
 
