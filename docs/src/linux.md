@@ -49,7 +49,8 @@ There are several third-party Zed packages for various Linux distributions and p
 - ALT Linux (Sisyphus): [`zed`](https://packages.altlinux.org/en/sisyphus/srpms/zed/)
 - AOSC OS: [`zed`](https://packages.aosc.io/packages/zed)
 - openSUSE Tumbleweed: [`zed`](https://en.opensuse.org/Zed)
-- Please add others to this list!
+
+See [Repology](https://repology.org/project/zed-editor/versions) for a list of Zed packages in various repositories.
 
 When installing a third-party package please be aware that it may not be completely up to date and may be slightly different from the Zed we package (a common change is to rename the binary to `zedit` or `zeditor` to avoid conflicting with other packages).
 
