@@ -3410,6 +3410,7 @@ impl ActiveThread {
             .or_insert(true);
         *is_expanded = !*is_expanded;
     }
+
     pub fn scroll_to_bottom(&mut self, cx: &mut Context<Self>) {
         self.list_state.reset(self.messages.len());
         cx.notify();
