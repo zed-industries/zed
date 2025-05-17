@@ -7,13 +7,13 @@ max_retries = 5
 timeout = 45
 
 exclude = [
-    # staging server
+    # Collab staging environment.
     'https://staging-collab.zed.dev/',
 
-    # slow and unreliable server
+    # Slow and unreliable server.
     'https://repology.org',
 
-    # the flollowing websites are rate limited or use bot detection and aren't nice enough to respond with 429
+    # The following websites are rate limited or use bot detection and aren't nice enough to respond with 429:
     'https://openai.com',
     'https://claude.ai/download',
     'https://www.perplexity.ai',
