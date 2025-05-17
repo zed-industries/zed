@@ -1,11 +1,15 @@
 #![allow(missing_docs)]
 use super::{FocusableElement, InteractiveElement, Interactivity, StatefulInteractiveElement};
 use crate::{
-    AnyElement, App, ClickEvent, Element, ElementId, GlobalElementId, Hitbox, IntoElement,
-    LayoutId, ParentElement, SharedString, StyleRefinement, Styled, TextStyleRefinement, Window,
-    colors::Colors,
+    AbsoluteLength, AnyElement, App, BorderStyle, ClickEvent, CornersRefinement, Edges,
+    EdgesRefinement, Element, ElementId, GlobalElementId, Hitbox, IntoElement, LayoutId,
+    ParentElement, SharedString, StyleRefinement, Styled, TextStyleRefinement, Window,
+    colors::Colors, px,
 };
+use refineable::Refineable;
 use smallvec::SmallVec;
+use taffy::FlexDirection;
+use util::default;
 
 pub fn button(id: impl Into<ElementId>) -> Button {
     Button {
@@ -92,17 +96,41 @@ impl Element for Button {
     ) {
         let colors = Colors::for_appearance(window);
         let text_style = self.text_style().clone();
+        let abs_px = |number: f32| AbsoluteLength::Pixels(px(number));
 
-        let mut style = self.style();
         let mut text_style = if let Some(style) = text_style {
             style.clone()
         } else {
             TextStyleRefinement::default()
         };
 
-        text_style.color = Some(colors.text.into());
-        style.background = Some(colors.container.into());
-        style.text = Some(text_style);
+        let new_style = StyleRefinement {
+            background: Some(colors.container.into()),
+            text: Some(TextStyleRefinement {
+                color: Some(colors.text.into()),
+                font_size: Some(px(13.).into()),
+                ..text_style
+            }),
+            border_color: Some(colors.border.into()),
+            border_style: Some(BorderStyle::Solid),
+            border_widths: EdgesRefinement {
+                top: Some(abs_px(1.)),
+                right: Some(abs_px(1.)),
+                bottom: Some(abs_px(1.)),
+                left: Some(abs_px(1.)),
+            },
+            corner_radii: CornersRefinement {
+                top_left: Some(abs_px(4.)),
+                top_right: Some(abs_px(4.)),
+                bottom_left: Some(abs_px(4.)),
+                bottom_right: Some(abs_px(4.)),
+            },
+            flex_direction: Some(FlexDirection::Row),
+            flex_grow: Some(0.),
+            ..StyleRefinement::default()
+        };
+
+        let refined = self.style().refine(&new_style);
 
         self.interactivity.paint(
             global_id,
