@@ -9234,10 +9234,9 @@ impl Editor {
             return;
         }
         self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
-        let display_map = self.selections.display_map(cx);
         let selections = self
             .selections
-            .all::<usize>(&display_map)
+            .all::<usize>(&self.selections.display_map(cx))
             .into_iter()
             .map(|s| s.range());
 
@@ -9245,7 +9244,9 @@ impl Editor {
             this.buffer.update(cx, |buffer, cx| {
                 buffer.autoindent_ranges(selections, cx);
             });
-            let selections = this.selections.all::<usize>(&display_map);
+            let selections = this
+                .selections
+                .all::<usize>(&this.selections.display_map(cx));
             this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.select(selections)
             });
