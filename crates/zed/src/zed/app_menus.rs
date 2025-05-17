@@ -66,11 +66,11 @@ pub fn app_menus() -> Vec<Menu> {
                 ),
                 MenuItem::action(
                     "Open Recent...",
-                    zed_actions::OpenRecent {
+                    zed_actions::ToggleRecent {
                         create_new_window: true,
                     },
                 ),
-                MenuItem::action("Open Remote...", zed_actions::OpenRemote),
+                MenuItem::action("Open Remote...", zed_actions::ToggleRemote),
                 MenuItem::separator(),
                 MenuItem::action("Add Folder to Project…", workspace::AddFolderToProject),
                 MenuItem::separator(),
