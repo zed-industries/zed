@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use futures::{FutureExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
+use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task, UpdateGlobal};
 use fs;
 use http_client::HttpClient;
 use language_model::{
@@ -980,25 +980,28 @@ impl ConfigurationView {
         let name_for_log = updated_server.name.clone();
         let url_for_log = updated_server.api_url.clone();
         let id_for_log = updated_server.id.clone();
+        let server_index = index;
         
-        // Get filesystem
-        let fs = <dyn fs::Fs>::global(cx);
-        
-        // Update settings
-        update_settings_file::<crate::AllLanguageModelSettings>(fs, cx, move |settings, _| {
-            if let Some(lmstudio) = &mut settings.lmstudio {
-                if let Some(servers) = &mut lmstudio.servers {
-                    if index < servers.len() {
-                        servers[index] = updated_server;
-                        log::info!(
-                            "Updated server: {} at {} with ID {}", 
-                            name_for_log, 
-                            url_for_log,
-                            id_for_log
-                        );
+        // Use SettingsStore to update settings
+        settings::SettingsStore::update_global(cx, |store, cx| {
+            store.update_settings_file::<crate::AllLanguageModelSettings>(
+                <dyn fs::Fs>::global(cx), 
+                move |settings, _| {
+                    if let Some(lmstudio) = &mut settings.lmstudio {
+                        if let Some(servers) = &mut lmstudio.servers {
+                            if server_index < servers.len() {
+                                servers[server_index] = updated_server;
+                                log::info!(
+                                    "Updated server: {} at {} with ID {}", 
+                                    name_for_log, 
+                                    url_for_log,
+                                    id_for_log
+                                );
+                            }
+                        }
                     }
                 }
-            }
+            );
         });
         
         // Reset edit state
@@ -1210,27 +1213,29 @@ impl ConfigurationView {
         // Clone for closure
         let server_clone = new_server.clone();
         
-        // Get filesystem
-        let fs = <dyn fs::Fs>::global(cx);
-        
-        // Update settings
-        update_settings_file::<crate::AllLanguageModelSettings>(fs, cx, move |settings, _| {
-            // Get or initialize lmstudio settings
-            if settings.lmstudio.is_none() {
-                settings.lmstudio = Some(Default::default());
-            }
-            
-            // Ensure servers collection exists
-            if let Some(lmstudio) = &mut settings.lmstudio {
-                if lmstudio.servers.is_none() {
-                    lmstudio.servers = Some(Vec::new());
+        // Use SettingsStore to update settings
+        settings::SettingsStore::update_global(cx, |store, cx| {
+            store.update_settings_file::<crate::AllLanguageModelSettings>(
+                <dyn fs::Fs>::global(cx), 
+                move |settings, _| {
+                    // Get or initialize lmstudio settings
+                    if settings.lmstudio.is_none() {
+                        settings.lmstudio = Some(Default::default());
+                    }
+                    
+                    // Ensure servers collection exists
+                    if let Some(lmstudio) = &mut settings.lmstudio {
+                        if lmstudio.servers.is_none() {
+                            lmstudio.servers = Some(Vec::new());
+                        }
+                        
+                        // Add server
+                        if let Some(servers) = &mut lmstudio.servers {
+                            servers.push(server_clone);
+                        }
+                    }
                 }
-                
-                // Add server
-                if let Some(servers) = &mut lmstudio.servers {
-                    servers.push(server_clone);
-                }
-            }
+            );
         });
         
         // Reset form and state
