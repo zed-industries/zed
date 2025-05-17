@@ -66,10 +66,6 @@ pub fn config_dir() -> &'static PathBuf {
     CONFIG_DIR.get_or_init(|| {
         if let Some(custom_dir) = CUSTOM_DATA_DIR.get() {
             custom_dir.join("config")
-        } else if cfg!(target_os = "windows") {
-            dirs::config_dir()
-                .expect("failed to determine RoamingAppData directory")
-                .join("Zed")
         } else if cfg!(any(target_os = "linux", target_os = "freebsd")) {
             if let Ok(flatpak_xdg_config) = std::env::var("FLATPAK_XDG_CONFIG_HOME") {
                 flatpak_xdg_config.into()
@@ -78,7 +74,26 @@ pub fn config_dir() -> &'static PathBuf {
             }
             .join("zed")
         } else {
-            home_dir().join(".config").join("zed")
+            let xdg_config_home = std::env::var_os("XDG_CONFIG_HOME").and_then(|val| {
+                let path = PathBuf::from(val);
+                if path.is_absolute() { Some(path) } else { None }
+            });
+
+            let path = xdg_config_home.unwrap_or_else(|| {
+                if cfg!(target_os = "windows") {
+                    dirs::config_dir().expect("failed to determine RoamingAppData directory")
+                } else {
+                    home_dir().join(".config")
+                }
+            });
+
+            let dirname = if cfg!(target_os = "windows") {
+                "Zed"
+            } else {
+                "zed"
+            };
+
+            path.join(dirname)
         }
     })
 }
