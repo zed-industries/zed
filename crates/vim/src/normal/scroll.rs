@@ -1,4 +1,4 @@
-use crate::{Vim, VimSettings};
+use crate::Vim;
 use editor::{
     DisplayPoint, Editor, EditorSettings,
     display_map::{DisplayRow, ToDisplayPoint},
@@ -69,8 +69,6 @@ fn scroll_editor(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
-    let dont_push_to_scroll_to_nav_history =
-        VimSettings::get_global(cx).dont_push_to_scroll_to_nav_history;
     let should_move_cursor = editor.newest_selection_on_screen(cx).is_eq();
     let old_top_anchor = editor.scroll_manager.anchor().anchor;
 
@@ -101,139 +99,69 @@ fn scroll_editor(
 
     let top_anchor = editor.scroll_manager.anchor().anchor;
     let vertical_scroll_margin = EditorSettings::get_global(cx).vertical_scroll_margin;
-    if dont_push_to_scroll_to_nav_history {
-        editor.change_selections_without_nav(None, window, cx, |s| {
-            s.move_with(|map, selection| {
-                let mut head = selection.head();
-                let top = top_anchor.to_display_point(map);
-                let starting_column = head.column();
+    editor.change_selections_without_nav(None, window, cx, |s| {
+        s.move_with(|map, selection| {
+            let mut head = selection.head();
+            let top = top_anchor.to_display_point(map);
+            let starting_column = head.column();
 
-                let vertical_scroll_margin =
-                    (vertical_scroll_margin as u32).min(visible_line_count as u32 / 2);
+            let vertical_scroll_margin =
+                (vertical_scroll_margin as u32).min(visible_line_count as u32 / 2);
 
-                if preserve_cursor_position {
-                    let old_top = old_top_anchor.to_display_point(map);
-                    let new_row = if old_top.row() == top.row() {
-                        DisplayRow(
-                            head.row()
-                                .0
-                                .saturating_add_signed(amount.lines(visible_line_count) as i32),
-                        )
-                    } else {
-                        DisplayRow(top.row().0 + selection.head().row().0 - old_top.row().0)
-                    };
-                    head = map.clip_point(DisplayPoint::new(new_row, head.column()), Bias::Left)
-                }
-
-                let min_row = if top.row().0 == 0 {
-                    DisplayRow(0)
-                } else {
-                    DisplayRow(top.row().0 + vertical_scroll_margin)
-                };
-
-                let max_visible_row = top.row().0.saturating_add(
-                    (visible_line_count as u32).saturating_sub(1 + vertical_scroll_margin),
-                );
-                // scroll off the end.
-                let max_row = if top.row().0 + visible_line_count as u32 >= map.max_point().row().0
-                {
-                    map.max_point().row()
-                } else {
+            if preserve_cursor_position {
+                let old_top = old_top_anchor.to_display_point(map);
+                let new_row = if old_top.row() == top.row() {
                     DisplayRow(
-                        (top.row().0 + visible_line_count as u32)
-                            .saturating_sub(1 + vertical_scroll_margin),
+                        head.row()
+                            .0
+                            .saturating_add_signed(amount.lines(visible_line_count) as i32),
                     )
-                };
-
-                let new_row = if full_page_up {
-                    // Special-casing ctrl-b/page-up, which is special-cased by Vim, it seems
-                    // to always put the cursor on the last line of the page, even if the cursor
-                    // was before that.
-                    DisplayRow(max_visible_row)
-                } else if head.row() < min_row {
-                    min_row
-                } else if head.row() > max_row {
-                    max_row
                 } else {
-                    head.row()
+                    DisplayRow(top.row().0 + selection.head().row().0 - old_top.row().0)
                 };
-                let new_head =
-                    map.clip_point(DisplayPoint::new(new_row, starting_column), Bias::Left);
+                head = map.clip_point(DisplayPoint::new(new_row, head.column()), Bias::Left)
+            }
 
-                if selection.is_empty() {
-                    selection.collapse_to(new_head, selection.goal)
-                } else {
-                    selection.set_head(new_head, selection.goal)
-                };
-            })
-        });
-    } else {
-        editor.change_selections(None, window, cx, |s| {
-            s.move_with(|map, selection| {
-                let mut head = selection.head();
-                let top = top_anchor.to_display_point(map);
-                let starting_column = head.column();
+            let min_row = if top.row().0 == 0 {
+                DisplayRow(0)
+            } else {
+                DisplayRow(top.row().0 + vertical_scroll_margin)
+            };
 
-                let vertical_scroll_margin =
-                    (vertical_scroll_margin as u32).min(visible_line_count as u32 / 2);
+            let max_visible_row = top.row().0.saturating_add(
+                (visible_line_count as u32).saturating_sub(1 + vertical_scroll_margin),
+            );
+            // scroll off the end.
+            let max_row = if top.row().0 + visible_line_count as u32 >= map.max_point().row().0 {
+                map.max_point().row()
+            } else {
+                DisplayRow(
+                    (top.row().0 + visible_line_count as u32)
+                        .saturating_sub(1 + vertical_scroll_margin),
+                )
+            };
 
-                if preserve_cursor_position {
-                    let old_top = old_top_anchor.to_display_point(map);
-                    let new_row = if old_top.row() == top.row() {
-                        DisplayRow(
-                            head.row()
-                                .0
-                                .saturating_add_signed(amount.lines(visible_line_count) as i32),
-                        )
-                    } else {
-                        DisplayRow(top.row().0 + selection.head().row().0 - old_top.row().0)
-                    };
-                    head = map.clip_point(DisplayPoint::new(new_row, head.column()), Bias::Left)
-                }
+            let new_row = if full_page_up {
+                // Special-casing ctrl-b/page-up, which is special-cased by Vim, it seems
+                // to always put the cursor on the last line of the page, even if the cursor
+                // was before that.
+                DisplayRow(max_visible_row)
+            } else if head.row() < min_row {
+                min_row
+            } else if head.row() > max_row {
+                max_row
+            } else {
+                head.row()
+            };
+            let new_head = map.clip_point(DisplayPoint::new(new_row, starting_column), Bias::Left);
 
-                let min_row = if top.row().0 == 0 {
-                    DisplayRow(0)
-                } else {
-                    DisplayRow(top.row().0 + vertical_scroll_margin)
-                };
-
-                let max_visible_row = top.row().0.saturating_add(
-                    (visible_line_count as u32).saturating_sub(1 + vertical_scroll_margin),
-                );
-                // scroll off the end.
-                let max_row = if top.row().0 + visible_line_count as u32 >= map.max_point().row().0
-                {
-                    map.max_point().row()
-                } else {
-                    DisplayRow(
-                        (top.row().0 + visible_line_count as u32)
-                            .saturating_sub(1 + vertical_scroll_margin),
-                    )
-                };
-
-                let new_row = if full_page_up {
-                    // Special-casing ctrl-b/page-up, which is special-cased by Vim, it seems
-                    // to always put the cursor on the last line of the page, even if the cursor
-                    // was before that.
-                    DisplayRow(max_visible_row)
-                } else if head.row() < min_row {
-                    min_row
-                } else if head.row() > max_row {
-                    max_row
-                } else {
-                    head.row()
-                };
-                let new_head =
-                    map.clip_point(DisplayPoint::new(new_row, starting_column), Bias::Left);
-
-                if selection.is_empty() {
-                    selection.collapse_to(new_head, selection.goal)
-                } else {
-                    selection.set_head(new_head, selection.goal)
-                };
-            })
-        });
-    }
+            if selection.is_empty() {
+                selection.collapse_to(new_head, selection.goal)
+            } else {
+                selection.set_head(new_head, selection.goal)
+            };
+        })
+    });
 }
 
 #[cfg(test)]
