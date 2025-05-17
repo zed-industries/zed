@@ -609,6 +609,7 @@ wasmtime = { version = "29", default-features = false, features = [
     "runtime",
     "cranelift",
     "component-model",
+    "parallel-compilation",
 ] }
 wasmtime-wasi = "29"
 which = "6.0.0"

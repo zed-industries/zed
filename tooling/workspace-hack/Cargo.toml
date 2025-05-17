@@ -132,7 +132,7 @@ url = { version = "2", features = ["serde"] }
 uuid = { version = "1", features = ["serde", "v4", "v5", "v7"] }
 wasm-encoder = { version = "0.221", features = ["wasmparser"] }
 wasmparser = { version = "0.221" }
-wasmtime = { version = "29", default-features = false, features = ["async", "component-model", "cranelift", "demangle", "gc-drc"] }
+wasmtime = { version = "29", default-features = false, features = ["async", "component-model", "cranelift", "demangle", "gc-drc", "parallel-compilation"] }
 wasmtime-cranelift = { version = "29", default-features = false, features = ["component-model", "gc-drc"] }
 wasmtime-environ = { version = "29", default-features = false, features = ["compile", "component-model", "demangle", "gc-drc"] }
 winnow = { version = "0.7", features = ["simd"] }
@@ -267,7 +267,7 @@ url = { version = "2", features = ["serde"] }
 uuid = { version = "1", features = ["serde", "v4", "v5", "v7"] }
 wasm-encoder = { version = "0.221", features = ["wasmparser"] }
 wasmparser = { version = "0.221" }
-wasmtime = { version = "29", default-features = false, features = ["async", "component-model", "cranelift", "demangle", "gc-drc"] }
+wasmtime = { version = "29", default-features = false, features = ["async", "component-model", "cranelift", "demangle", "gc-drc", "parallel-compilation"] }
 wasmtime-cranelift = { version = "29", default-features = false, features = ["component-model", "gc-drc"] }
 wasmtime-environ = { version = "29", default-features = false, features = ["compile", "component-model", "demangle", "gc-drc"] }
 winnow = { version = "0.7", features = ["simd"] }
