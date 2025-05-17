@@ -171,12 +171,50 @@ impl Tool for EditFileTool {
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
-        let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
-            return Task::ready(Err(anyhow!(
-                "Path {} not found in project",
-                input.path.display()
-            )))
-            .into();
+        // Check if we're in create mode
+        let is_create_or_overwrite = matches!(input.mode, EditFileMode::Create | EditFileMode::Overwrite);
+        
+        // For create mode, we need to check if the parent directory exists
+        let project_path = if is_create_or_overwrite {
+            // Get parent directory to check if it exists
+            if let Some(parent_path) = input.path.parent().map(|p| p.to_path_buf()) {
+                // If parent path is empty (relative path with no directory), use current directory
+                let path_to_check = if parent_path.as_os_str().is_empty() { input.path.clone() } else { parent_path };
+                
+                // Find the parent directory in the project
+                if let Some(parent_project_path) = project.read(cx).find_project_path(&path_to_check, cx) {
+                    // Parent exists, use the full path for later operations
+                    parent_project_path
+                } else {
+                    return Task::ready(Err(anyhow!(
+                        "Parent directory for {} not found in project",
+                        input.path.display()
+                    )))
+                    .into();
+                }
+            } else {
+                // No parent directory, check if we can find the path directly
+                if let Some(path) = project.read(cx).find_project_path(&input.path, cx) {
+                    path
+                } else {
+                    return Task::ready(Err(anyhow!(
+                        "Path {} not found in project",
+                        input.path.display()
+                    )))
+                    .into();
+                }
+            }
+        } else {
+            // For edit mode, the exact path should exist
+            if let Some(path) = project.read(cx).find_project_path(&input.path, cx) {
+                path
+            } else {
+                return Task::ready(Err(anyhow!(
+                    "Path {} not found in project",
+                    input.path.display()
+                )))
+                .into();
+            }
         };
 
         let card = window.and_then(|window| {
