@@ -1,0 +1,19 @@
+[package]
+name = "jj"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/jj.rs"
+
+[dependencies]
+anyhow.workspace = true
+gpui.workspace = true
+jj-lib.workspace = true
+util.workspace = true
+workspace-hack.workspace = true
