@@ -2028,13 +2028,14 @@ impl ContextEditor {
     /// Will return false if the selected provided has a configuration error or
     /// if the user has not accepted the terms of service for this provider.
     fn sending_disabled(&self, cx: &mut Context<'_, ContextEditor>) -> bool {
-        let model = LanguageModelRegistry::read_global(cx).default_model();
+        let model = LanguageModelRegistry::read_global(cx)
+            .default_model();
 
         let has_configuration_error = configuration_error(cx).is_some();
         let needs_to_accept_terms = self.show_accept_terms
             && model
                 .as_ref()
-                .map_or(false, |model| model.provider.must_accept_terms(cx));
+                .map_or(false, |configured| configured.provider.must_accept_terms(cx));
         has_configuration_error || needs_to_accept_terms
     }
 
@@ -2175,7 +2176,7 @@ impl ContextEditor {
                     .items_center()
                     .child(Icon::new(IconName::XCircle).color(Color::Error))
                     .child(
-                        Label::new("Error interacting with language model")
+                        Label::new("Language Model Error")
                             .weight(FontWeight::MEDIUM),
                     ),
             )

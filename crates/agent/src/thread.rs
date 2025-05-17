@@ -1715,7 +1715,7 @@ impl Thread {
                                     .collect::<Vec<_>>()
                                     .join("\n");
                                 cx.emit(ThreadEvent::ShowError(ThreadError::Message {
-                                    header: "Error interacting with language model".into(),
+                                    header: "Language Model Error".into(),
                                     message: SharedString::from(error_message.clone()),
                                 }));
                             }
