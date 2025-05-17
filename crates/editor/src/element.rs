@@ -7410,7 +7410,9 @@ impl Element for EditorElement {
                         .editor_with_selections(cx)
                         .map(|editor| {
                             editor.update(cx, |editor, cx| {
-                                let all_selections = editor.selections.all::<Point>(cx);
+                                let all_selections = editor
+                                    .selections
+                                    .all::<Point>(&editor.selections.display_map(cx));
                                 let selected_buffer_ids = if editor.is_singleton(cx) {
                                     Vec::new()
                                 } else {

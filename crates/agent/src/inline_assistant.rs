@@ -340,7 +340,7 @@ impl InlineAssistant {
     ) {
         let (snapshot, initial_selections, newest_selection) = editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(window, cx);
-            let selections = editor.selections.all::<Point>(cx);
+            let selections = editor.selections.all::<Point>(&snapshot.display_snapshot);
             let newest_selection = editor
                 .selections
                 .newest::<Point>(&snapshot.display_snapshot);

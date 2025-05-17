@@ -422,9 +422,11 @@ impl ContextEditor {
     }
 
     fn cursors(&self, cx: &mut App) -> Vec<usize> {
-        let selections = self
-            .editor
-            .update(cx, |editor, cx| editor.selections.all::<usize>(cx));
+        let selections = self.editor.update(cx, |editor, cx| {
+            editor
+                .selections
+                .all::<usize>(&editor.selections.display_map(cx))
+        });
         selections
             .into_iter()
             .map(|selection| selection.head())
@@ -1773,13 +1775,16 @@ impl ContextEditor {
                 editor.transact(window, cx, |editor, _window, cx| {
                     let edits = editor
                         .selections
-                        .all::<usize>(cx)
+                        .all::<usize>(&editor.selections.display_map(cx))
                         .into_iter()
                         .map(|selection| (selection.start..selection.end, "\n"));
                     editor.edit(edits, cx);
 
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
-                    for selection in editor.selections.all::<usize>(cx) {
+                    for selection in editor
+                        .selections
+                        .all::<usize>(&editor.selections.display_map(cx))
+                    {
                         image_positions.push(snapshot.anchor_before(selection.end));
                     }
                 });

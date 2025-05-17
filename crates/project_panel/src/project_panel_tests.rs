@@ -586,7 +586,9 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
 
     let confirm = panel.update_in(cx, |panel, window, cx| {
         panel.filename_editor.update(cx, |editor, cx| {
-            let file_name_selections = editor.selections.all::<usize>(cx);
+            let file_name_selections = editor
+                .selections
+                .all::<usize>(&editor.selections.display_map(cx));
             assert_eq!(
                 file_name_selections.len(),
                 1,
@@ -659,7 +661,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
 
     panel.update_in(cx, |panel, window, cx| {
             panel.filename_editor.update(cx, |editor, cx| {
-                let file_name_selections = editor.selections.all::<usize>(cx);
+                let file_name_selections = editor.selections.all::<usize>(&editor.selections.display_map(cx));
                 assert_eq!(file_name_selections.len(), 1, "File editing should have a single selection, but got: {file_name_selections:?}");
                 let file_name_selection = &file_name_selections[0];
                 assert_eq!(file_name_selection.start, 0, "Should select the file name from the start");
@@ -1127,7 +1129,9 @@ async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
 
     panel.update_in(cx, |panel, window, cx| {
         panel.filename_editor.update(cx, |editor, cx| {
-            let file_name_selections = editor.selections.all::<usize>(cx);
+            let file_name_selections = editor
+                .selections
+                .all::<usize>(&editor.selections.display_map(cx));
             assert_eq!(
                 file_name_selections.len(),
                 1,

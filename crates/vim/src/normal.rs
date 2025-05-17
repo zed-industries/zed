@@ -464,7 +464,9 @@ impl Vim {
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
-                let selections = editor.selections.all::<Point>(cx);
+                let selections = editor
+                    .selections
+                    .all::<Point>(&editor.selections.display_map(cx));
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
 
                 let selection_start_rows: BTreeSet<u32> = selections
@@ -506,7 +508,9 @@ impl Vim {
         self.update_editor(window, cx, |_, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
-                let selections = editor.selections.all::<Point>(cx);
+                let selections = editor
+                    .selections
+                    .all::<Point>(&editor.selections.display_map(cx));
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
 
                 let selection_end_rows: BTreeSet<u32> = selections
@@ -550,7 +554,9 @@ impl Vim {
         self.record_current_action(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.transact(window, cx, |editor, _, cx| {
-                let selections = editor.selections.all::<Point>(cx);
+                let selections = editor
+                    .selections
+                    .all::<Point>(&editor.selections.display_map(cx));
 
                 let selection_start_rows: BTreeSet<u32> = selections
                     .into_iter()
@@ -577,7 +583,9 @@ impl Vim {
         self.record_current_action(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.transact(window, cx, |editor, _, cx| {
-                let selections = editor.selections.all::<Point>(cx);
+                let selections = editor
+                    .selections
+                    .all::<Point>(&editor.selections.display_map(cx));
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
 
                 let selection_end_rows: BTreeSet<u32> = selections

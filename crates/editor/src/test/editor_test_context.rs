@@ -543,7 +543,9 @@ impl EditorTestContext {
     fn editor_selections(&mut self) -> Vec<Range<usize>> {
         self.editor
             .update(&mut self.cx, |editor, cx| {
-                editor.selections.all::<usize>(cx)
+                editor
+                    .selections
+                    .all::<usize>(&editor.selections.display_map(cx))
             })
             .into_iter()
             .map(|s| {

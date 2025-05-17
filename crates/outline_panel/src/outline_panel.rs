@@ -6922,13 +6922,13 @@ outline: struct OutlineEntryExcerpt
 
     fn selected_row_text(editor: &Entity<Editor>, cx: &mut App) -> String {
         editor.update(cx, |editor, cx| {
-                let selections = editor.selections.all::<language::Point>(cx);
-                assert_eq!(selections.len(), 1, "Active editor should have exactly one selection after any outline panel interactions");
-                let selection = selections.first().unwrap();
-                let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-                let line_start = language::Point::new(selection.start.row, 0);
-                let line_end = multi_buffer_snapshot.clip_point(language::Point::new(selection.end.row, u32::MAX), language::Bias::Right);
-                multi_buffer_snapshot.text_for_range(line_start..line_end).collect::<String>().trim().to_owned()
+            let selections = editor.selections.all::<language::Point>(&editor.selections.display_map(cx));
+            assert_eq!(selections.len(), 1, "Active editor should have exactly one selection after any outline panel interactions");
+            let selection = selections.first().unwrap();
+            let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+            let line_start = language::Point::new(selection.start.row, 0);
+            let line_end = multi_buffer_snapshot.clip_point(language::Point::new(selection.end.row, u32::MAX), language::Bias::Right);
+            multi_buffer_snapshot.text_for_range(line_start..line_end).collect::<String>().trim().to_owned()
         })
     }
 }
