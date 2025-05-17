@@ -98,15 +98,18 @@ impl BranchList {
 
             let all_branches = cx
                 .background_spawn(async move {
-                    let upstreams: HashSet<_> = all_branches
+                    let remote_upstreams: HashSet<_> = all_branches
                         .iter()
                         .filter_map(|branch| {
-                            let upstream = branch.upstream.as_ref()?;
-                            Some(upstream.ref_name.clone())
+                            branch
+                                .upstream
+                                .as_ref()
+                                .filter(|upstream| upstream.is_remote())
+                                .map(|upstream| upstream.ref_name.clone())
                         })
                         .collect();
 
-                    all_branches.retain(|branch| !upstreams.contains(&branch.ref_name));
+                    all_branches.retain(|branch| !remote_upstreams.contains(&branch.ref_name));
 
                     all_branches.sort_by_key(|branch| {
                         branch
