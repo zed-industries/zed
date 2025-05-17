@@ -75,6 +75,7 @@ members = [
     "crates/inline_completion_button",
     "crates/install_cli",
     "crates/jj",
+    "crates/jj_ui",
     "crates/journal",
     "crates/language",
     "crates/language_extension",
@@ -281,6 +282,7 @@ inline_completion = { path = "crates/inline_completion" }
 inline_completion_button = { path = "crates/inline_completion_button" }
 install_cli = { path = "crates/install_cli" }
 jj = { path = "crates/jj" }
+jj_ui = { path = "crates/jj_ui" }
 journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_extension = { path = "crates/language_extension" }
@@ -460,7 +462,8 @@ indexmap = { version = "2.7.0", features = ["serde"] }
 indoc = "2"
 inventory = "0.3.19"
 itertools = "0.14.0"
-jj-lib = "0.29.0"
+jj-cli = { git = "https://github.com/jj-vcs/jj", rev = "e18eb8e05efaa153fad5ef46576af145bba1807f" }
+jj-lib = { git = "https://github.com/jj-vcs/jj", rev = "e18eb8e05efaa153fad5ef46576af145bba1807f" }
 jsonschema = "0.30.0"
 jsonwebtoken = "9.3"
 jupyter-protocol = { git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
