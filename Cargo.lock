@@ -15696,8 +15696,6 @@ dependencies = [
 name = "ui_macros"
 version = "0.1.0"
 dependencies = [
- "convert_case 0.8.0",
- "proc-macro2",
  "quote",
  "syn 1.0.109",
  "workspace-hack",
