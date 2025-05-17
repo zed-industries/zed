@@ -1,3 +1,6 @@
+// Allow warnings for deprecated fields needed for backward compatibility
+#![allow(deprecated)]
+
 use anyhow::{Result, anyhow};
 use futures::{FutureExt, future::BoxFuture, stream::BoxStream, StreamExt};
 use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task, UpdateGlobal};
@@ -10,19 +13,18 @@ use language_model::{
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, RateLimiter, Role,
+    LanguageModelRequest, Role,
 };
 use lmstudio::{
     ChatCompletionRequest, ChatMessage, preload_model,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::{Settings, update_settings_file};
 use std::{collections::{BTreeMap, HashSet}, sync::Arc};
 // UI imports
 use ui::{ButtonLike, Indicator, List, prelude::*, ListItem, h_flex, v_flex, div, Label, Button, IconButton, LabelSize, Tooltip};
 use ui_input::SingleLineInput;
-use settings::update_settings_file;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
@@ -69,8 +71,9 @@ pub struct AvailableModel {
     /// For backward compatibility, max_tokens field is retained but not used directly
     #[serde(default)]
     #[serde(skip_serializing_if = "max_tokens_is_default")]
-    #[deprecated]
-    pub max_tokens: usize,
+    #[deprecated(note = "Use server_max_tokens and custom_max_tokens instead")]
+    #[doc(hidden)]
+    max_tokens: usize,
 }
 
 pub struct LmStudioLanguageModelProvider {
@@ -209,6 +212,7 @@ impl State {
                                             }),
                                         server_max_tokens: model.max_tokens,
                                         custom_max_tokens, // Preserve custom value if it exists
+                                        #[allow(deprecated)]
                                         max_tokens: 0, // For backward compatibility
                                         server_id: Some(server_id.clone()),
                                         enabled,
@@ -298,7 +302,6 @@ impl LmStudioLanguageModelProvider {
             id: LanguageModelId::from(model.name.clone()),
             model: model.clone(),
             http_client: self.http_client.clone(),
-            request_limiter: RateLimiter::new(4),
         }) as Arc<dyn LanguageModel>
     }
 }
@@ -432,7 +435,6 @@ pub struct LmStudioLanguageModel {
     id: LanguageModelId,
     model: lmstudio::Model,
     http_client: Arc<dyn HttpClient>,
-    request_limiter: RateLimiter,
 }
 
 impl LmStudioLanguageModel {
@@ -1458,6 +1460,7 @@ impl ConfigurationView {
         cx.notify();
     }
 
+    #[allow(dead_code)]
     fn add_model(&mut self, cx: &mut Context<Self>) {
         if let Some(server_idx) = self.selected_server_index {
             let settings = &AllLanguageModelSettings::get_global(cx).lmstudio;
@@ -1477,6 +1480,7 @@ impl ConfigurationView {
         }
     }
     
+    #[allow(dead_code)]
     fn remove_model(&mut self, model_name: String, server_id: String, cx: &mut Context<Self>) {
         // Get filesystem
         let fs = <dyn fs::Fs>::global(cx);
@@ -1707,6 +1711,7 @@ impl ConfigurationView {
                                     display_name: Some(format!("{} - {}", model_id, server_name)),
                                     server_max_tokens: local_model.max_context_length.unwrap_or(8192),
                                     custom_max_tokens,
+                                    #[allow(deprecated)]
                                     max_tokens: 0, // For backward compatibility
                                     server_id: Some(server_id.clone()),
                                     enabled,
@@ -1830,6 +1835,7 @@ impl ConfigurationView {
             },
             server_max_tokens: max_tokens,
             custom_max_tokens: None,
+            #[allow(deprecated)]
             max_tokens: 0, // For backward compatibility
             server_id: Some(server_id.clone()),
             enabled: true,
@@ -2897,8 +2903,11 @@ impl AvailableModel {
     
     /// For backward compatibility when loading older settings
     pub fn migrate_max_tokens(&mut self) {
-        if self.max_tokens > 0 && self.custom_max_tokens.is_none() {
-            self.custom_max_tokens = Some(self.max_tokens);
+        #[allow(deprecated)]
+        let legacy_max_tokens = self.max_tokens;
+        
+        if legacy_max_tokens > 0 && self.custom_max_tokens.is_none() {
+            self.custom_max_tokens = Some(legacy_max_tokens);
         }
     }
 }
