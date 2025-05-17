@@ -788,7 +788,7 @@ impl ContextProvider for BasicContextProvider {
         &self,
         _: &TaskVariables,
         location: &Location,
-        _: Option<HashMap<String, String>>,
+        _: HashMap<String, String>,
         _: Arc<dyn LanguageToolchainStore>,
         cx: &mut App,
     ) -> Task<Result<TaskVariables>> {

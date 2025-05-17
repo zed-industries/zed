@@ -38,6 +38,7 @@ clock.workspace = true
 collections.workspace = true
 context_server.workspace = true
 dap.workspace = true
+environment.workspace = true
 extension.workspace = true
 fancy-regex.workspace = true
 fs.workspace = true

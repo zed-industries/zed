@@ -27,7 +27,7 @@ pub trait ContextProvider: Send + Sync {
         &self,
         _variables: &TaskVariables,
         _location: &Location,
-        _project_env: Option<HashMap<String, String>>,
+        _project_env: HashMap<String, String>,
         _toolchains: Arc<dyn LanguageToolchainStore>,
         _cx: &mut App,
     ) -> Task<Result<TaskVariables>> {

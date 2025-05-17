@@ -30,6 +30,7 @@ async-trait.workspace = true
 client.workspace = true
 collections.workspace = true
 dap-types.workspace = true
+environment.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true

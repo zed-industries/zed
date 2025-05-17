@@ -667,6 +667,7 @@ dependencies = [
  "component",
  "derive_more",
  "editor",
+ "environment",
  "feature_flags",
  "fs",
  "futures 0.3.31",
@@ -3280,6 +3281,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "collections",
+ "environment",
  "futures 0.3.31",
  "gpui",
  "log",
@@ -3332,6 +3334,7 @@ dependencies = [
  "ctor",
  "editor",
  "env_logger 0.11.8",
+ "environment",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -4005,6 +4008,7 @@ dependencies = [
  "collections",
  "dap-types",
  "env_logger 0.11.8",
+ "environment",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -4880,6 +4884,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "environment"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "paths",
+ "serde_json",
+ "smol",
+ "tokio",
+ "util",
+ "which 6.0.3",
+ "workspace-hack",
+]
+
+[[package]]
 name = "envy"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4984,6 +5003,7 @@ dependencies = [
  "dirs 4.0.0",
  "dotenv",
  "env_logger 0.11.8",
+ "environment",
  "extension",
  "fs",
  "futures 0.3.31",
@@ -5080,6 +5100,7 @@ dependencies = [
  "async-trait",
  "collections",
  "dap",
+ "environment",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -5139,6 +5160,7 @@ dependencies = [
  "ctor",
  "dap",
  "env_logger 0.11.8",
+ "environment",
  "extension",
  "fs",
  "futures 0.3.31",
@@ -5991,6 +6013,7 @@ dependencies = [
  "async-trait",
  "collections",
  "derive_more",
+ "environment",
  "futures 0.3.31",
  "git2",
  "gpui",
@@ -10036,6 +10059,8 @@ dependencies = [
  "async-trait",
  "async-watch",
  "async_zip",
+ "collections",
+ "environment",
  "futures 0.3.31",
  "http_client",
  "log",
@@ -11805,6 +11830,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
+ "environment",
  "fs",
  "gpui",
  "language",
@@ -11938,6 +11964,7 @@ dependencies = [
  "dap",
  "dap_adapters",
  "env_logger 0.11.8",
+ "environment",
  "extension",
  "fancy-regex 0.14.0",
  "fs",
@@ -12843,6 +12870,7 @@ dependencies = [
  "askpass",
  "async-trait",
  "collections",
+ "environment",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -12945,6 +12973,7 @@ dependencies = [
  "command_palette_hooks",
  "editor",
  "env_logger 0.11.8",
+ "environment",
  "feature_flags",
  "file_icons",
  "futures 0.3.31",
@@ -15092,6 +15121,7 @@ dependencies = [
  "collections",
  "editor",
  "env_logger 0.11.8",
+ "environment",
  "futures 0.3.31",
  "gpui",
  "http_client",

@@ -15,6 +15,7 @@ path = "src/context_server.rs"
 anyhow.workspace = true
 async-trait.workspace = true
 collections.workspace = true
+environment.workspace = true
 futures.workspace = true
 gpui.workspace = true
 log.workspace = true

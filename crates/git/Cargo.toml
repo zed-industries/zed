@@ -20,6 +20,7 @@ askpass.workspace = true
 async-trait.workspace = true
 collections.workspace = true
 derive_more.workspace = true
+environment.workspace = true
 git2.workspace = true
 gpui.workspace = true
 http_client.workspace = true

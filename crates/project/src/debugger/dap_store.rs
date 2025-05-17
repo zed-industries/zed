@@ -203,7 +203,7 @@ impl DapStore {
                         .get_binary(&delegate, &definition, user_installed_path, cx)
                         .await?;
 
-                    let env = this
+                    let mut env = this
                         .update(cx, |this, cx| {
                             this.as_local()
                                 .unwrap()
@@ -214,10 +214,8 @@ impl DapStore {
                         })?
                         .await;
 
-                    if let Some(mut env) = env {
-                        env.extend(std::mem::take(&mut binary.envs));
-                        binary.envs = env;
-                    }
+                    env.extend(std::mem::take(&mut binary.envs));
+                    binary.envs = env;
 
                     Ok(binary)
                 })
@@ -815,7 +813,7 @@ pub struct DapAdapterDelegate {
     node_runtime: NodeRuntime,
     http_client: Arc<dyn HttpClient>,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
-    load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
+    load_shell_env_task: Shared<Task<HashMap<String, String>>>,
 }
 
 impl DapAdapterDelegate {
@@ -826,7 +824,7 @@ impl DapAdapterDelegate {
         node_runtime: NodeRuntime,
         http_client: Arc<dyn HttpClient>,
         toolchain_store: Arc<dyn LanguageToolchainStore>,
-        load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
+        load_shell_env_task: Shared<Task<HashMap<String, String>>>,
     ) -> Self {
         Self {
             fs,
@@ -868,7 +866,7 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
 
     async fn shell_env(&self) -> HashMap<String, String> {
         let task = self.load_shell_env_task.clone();
-        task.await.unwrap_or_default()
+        task.await
     }
 
     fn toolchain_store(&self) -> Arc<dyn LanguageToolchainStore> {
