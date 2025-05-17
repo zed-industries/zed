@@ -343,7 +343,7 @@ impl WindowTextSystem {
         text: SharedString,
         font_size: Pixels,
         runs: &[TextRun],
-    ) -> Result<ShapedLine> {
+    ) -> ShapedLine {
         debug_assert!(
             text.find('\n').is_none(),
             "text argument should not contain newlines"
@@ -370,13 +370,13 @@ impl WindowTextSystem {
             });
         }
 
-        let layout = self.layout_line(&text, font_size, runs)?;
+        let layout = self.layout_line(&text, font_size, runs);
 
-        Ok(ShapedLine {
+        ShapedLine {
             layout,
             text,
             decoration_runs,
-        })
+        }
     }
 
     /// Shape a multi line string of text, at the given font_size, for painting to the screen.
@@ -510,7 +510,7 @@ impl WindowTextSystem {
         text: Text,
         font_size: Pixels,
         runs: &[TextRun],
-    ) -> Result<Arc<LineLayout>>
+    ) -> Arc<LineLayout>
     where
         Text: AsRef<str>,
         SharedString: From<Text>,
@@ -537,7 +537,7 @@ impl WindowTextSystem {
         font_runs.clear();
         self.font_runs_pool.lock().push(font_runs);
 
-        Ok(layout)
+        layout
     }
 }
 

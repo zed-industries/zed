@@ -52,6 +52,20 @@
 (function_definition
   name: (identifier) @function.definition)
 
+((call
+  function: (identifier) @_isinstance
+  arguments: (argument_list
+    (_)
+    (identifier) @type))
+  (#eq? @_isinstance "isinstance"))
+
+((call
+  function: (identifier) @_issubclass
+  arguments: (argument_list
+    (identifier) @type
+    (identifier) @type))
+  (#eq? @_issubclass "issubclass"))
+
 ; Function arguments
 (function_definition
   parameters: (parameters

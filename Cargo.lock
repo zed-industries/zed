@@ -2793,6 +2793,7 @@ dependencies = [
  "anyhow",
  "async-recursion 0.3.2",
  "async-tungstenite",
+ "base64 0.22.1",
  "chrono",
  "clock",
  "cocoa 0.26.0",
@@ -2804,6 +2805,7 @@ dependencies = [
  "gpui_tokio",
  "http_client",
  "http_client_tls",
+ "httparse",
  "log",
  "parking_lot",
  "paths",
@@ -2824,6 +2826,7 @@ dependencies = [
  "time",
  "tiny_http",
  "tokio",
+ "tokio-native-tls",
  "tokio-socks",
  "url",
  "util",
@@ -15694,8 +15697,6 @@ dependencies = [
 name = "ui_macros"
 version = "0.1.0"
 dependencies = [
- "convert_case 0.8.0",
- "proc-macro2",
  "quote",
  "syn 1.0.109",
  "workspace-hack",

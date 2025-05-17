@@ -7,11 +7,11 @@ use crate::notifications::collab_notification::CollabNotification;
 pub struct CollabNotificationStory;
 
 impl Render for CollabNotificationStory {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let window_container = |width, height| div().w(px(width)).h(px(height));
 
-        Story::container()
-            .child(Story::title_for::<CollabNotification>())
+        Story::container(cx)
+            .child(Story::title_for::<CollabNotification>(cx))
             .child(
                 StorySection::new().child(StoryItem::new(
                     "Incoming Call Notification",

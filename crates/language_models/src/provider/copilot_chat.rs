@@ -60,10 +60,10 @@ impl State {
 impl CopilotChatLanguageModelProvider {
     pub fn new(cx: &mut App) -> Self {
         let state = cx.new(|cx| {
-            let _copilot_chat_subscription = CopilotChat::global(cx)
+            let copilot_chat_subscription = CopilotChat::global(cx)
                 .map(|copilot_chat| cx.observe(&copilot_chat, |_, _, cx| cx.notify()));
             State {
-                _copilot_chat_subscription,
+                _copilot_chat_subscription: copilot_chat_subscription,
                 _settings_subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                     cx.notify();
                 }),
