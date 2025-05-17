@@ -1612,9 +1612,36 @@ impl ConfigurationView {
         cx.notify();
     }
 
+    // Helper method to check if server is reachable
+    fn check_server_health(&self, server_url: &str, cx: &mut Context<Self>) -> Task<Result<bool>> {
+        log::info!("Checking health of server at {}", server_url);
+        
+        let http_client = self.state.read(cx).http_client.clone();
+        let server_url = server_url.to_string();
+        
+        // Spawn a background task to check server health
+        cx.spawn(async move |_, _| {
+            // Use the healthcheck function from the lmstudio crate
+            match lmstudio::healthcheck(&*http_client, &server_url).await {
+                Ok(true) => {
+                    log::info!("Server at {} is healthy", server_url);
+                    Ok(true)
+                },
+                Ok(false) => {
+                    log::warn!("Server at {} is not healthy", server_url);
+                    Ok(false)
+                },
+                Err(e) => {
+                    log::error!("Health check failed for server at {}: {}", server_url, e);
+                    Ok(false) // Consider server unhealthy if check fails
+                }
+            }
+        })
+    }
+    
     // Helper method to fetch models from a specific server
     fn fetch_models_from_server(&self, server_id: String, server_url: String, cx: &mut Context<Self>) {
-        log::info!("Fetching models from newly added server at {}", server_url);
+        log::info!("Fetching models from server at {}", server_url);
         
         let http_client = self.state.read(cx).http_client.clone();
         let state_entity = self.state.clone();
@@ -1623,6 +1650,30 @@ impl ConfigurationView {
         cx.spawn({
             let http_client = http_client.clone();
             async move |this, cx| {
+                // First check if the server is healthy
+                let is_healthy = match lmstudio::healthcheck(&*http_client, &server_url).await {
+                    Ok(true) => {
+                        log::info!("Server at {} is healthy, fetching models", server_url);
+                        true
+                    },
+                    Ok(false) => {
+                        log::warn!("Server at {} is not healthy, skipping model fetch", server_url);
+                        false
+                    },
+                    Err(e) => {
+                        log::error!("Health check failed for server at {}: {}", server_url, e);
+                        false
+                    }
+                };
+                
+                if !is_healthy {
+                    // Update UI to show connection failed
+                    this.update(cx, |_this, cx| {
+                        cx.notify(); // Notify UI to refresh
+                    }).ok();
+                    return;
+                }
+                
                 // Attempt to fetch models from the server
                 match lmstudio::get_models(&*http_client, &server_url, None).await {
                     Ok(local_models) => {
@@ -2528,7 +2579,8 @@ impl Render for ConfigurationView {
                                                                                 .gap_1()
                                                                                 .child(Label::new(&server.name))
                                                                                 .child({
-                                                                                    // Check if server is connected by looking at available_models
+                                                                                    // Determining connection status - server is connected if it has models 
+                                                                                    // We could update this to do a live healthcheck in the future
                                                                                     let is_connected = server.enabled && 
                                                                                         server.available_models.as_ref().map(|models| !models.is_empty()).unwrap_or(false);
                                                                                     
@@ -2575,7 +2627,8 @@ impl Render for ConfigurationView {
                                                                             }))
                                                                         )
                                                                         .child({
-                                                                            // Check if server is connected by looking at available_models
+                                                                            // Determining connection status - server is connected if it has models 
+                                                                            // We could update this to do a live healthcheck in the future
                                                                             let is_connected = server.enabled && 
                                                                                 server.available_models.as_ref().map(|models| !models.is_empty()).unwrap_or(false);
                                                                             
