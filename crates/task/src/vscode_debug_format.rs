@@ -50,33 +50,6 @@ impl VsCodeDebugTaskDefinition {
         let definition = DebugScenario {
             label,
             build: None,
-            request: match self.request {
-                Request::Launch => {
-                    // let cwd = self.cwd.map(|cwd| PathBuf::from(replacer.replace(&cwd)));
-                    // let program = self.program.ok_or_else(|| {
-                    //     anyhow!("vscode debug launch configuration does not define a program")
-                    // })?;
-                    // let program = replacer.replace(&program);
-                    // let args = self
-                    //     .args
-                    //     .into_iter()
-                    //     .map(|arg| replacer.replace(&arg))
-                    //     .collect();
-                    // let env = self
-                    //     .env
-                    //     .into_iter()
-                    //     .filter_map(|(k, v)| v.map(|v| (k, v)))
-                    //     .collect();
-                    // DebugRequest::Launch(LaunchRequest {
-                    //     program,
-                    //     cwd,
-                    //     args,
-                    //     env,
-                    // })
-                    Some(debug_format::Request::Launch)
-                }
-                Request::Attach => Some(debug_format::Request::Attach),
-            },
             adapter: task_type_to_adapter_name(&self.r#type),
             // TODO host?
             tcp_connection: self.port.map(|port| TcpArgumentsTemplate {
@@ -85,7 +58,7 @@ impl VsCodeDebugTaskDefinition {
                 timeout: None,
             }),
             stop_on_entry: self.stop_on_entry,
-            // TODO
+            // todo!(debugger)
             config: serde_json::Value::Null,
         };
         Ok(definition)

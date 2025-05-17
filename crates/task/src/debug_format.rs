@@ -233,9 +233,7 @@ pub struct DebugScenario {
     /// A task to run prior to spawning the debuggee.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build: Option<BuildTaskDefinition>,
-    #[serde(flatten)]
-    pub request: Option<Request>,
-    /// Additional initialization arguments to be sent on DAP initialization
+    /// The main arguments to be sent to the debug adapter
     #[serde(default, flatten)]
     pub config: serde_json::Value,
     /// Optional TCP connection information

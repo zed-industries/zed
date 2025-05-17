@@ -82,7 +82,6 @@ impl DapLocator for CargoLocator {
                 task_template,
                 locator_name: Some(self.name()),
             }),
-            request: None,
             config: serde_json::Value::Null,
             tcp_connection: None,
             stop_on_entry: None,

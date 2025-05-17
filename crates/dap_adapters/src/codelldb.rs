@@ -9,7 +9,7 @@ use dap::{
 use futures::StreamExt;
 use gpui::AsyncApp;
 use task::{DebugRequest, DebugScenario, ZedDebugConfig};
-use util::fs::remove_matching;
+use util::{ResultExt, fs::remove_matching};
 
 use crate::*;
 
@@ -21,30 +21,27 @@ pub(crate) struct CodeLldbDebugAdapter {
 impl CodeLldbDebugAdapter {
     const ADAPTER_NAME: &'static str = "CodeLLDB";
 
-    fn request_args(&self, config: &DebugTaskDefinition) -> dap::StartDebuggingRequestArguments {
-        let mut configuration = json!({
-            "request": match config.request {
-                task::Request::Launch => "launch",
-                task::Request::Attach => "attach",
-            },
-        });
-        let map = configuration.as_object_mut().unwrap();
+    fn request_args(
+        &self,
+        task_definition: &DebugTaskDefinition,
+    ) -> Result<dap::StartDebuggingRequestArguments> {
         // CodeLLDB uses `name` for a terminal label.
-        map.insert(
-            "name".into(),
-            Value::String(String::from(config.label.as_ref())),
-        );
+        let mut configuration = task_definition.config.clone();
 
-        util::merge_json_value_into(config.config.clone(), &mut configuration);
-        let request = match config.request {
-            task::Request::Launch => StartDebuggingRequestArgumentsRequest::Launch,
-            task::Request::Attach => StartDebuggingRequestArgumentsRequest::Attach,
-        };
+        configuration
+            .as_object_mut()
+            .ok_or_else(|| anyhow!("CodeLLDB is not a valid json object"))?
+            .insert(
+                "name".into(),
+                Value::String(String::from(task_definition.label.as_ref())),
+            );
 
-        dap::StartDebuggingRequestArguments {
+        let request = self.validate_config(&configuration)?;
+
+        Ok(dap::StartDebuggingRequestArguments {
             request,
             configuration,
-        }
+        })
     }
 
     async fn fetch_latest_adapter_version(
@@ -137,10 +134,6 @@ impl DebugAdapter for CodeLldbDebugAdapter {
             label: zed_scenario.label,
             config: configuration,
             build: None,
-            request: Some(match zed_scenario.request {
-                DebugRequest::Launch(_) => task::Request::Launch,
-                DebugRequest::Attach(_) => task::Request::Attach,
-            }),
             tcp_connection: None,
             stop_on_entry: zed_scenario.stop_on_entry,
         }
@@ -203,7 +196,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                 "--settings".into(),
                 json!({"sourceLanguages": ["cpp", "rust"]}).to_string(),
             ],
-            request_args: self.request_args(config),
+            request_args: self.request_args(config)?,
             envs: HashMap::default(),
             connection: None,
         })

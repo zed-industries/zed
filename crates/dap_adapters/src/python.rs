@@ -19,7 +19,10 @@ impl PythonDebugAdapter {
     const ADAPTER_PATH: &'static str = "src/debugpy/adapter";
     const LANGUAGE_NAME: &'static str = "Python";
 
-    fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
+    fn request_args(
+        &self,
+        task_definition: &DebugTaskDefinition,
+    ) -> Result<StartDebuggingRequestArguments> {
         // let args = json!({
         //     "request": match config.request {
         //         DebugRequest::Launch(_) => "launch",
@@ -52,15 +55,13 @@ impl PythonDebugAdapter {
         //
         // let mut adapter_config = config.config.clone();
         // util::merge_json_value_into(args, &mut adapter_config);
-        let request = match config.request {
-            task::Request::Launch => StartDebuggingRequestArgumentsRequest::Launch,
-            task::Request::Attach => StartDebuggingRequestArgumentsRequest::Attach,
-        };
 
-        StartDebuggingRequestArguments {
-            configuration: config.config.clone(),
+        let request = self.validate_config(&task_definition.config)?;
+
+        Ok(StartDebuggingRequestArguments {
+            configuration: task_definition.config.clone(),
             request,
-        }
+        })
     }
     async fn fetch_latest_adapter_version(
         &self,
@@ -167,7 +168,7 @@ impl PythonDebugAdapter {
             }),
             cwd: None,
             envs: HashMap::default(),
-            request_args: self.request_args(config),
+            request_args: self.request_args(config)?,
         })
     }
 }
@@ -218,180 +219,358 @@ impl DebugAdapter for PythonDebugAdapter {
             label: zed_scenario.label,
             config: args,
             build: None,
-            request: Some(match zed_scenario.request {
-                DebugRequest::Launch(_) => task::Request::Launch,
-                DebugRequest::Attach(_) => task::Request::Attach,
-            }),
             tcp_connection: None,
             stop_on_entry: zed_scenario.stop_on_entry,
+        }
+    }
+
+    fn validate_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<StartDebuggingRequestArgumentsRequest> {
+        let map = config
+            .as_object()
+            .ok_or_else(|| anyhow!("Config isn't an object"))?;
+
+        let request_variant = map["request"]
+            .as_str()
+            .ok_or_else(|| anyhow!("request is not valid"))?;
+
+        match request_variant {
+            "launch" => Ok(StartDebuggingRequestArgumentsRequest::Launch),
+            "attach" => Ok(StartDebuggingRequestArgumentsRequest::Attach),
+            _ => Err(anyhow!("request must be either 'launch' or 'attach'")),
         }
     }
 
     fn dap_schema(&self) -> serde_json::Value {
         json!({
             "properties": {
-                "module": {
+                "request": {
                     "type": "string",
-                    "description": "Name of the module to be debugged."
+                    "enum": ["attach", "launch"],
+                    "description": "Debug adapter request type"
                 },
-                "program": {
-                    "type": "string",
-                    "description": "Absolute path to the program."
-                },
-                "code": {
-                    "type": "string",
-                    "description": "Code to execute in string form. Example: \"import debugpy;print(debugpy.__version__)\""
-                },
-                "python": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
+                "autoReload": {
+                    "default": {},
+                    "description": "Configures automatic reload of code on edit.",
+                    "properties": {
+                        "enable": {
+                            "default": false,
+                            "description": "Automatically reload code on edit.",
+                            "type": "boolean"
+                        },
+                        "exclude": {
+                            "default": [
+                                "**/.git/**",
+                                "**/.metadata/**",
+                                "**/__pycache__/**",
+                                "**/node_modules/**",
+                                "**/site-packages/**"
+                            ],
+                            "description": "Glob patterns of paths to exclude from auto reload.",
+                            "items": {
+                                "type": "string"
+                            },
+                            "type": "array"
+                        },
+                        "include": {
+                            "default": [
+                                "**/*.py",
+                                "**/*.pyw"
+                            ],
+                            "description": "Glob patterns of paths to include in auto reload.",
+                            "items": {
+                                "type": "string"
+                            },
+                            "type": "array"
+                        }
                     },
-                    "description": "Path python executable and interpreter arguments. Example: [\"/usr/bin/python\", \"-E\"]"
+                    "type": "object"
                 },
-                "args": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    },
-                    "description": "Command line arguments passed to the program."
+                "debugAdapterPath": {
+                    "description": "Path (fully qualified) to the python debug adapter executable.",
+                    "type": "string"
                 },
-                "console": {
-                    "type": "string",
-                    "enum": ["internalConsole", "integratedTerminal", "externalTerminal"],
-                    "default": "integratedTerminal",
-                    "description": "Sets where to launch the debug target. Default is \"integratedTerminal\"."
-                },
-                "cwd": {
-                    "type": "string",
-                    "description": "Absolute path to the working directory of the program being debugged."
-                },
-                "env": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string"
-                    },
-                    "description": "Environment variables defined as a key value pair."
-                },
-
                 "django": {
-                    "type": "boolean",
                     "default": false,
-                    "description": "When true enables Django templates. Default is false."
-                },
-                "gevent": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "When true enables debugging of gevent monkey-patched code. Default is false."
+                    "description": "Django debugging.",
+                    "type": "boolean"
                 },
                 "jinja": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "When true enables Jinja2 template debugging (e.g. Flask). Default is false."
+                    "default": null,
+                    "description": "Jinja template debugging (e.g. Flask).",
+                    "enum": [
+                        false,
+                        null,
+                        true
+                    ]
                 },
                 "justMyCode": {
-                    "type": "boolean",
                     "default": true,
-                    "description": "When true debug only user-written code. To debug standard library or anything outside of \"cwd\" use false. Default is true."
+                    "description": "If true, show and debug only user-written code. If false, show and debug all code, including library calls.",
+                    "type": "boolean"
                 },
                 "logToFile": {
-                    "type": "boolean",
                     "default": false,
-                    "description": "When true enables logging of debugger events to a log file(s). Default is false."
+                    "description": "Enable logging of debugger events to a log file. This file can be found in the debugpy extension install folder.",
+                    "type": "boolean"
                 },
                 "pathMappings": {
-                    "type": "array",
+                    "default": [],
                     "items": {
-                        "type": "object",
-                        "required": ["localRoot", "remoteRoot"],
+                        "label": "Path mapping",
                         "properties": {
                             "localRoot": {
-                                "type": "string",
-                                "description": "Local path"
+                                "default": "${workspaceFolder}",
+                                "label": "Local source root.",
+                                "type": "string"
                             },
                             "remoteRoot": {
-                                "type": "string",
-                                "description": "Remote path"
+                                "default": "",
+                                "label": "Remote source root.",
+                                "type": "string"
+                            }
+                        },
+                        "required": [
+                            "localRoot",
+                            "remoteRoot"
+                        ],
+                        "type": "object"
+                    },
+                    "label": "Path mappings.",
+                    "type": "array"
+                },
+                "redirectOutput": {
+                    "default": true,
+                    "description": "Redirect output.",
+                    "type": "boolean"
+                },
+                "showReturnValue": {
+                    "default": true,
+                    "description": "Show return value of functions when stepping.",
+                    "type": "boolean"
+                },
+                "subProcess": {
+                    "default": false,
+                    "description": "Whether to enable Sub Process debugging",
+                    "type": "boolean"
+                },
+                "consoleName": {
+                    "default": "Python Debug Console",
+                    "description": "Display name of the debug console or terminal",
+                    "type": "string"
+                },
+                "clientOS": {
+                    "default": null,
+                    "description": "OS that VS code is using.",
+                    "enum": [
+                        "windows",
+                        null,
+                        "unix"
+                    ]
+                }
+            },
+            "required": ["request"],
+            "allOf": [
+                {
+                    "if": {
+                        "properties": {
+                            "request": {
+                                "enum": ["attach"]
                             }
                         }
                     },
-                    "description": "Map of local and remote paths. Example: [{\"localRoot\": \"local path\", \"remoteRoot\": \"remote path\"}, ...]"
+                    "then": {
+                        "properties": {
+                            "connect": {
+                                "label": "Attach by connecting to debugpy over a socket.",
+                                "properties": {
+                                    "host": {
+                                        "default": "127.0.0.1",
+                                        "description": "Hostname or IP address to connect to.",
+                                        "type": "string"
+                                    },
+                                    "port": {
+                                        "description": "Port to connect to.",
+                                        "type": [
+                                            "number",
+                                            "string"
+                                        ]
+                                    }
+                                },
+                                "required": [
+                                    "port"
+                                ],
+                                "type": "object"
+                            },
+                            "listen": {
+                                "label": "Attach by listening for incoming socket connection from debugpy",
+                                "properties": {
+                                    "host": {
+                                        "default": "127.0.0.1",
+                                        "description": "Hostname or IP address of the interface to listen on.",
+                                        "type": "string"
+                                    },
+                                    "port": {
+                                        "description": "Port to listen on.",
+                                        "type": [
+                                            "number",
+                                            "string"
+                                        ]
+                                    }
+                                },
+                                "required": [
+                                    "port"
+                                ],
+                                "type": "object"
+                            },
+                            "processId": {
+                                "anyOf": [
+                                    {
+                                        "default": "${command:pickProcess}",
+                                        "description": "Use process picker to select a process to attach, or Process ID as integer.",
+                                        "enum": [
+                                            "${command:pickProcess}"
+                                        ]
+                                    },
+                                    {
+                                        "description": "ID of the local process to attach to.",
+                                        "type": "integer"
+                                    }
+                                ]
+                            }
+                        }
+                    }
                 },
-                "pyramid": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "When true enables debugging Pyramid applications. Default is false."
-                },
-                "redirectOutput": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "When true redirects output to debug console. Default is false."
-                },
-                "showReturnValue": {
-                    "type": "boolean",
-                    "description": "Shows return value of functions when stepping. The return value is added to the response to Variables Request"
-                },
-                "stopOnEntry": {
-                    "type": "boolean",
-                    "description": "When true debugger stops at first line of user code. When false debugger does not stop until breakpoint, exception or pause."
-                },
-                "subProcess": {
-                    "type": "boolean",
-                    "default": true,
-                    "description": "When true enables debugging multiprocess applications. Default is true."
-                },
-                "sudo": {
-                    "type": "boolean",
-                    "default": false,
-                    "description": "When true runs program under elevated permissions (on Unix). Default is false."
-                },
-
-                "label": {
-                    "type": "string",
-                    "description": "The name of the debug configuration"
-                },
-                "build": {
-                    "oneOf": [
-                        { "type": "string" },
-                        { "type": "object" }
-                    ],
-                    "description": "A task to run prior to spawning the debuggee"
-                },
-                "tcp_connection": {
-                    "type": "object",
-                    "properties": {
-                        "port": {
-                            "type": "integer",
-                            "description": "The port that the debug adapter is listening on"
-                        },
-                        "host": {
-                            "type": "string",
-                            "description": "The host that the debug adapter is listening to (e.g. 127.0.0.1)"
-                        },
-                        "timeout": {
-                            "type": "integer",
-                            "description": "Timeout in milliseconds to connect to the debug adapter"
+                {
+                    "if": {
+                        "properties": {
+                            "request": {
+                                "enum": ["launch"]
+                            }
                         }
                     },
-                    "description": "TCP connection information for connecting to an externally started debug adapter"
-                }
-            },
-            "allOf": [
-                {
-                    "oneOf": [
-                        {
-                            "required": ["module"],
-                            "title": "Debug Python Module"
-                        },
-                        {
-                            "required": ["program"],
-                            "title": "Debug Python Program"
-                        },
-                        {
-                            "required": ["code"],
-                            "title": "Debug Python Code"
+                    "then": {
+                        "properties": {
+                            "args": {
+                                "default": [],
+                                "description": "Command line arguments passed to the program. For string type arguments, it will pass through the shell as is, and therefore all shell variable expansions will apply. But for the array type, the values will be shell-escaped.",
+                                "items": {
+                                    "type": "string"
+                                },
+                                "anyOf": [
+                                    {
+                                        "default": "${command:pickArgs}",
+                                        "enum": [
+                                            "${command:pickArgs}"
+                                        ]
+                                    },
+                                    {
+                                        "type": [
+                                            "array",
+                                            "string"
+                                        ]
+                                    }
+                                ]
+                            },
+                            "console": {
+                                "default": "integratedTerminal",
+                                "description": "Where to launch the debug target: internal console, integrated terminal, or external terminal.",
+                                "enum": [
+                                    "externalTerminal",
+                                    "integratedTerminal",
+                                    "internalConsole"
+                                ]
+                            },
+                            "cwd": {
+                                "default": "${workspaceFolder}",
+                                "description": "Absolute path to the working directory of the program being debugged. Default is the root directory of the file (leave empty).",
+                                "type": "string"
+                            },
+                            "autoStartBrowser": {
+                                "default": false,
+                                "description": "Open external browser to launch the application",
+                                "type": "boolean"
+                            },
+                            "env": {
+                                "additionalProperties": {
+                                    "type": "string"
+                                },
+                                "default": {},
+                                "description": "Environment variables defined as a key value pair. Property ends up being the Environment Variable and the value of the property ends up being the value of the Env Variable.",
+                                "type": "object"
+                            },
+                            "envFile": {
+                                "default": "${workspaceFolder}/.env",
+                                "description": "Absolute path to a file containing environment variable definitions.",
+                                "type": "string"
+                            },
+                            "gevent": {
+                                "default": false,
+                                "description": "Enable debugging of gevent monkey-patched code.",
+                                "type": "boolean"
+                            },
+                            "module": {
+                                "default": "",
+                                "description": "Name of the module to be debugged.",
+                                "type": "string"
+                            },
+                            "program": {
+                                "default": "${file}",
+                                "description": "Absolute path to the program.",
+                                "type": "string"
+                            },
+                            "purpose": {
+                                "default": [],
+                                "description": "Tells extension to use this configuration for test debugging, or when using debug-in-terminal command.",
+                                "items": {
+                                    "enum": [
+                                        "debug-test",
+                                        "debug-in-terminal"
+                                    ],
+                                    "enumDescriptions": [
+                                        "Use this configuration while debugging tests using test view or test debug commands.",
+                                        "Use this configuration while debugging a file using debug in terminal button in the editor."
+                                    ]
+                                },
+                                "type": "array"
+                            },
+                            "pyramid": {
+                                "default": false,
+                                "description": "Whether debugging Pyramid applications.",
+                                "type": "boolean"
+                            },
+                            "python": {
+                                "default": "${command:python.interpreterPath}",
+                                "description": "Absolute path to the Python interpreter executable; overrides workspace configuration if set.",
+                                "type": "string"
+                            },
+                            "pythonArgs": {
+                                "default": [],
+                                "description": "Command-line arguments passed to the Python interpreter. To pass arguments to the debug target, use \"args\".",
+                                "items": {
+                                    "type": "string"
+                                },
+                                "type": "array"
+                            },
+                            "stopOnEntry": {
+                                "default": false,
+                                "description": "Automatically stop after launch.",
+                                "type": "boolean"
+                            },
+                            "sudo": {
+                                "default": false,
+                                "description": "Running debug program under elevated permissions (on Unix).",
+                                "type": "boolean"
+                            },
+                            "guiEventLoop": {
+                                "default": "matplotlib",
+                                "description": "The GUI event loop that's going to run. Possible values: \"matplotlib\", \"wx\", \"qt\", \"none\", or a custom function that'll be imported and run.",
+                                "type": "string"
+                            }
                         }
-                    ]
+                    }
                 }
             ]
         })

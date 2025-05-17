@@ -1,5 +1,5 @@
 use ::fs::Fs;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
@@ -131,10 +131,11 @@ impl TcpArguments {
     derive(serde::Deserialize, serde::Serialize)
 )]
 pub struct DebugTaskDefinition {
+    /// The name of this debug task
     pub label: SharedString,
+    /// The debug adapter to use
     pub adapter: DebugAdapterName,
-    pub request: Request,
-    /// Additional initialization arguments to be sent on DAP initialization
+    /// The launch/attach configuration to send to the debug adapter
     pub config: serde_json::Value,
     /// Whether to tell the debug adapter to stop on entry
     pub stop_on_entry: Option<bool>,
@@ -161,7 +162,6 @@ impl DebugTaskDefinition {
             label: self.label.clone(),
             adapter: self.adapter.clone().into(),
             build: None,
-            request: Some(task::Request::Launch),
             stop_on_entry: self.stop_on_entry,
             tcp_connection: self.tcp_connection.clone(),
             config: self.config.clone(),
@@ -205,9 +205,7 @@ impl DebugTaskDefinition {
     }
 
     pub fn from_proto(proto: proto::DebugTaskDefinition) -> Result<Self> {
-        let request = proto
-            .request
-            .ok_or_else(|| anyhow::anyhow!("request is required"))?;
+        // todo!(remove request subtype from proto definition)
         Ok(Self {
             label: proto.label.into(),
             config: proto.initialize_args.map(|v| v.into()).unwrap_or_default(),
@@ -217,24 +215,6 @@ impl DebugTaskDefinition {
                 .transpose()?,
             stop_on_entry: proto.stop_on_entry,
             adapter: DebugAdapterName(proto.adapter.into()),
-            request: match request {
-                proto::debug_task_definition::Request::DebugAttachRequest(config) => {
-                    DebugRequest::Attach(AttachRequest {
-                        process_id: Some(config.process_id),
-                    });
-                    todo!()
-                }
-
-                proto::debug_task_definition::Request::DebugLaunchRequest(config) => {
-                    DebugRequest::Launch(LaunchRequest {
-                        program: config.program,
-                        cwd: config.cwd.map(|cwd| cwd.into()),
-                        args: config.args,
-                        env: Default::default(),
-                    });
-                    todo!()
-                }
-            },
         })
     }
 }
@@ -433,6 +413,13 @@ pub trait DebugAdapter: 'static + Send + Sync {
     /// Returns the language name of an adapter if it only supports one language
     fn adapter_language_name(&self) -> Option<LanguageName> {
         None
+    }
+
+    fn validate_config(
+        &self,
+        _config: &serde_json::Value,
+    ) -> Result<StartDebuggingRequestArgumentsRequest> {
+        bail!("Not yet implemented for {}", self.name())
     }
 
     fn dap_schema(&self) -> serde_json::Value {

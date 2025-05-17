@@ -938,28 +938,14 @@ impl DebugScenarioDelegate {
             });
 
         let language = language.or_else(|| {
-            scenario
-                .request
-                .as_ref()
-                .and_then(|request| match request {
-                    // DebugRequest::Launch(launch) => launch
-                    //     .program
-                    //     .rsplit_once(".")
-                    //     .and_then(|split| languages.language_name_for_extension(split.1))
-                    //     .map(|name| TaskSourceKind::Language { name: name.into() }),
-                    // todo!()
-                    _ => None,
-                })
-                .or_else(|| {
-                    scenario.label.split_whitespace().find_map(|word| {
-                        language_names
-                            .iter()
-                            .find(|name| name.eq_ignore_ascii_case(word))
-                            .map(|name| TaskSourceKind::Language {
-                                name: name.to_owned().into(),
-                            })
+            scenario.label.split_whitespace().find_map(|word| {
+                language_names
+                    .iter()
+                    .find(|name| name.eq_ignore_ascii_case(word))
+                    .map(|name| TaskSourceKind::Language {
+                        name: name.to_owned().into(),
                     })
-                })
+            })
         });
 
         (language, scenario)
@@ -1122,7 +1108,6 @@ impl PickerDelegate for DebugScenarioDelegate {
         // }
         // todo!()
         //
-        debug_scenario.request = Some(task::Request::Launch);
 
         self.debug_panel
             .update(cx, |panel, cx| {

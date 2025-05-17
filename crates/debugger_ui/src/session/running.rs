@@ -15,15 +15,15 @@ use breakpoint_list::BreakpointList;
 use collections::{HashMap, IndexMap};
 use console::Console;
 use dap::{
-    Capabilities, RunInTerminalRequestArguments, Thread,
+    Capabilities, DapRegistry, RunInTerminalRequestArguments, Thread,
     adapters::{DebugAdapterName, DebugTaskDefinition},
     client::SessionId,
     debugger_settings::DebuggerSettings,
 };
 use futures::{SinkExt, channel::mpsc};
 use gpui::{
-    Action as _, AnyView, AppContext, Axis, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    NoAction, Pixels, Point, Subscription, Task, WeakEntity,
+    Action as _, AnyView, AppContext, Axis, Entity, EntityId, EventEmitter, Flatten, FocusHandle,
+    Focusable, NoAction, Pixels, Point, Subscription, Task, WeakEntity,
 };
 use language::Buffer;
 use loaded_source_list::LoadedSourceList;
@@ -520,6 +520,30 @@ impl Focusable for DebugTerminal {
 }
 
 impl RunningState {
+    // todo!() move this to util and make it so you pass a closure to it that converts a string
+    pub(crate) fn substitute_variables_in_config(
+        config: &mut serde_json::Value,
+        context: &TaskContext,
+    ) {
+        match config {
+            serde_json::Value::Object(obj) => {
+                obj.values_mut()
+                    .for_each(|value| Self::substitute_variables_in_config(value, context));
+            }
+            serde_json::Value::Array(array) => {
+                array
+                    .iter_mut()
+                    .for_each(|value| Self::substitute_variables_in_config(value, context));
+            }
+            serde_json::Value::String(s) => {
+                if let Some(substituted) = substitute_variables_in_str(&s, context) {
+                    *s = substituted;
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub(crate) fn new(
         session: Entity<Session>,
         project: Entity<Project>,
@@ -701,7 +725,6 @@ impl RunningState {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<DebugTaskDefinition>> {
-        dbg!(&scenario);
         let Some(workspace) = self.workspace.upgrade() else {
             return Task::ready(Err(anyhow!("no workspace")));
         };
@@ -716,11 +739,20 @@ impl RunningState {
                 adapter,
                 label,
                 build,
-                request,
-                config,
+                mut config,
                 tcp_connection,
                 stop_on_entry,
             } = scenario;
+            Self::substitute_variables_in_config(&mut config, &task_context);
+
+            let request_type = cx.read_global::<DapRegistry, _>(|dap_registry, _, _| {
+                dap_registry
+                    .adapter(&adapter)
+                    .ok_or_else(|| anyhow!("{}: is not a valid adapter name", &adapter))
+                    .and_then(|adapter| adapter.validate_config(&config))
+            })?;
+            let config_is_valid = request_type.is_ok();
+
             let build_output = if let Some(build) = build {
                 let (task, locator_name) = match build {
                     BuildTaskDefinition::Template {
@@ -749,28 +781,30 @@ impl RunningState {
                 };
 
                 let locator_name = if let Some(locator_name) = locator_name {
-                    debug_assert!(request.is_none());
+                    debug_assert!(!config_is_valid);
+
                     Some(locator_name)
-                } else if request.is_none() {
-                    dap_store
-                        .update(cx, |this, cx| {
-                            this.debug_scenario_for_build_task(
-                                task.original_task().clone(),
-                                adapter.clone().into(),
-                                task.display_label().to_owned().into(),
-                                cx,
-                            )
-                            .and_then(|scenario| {
-                                match scenario.build {
-                                    Some(BuildTaskDefinition::Template {
-                                        locator_name, ..
-                                    }) => locator_name,
-                                    _ => None,
-                                }
-                            })
-                        })
-                        .ok()
-                        .flatten()
+                // todo!() ^^
+                // } else if request.is_none() {
+                //     dap_store
+                //         .update(cx, |this, cx| {
+                //             this.debug_scenario_for_build_task(
+                //                 task.original_task().clone(),
+                //                 adapter.clone().into(),
+                //                 task.display_label().to_owned().into(),
+                //                 cx,
+                //             )
+                //             .and_then(|scenario| {
+                //                 match scenario.build {
+                //                     Some(BuildTaskDefinition::Template {
+                //                         locator_name, ..
+                //                     }) => locator_name,
+                //                     _ => None,
+                //                 }
+                //             })
+                //         })
+                //         .ok()
+                //         .flatten()
                 } else {
                     None
                 };
@@ -828,8 +862,8 @@ impl RunningState {
             } else {
                 None
             };
-            let request = if let Some(request) = request {
-                request
+
+            if config_is_valid {
             } else if let Some((task, locator_name)) = build_output {
                 let locator_name = locator_name
                     .ok_or_else(|| anyhow!("Could not find a valid locator for a build task"))?;
@@ -838,7 +872,7 @@ impl RunningState {
                         this.run_debug_locator(&locator_name, task, cx)
                     })?
                     .await?;
-                todo!()
+                todo!("We want to get the new debug request and convert it to the adapter's type")
             } else {
                 return Err(anyhow!("No request or build provided"));
             };
@@ -846,7 +880,6 @@ impl RunningState {
             Ok(DebugTaskDefinition {
                 label,
                 adapter: DebugAdapterName(adapter),
-                request,
                 config,
                 stop_on_entry,
                 tcp_connection,
