@@ -185,12 +185,14 @@ pub(crate) fn default_markdown_style(window: &Window, cx: &App) -> MarkdownStyle
     let ui_font_size = TextSize::Default.rems(cx);
     let buffer_font_size = TextSize::Small.rems(cx);
     let mut text_style = window.text_style();
+    let line_height = buffer_font_size * 1.75;
 
     text_style.refine(&TextStyleRefinement {
         font_family: Some(theme_settings.ui_font.family.clone()),
         font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
         font_features: Some(theme_settings.ui_font.features.clone()),
         font_size: Some(ui_font_size.into()),
+        line_height: Some(line_height.into()),
         color: Some(cx.theme().colors().text),
         ..Default::default()
     });
@@ -1720,10 +1722,11 @@ impl ActiveThread {
             .on_action(cx.listener(Self::confirm_editing_message))
             .capture_action(cx.listener(Self::paste))
             .min_h_6()
-            .flex_grow()
             .w_full()
+            .flex_grow()
             .gap_2()
-            .child(EditorElement::new(
+            .child(state.context_strip.clone())
+            .child(div().pt(px(-3.)).px_neg_0p5().child(EditorElement::new(
                 &state.editor,
                 EditorStyle {
                     background: colors.editor_background,
@@ -1732,8 +1735,7 @@ impl ActiveThread {
                     syntax: cx.theme().syntax().clone(),
                     ..Default::default()
                 },
-            ))
-            .child(state.context_strip.clone())
+            )))
     }
 
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -1921,16 +1923,6 @@ impl ActiveThread {
                 v_flex()
                     .w_full()
                     .gap_1()
-                    .when(!message_is_empty, |parent| {
-                        parent.child(div().min_h_6().child(self.render_message_content(
-                            message_id,
-                            rendered_message,
-                            has_tool_uses,
-                            workspace.clone(),
-                            window,
-                            cx,
-                        )))
-                    })
                     .when(!added_context.is_empty(), |parent| {
                         parent.child(h_flex().flex_wrap().gap_1().children(
                             added_context.into_iter().map(|added_context| {
@@ -1948,6 +1940,16 @@ impl ActiveThread {
                                 )
                             }),
                         ))
+                    })
+                    .when(!message_is_empty, |parent| {
+                        parent.child(div().pt_0p5().min_h_6().child(self.render_message_content(
+                            message_id,
+                            rendered_message,
+                            has_tool_uses,
+                            workspace.clone(),
+                            window,
+                            cx,
+                        )))
                     })
                     .into_any_element()
             }
@@ -1974,6 +1976,7 @@ impl ActiveThread {
                             h_flex()
                                 .p_2p5()
                                 .gap_1()
+                                .items_end()
                                 .children(message_content)
                                 .when_some(editing_message_state, |this, state| {
                                     let focus_handle = state.editor.focus_handle(cx).clone();
@@ -1987,6 +1990,7 @@ impl ActiveThread {
                                                 )
                                                 .shape(ui::IconButtonShape::Square)
                                                 .icon_color(Color::Error)
+                                                .icon_size(IconSize::Small)
                                                 .tooltip({
                                                     let focus_handle = focus_handle.clone();
                                                     move |window, cx| {
@@ -2004,11 +2008,12 @@ impl ActiveThread {
                                             .child(
                                                 IconButton::new(
                                                     "confirm-edit-message",
-                                                    IconName::Check,
+                                                    IconName::Return,
                                                 )
                                                 .disabled(state.editor.read(cx).is_empty(cx))
                                                 .shape(ui::IconButtonShape::Square)
-                                                .icon_color(Color::Success)
+                                                .icon_color(Color::Muted)
+                                                .icon_size(IconSize::Small)
                                                 .tooltip({
                                                     let focus_handle = focus_handle.clone();
                                                     move |window, cx| {

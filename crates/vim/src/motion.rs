@@ -84,6 +84,9 @@ pub enum Motion {
     StartOfLine {
         display_lines: bool,
     },
+    MiddleOfLine {
+        display_lines: bool,
+    },
     EndOfLine {
         display_lines: bool,
     },
@@ -267,6 +270,13 @@ pub struct StartOfLine {
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
+struct MiddleOfLine {
+    #[serde(default)]
+    display_lines: bool,
+}
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
 struct UnmatchedForward {
     #[serde(default)]
     char: char,
@@ -283,6 +293,7 @@ impl_actions!(
     vim,
     [
         StartOfLine,
+        MiddleOfLine,
         EndOfLine,
         FirstNonWhitespace,
         Down,
@@ -403,6 +414,15 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, action: &StartOfLine, window, cx| {
         vim.motion(
             Motion::StartOfLine {
+                display_lines: action.display_lines,
+            },
+            window,
+            cx,
+        )
+    });
+    Vim::action(editor, cx, |vim, action: &MiddleOfLine, window, cx| {
+        vim.motion(
+            Motion::MiddleOfLine {
                 display_lines: action.display_lines,
             },
             window,
@@ -737,6 +757,7 @@ impl Motion {
             | SentenceBackward
             | SentenceForward
             | GoToColumn
+            | MiddleOfLine { .. }
             | UnmatchedForward { .. }
             | UnmatchedBackward { .. }
             | NextWordStart { .. }
@@ -769,6 +790,7 @@ impl Motion {
             Down { .. }
             | Up { .. }
             | EndOfLine { .. }
+            | MiddleOfLine { .. }
             | Matching
             | UnmatchedForward { .. }
             | UnmatchedBackward { .. }
@@ -892,6 +914,10 @@ impl Motion {
             ),
             StartOfLine { display_lines } => (
                 start_of_line(map, *display_lines, point),
+                SelectionGoal::None,
+            ),
+            MiddleOfLine { display_lines } => (
+                middle_of_line(map, *display_lines, point, maybe_times),
                 SelectionGoal::None,
             ),
             EndOfLine { display_lines } => (
@@ -1941,6 +1967,36 @@ pub(crate) fn start_of_line(
         map.clip_point(DisplayPoint::new(point.row(), 0), Bias::Right)
     } else {
         map.prev_line_boundary(point.to_point(map)).1
+    }
+}
+
+pub(crate) fn middle_of_line(
+    map: &DisplaySnapshot,
+    display_lines: bool,
+    point: DisplayPoint,
+    times: Option<usize>,
+) -> DisplayPoint {
+    let percent = if let Some(times) = times.filter(|&t| t <= 100) {
+        times as f64 / 100.
+    } else {
+        0.5
+    };
+    if display_lines {
+        map.clip_point(
+            DisplayPoint::new(
+                point.row(),
+                (map.line_len(point.row()) as f64 * percent) as u32,
+            ),
+            Bias::Left,
+        )
+    } else {
+        let mut buffer_point = point.to_point(map);
+        buffer_point.column = (map
+            .buffer_snapshot
+            .line_len(MultiBufferRow(buffer_point.row)) as f64
+            * percent) as u32;
+
+        map.clip_point(buffer_point.to_display_point(map), Bias::Left)
     }
 }
 
@@ -3902,6 +3958,61 @@ mod test {
         cx.simulate_shared_keystrokes("d v 0").await;
         cx.shared_state().await.assert_eq(indoc! {"
             ˇ
+            jumped over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
+    }
+
+    #[gpui::test]
+    async fn test_forced_motion_delete_to_middle_of_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+             ˇthe quick brown fox
+             jumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("d v g shift-m").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+             ˇbrown fox
+             jumped over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
+
+        cx.set_shared_state(indoc! {"
+            the quick bˇrown fox
+            jumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("d v g shift-m").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            the quickˇown fox
+            jumped over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
+
+        cx.set_shared_state(indoc! {"
+            the quick brown foˇx
+            jumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("d v g shift-m").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            the quicˇk
+            jumped over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
+
+        cx.set_shared_state(indoc! {"
+            ˇthe quick brown fox
+            jumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("d v 7 5 g shift-m").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            ˇ fox
+            jumped over the lazy dog"});
+        assert_eq!(cx.cx.forced_motion(), false);
+
+        cx.set_shared_state(indoc! {"
+            ˇthe quick brown fox
+            jumped over the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("d v 2 3 g shift-m").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            ˇuick brown fox
             jumped over the lazy dog"});
         assert_eq!(cx.cx.forced_motion(), false);
     }
