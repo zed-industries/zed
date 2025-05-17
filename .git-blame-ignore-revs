@@ -30,3 +30,7 @@ ffdda588b41f7d9d270ffe76cab116f828ad545e
 # 2024-07-05 Improved formatting of default keymaps (single line per bind)
 # https://github.com/zed-industries/zed/pull/13887
 813cc3f5e537372fc86720b5e71b6e1c815440ab
+
+# 2024-07-24 docs: Format docs
+# https://github.com/zed-industries/zed/pull/15352
+3a44a59f8ec114ac1ba22f7da1652717ef7e4e5c
