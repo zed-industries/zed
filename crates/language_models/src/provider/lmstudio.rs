@@ -87,7 +87,24 @@ pub struct State {
 
 impl State {
     fn is_authenticated(&self) -> bool {
-        !self.available_models.is_empty()
+        // A provider is considered authenticated if it has at least one model available
+        // from an enabled server
+        if self.available_models.is_empty() {
+            return false;
+        }
+        
+        // Additional check: ensure at least one model is from an enabled server
+        // This helps when we've removed models from disabled servers but haven't
+        // fully refreshed the list yet
+        self.available_models.iter().any(|model| {
+            if let Some(_server_id) = &model.server_id {
+                // We keep models in available_models only if they're from enabled servers
+                // So having a server_id means it should be usable
+                return true;
+            }
+            // Legacy models without server_id
+            false
+        })
     }
 
     fn fetch_models(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -1373,28 +1390,35 @@ impl ConfigurationView {
             self.fetch_models_from_server(server_id, server_url, cx);
         } else {
             // If the server is being disabled, immediately update the state to remove its models
-            self.state.update(cx, |state, cx| {
-                let server_id_clone = server_id.clone();
-                log::info!("Server {} was disabled, removing its models", server_name);
-                
-                // Filter out models from the disabled server
-                state.available_models.retain(|model| {
-                    if let Some(model_server_id) = &model.server_id {
-                        if model_server_id == &server_id_clone {
-                            log::info!("Removing model {} from disabled server", model.name);
-                            return false;
+            let state_entity = self.state.clone();
+            cx.spawn(async move |_, cx| {
+                // Put this on the async path to ensure it happens after settings are updated
+                state_entity.update(cx, |state, cx| {
+                    let server_id_clone = server_id.clone();
+                    log::info!("Server {} was disabled, removing its models", server_name);
+                    
+                    // Count how many models we had before
+                    let models_before = state.available_models.len();
+                    
+                    // Filter out models from the disabled server
+                    state.available_models.retain(|model| {
+                        if let Some(model_server_id) = &model.server_id {
+                            if model_server_id == &server_id_clone {
+                                log::info!("Removing model {} from disabled server", model.name);
+                                return false;
+                            }
                         }
-                    }
-                    true
-                });
-                
-                // Restart fetch models task to ensure everything is in sync
-                state.restart_fetch_models_task(cx);
-            });
+                        true
+                    });
+                    
+                    let models_after = state.available_models.len();
+                    log::info!("Removed {} models from disabled server", models_before - models_after);
+                    
+                    // Make sure to notify subscribers of the state change
+                    cx.notify();
+                }).ok();
+            }).detach();
         }
-        
-        // Refresh models
-        self.state.update(cx, |state, cx| state.restart_fetch_models_task(cx));
         
         cx.notify();
     }
@@ -1593,7 +1617,7 @@ impl ConfigurationView {
                         }).collect::<Vec<_>>();
                         
                         // Immediately update the state with new models
-                        state_entity.update(cx, |state, _cx| {
+                        state_entity.update(cx, |state, cx| {
                             log::info!("Adding {} models to provider state", models.len());
                             // Add models to the state's available_models list
                             for model in &models {
@@ -1604,6 +1628,8 @@ impl ConfigurationView {
                                     log::info!("Added model {} to provider state", model.name);
                                 }
                             }
+                            // Make sure to notify subscribers of the state change
+                            cx.notify();
                         }).ok();
                         
                         // Convert models to AvailableModel format for settings
@@ -1664,7 +1690,7 @@ impl ConfigurationView {
                         log::info!("Found {} models on newly added server", models_count);
                         
                         // Update settings via SettingsStore instead of using update_global
-                        if let Ok(()) = this.update(cx, |this, cx| {
+                        if let Ok(()) = this.update(cx, |_this, cx| {
                             // Use SettingsStore to update settings
                             settings::SettingsStore::update_global(cx, |store, cx| {
                                 store.update_settings_file::<crate::AllLanguageModelSettings>(
