@@ -115,7 +115,7 @@ Other entities can then register a callback to handle these events by doing `cx.
 GPUI has had some changes to its APIs. Always write code using the new APIs:
 
 * `spawn` methods now take async closures (`AsyncFn`), and so should be called like `cx.spawn(async move |cx| ...)`.
-* Use `Entity<T>`. This replaces `Model<T>` and `View<T>` which no longer exists and should NEVER be used.
+* Use `Entity<T>`. This replaces `Model<T>` and `View<T>` which no longer exist and should NEVER be used.
 * Use `App` references. This replaces `AppContext` which no longer exists and should NEVER be used.
 * Use `Context<T>` references. This replaces `ModelContext<T>` which no longer exists and should NEVER be used.
 * `Window` is now passed around explicitly. The new interface adds a `Window` reference parameter to some methods, and adds some new "*_in" methods for plumbing `Window`. The old types `WindowContext` and `ViewContext<T>` should NEVER be used.
