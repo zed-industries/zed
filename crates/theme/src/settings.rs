@@ -545,7 +545,7 @@ impl ThemeSettingsContent {
 }
 
 /// The buffer's line height.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum BufferLineHeight {
     /// A less dense line height.
@@ -556,7 +556,37 @@ pub enum BufferLineHeight {
     /// A custom line height.
     ///
     /// A line height of 1.0 is the height of the buffer's font size.
+    /// Must be greater than 0.
     Custom(f32),
+}
+
+impl<'de> Deserialize<'de> for BufferLineHeight {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        enum BufferLineHeightDef {
+            Comfortable,
+            Standard,
+            Custom(f32),
+        }
+
+        let def = BufferLineHeightDef::deserialize(deserializer)?;
+        match def {
+            BufferLineHeightDef::Comfortable => Ok(BufferLineHeight::Comfortable),
+            BufferLineHeightDef::Standard => Ok(BufferLineHeight::Standard),
+            BufferLineHeightDef::Custom(value) => {
+                if value <= 0.0 {
+                    return Err(serde::de::Error::custom(
+                        "buffer_line_height.custom must be greater than 0",
+                    ));
+                }
+                Ok(BufferLineHeight::Custom(value))
+            }
+        }
+    }
 }
 
 impl BufferLineHeight {
@@ -567,6 +597,45 @@ impl BufferLineHeight {
             BufferLineHeight::Standard => 1.3,
             BufferLineHeight::Custom(line_height) => *line_height,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_buffer_line_height_deserialize_valid() {
+        let json = json!("comfortable");
+        let result: Result<BufferLineHeight, _> = serde_json::from_value(json);
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), BufferLineHeight::Comfortable));
+
+        let json = json!("standard");
+        let result: Result<BufferLineHeight, _> = serde_json::from_value(json);
+        assert!(result.is_ok());
+        assert!(matches!(result.unwrap(), BufferLineHeight::Standard));
+
+        let json = json!({"custom": 1.5});
+        let result: Result<BufferLineHeight, _> = serde_json::from_value(json);
+        assert!(result.is_ok());
+        if let BufferLineHeight::Custom(value) = result.unwrap() {
+            assert_eq!(value, 1.5);
+        } else {
+            panic!("Expected Custom variant");
+        }
+    }
+
+    #[test]
+    fn test_buffer_line_height_deserialize_invalid() {
+        let json = json!({"custom": 0.0});
+        let result: Result<BufferLineHeight, _> = serde_json::from_value(json);
+        assert!(result.is_err());
+
+        let json = json!({"custom": -1.0});
+        let result: Result<BufferLineHeight, _> = serde_json::from_value(json);
+        assert!(result.is_err());
     }
 }
 
