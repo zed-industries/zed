@@ -72,8 +72,8 @@ fn get_max_tokens(name: &str) -> usize {
 impl Model {
     pub fn new(name: &str, display_name: Option<&str>, max_tokens: Option<usize>, server_id: Option<String>) -> Self {
         Self {
-            name: name.to_owned(),
-            display_name: display_name.map(ToOwned::to_owned),
+            name: name.to_string(),
+            display_name: display_name.map(|s| s.to_string()),
             max_tokens: max_tokens.unwrap_or_else(|| get_max_tokens(name)),
             supports_tools: Some(true),
             server_id,
@@ -90,6 +90,68 @@ impl Model {
 
     pub fn max_token_count(&self) -> usize {
         self.max_tokens
+    }
+    
+    /// Create a Model from a model ID string
+    pub fn from_id(id: &str) -> Result<Self> {
+        // For LM Studio, model ID is just the name
+        Ok(Self::new(id, None, None, None))
+    }
+
+    /// Count tokens in text using a simple heuristic approach.
+    /// This is an approximation since LM Studio doesn't provide a token counting API.
+    pub fn estimate_tokens(text: &str) -> usize {
+        // Simple estimation: Split on whitespace and count words
+        // Most tokenizers use ~1.3 tokens per word
+        let word_count = text.split_whitespace().count();
+        
+        // Add token estimations for special characters and numbers
+        let special_char_count = text.chars()
+            .filter(|c| !c.is_alphanumeric() && !c.is_whitespace())
+            .count();
+            
+        // Formula based on observed tokenization patterns
+        // This is a simple approximation that works reasonably well
+        let estimated_tokens = (word_count as f64 * 1.3) + (special_char_count as f64 * 0.5);
+        
+        estimated_tokens.ceil() as usize
+    }
+    
+    /// Check if a request would exceed the model's token limit
+    pub fn would_exceed_token_limit(&self, messages: &[ChatMessage]) -> Option<(usize, usize)> {
+        // Get total token count for all messages
+        let total_tokens = messages.iter()
+            .map(|msg| {
+                match msg {
+                    ChatMessage::User { content } => Self::estimate_tokens(content),
+                    ChatMessage::System { content } => Self::estimate_tokens(content),
+                    ChatMessage::Assistant { content, tool_calls } => {
+                        let content_tokens = content.as_ref().map_or(0, |c| Self::estimate_tokens(c));
+                        let tool_call_tokens = tool_calls.as_ref().map_or(0, |calls| {
+                            calls.iter().map(|call| {
+                                // Estimate tokens for function name and arguments
+                                Self::estimate_tokens(&call.function.name) + 
+                                Self::estimate_tokens(&call.function.arguments)
+                            }).sum()
+                        });
+                        content_tokens + tool_call_tokens
+                    },
+                    ChatMessage::Tool { content, tool_call_id } => {
+                        Self::estimate_tokens(content) + Self::estimate_tokens(tool_call_id)
+                    }
+                }
+            })
+            .sum();
+            
+        // Get max tokens for this model
+        let max_tokens = self.max_token_count();
+        
+        // If token count exceeds max tokens, return both values
+        if total_tokens >= max_tokens {
+            Some((total_tokens, max_tokens))
+        } else {
+            None
+        }
     }
 }
 
@@ -372,6 +434,14 @@ pub async fn stream_chat_completion(
     api_url: &str,
     request: ChatCompletionRequest,
 ) -> Result<BoxStream<'static, Result<ChatResponse>>> {
+    // Check if we would exceed the token limit
+    if let Some(model) = Model::from_id(&request.model).ok() {
+        if let Some((total_tokens, max_tokens)) = model.would_exceed_token_limit(&request.messages) {
+            return Err(anyhow!("Request would exceed the model's token limit. Estimated tokens: {}, Max tokens: {}", 
+                              total_tokens, max_tokens));
+        }
+    }
+
     let endpoint = format!("{}/chat/completions", api_url);
     
     let request_body = serde_json::to_vec(&request)
@@ -638,7 +708,7 @@ pub async fn get_models(
                                         log::info!("Successfully parsed response as direct array of models");
                                         Ok(models)
                                     },
-                                    Err(e3) => {
+                                    Err(_e3) => {
                                         // Try parsing as object with a different structure
                                         match serde_json::from_str::<serde_json::Value>(&body_str) {
                                             Ok(value) => {
@@ -650,8 +720,8 @@ pub async fn get_models(
                                                             log::info!("Extracted models from 'models' field");
                                                             Ok(models)
                                                         }
-                                                        Err(e3) => {
-                                                            log::error!("Failed to parse models from 'models' field: {}", e3);
+                                                        Err(_e3) => {
+                                                            log::error!("Failed to parse models from 'models' field: {}", _e3);
                                                             Err(anyhow!("Failed to parse models response: multiple formats attempted"))
                                                         }
                                                     }
@@ -662,8 +732,8 @@ pub async fn get_models(
                                                             log::info!("Extracted models from 'data' field");
                                                             Ok(models)
                                                         }
-                                                        Err(e3) => {
-                                                            log::error!("Failed to parse models from 'data' field: {}", e3);
+                                                        Err(_e3) => {
+                                                            log::error!("Failed to parse models from 'data' field: {}", _e3);
                                                             Err(anyhow!("Failed to parse models response: multiple formats attempted"))
                                                         }
                                                     }
@@ -704,8 +774,8 @@ pub async fn get_models(
                                                     Err(anyhow!("Could not find models in the response"))
                                                 }
                                             },
-                                            Err(e3) => {
-                                                log::error!("Failed to parse response as JSON: {}", e3);
+                                            Err(_e3) => {
+                                                log::error!("Failed to parse response as JSON: {}", _e3);
                                                 log::error!("Raw response: {}", body_str);
                                                 Err(anyhow!("Failed to parse models response: not valid JSON"))
                                             }

@@ -88,23 +88,14 @@ pub struct State {
 impl State {
     fn is_authenticated(&self) -> bool {
         // A provider is considered authenticated if it has at least one model available
-        // from an enabled server
         if self.available_models.is_empty() {
             return false;
         }
         
-        // Additional check: ensure at least one model is from an enabled server
-        // This helps when we've removed models from disabled servers but haven't
-        // fully refreshed the list yet
-        self.available_models.iter().any(|model| {
-            if let Some(_server_id) = &model.server_id {
-                // We keep models in available_models only if they're from enabled servers
-                // So having a server_id means it should be usable
-                return true;
-            }
-            // Legacy models without server_id
-            false
-        })
+        // Additional check: verify that at least one model has a valid server_id
+        // We're not checking if the server is enabled here, but our model refresh
+        // mechanism should have already removed models from disabled servers
+        self.available_models.iter().any(|model| model.server_id.is_some())
     }
 
     fn fetch_models(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -454,17 +445,14 @@ impl LmStudioLanguageModel {
                 }
             }
             
-            // Fallback to first enabled server for models with unknown server_id
-            if let Some(server) = settings.first_enabled_server() {
-                log::warn!("Server ID {} not found for model {}, using first enabled server instead", server_id, self.model.name);
-                return Ok(server.api_url.clone());
-            }
-            
+            // Don't fallback to another server, require a server match
             return Err(anyhow!("Server not found for model {}", self.model.name));
         }
         
+        // For backwards compatibility with models that don't have a server_id
         // Fallback to first enabled server
         if let Some(server) = settings.first_enabled_server() {
+            log::warn!("Model {} has no server_id, using first enabled server", self.model.name);
             return Ok(server.api_url.clone());
         }
         
@@ -581,18 +569,51 @@ impl LanguageModel for LmStudioLanguageModel {
 
     fn count_tokens(
         &self,
-        _request: LanguageModelRequest,
+        request: LanguageModelRequest,
         _cx: &App,
     ) -> BoxFuture<'static, Result<usize>> {
-        // Endpoint for this is coming soon. In the meantime, hacky estimation
-        let token_count = _request
-            .messages
-            .iter()
-            .map(|msg| msg.string_contents().split_whitespace().count())
+        // Convert LanguageModelRequest to ChatMessage for token counting
+        let messages = self.to_lmstudio_request(request).messages;
+        
+        // Use the model's own token counting method
+        let total_tokens = messages.iter()
+            .map(|msg| {
+                match msg {
+                    lmstudio::ChatMessage::User { content } => 
+                        lmstudio::Model::estimate_tokens(content),
+                    lmstudio::ChatMessage::System { content } => 
+                        lmstudio::Model::estimate_tokens(content),
+                    lmstudio::ChatMessage::Assistant { content, tool_calls } => {
+                        let content_tokens = content.as_ref()
+                            .map_or(0, |c| lmstudio::Model::estimate_tokens(c));
+                        let tool_call_tokens = tool_calls.as_ref().map_or(0, |calls| {
+                            calls.iter().map(|call| {
+                                lmstudio::Model::estimate_tokens(&call.function.name) + 
+                                lmstudio::Model::estimate_tokens(&call.function.arguments)
+                            }).sum()
+                        });
+                        content_tokens + tool_call_tokens
+                    },
+                    lmstudio::ChatMessage::Tool { content, tool_call_id } => {
+                        lmstudio::Model::estimate_tokens(content) + 
+                        lmstudio::Model::estimate_tokens(tool_call_id)
+                    }
+                }
+            })
             .sum::<usize>();
-
-        let estimated_tokens = (token_count as f64 * 0.75) as usize;
-        async move { Ok(estimated_tokens) }.boxed()
+        
+        // Check if we're approaching the model's token limit
+        let max_tokens = self.model.max_token_count();
+        if total_tokens > max_tokens * 9 / 10 {
+            log::warn!(
+                "LM Studio token count is approaching model limit: {}/{} ({}%)",
+                total_tokens,
+                max_tokens,
+                (total_tokens as f64 / max_tokens as f64 * 100.0) as usize
+            );
+        }
+        
+        async move { Ok(total_tokens) }.boxed()
     }
 
     fn stream_completion(
