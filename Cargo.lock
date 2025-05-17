@@ -546,6 +546,7 @@ dependencies = [
  "language_model",
  "lmstudio",
  "log",
+ "mistral",
  "ollama",
  "open_ai",
  "paths",
