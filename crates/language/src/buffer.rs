@@ -1824,18 +1824,71 @@ impl Buffer {
         let old_text = self.as_rope().clone();
         let line_ending = self.line_ending();
         let base_version = self.version();
+        let snapshot = self.snapshot();
+
         cx.background_spawn(async move {
-            let ranges = trailing_whitespace_ranges(&old_text);
+            let whitespace_ranges = trailing_whitespace_ranges(&old_text);
+
+            // Traverse the tree to find all string nodes
+            let mut string_ranges = Vec::new();
+            for layer in snapshot.syntax_layers() {
+                let root_node = layer.node();
+                let mut cursor = root_node.walk();
+
+                Self::find_string_nodes(&mut cursor, &mut string_ranges);
+            }
+
+            // Both range sets are in order, so filtering is O(m+n)
             let empty = Arc::<str>::from("");
+            let mut current_string_idx = 0;
+            let edits = whitespace_ranges
+                .into_iter()
+                .filter_map(|whitespace_range| {
+                    // Advance current_string_idx past any string ranges that end before this whitespace
+                    while current_string_idx < string_ranges.len() &&
+                          string_ranges[current_string_idx].end <= whitespace_range.start {
+                        current_string_idx += 1;
+                    }
+
+                    // Check if there's a string range that overlaps with this whitespace
+                    if current_string_idx < string_ranges.len() &&
+                       string_ranges[current_string_idx].start < whitespace_range.end {
+                        None // Skip this range (it overlaps with a string)
+                    } else {
+                        Some((whitespace_range, empty.clone())) // Include this range in the edits
+                    }
+                })
+                .collect();
+
             Diff {
                 base_version,
                 line_ending,
-                edits: ranges
-                    .into_iter()
-                    .map(|range| (range, empty.clone()))
-                    .collect(),
+                edits: edits,
             }
         })
+    }
+
+    // Recursively finds string nodes in the syntax tree
+    fn find_string_nodes(
+        cursor: &mut tree_sitter::TreeCursor,
+        string_ranges: &mut Vec<Range<usize>>,
+    ) {
+        let node = cursor.node();
+
+        let node_type = node.kind();
+        if node_type.contains("string") {
+            string_ranges.push(node.byte_range());
+        }
+
+        if cursor.goto_first_child() {
+            loop {
+                Self::find_string_nodes(cursor, string_ranges);
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+            cursor.goto_parent();
+        }
     }
 
     /// Ensures that the buffer ends with a single newline character, and
