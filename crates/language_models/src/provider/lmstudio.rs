@@ -18,7 +18,7 @@ use lmstudio::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::{BTreeMap, HashSet}, sync::Arc};
 // UI imports
 use ui::{ButtonLike, Indicator, List, prelude::*, ListItem, h_flex, v_flex, div, Label, Button, IconButton, LabelSize, Tooltip};
 use ui_input::SingleLineInput;
@@ -55,10 +55,22 @@ pub struct AvailableModel {
     pub name: String,
     /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
     pub display_name: Option<String>,
-    /// The model's context window size.
-    pub max_tokens: usize,
+    /// The model's context window size from server.
+    pub server_max_tokens: usize,
+    /// The model's context window size overridden by user (if None, use server_max_tokens).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_max_tokens: Option<usize>,
     /// Which server this model belongs to
     pub server_id: Option<String>,
+    /// Whether this model is enabled
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    
+    /// For backward compatibility, max_tokens field is retained but not used directly
+    #[serde(default)]
+    #[serde(skip_serializing_if = "max_tokens_is_default")]
+    #[deprecated]
+    pub max_tokens: usize,
 }
 
 pub struct LmStudioLanguageModelProvider {
@@ -107,17 +119,43 @@ impl State {
                 
                 // Try to fetch models from each enabled server
                 for server in enabled_servers {
+                    log::info!("Checking connection to LM Studio server: {} at {}", server.name, server.api_url);
+                    
+                    // First check if the server is reachable
+                    match lmstudio::healthcheck(&*http_client, &server.api_url).await {
+                        Ok(true) => {
+                            log::info!("LM Studio server {} is reachable, fetching models", server.name);
+                        },
+                        Ok(false) => {
+                            log::warn!("LM Studio server {} is not reachable, skipping", server.name);
+                            continue;
+                        },
+                        Err(e) => {
+                            log::warn!("Error checking LM Studio server {}: {}", server.name, e);
+                            continue;
+                        }
+                    }
+                    
                     log::info!("Fetching models from LM Studio server: {} at {}", server.name, server.api_url);
                     
                     match lmstudio::get_models(&*http_client, &server.api_url, None).await {
                         Ok(local_models) => {
+                            // Log incoming models
+                            log::info!("Server {} returned {} models", server.name, local_models.len());
+                            
+                            for model in &local_models {
+                                log::info!("Retrieved model: id={}, type={:?}, state={:?}", 
+                                    model.id, model.r#type, model.state);
+                            }
+                            
                             // Convert LocalModelListing to Model
                             let models = local_models.into_iter()
                                 .map(|local_model| {
                                     let id = local_model.id.clone();
+                                    log::info!("Converting model {} to internal format", id);
                                     lmstudio::Model {
                                         name: local_model.id,
-                                        display_name: Some(id),
+                                        display_name: Some(format!("{}", id)),
                                         max_tokens: local_model.max_context_length.unwrap_or(8192),
                                         supports_tools: Some(true),
                                         server_id: Some(server.id.clone()),
@@ -125,8 +163,70 @@ impl State {
                                 })
                                 .collect::<Vec<_>>();
                             
-                            log::info!("Found {} models on server {}", models.len(), server.name);
-                            all_models.extend(models);
+                            log::info!("Converted {} models for server {}", models.len(), server.name);
+                            all_models.extend(models.clone());
+                            log::info!("All models count after extending: {}", all_models.len());
+                            
+                            // Store these fetched models so we can update settings later
+                            let server_id = server.id.clone();
+                            
+                            // Get existing models to preserve enabled state
+                            let existing_models = if let Some(models) = &server.available_models {
+                                models.clone()
+                            } else {
+                                Vec::new()
+                            };
+                            
+                            let converted_models = models.into_iter()
+                                .map(|model| {
+                                    // Try to find this model in existing models to preserve settings
+                                    let existing_model = existing_models.iter()
+                                        .find(|m| m.name == model.name);
+                                        
+                                    let enabled = existing_model
+                                        .map(|m| m.enabled)
+                                        .unwrap_or(true); // Default to enabled for new models
+                                        
+                                    // Get custom max tokens from existing model if available
+                                    let custom_max_tokens = existing_model
+                                        .and_then(|m| m.custom_max_tokens);
+                                    
+                                    AvailableModel {
+                                        name: model.name,
+                                        display_name: model.display_name.clone(),
+                                        server_max_tokens: model.max_tokens,
+                                        custom_max_tokens, // Preserve custom value if it exists
+                                        max_tokens: 0, // For backward compatibility
+                                        server_id: Some(server_id.clone()),
+                                        enabled,
+                                    }
+                                })
+                                .collect::<Vec<_>>();
+                                
+                            // We'll update settings in the next phase
+                            this.update(cx, move |_this, cx| {
+                                // Now we have App context, so we can update settings
+                                log::info!("Updating settings with {} models for server {}", 
+                                    converted_models.len(), server_id);
+                                
+                                settings::SettingsStore::update_global(cx, |store, cx| {
+                                    store.update_settings_file::<crate::AllLanguageModelSettings>(
+                                        <dyn fs::Fs>::global(cx), 
+                                        move |settings, _| {
+                                            if let Some(lmstudio) = &mut settings.lmstudio {
+                                                if let Some(servers) = &mut lmstudio.servers {
+                                                    // Find the server by ID
+                                                    if let Some(server) = servers.iter_mut().find(|s| s.id == server_id) {
+                                                        // Update the models
+                                                        server.available_models = Some(converted_models.clone());
+                                                        log::info!("Updated server settings with {} models", converted_models.len());
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    );
+                                });
+                            }).ok();
                         }
                         Err(err) => {
                             log::warn!("Failed to fetch models from server {}: {}", server.name, err);
@@ -161,32 +261,32 @@ impl State {
 
 impl LmStudioLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
-        let this = Self {
-            http_client: http_client.clone(),
-            state: cx.new(|cx| {
-                let subscription = cx.observe_global::<SettingsStore>({
-                    let mut settings = AllLanguageModelSettings::get_global(cx).lmstudio.clone();
-                    move |this: &mut State, cx| {
-                        let new_settings = &AllLanguageModelSettings::get_global(cx).lmstudio;
-                        if &settings != new_settings {
-                            settings = new_settings.clone();
-                            this.restart_fetch_models_task(cx);
-                            cx.notify();
-                        }
-                    }
-                });
+        let state = cx.new(|cx| {
+            let mut state = State {
+                http_client: http_client.clone(),
+                available_models: Vec::new(),
+                fetch_model_task: None,
+                _subscription: cx.observe_global::<AllLanguageModelSettings>(|_, _| {}),
+            };
+            
+            // Fetch models when created
+            state.restart_fetch_models_task(cx);
+            state
+        });
 
-                State {
-                    http_client,
-                    available_models: Default::default(),
-                    fetch_model_task: None,
-                    _subscription: subscription,
-                }
-            }),
-        };
-        this.state
-            .update(cx, |state, cx| state.restart_fetch_models_task(cx));
-        this
+        Self {
+            http_client,
+            state,
+        }
+    }
+    
+    fn create_language_model(&self, model: lmstudio::Model) -> Arc<dyn LanguageModel> {
+        Arc::new(LmStudioLanguageModel {
+            id: LanguageModelId::from(model.name.clone()),
+            model: model.clone(),
+            http_client: self.http_client.clone(),
+            request_limiter: RateLimiter::new(4),
+        }) as Arc<dyn LanguageModel>
     }
 }
 
@@ -223,39 +323,57 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
         let mut models: BTreeMap<String, lmstudio::Model> = BTreeMap::default();
 
         // Add models from the LM Studio API
+        log::info!("Processing models from LM Studio API, available models count: {}", self.state.read(cx).available_models.len());
         for model in self.state.read(cx).available_models.iter() {
+            log::info!("Adding model from state: {}", model.name);
             models.insert(model.name.clone(), model.clone());
         }
 
-        // Override with available models from settings
-        for server in &AllLanguageModelSettings::get_global(cx).lmstudio.servers {
+        // Override with available models from settings and filter out disabled models
+        let servers = &AllLanguageModelSettings::get_global(cx).lmstudio.servers;
+        log::info!("Processing {} servers from settings", servers.len());
+        
+        // First, filter out any models on disabled servers
+        let enabled_servers: Vec<&LmStudioServer> = servers.iter()
+            .filter(|server| server.enabled)
+            .collect();
+            
+        log::info!("Found {} enabled servers", enabled_servers.len());
+        
+        // Then build a list of enabled models
+        let mut enabled_models = HashSet::new();
+        for server in &enabled_servers {
             if let Some(available_models) = &server.available_models {
                 for model in available_models {
-                    models.insert(
-                        model.name.clone(),
-                        lmstudio::Model {
-                            name: model.name.clone(),
-                            display_name: model.display_name.clone(),
-                            max_tokens: model.max_tokens,
-                            supports_tools: Some(true),
-                            server_id: Some(server.id.clone()),
-                        },
-                    );
+                    if model.enabled {
+                        // Only include enabled models from enabled servers
+                        if let Some(server_id) = &model.server_id {
+                            let key = format!("{}:{}", server_id, model.name);
+                            log::info!("Marking model as enabled: {}", &key);
+                            enabled_models.insert(key);
+                        }
+                    }
                 }
             }
         }
-
-        models
-            .into_values()
-            .map(|model| {
-                Arc::new(LmStudioLanguageModel {
-                    id: LanguageModelId::from(model.name.clone()),
-                    model: model.clone(),
-                    http_client: self.http_client.clone(),
-                    request_limiter: RateLimiter::new(4),
-                }) as Arc<dyn LanguageModel>
+        
+        // Now filter out any models that aren't enabled
+        let final_models = models.into_iter()
+            .filter_map(|(name, model)| {
+                let server_id = model.server_id.as_ref()?;
+                let key = format!("{}:{}", server_id, name);
+                
+                if enabled_models.contains(&key) {
+                    log::info!("Including enabled model: {}", &key);
+                    Some(self.create_language_model(model))
+                } else {
+                    log::info!("Filtering out disabled model: {}", &key);
+                    None
+                }
             })
-            .collect()
+            .collect();
+
+        final_models
     }
 
     fn load_model(&self, model: Arc<dyn LanguageModel>, cx: &App) {
@@ -835,6 +953,11 @@ struct ConfigurationView {
     new_model_name: String,
     new_model_display_name: String,
     new_model_max_tokens: String,
+    // Max tokens editing state
+    is_editing_max_tokens: bool,
+    editing_model_server_id: Option<String>,
+    editing_model_name: Option<String>,
+    edit_max_tokens_value: String,
     // New server form state
     is_adding_server: bool,
     new_server_name: String,
@@ -847,6 +970,7 @@ struct ConfigurationView {
     new_model_max_tokens_input: Option<gpui::Entity<SingleLineInput>>,
     new_server_name_input: Option<gpui::Entity<SingleLineInput>>,
     new_server_url_input: Option<gpui::Entity<SingleLineInput>>,
+    edit_max_tokens_input: Option<gpui::Entity<SingleLineInput>>,
 }
 
 impl ConfigurationView {
@@ -879,6 +1003,11 @@ impl ConfigurationView {
             new_model_name: String::new(),
             new_model_display_name: String::new(),
             new_model_max_tokens: String::new(),
+            // Max tokens editing state
+            is_editing_max_tokens: false,
+            editing_model_server_id: None,
+            editing_model_name: None,
+            edit_max_tokens_value: String::new(),
             // New server form state
             is_adding_server: false,
             new_server_name: String::new(),
@@ -891,6 +1020,7 @@ impl ConfigurationView {
             new_model_max_tokens_input: None,
             new_server_name_input: None,
             new_server_url_input: None,
+            edit_max_tokens_input: None,
         }
     }
 
@@ -1029,6 +1159,11 @@ impl ConfigurationView {
         }
         if let Some(max_tokens_input) = &self.new_model_max_tokens_input {
             self.new_model_max_tokens = max_tokens_input.read(cx).editor.read(cx).text(cx).to_string();
+        }
+        
+        // Update max tokens edit field
+        if let Some(max_tokens_input) = &self.edit_max_tokens_input {
+            self.edit_max_tokens_value = max_tokens_input.read(cx).editor.read(cx).text(cx).to_string();
         }
     }
 
@@ -1408,11 +1543,32 @@ impl ConfigurationView {
                         let models = local_models.into_iter()
                             .map(|local_model| {
                                 let id = local_model.id.clone();
+                                // Check if this model already exists to preserve custom settings
+                                let existing_model_data = {
+                                    cx.update(|cx| {
+                                        let settings = AllLanguageModelSettings::get_global(cx);
+                                        settings.lmstudio.servers.iter()
+                                            .find(|s| s.id == server_id)
+                                            .and_then(|s| s.available_models.as_ref())
+                                            .and_then(|models| models.iter().find(|m| m.name == local_model.id))
+                                            .map(|m| (m.custom_max_tokens, m.enabled))
+                                    }).unwrap_or(None)
+                                };
+                                
+                                // Extract the data from the tuple
+                                let (custom_max_tokens, enabled) = match existing_model_data {
+                                    Some((custom_tokens, is_enabled)) => (custom_tokens, is_enabled),
+                                    None => (None, true),
+                                };
+                                
                                 AvailableModel {
                                     name: local_model.id,
                                     display_name: Some(id),
-                                    max_tokens: local_model.max_context_length.unwrap_or(8192),
+                                    server_max_tokens: local_model.max_context_length.unwrap_or(8192),
+                                    custom_max_tokens,
+                                    max_tokens: 0, // For backward compatibility
                                     server_id: Some(server_id.clone()),
+                                    enabled,
                                 }
                             })
                             .collect::<Vec<_>>();
@@ -1531,14 +1687,17 @@ impl ConfigurationView {
             } else {
                 Some(self.new_model_display_name.trim().to_string())
             },
-            max_tokens,
+            server_max_tokens: max_tokens,
+            custom_max_tokens: None,
+            max_tokens: 0, // For backward compatibility
             server_id: Some(server_id.clone()),
+            enabled: true,
         };
         
         log::info!(
             "Adding new model: {} with max tokens: {} for server: {}", 
             new_model.name, 
-            new_model.max_tokens,
+            new_model.server_max_tokens,
             server_id
         );
         
@@ -1614,7 +1773,31 @@ impl ConfigurationView {
                 .children(
                     server_models.iter().map(|model| {
                         let display_name = model.display_name.clone().unwrap_or_else(|| model.name.clone());
-                        let tokens_text = format!("{}k tokens", model.max_tokens / 1000);
+                        
+                        // Format tokens text differently depending on if custom value is set
+                        let tokens_text = if let Some(custom) = model.custom_max_tokens {
+                            if custom != model.server_max_tokens {
+                                format!("{}k tokens (server: {}k)", 
+                                    custom / 1000, 
+                                    model.server_max_tokens / 1000)
+                            } else {
+                                format!("{}k tokens", custom / 1000)
+                            }
+                        } else {
+                            format!("{}k tokens (server default)", model.server_max_tokens / 1000)
+                        };
+                        
+                        let server_id = server.id.clone();
+                        let model_name = model.name.clone();
+                        let is_enabled = model.enabled;
+                        
+                        let index_in_list = server_models.iter().position(|m| m.name == model.name).unwrap_or(0);
+                        
+                        // Create a unique ID for each button using NamedInteger
+                        let toggle_button = IconButton::new(
+                            ElementId::NamedInteger("toggle".into(), index_in_list as u64),
+                            if is_enabled { IconName::Check } else { IconName::Circle }
+                        );
                         
                         h_flex()
                             .justify_between()
@@ -1642,10 +1825,272 @@ impl ConfigurationView {
                                             )
                                     )
                             )
+                            .child(
+                                h_flex()
+                                .gap_1()
+                                .child(
+                                    // Add edit max tokens button
+                                    IconButton::new(
+                                        ElementId::NamedInteger("edit-tokens".into(), index_in_list as u64),
+                                        IconName::Pencil
+                                    )
+                                    .tooltip(Tooltip::text("Edit Max Tokens"))
+                                    .icon_color(Color::Info)
+                                    .on_click(cx.listener({
+                                        let server_id = server_id.clone();
+                                        let model_name = model_name.clone();
+                                        move |this, _, _, cx| {
+                                            this.show_edit_max_tokens_dialog(server_id.clone(), model_name.clone(), cx);
+                                        }
+                                    }))
+                                )
+                                .child(
+                                    // Add the toggle button 
+                                    toggle_button
+                                        .tooltip(if is_enabled {
+                                            Tooltip::text("Disable Model")
+                                        } else {
+                                            Tooltip::text("Enable Model")
+                                        })
+                                        .icon_color(if is_enabled { Color::Success } else { Color::Muted })
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            log::info!("Toggle clicked for model: {}", model_name);
+                                            this.toggle_model_enabled(server_id.clone(), model_name.clone(), cx);
+                                        }))
+                                )
+                            )
                     })
                 )
                 .into_any_element()
         }
+    }
+
+    fn toggle_model_enabled(&mut self, server_id: String, model_name: String, cx: &mut Context<Self>) {
+        log::info!("Toggling model '{}' for server '{}'", model_name, server_id);
+        
+        // Get a copy of current settings to see what's available
+        let settings = AllLanguageModelSettings::get_global(cx);
+        let servers = &settings.lmstudio.servers;
+        
+        // Debug what's available
+        log::info!("Current servers: {}", servers.len());
+        for (i, server) in servers.iter().enumerate() {
+            log::info!("Server {}: id={}, name={}", i, server.id, server.name);
+            
+            if let Some(models) = &server.available_models {
+                log::info!("  Models: {}", models.len());
+                for (j, model) in models.iter().enumerate() {
+                    log::info!("    Model {}: name={}, enabled={}", j, model.name, model.enabled);
+                }
+            } else {
+                log::info!("  No models");
+            }
+        }
+        
+        // Get filesystem
+        let fs = <dyn fs::Fs>::global(cx);
+        
+        // Clone values for the closure
+        let model_name_clone = model_name.clone();
+        let server_id_clone = server_id.clone();
+        
+        // Update settings
+        update_settings_file::<crate::AllLanguageModelSettings>(fs, cx, move |settings, _| {
+            if let Some(lmstudio) = &mut settings.lmstudio {
+                if let Some(servers) = &mut lmstudio.servers {
+                    // Find the server with matching ID
+                    for server in servers.iter_mut() {
+                        if server.id == server_id_clone {
+                            if let Some(models) = &mut server.available_models {
+                                // Find the model with the matching name
+                                for model in models.iter_mut() {
+                                    if model.name == model_name_clone {
+                                        // Toggle the enabled state
+                                        model.enabled = !model.enabled;
+                                        log::info!(
+                                            "Model {} is now {}", 
+                                            model_name_clone, 
+                                            if model.enabled { "enabled" } else { "disabled" }
+                                        );
+                                        break;
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        
+        // Refresh the models list to reflect the changes
+        self.state.update(cx, |state, cx| {
+            state.restart_fetch_models_task(cx);
+        });
+        
+        cx.notify();
+    }
+
+    fn show_edit_max_tokens_dialog(&mut self, server_id: String, model_name: String, cx: &mut Context<Self>) {
+        // Find the model to get its current max tokens
+        let settings = AllLanguageModelSettings::get_global(cx);
+        let servers = &settings.lmstudio.servers;
+        
+        // Find the server and model
+        let mut server_max_tokens = 8192; // Default if not found
+        let mut custom_max_tokens = None;
+        
+        for server in servers {
+            if server.id == server_id {
+                if let Some(models) = &server.available_models {
+                    for model in models {
+                        if model.name == model_name {
+                            server_max_tokens = model.server_max_tokens;
+                            custom_max_tokens = model.custom_max_tokens;
+                            break;
+                        }
+                    }
+                }
+                break;
+            }
+        }
+        
+        // Set dialog state
+        self.is_editing_max_tokens = true;
+        self.editing_model_server_id = Some(server_id);
+        self.editing_model_name = Some(model_name);
+        
+        // Initialize the dialog with current value or default
+        self.edit_max_tokens_value = custom_max_tokens
+            .unwrap_or(server_max_tokens)
+            .to_string();
+        
+        // Clear the input entity so it will be recreated
+        self.edit_max_tokens_input = None;
+        
+        cx.notify();
+    }
+    
+    fn create_max_tokens_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.edit_max_tokens_input.is_none() {
+            let tokens_input = cx.new(|cx| {
+                let input = SingleLineInput::new(window, cx, "Max tokens");
+                if !self.edit_max_tokens_value.is_empty() {
+                    input.editor.update(cx, |editor, cx| {
+                        editor.set_text(self.edit_max_tokens_value.clone(), window, cx);
+                    });
+                }
+                input
+            });
+            self.edit_max_tokens_input = Some(tokens_input);
+        }
+    }
+    
+    fn save_max_tokens_edit(&mut self, cx: &mut Context<Self>) {
+        // Get necessary values
+        self.update_field_from_input(cx);
+        
+        // Parse the max tokens value
+        let Ok(max_tokens) = self.edit_max_tokens_value.trim().parse::<usize>() else {
+            log::error!("Invalid max tokens value: {}", self.edit_max_tokens_value);
+            return;
+        };
+        
+        if max_tokens == 0 {
+            log::error!("Max tokens value cannot be zero");
+            return;
+        }
+        
+        // Get server ID and model name
+        let Some(server_id) = self.editing_model_server_id.clone() else {
+            log::error!("No server ID for max tokens edit");
+            return;
+        };
+        
+        let Some(model_name) = self.editing_model_name.clone() else {
+            log::error!("No model name for max tokens edit");
+            return;
+        };
+        
+        log::info!("Updating max tokens for model {} to {}", model_name, max_tokens);
+        
+        // Get filesystem for settings update
+        let fs = <dyn fs::Fs>::global(cx);
+        
+        // Variables for the closure
+        let server_id_clone = server_id.clone();
+        let model_name_clone = model_name.clone();
+        let new_max_tokens = max_tokens;
+        
+        // Update settings
+        update_settings_file::<crate::AllLanguageModelSettings>(fs, cx, move |settings, _| {
+            if let Some(lmstudio) = &mut settings.lmstudio {
+                if let Some(servers) = &mut lmstudio.servers {
+                    // Find the server with matching ID
+                    for server in servers.iter_mut() {
+                        if server.id == server_id_clone {
+                            if let Some(models) = &mut server.available_models {
+                                // Find the model with the matching name
+                                for model in models.iter_mut() {
+                                    if model.name == model_name_clone {
+                                        // Get the server default
+                                        let server_default = model.server_max_tokens;
+                                        
+                                                                                            // Log current state before update
+                                                    log::info!("Before update: model {}, server_max_tokens={}, custom_max_tokens={:?}", 
+                                                        model_name_clone, 
+                                                        model.server_max_tokens,
+                                                        model.custom_max_tokens);
+                                                    
+                                                    // Update the custom max tokens
+                                                    if new_max_tokens == server_default {
+                                                        // If value equals server default, remove the custom value
+                                                        model.custom_max_tokens = None;
+                                                        log::info!("Reset max tokens to server default for model {}", model_name_clone);
+                                                    } else {
+                                                        model.custom_max_tokens = Some(new_max_tokens);
+                                                        log::info!("Updated custom max tokens for model {} to {}", 
+                                                            model_name_clone, new_max_tokens);
+                                                    }
+                                                    
+                                                    // Log state after update
+                                                    log::info!("After update: model {}, server_max_tokens={}, custom_max_tokens={:?}", 
+                                                        model_name_clone, 
+                                                        model.server_max_tokens,
+                                                        model.custom_max_tokens);
+                                        break;
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        
+        // Reset dialog state
+        self.is_editing_max_tokens = false;
+        self.editing_model_server_id = None;
+        self.editing_model_name = None;
+        self.edit_max_tokens_input = None;
+        
+        // Refresh the models
+        self.state.update(cx, |state, cx| {
+            state.restart_fetch_models_task(cx);
+        });
+        
+        cx.notify();
+    }
+    
+    fn cancel_max_tokens_edit(&mut self, cx: &mut Context<Self>) {
+        // Reset state
+        self.is_editing_max_tokens = false;
+        self.editing_model_server_id = None;
+        self.editing_model_name = None;
+        self.edit_max_tokens_input = None;
+        
+        cx.notify();
     }
 }
 
@@ -1662,6 +2107,10 @@ impl Render for ConfigurationView {
         
         if self.is_adding_model {
             self.create_model_inputs(window, cx);
+        }
+        
+        if self.is_editing_max_tokens {
+            self.create_max_tokens_input(window, cx);
         }
         
         // Now get settings and continue with rendering
@@ -2117,6 +2566,114 @@ impl Render for ConfigurationView {
                             }
                         })
                 )
+                // Add max tokens editing dialog if active
+                .child(
+                    if self.is_editing_max_tokens {
+                        v_flex()
+                            .gap_2()
+                            .p_2()
+                            .border_1()
+                            .border_color(cx.theme().colors().border)
+                            .bg(cx.theme().colors().background)
+                            .rounded_md()
+                            .my_2()
+                            .w_full()
+                            .child(
+                                Label::new("Edit Max Tokens")
+                            )
+                            .child(
+                                v_flex()
+                                    .gap_2()
+                                    .w_full()
+                                    .child(
+                                        v_flex()
+                                            .gap_1()
+                                            .child(Label::new("Max Tokens:").size(LabelSize::Small))
+                                            .child(self.edit_max_tokens_input.clone().unwrap())
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .gap_1()
+                                            .child(
+                                                Label::new("Server default:")
+                                                    .size(LabelSize::XSmall)
+                                                    .color(Color::Muted)
+                                            )
+                                            .child(
+                                                Label::new(format!("{} tokens", 
+                                                    // Find current server default for this model
+                                                    self.editing_model_server_id.as_ref().and_then(|server_id| {
+                                                        self.editing_model_name.as_ref().and_then(|model_name| {
+                                                            let settings = AllLanguageModelSettings::get_global(cx);
+                                                            settings.lmstudio.servers.iter()
+                                                                .find(|s| &s.id == server_id)
+                                                                .and_then(|s| s.available_models.as_ref())
+                                                                .and_then(|models| models.iter().find(|m| &m.name == model_name))
+                                                                .map(|m| m.server_max_tokens)
+                                                        })
+                                                    }).unwrap_or(8192)
+                                                ))
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Default)
+                                            )
+                                    )
+                                    .child(
+                                        Label::new("Setting to server default will remove custom value")
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted)
+                                    )
+                            )
+                            .child(
+                                h_flex()
+                                    .justify_between()
+                                    .mt_2()
+                                    .child(
+                                        Button::new("reset-to-default", "Use Server Default")
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                // Get server default value
+                                                let server_default = this.editing_model_server_id.as_ref().and_then(|server_id| {
+                                                    this.editing_model_name.as_ref().and_then(|model_name| {
+                                                        let settings = AllLanguageModelSettings::get_global(cx);
+                                                        settings.lmstudio.servers.iter()
+                                                            .find(|s| &s.id == server_id)
+                                                            .and_then(|s| s.available_models.as_ref())
+                                                            .and_then(|models| models.iter().find(|m| &m.name == model_name))
+                                                            .map(|m| m.server_max_tokens)
+                                                    })
+                                                }).unwrap_or(8192);
+                                                
+                                                // Just update our internal value - the input will be recreated on next UI refresh
+                                                this.edit_max_tokens_value = server_default.to_string();
+                                                // Clear the input to force recreation
+                                                this.edit_max_tokens_input = None;
+                                                
+                                                // Save with the default value
+                                                this.save_max_tokens_edit(cx);
+                                            }))
+                                    )
+                                    .child(
+                                        h_flex()
+                                        .gap_2()
+                                        .child(
+                                            Button::new("cancel-tokens-edit", "Cancel")
+                                                .style(ButtonStyle::Subtle)
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.cancel_max_tokens_edit(cx);
+                                                }))
+                                        )
+                                        .child(
+                                            Button::new("save-tokens-edit", "Save")
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.save_max_tokens_edit(cx);
+                                                }))
+                                        )
+                                    )
+                            )
+                            .into_any_element()
+                    } else {
+                        div().into_any_element()
+                    }
+                )
                 .into_any()
         }
     }
@@ -2153,5 +2710,27 @@ impl LmStudioSettings {
     // Get the first enabled server or None
     pub fn first_enabled_server(&self) -> Option<&LmStudioServer> {
         self.servers.iter().find(|server| server.enabled)
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn max_tokens_is_default(max_tokens: &usize) -> bool {
+    *max_tokens == 0
+}
+
+impl AvailableModel {
+    /// Gets the effective max tokens, prioritizing custom value if set
+    pub fn effective_max_tokens(&self) -> usize {
+        self.custom_max_tokens.unwrap_or(self.server_max_tokens)
+    }
+    
+    /// For backward compatibility when loading older settings
+    pub fn migrate_max_tokens(&mut self) {
+        if self.max_tokens > 0 && self.custom_max_tokens.is_none() {
+            self.custom_max_tokens = Some(self.max_tokens);
+        }
     }
 }
