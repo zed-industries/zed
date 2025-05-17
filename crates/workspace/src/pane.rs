@@ -2398,10 +2398,16 @@ impl Pane {
                                     }))
                                     .disabled(total_items == 1)
                                     .handler(window.handler_for(&pane, move |pane, window, cx| {
-                                        pane.close_items(window, cx, SaveIntent::Close, |id| {
-                                            id != item_id
-                                        })
-                                        .detach_and_log_err(cx);
+                                        if let Some(task) = pane.close_inactive_items(
+                                            &CloseInactiveItems {
+                                                save_intent: None,
+                                                close_pinned: false,
+                                            },
+                                            window,
+                                            cx,
+                                        ) {
+                                            task.detach_and_log_err(cx);
+                                        }
                                     })),
                             ))
                             .separator()
