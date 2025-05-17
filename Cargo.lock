@@ -8362,11 +8362,8 @@ name = "jj"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "fs",
  "gpui",
  "jj-lib",
- "parking_lot",
- "util",
  "workspace-hack",
 ]
 

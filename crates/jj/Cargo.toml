@@ -13,9 +13,6 @@ path = "src/jj.rs"
 
 [dependencies]
 anyhow.workspace = true
-fs.workspace = true
 gpui.workspace = true
 jj-lib.workspace = true
-parking_lot.workspace = true
-util.workspace = true
 workspace-hack.workspace = true
