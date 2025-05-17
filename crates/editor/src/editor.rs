@@ -2590,7 +2590,9 @@ impl Editor {
         // Copy selections to primary selection buffer
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         if local {
-            let selections = self.selections.all::<usize>(cx);
+            let selections = self
+                .selections
+                .all::<usize>(&self.selections.display_map(cx));
             let buffer_handle = self.buffer.read(cx).read(cx);
 
             let mut text = String::new();
