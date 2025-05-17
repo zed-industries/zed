@@ -676,6 +676,7 @@ message MultiLspQuery {
         GetCodeActions get_code_actions = 6;
         GetSignatureHelp get_signature_help = 7;
         GetCodeLens get_code_lens = 8;
+        GetDocumentDiagnostics get_document_diagnostics = 9;
     }
 }
 
@@ -701,6 +702,7 @@ message LspResponse {
         GetCodeActionsResponse get_code_actions_response = 2;
         GetSignatureHelpResponse get_signature_help_response = 3;
         GetCodeLensResponse get_code_lens_response = 4;
+        GetDocumentDiagnosticsResponse get_document_diagnostics_response = 5;
     }
 }
 
@@ -746,4 +748,54 @@ message LspExtClearFlycheck {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
     uint64 language_server_id = 3;
+}
+
+message LspDiagnosticRelatedInformation {
+    optional string location_url = 1;
+    PointUtf16 location_range_start = 2;
+    PointUtf16 location_range_end = 3;
+    string message = 4;
+}
+
+enum LspDiagnosticTag {
+    None = 0;
+    Unnecessary = 1;
+    Deprecated = 2;
+}
+
+message LspDiagnostic {
+    PointUtf16 start = 1;
+    PointUtf16 end = 2;
+    Severity severity = 3;
+    optional string code = 4;
+    optional string code_description = 5;
+    optional string source = 6;
+    string message = 7;
+    repeated LspDiagnosticRelatedInformation related_information = 8;
+    repeated LspDiagnosticTag tags = 9;
+    optional string data = 10;
+
+    enum Severity {
+        None = 0;
+        Error = 1;
+        Warning = 2;
+        Information = 3;
+        Hint = 4;
+    }
+}
+
+message GetDocumentDiagnostics {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+}
+
+message GetDocumentDiagnosticsResponse {
+    uint64 server_id = 1;
+    string uri = 2;
+    repeated LspDiagnostic diagnostics = 3;
+}
+
+message RefreshDocumentsDiagnostics {
+    uint64 project_id = 1;
 }

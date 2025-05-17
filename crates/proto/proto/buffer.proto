@@ -251,6 +251,14 @@ message Diagnostic {
     Anchor start = 1;
     Anchor end = 2;
     optional string source = 3;
+    
+    enum SourceKind {
+        Pulled = 0;
+        Pushed = 1;
+        Other = 2;
+    }
+    
+    SourceKind source_kind = 15;
     Severity severity = 4;
     string message = 5;
     optional string code = 6;
