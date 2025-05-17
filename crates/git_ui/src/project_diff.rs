@@ -1323,6 +1323,7 @@ fn merge_anchor_ranges<'a>(
 mod tests {
     use db::indoc;
     use editor::test::editor_test_context::{EditorTestContext, assert_state_with_diff};
+    use git::status::{UnmergedStatus, UnmergedStatusCode};
     use gpui::TestAppContext;
     use project::FakeFs;
     use serde_json::json;
@@ -1583,7 +1584,10 @@ mod tests {
         );
     }
 
-    use crate::project_diff::{self, ProjectDiff};
+    use crate::{
+        conflict_view::resolve_conflict,
+        project_diff::{self, ProjectDiff},
+    };
 
     #[gpui::test]
     async fn test_go_to_prev_hunk_multibuffer(cx: &mut TestAppContext) {
@@ -1753,5 +1757,81 @@ mod tests {
         cx.dispatch_action(editor::actions::MoveToBeginning);
 
         cx.assert_excerpts_with_selections(&format!("[EXCERPT]\nˇ{git_contents}"));
+    }
+
+    #[gpui::test]
+    async fn test_saving_resolved_conflicts(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "foo": "<<<<<<< x\nours\n=======\ntheirs\n>>>>>>> y\n",
+            }),
+        )
+        .await;
+        fs.set_status_for_repo(
+            Path::new(path!("/project/.git")),
+            &[(
+                Path::new("foo"),
+                UnmergedStatus {
+                    first_head: UnmergedStatusCode::Updated,
+                    second_head: UnmergedStatusCode::Updated,
+                }
+                .into(),
+            )],
+        );
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, window, cx)
+        });
+        cx.run_until_parked();
+
+        cx.update(|window, cx| {
+            let editor = diff.read(cx).editor.clone();
+            let excerpt_ids = editor.read(cx).buffer().read(cx).excerpt_ids();
+            assert_eq!(excerpt_ids.len(), 1);
+            let excerpt_id = excerpt_ids[0];
+            let buffer = editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .all_buffers()
+                .into_iter()
+                .next()
+                .unwrap();
+            let buffer_id = buffer.read(cx).remote_id();
+            let conflict_set = diff
+                .read(cx)
+                .editor
+                .read(cx)
+                .addon::<ConflictAddon>()
+                .unwrap()
+                .conflict_set(buffer_id)
+                .unwrap();
+            assert!(conflict_set.read(cx).has_conflict);
+            let snapshot = conflict_set.read(cx).snapshot();
+            assert_eq!(snapshot.conflicts.len(), 1);
+
+            let ours_range = snapshot.conflicts[0].ours.clone();
+
+            resolve_conflict(
+                editor.downgrade(),
+                excerpt_id,
+                snapshot.conflicts[0].clone(),
+                vec![ours_range],
+                window,
+                cx,
+            )
+        })
+        .await;
+
+        let contents = fs.read_file_sync(path!("/project/foo")).unwrap();
+        let contents = String::from_utf8(contents).unwrap();
+        assert_eq!(contents, "ours\n");
     }
 }
