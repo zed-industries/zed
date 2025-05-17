@@ -1,5 +1,5 @@
+mod jj_repository;
 mod jj_store;
-mod repository;
 
+pub use jj_repository::*;
 pub use jj_store::*;
-pub use repository::*;

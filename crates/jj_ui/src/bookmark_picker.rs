@@ -1,11 +1,11 @@
-use std::path::Path;
 use std::sync::Arc;
 
 use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
-    App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task, Window, prelude::*,
+    App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity, Window,
+    prelude::*,
 };
-use jj::{Bookmark, JujutsuRepository, JujutsuStore, RealJujutsuRepository};
+use jj::{Bookmark, JujutsuStore};
 use picker::{Picker, PickerDelegate};
 use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt as _;
@@ -21,10 +21,12 @@ fn open(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let repository = Arc::new(RealJujutsuRepository::new(&Path::new(".")).unwrap());
+    let Some(jj_store) = JujutsuStore::try_global(cx) else {
+        return;
+    };
 
     workspace.toggle_modal(window, cx, |window, cx| {
-        let delegate = BookmarkPickerDelegate::new(repository, cx);
+        let delegate = BookmarkPickerDelegate::new(cx.entity().downgrade(), jj_store, cx);
         BookmarkPicker::new(delegate, window, cx)
     });
 }
@@ -67,18 +69,22 @@ struct BookmarkEntry {
 }
 
 pub struct BookmarkPickerDelegate {
+    picker: WeakEntity<BookmarkPicker>,
     matches: Vec<BookmarkEntry>,
     all_bookmarks: Vec<Bookmark>,
     selected_index: usize,
 }
 
 impl BookmarkPickerDelegate {
-    fn new(repository: Arc<dyn JujutsuRepository>, cx: &mut Context<BookmarkPicker>) -> Self {
-        let jj_store = cx.new(|cx| JujutsuStore::new(repository, cx));
-
+    fn new(
+        picker: WeakEntity<BookmarkPicker>,
+        jj_store: Entity<JujutsuStore>,
+        cx: &mut Context<BookmarkPicker>,
+    ) -> Self {
         let bookmarks = jj_store.read(cx).repository().list_bookmarks();
 
         Self {
+            picker,
             matches: Vec::new(),
             all_bookmarks: bookmarks,
             selected_index: 0,
@@ -158,12 +164,14 @@ impl PickerDelegate for BookmarkPickerDelegate {
         })
     }
 
-    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {
         //
     }
 
-    fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        //
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.picker
+            .update(cx, |_, cx| cx.emit(DismissEvent))
+            .log_err();
     }
 
     fn render_match(

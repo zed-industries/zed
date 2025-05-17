@@ -22,9 +22,9 @@ pub struct RealJujutsuRepository {
 }
 
 impl RealJujutsuRepository {
-    pub fn new(workspace_root: &Path) -> Result<Self> {
+    pub fn new(cwd: &Path) -> Result<Self> {
         let workspace_loader_factory = DefaultWorkspaceLoaderFactory;
-        let workspace_loader = workspace_loader_factory.create(workspace_root)?;
+        let workspace_loader = workspace_loader_factory.create(Self::find_workspace_dir(cwd))?;
 
         let config = StackedConfig::with_defaults();
         let settings = UserSettings::from_config(config)?;
@@ -50,19 +50,14 @@ impl RealJujutsuRepository {
 
 impl JujutsuRepository for RealJujutsuRepository {
     fn list_bookmarks(&self) -> Vec<Bookmark> {
-        let bookmarks = self.repository.view().bookmarks().collect::<Vec<_>>();
-        dbg!(&bookmarks);
-
         let bookmarks = self
             .repository
             .view()
             .bookmarks()
-            .map(|(ref_name, target)| Bookmark {
+            .map(|(ref_name, _target)| Bookmark {
                 ref_name: ref_name.as_str().to_string().into(),
             })
             .collect();
-
-        dbg!(&bookmarks);
 
         bookmarks
     }
@@ -72,6 +67,6 @@ pub struct FakeJujutsuRepository {}
 
 impl JujutsuRepository for FakeJujutsuRepository {
     fn list_bookmarks(&self) -> Vec<Bookmark> {
-        todo!()
+        Vec::new()
     }
 }
