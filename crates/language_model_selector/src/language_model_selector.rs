@@ -157,16 +157,20 @@ impl LanguageModelSelector {
     fn all_models(cx: &App) -> GroupedModels {
         let mut recommended = Vec::new();
         let mut recommended_set = HashSet::default();
-        for provider in LanguageModelRegistry::global(cx)
+        
+        // Get only authenticated providers
+        let authenticated_providers = LanguageModelRegistry::global(cx)
             .read(cx)
             .providers()
-            .iter()
-        {
+            .into_iter()
+            .filter(|provider| provider.is_authenticated(cx))
+            .collect::<Vec<_>>();
+            
+        for provider in &authenticated_providers {
             let models = provider.recommended_models(cx);
             recommended_set.extend(models.iter().map(|model| (model.provider_id(), model.id())));
             recommended.extend(
-                provider
-                    .recommended_models(cx)
+                models
                     .into_iter()
                     .map(move |model| ModelInfo {
                         model: model.clone(),
@@ -175,9 +179,7 @@ impl LanguageModelSelector {
             );
         }
 
-        let other_models = LanguageModelRegistry::global(cx)
-            .read(cx)
-            .providers()
+        let other_models = authenticated_providers
             .iter()
             .map(|provider| {
                 (
@@ -504,33 +506,9 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         let current_index = self.selected_index;
         let bg_executor = cx.background_executor();
 
-        let language_model_registry = LanguageModelRegistry::global(cx);
-
-        let configured_providers = language_model_registry
-            .read(cx)
-            .providers()
-            .into_iter()
-            .filter(|provider| provider.is_authenticated(cx))
-            .collect::<Vec<_>>();
-
-        let configured_provider_ids = configured_providers
-            .iter()
-            .map(|provider| provider.id())
-            .collect::<Vec<_>>();
-
-        let recommended_models = all_models
-            .recommended
-            .iter()
-            .filter(|m| configured_provider_ids.contains(&m.model.provider_id()))
-            .cloned()
-            .collect::<Vec<_>>();
-
-        let available_models = all_models
-            .model_infos()
-            .iter()
-            .filter(|m| configured_provider_ids.contains(&m.model.provider_id()))
-            .cloned()
-            .collect::<Vec<_>>();
+        // We already filtered authenticated providers in all_models
+        let recommended_models = all_models.recommended.clone();
+        let available_models = all_models.model_infos();
 
         let matcher_rec = ModelMatcher::new(recommended_models, bg_executor.clone());
         let matcher_all = ModelMatcher::new(available_models, bg_executor.clone());
