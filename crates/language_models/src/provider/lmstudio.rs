@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use futures::{FutureExt, future::BoxFuture, stream::BoxStream};
+use futures::{FutureExt, future::BoxFuture, stream::BoxStream, StreamExt};
 use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task, UpdateGlobal};
 use fs;
 use http_client::HttpClient;
@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::{collections::BTreeMap, sync::Arc};
 // UI imports
-use ui::{ButtonLike, Indicator, List, prelude::*, ListItem, h_flex, v_flex, div, Label, Button, IconButton, LabelSize};
+use ui::{ButtonLike, Indicator, List, prelude::*, ListItem, h_flex, v_flex, div, Label, Button, IconButton, LabelSize, Tooltip};
 use ui_input::SingleLineInput;
 use settings::update_settings_file;
 use util::ResultExt;
@@ -79,10 +79,69 @@ impl State {
     }
 
     fn fetch_models(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        // Just clear models for now to fix compilation errors
+        // Clear existing models
         self.available_models.clear();
-        cx.notify();
-        return Task::ready(Ok(()));
+        
+        // Create a new task to fetch models from all enabled servers
+        let http_client = self.http_client.clone();
+        let settings = AllLanguageModelSettings::get_global(cx).lmstudio.clone();
+        
+        cx.spawn({
+            let http_client = http_client.clone();
+            async move |this, cx| {
+                // Get all enabled servers
+                let enabled_servers: Vec<LmStudioServer> = settings.servers
+                    .into_iter()
+                    .filter(|server| server.enabled)
+                    .collect();
+                
+                if enabled_servers.is_empty() {
+                    this.update(cx, |this, cx| {
+                        this.available_models.clear();
+                        cx.notify();
+                    })?;
+                    return Ok(());
+                }
+                
+                let mut all_models = Vec::new();
+                
+                // Try to fetch models from each enabled server
+                for server in enabled_servers {
+                    log::info!("Fetching models from LM Studio server: {} at {}", server.name, server.api_url);
+                    
+                    match lmstudio::get_models(&*http_client, &server.api_url, None).await {
+                        Ok(local_models) => {
+                            // Convert LocalModelListing to Model
+                            let models = local_models.into_iter()
+                                .map(|local_model| {
+                                    let id = local_model.id.clone();
+                                    lmstudio::Model {
+                                        name: local_model.id,
+                                        display_name: Some(id),
+                                        max_tokens: local_model.max_context_length.unwrap_or(8192),
+                                        supports_tools: Some(true),
+                                        server_id: Some(server.id.clone()),
+                                    }
+                                })
+                                .collect::<Vec<_>>();
+                            
+                            log::info!("Found {} models on server {}", models.len(), server.name);
+                            all_models.extend(models);
+                        }
+                        Err(err) => {
+                            log::warn!("Failed to fetch models from server {}: {}", server.name, err);
+                        }
+                    }
+                }
+                
+                this.update(cx, |this, cx| {
+                    this.available_models = all_models;
+                    cx.notify();
+                })?;
+                
+                Ok(())
+            }
+        })
     }
 
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
@@ -398,19 +457,79 @@ impl LanguageModel for LmStudioLanguageModel {
 
     fn stream_completion(
         &self,
-        _request: LanguageModelRequest,
-        _cx: &AsyncApp,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
         >,
     > {
-        // Return a simple error to simplify compilation
-        futures::future::ready(Err(anyhow!("LM Studio support is currently being updated"))).boxed()
+        // Clone needed variables for the async block
+        let http_client = self.http_client.clone();
+        let model_name = self.model.name.clone();
+        let lmstudio_request = self.to_lmstudio_request(request);
+        let model_id = self.id.0.clone();
+        
+        // Get the server URL upfront before the async block
+        let server_url_result = cx.update(|app| {
+            self.get_server_url(app)
+        });
+        
+        async move {
+            // First get the server URL, which may fail if no servers are available
+            let server_url = match server_url_result {
+                Ok(url_result) => match url_result {
+                    Ok(url) => url,
+                    Err(e) => {
+                        log::error!("Failed to get server URL for model {}: {}", model_id, e);
+                        return Err(anyhow!("No available LM Studio server for model {}: {}", model_id, e));
+                    }
+                },
+                Err(e) => return Err(anyhow!("Failed during server URL lookup: {}", e)),
+            };
+            
+            log::info!("Streaming completion from LM Studio model {} at {}", model_name, server_url);
+
+            // Create stream mapper to handle the response
+            let mut stream_mapper = LmStudioStreamMapper::new();
+
+            // Get streaming response from LM Studio
+            let stream = match lmstudio::stream_chat_completion(
+                &*http_client,
+                &server_url,
+                lmstudio_request,
+            )
+            .await {
+                Ok(stream) => stream,
+                Err(err) => {
+                    log::error!("Error streaming from LM Studio: {}", err);
+                    return Err(anyhow!("Error connecting to LM Studio: {}", err));
+                }
+            };
+
+            // Map the stream to LanguageModelCompletionEvent
+            let mapped_stream = stream.map(move |fragment| {
+                match fragment {
+                    Ok(chat_response) => {
+                        match stream_mapper.process_fragment(chat_response) {
+                            Ok(Some(event)) => Ok(event),
+                            Ok(None) => Ok(LanguageModelCompletionEvent::Text(String::new())), // Send empty text for fragments that don't produce events
+                            Err(e) => Err(LanguageModelCompletionError::Other(e)),
+                        }
+                    }
+                    Err(e) => Err(LanguageModelCompletionError::Other(anyhow!("{}", e))),
+                }
+            })
+            .boxed();
+
+            Ok(mapped_stream)
+        }
+        .boxed()
     }
 }
 
+#[derive(Clone)]
 struct LmStudioStreamMapper {
     in_thinking_block: bool,
     thinking_buffer: String,
@@ -967,12 +1086,17 @@ impl ConfigurationView {
         // Get server ID to preserve it
         let server_id = servers[index].id.clone();
         let enabled = servers[index].enabled;
+        let old_url = servers[index].api_url.clone();
+        let new_url = self.server_edit_url.trim().to_string();
+        
+        // Check if URL has changed
+        let url_changed = old_url != new_url;
         
         // Create updated server object
         let updated_server = LmStudioServer {
             id: server_id.clone(),
             name: self.server_edit_name.trim().to_string(),
-            api_url: self.server_edit_url.trim().to_string(),
+            api_url: new_url.clone(),
             enabled,
             available_models: servers[index].available_models.clone(),
         };
@@ -1008,6 +1132,12 @@ impl ConfigurationView {
         self.editing_server_index = None;
         self.server_edit_name_input = None;
         self.server_edit_url_input = None;
+        
+        // If URL changed, fetch models from the new server URL
+        if url_changed && enabled {
+            log::info!("Server URL changed, fetching models from new URL");
+            self.fetch_models_from_server(server_id, new_url, cx);
+        }
         
         // Refresh models
         self.state.update(cx, |state, cx| state.restart_fetch_models_task(cx));
@@ -1212,6 +1342,8 @@ impl ConfigurationView {
         
         // Clone for closure
         let server_clone = new_server.clone();
+        let server_id = new_server.id.clone();
+        let server_url = new_server.api_url.clone();
         
         // Use SettingsStore to update settings
         settings::SettingsStore::update_global(cx, |store, cx| {
@@ -1245,10 +1377,88 @@ impl ConfigurationView {
         self.new_server_name_input = None;
         self.new_server_url_input = None;
         
-        // Refresh models
+        // Fetch models from the new server
+        self.fetch_models_from_server(server_id, server_url, cx);
+        
+        // Refresh models via state
         self.state.update(cx, |state, cx| state.restart_fetch_models_task(cx));
         
         cx.notify();
+    }
+
+    // Helper method to fetch models from a specific server
+    fn fetch_models_from_server(&self, server_id: String, server_url: String, cx: &mut Context<Self>) {
+        log::info!("Fetching models from newly added server at {}", server_url);
+        
+        let http_client = self.state.read(cx).http_client.clone();
+        
+        // Spawn a background task to fetch models
+        cx.spawn({
+            let http_client = http_client.clone();
+            async move |this, cx| {
+                // Attempt to fetch models from the server
+                match lmstudio::get_models(&*http_client, &server_url, None).await {
+                    Ok(local_models) => {
+                        if local_models.is_empty() {
+                            log::info!("No models found on server at {}", server_url);
+                            return;
+                        }
+                        
+                        // Convert models to AvailableModel format
+                        let models = local_models.into_iter()
+                            .map(|local_model| {
+                                let id = local_model.id.clone();
+                                AvailableModel {
+                                    name: local_model.id,
+                                    display_name: Some(id),
+                                    max_tokens: local_model.max_context_length.unwrap_or(8192),
+                                    server_id: Some(server_id.clone()),
+                                }
+                            })
+                            .collect::<Vec<_>>();
+                        
+                        let models_count = models.len();
+                        let server_id_clone = server_id.clone();
+                        
+                        log::info!("Found {} models on newly added server", models_count);
+                        
+                        // Update settings via SettingsStore instead of using update_global
+                        if let Ok(()) = this.update(cx, |this, cx| {
+                            // Use SettingsStore to update settings
+                            settings::SettingsStore::update_global(cx, |store, cx| {
+                                store.update_settings_file::<crate::AllLanguageModelSettings>(
+                                    <dyn fs::Fs>::global(cx), 
+                                    move |settings, _| {
+                                        if let Some(lmstudio) = &mut settings.lmstudio {
+                                            if let Some(servers) = &mut lmstudio.servers {
+                                                // Find the server by ID
+                                                if let Some(server) = servers.iter_mut().find(|s| s.id == server_id) {
+                                                    // Update the models
+                                                    server.available_models = Some(models.clone());
+                                                    log::info!("Updated server with {} models", models.len());
+                                                }
+                                            }
+                                        }
+                                    }
+                                );
+                            });
+                            
+                            // Refresh the models list
+                            this.state.update(cx, |state, cx| {
+                                state.restart_fetch_models_task(cx);
+                            });
+                        }) {
+                            log::info!("Successfully updated models for server {}", server_id_clone);
+                        } else {
+                            log::error!("Failed to update UI state with new models");
+                        }
+                    },
+                    Err(err) => {
+                        log::warn!("Failed to fetch models from new server at {}: {}", server_url, err);
+                    }
+                }
+            }
+        }).detach();
     }
 
     fn toggle_add_model_form(&mut self, cx: &mut Context<Self>) {
@@ -1711,6 +1921,23 @@ impl Render for ConfigurationView {
                                                                                     this.toggle_server(idx, cx);
                                                                                 }))
                                                                                 .icon_color(if server.enabled { Color::Success } else { Color::Muted })
+                                                                        )
+                                                                        .child(
+                                                                            IconButton::new("fetch-models", IconName::Update)
+                                                                                .tooltip(Tooltip::text("Fetch Models"))
+                                                                                .on_click({
+                                                                                    let server_enabled = server.enabled;
+                                                                                    let state = self.state.clone();
+                                                                                    move |_, _, cx| {
+                                                                                        if server_enabled {
+                                                                                            // Refresh this specific server's models via the state
+                                                                                            state.update(cx, |state, cx| {
+                                                                                                state.restart_fetch_models_task(cx);
+                                                                                            });
+                                                                                        }
+                                                                                    }
+                                                                                })
+                                                                                .icon_color(if server.enabled { Color::Info } else { Color::Muted })
                                                                         )
                                                                         .child(
                                                                             IconButton::new("edit-server", IconName::Pencil)
