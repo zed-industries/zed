@@ -547,9 +547,10 @@ If you're using vim mode on Linux or Windows, you may find it overrides keybindi
     "ctrl-y": "editor::Undo",          // vim default: line up
     "ctrl-f": "buffer_search::Deploy", // vim default: page down
     "ctrl-o": "workspace::Open",       // vim default: go back
-    "ctrl-a": "editor::SelectAll",     // vim default: increment
+    "ctrl-s": "workspace::Save",       // vim default: show signature
+    "ctrl-a": "editor::SelectAll"      // vim default: increment
   }
-},
+}
 ```
 
 ## Changing vim mode settings
