@@ -440,7 +440,10 @@ pub async fn stream_completion_with_rate_limit_info(
                         let line = line.strip_prefix("data: ")?;
                         match serde_json::from_str(line) {
                             Ok(response) => Some(Ok(response)),
-                            Err(error) => Some(Err(AnthropicError::Other(anyhow!(error)))),
+                            Err(error) => Some(Err(AnthropicError::Other(anyhow!(
+                                "Failed to parse streaming response: {} - Raw server response: {}", 
+                                error, line
+                            )))),
                         }
                     }
                     Err(error) => Some(Err(AnthropicError::Other(anyhow!(error)))),

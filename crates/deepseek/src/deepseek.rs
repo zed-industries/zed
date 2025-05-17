@@ -285,7 +285,10 @@ pub async fn stream_completion(
                         } else {
                             match serde_json::from_str(line) {
                                 Ok(response) => Some(Ok(response)),
-                                Err(error) => Some(Err(anyhow!(error))),
+                                Err(error) => Some(Err(anyhow!(
+                                    "Failed to parse streaming response: {} - Raw server response: {}", 
+                                    error, line
+                                ))),
                             }
                         }
                     }

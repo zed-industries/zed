@@ -644,7 +644,10 @@ pub async fn stream_completion(
                                 Ok(ResponseStreamResult::Err { error }) => {
                                     Some(Err(anyhow!(error)))
                                 }
-                                Err(error) => Some(Err(anyhow!(error))),
+                                Err(error) => Some(Err(anyhow!(
+                                    "Failed to parse streaming response: {} - Raw server response: {}", 
+                                    error, line
+                                ))),
                             }
                         }
                     }

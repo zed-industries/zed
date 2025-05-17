@@ -488,7 +488,7 @@ pub async fn stream_chat_completion(
                     
                     match serde_json::from_str::<ChatResponse>(json_str) {
                         Ok(response) => Some(Ok(response)),
-                        Err(e) => Some(Err(anyhow!("Failed to parse streaming response: {}", e))),
+                        Err(e) => Some(Err(anyhow!("Failed to parse streaming response: {} - Raw server response: {}", e, json_str))),
                     }
                 }
                 Err(e) => Some(Err(anyhow!("Failed to read streaming response: {}", e))),

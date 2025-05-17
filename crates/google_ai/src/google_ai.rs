@@ -38,10 +38,10 @@ pub async fn stream_generate_content(
                         if let Some(line) = line.strip_prefix("data: ") {
                             match serde_json::from_str(line) {
                                 Ok(response) => Some(Ok(response)),
-                                Err(error) => Some(Err(anyhow!(format!(
-                                    "Error parsing JSON: {:?}\n{:?}",
+                                Err(error) => Some(Err(anyhow!(
+                                    "Failed to parse streaming response: {} - Raw server response: {}", 
                                     error, line
-                                )))),
+                                ))),
                             }
                         } else {
                             None

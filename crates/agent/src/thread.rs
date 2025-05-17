@@ -1714,9 +1714,27 @@ impl Thread {
                                     .map(|err| err.to_string())
                                     .collect::<Vec<_>>()
                                     .join("\n");
+                                
+                                // Check for specific JSON parsing errors and try to show raw server response
+                                let enhanced_message = if error_message.contains("Failed to parse streaming response") {
+                                    // Get the raw response if available
+                                    let raw_response = error.chain()
+                                        .find_map(|err| {
+                                            err.to_string()
+                                                .strip_prefix("Failed to parse streaming response: ")
+                                                .map(|s| s.to_string())
+                                        })
+                                        .unwrap_or_else(|| error_message.clone());
+                                    
+                                    format!("LLM API returned invalid response: {}\n\nFull error: {}", 
+                                            raw_response, error_message)
+                                } else {
+                                    error_message
+                                };
+                                
                                 cx.emit(ThreadEvent::ShowError(ThreadError::Message {
                                     header: "Language Model Error".into(),
-                                    message: SharedString::from(error_message.clone()),
+                                    message: SharedString::from(enhanced_message),
                                 }));
                             }
 
