@@ -21,11 +21,12 @@ impl BladeContext {
                 None
             }
         };
+        let do_validation = std::env::var("ZED_BLADE_VALIDATE").is_ok();
         let gpu = Arc::new(
             unsafe {
                 gpu::Context::init(gpu::ContextDesc {
                     presentation: true,
-                    validation: false,
+                    validation: do_validation,
                     device_id: device_id_forced.unwrap_or(0),
                     ..Default::default()
                 })
