@@ -164,10 +164,7 @@ impl DiagnosticIndicator {
     fn update(&mut self, editor: Entity<Editor>, window: &mut Window, cx: &mut Context<Self>) {
         let (buffer, cursor_position) = editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().read(cx).snapshot(cx);
-            let cursor_position = editor
-                .selections
-                .newest::<usize>(&editor.selections.display_map(cx))
-                .head();
+            let cursor_position = editor.selections.newest::<usize>(cx).head();
             (buffer, cursor_position)
         });
         let new_diagnostic = buffer

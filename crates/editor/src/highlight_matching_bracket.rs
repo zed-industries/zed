@@ -11,9 +11,7 @@ pub fn refresh_matching_bracket_highlights(
 ) {
     editor.clear_background_highlights::<MatchingBracketHighlight>(cx);
 
-    let newest_selection = editor
-        .selections
-        .newest::<usize>(&editor.selections.display_map(cx));
+    let newest_selection = editor.selections.newest::<usize>(cx);
     // Don't highlight brackets if the selection isn't empty
     if !newest_selection.is_empty() {
         return;

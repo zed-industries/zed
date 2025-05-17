@@ -1124,7 +1124,7 @@ impl EditorElement {
         editor_with_selections.update(cx, |editor, cx| {
             if editor.show_local_selections {
                 let mut layouts = Vec::new();
-                let newest = editor.selections.newest(&editor.selections.display_map(cx));
+                let newest = editor.selections.newest(cx);
                 for selection in local_selections.iter().cloned() {
                     let is_empty = selection.start == selection.end;
                     let is_newest = selection == newest;
@@ -2639,9 +2639,7 @@ impl EditorElement {
 
         let (newest_selection_head, is_relative) = self.editor.update(cx, |editor, cx| {
             let newest_selection_head = newest_selection_head.unwrap_or_else(|| {
-                let newest = editor
-                    .selections
-                    .newest::<Point>(&editor.selections.display_map(cx));
+                let newest = editor.selections.newest::<Point>(cx);
                 SelectionLayout::new(
                     newest,
                     editor.selections.line_mode,

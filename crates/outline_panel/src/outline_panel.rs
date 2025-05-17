@@ -3026,10 +3026,7 @@ impl OutlinePanel {
         cx: &mut Context<Self>,
     ) -> Option<PanelEntry> {
         let selection = editor.update(cx, |editor, cx| {
-            editor
-                .selections
-                .newest::<language::Point>(&editor.selections.display_map(cx))
-                .head()
+            editor.selections.newest::<language::Point>(cx).head()
         });
         let editor_snapshot = editor.update(cx, |editor, cx| editor.snapshot(window, cx));
         let multi_buffer = editor.read(cx).buffer();

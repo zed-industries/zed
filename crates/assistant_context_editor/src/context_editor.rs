@@ -438,10 +438,7 @@ impl ContextEditor {
                     editor
                         .change_selections(Some(Autoscroll::fit()), window, cx, |s| s.try_cancel());
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
-                    let newest_cursor = editor
-                        .selections
-                        .newest::<Point>(&editor.selections.display_map(cx))
-                        .head();
+                    let newest_cursor = editor.selections.newest::<Point>(cx).head();
                     if newest_cursor.column > 0
                         || snapshot
                             .chars_at(newest_cursor)
@@ -1285,19 +1282,11 @@ impl ContextEditor {
 
         let context_editor = context_editor_view.read(cx).editor.clone();
         context_editor.update(cx, |context_editor, cx| {
-            let display_map = context_editor.selections.display_map(cx);
-            if context_editor
-                .selections
-                .newest::<Point>(&display_map)
-                .is_empty()
-            {
+            if context_editor.selections.newest::<Point>(cx).is_empty() {
                 let snapshot = context_editor.buffer().read(cx).snapshot(cx);
                 let (_, _, snapshot) = snapshot.as_singleton()?;
 
-                let head = context_editor
-                    .selections
-                    .newest::<Point>(&display_map)
-                    .head();
+                let head = context_editor.selections.newest::<Point>(cx).head();
                 let offset = snapshot.point_to_offset(head);
 
                 let surrounding_code_block_range = find_surrounding_code_block(snapshot, offset)?;
@@ -1530,10 +1519,7 @@ impl ContextEditor {
         self.editor.update(cx, |editor, cx| {
             editor.insert("\n", window, cx);
             for (text, crease_title) in creases {
-                let point = editor
-                    .selections
-                    .newest::<Point>(&editor.selections.display_map(cx))
-                    .head();
+                let point = editor.selections.newest::<Point>(cx).head();
                 let start_row = MultiBufferRow(point.row);
 
                 editor.insert(&text, window, cx);
@@ -1723,10 +1709,7 @@ impl ContextEditor {
 
         if images.is_empty() {
             self.editor.update(cx, |editor, cx| {
-                let paste_position = editor
-                    .selections
-                    .newest::<usize>(&editor.selections.display_map(cx))
-                    .head();
+                let paste_position = editor.selections.newest::<usize>(cx).head();
                 editor.paste(action, window, cx);
 
                 if let Some(metadata) = metadata {

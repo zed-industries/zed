@@ -197,10 +197,7 @@ pub fn init(cx: &mut App) {
                         maybe!({
                             let debug_panel =
                                 editor.workspace()?.read(cx).panel::<DebugPanel>(cx)?;
-                            let cursor_point: language::Point = editor
-                                .selections
-                                .newest(&editor.selections.display_map(cx))
-                                .head();
+                            let cursor_point: language::Point = editor.selections.newest(cx).head();
                             let active_session = debug_panel.read(cx).active_session()?;
 
                             let (buffer, position, _) = editor
@@ -251,10 +248,7 @@ pub fn init(cx: &mut App) {
                             let active_session = debug_panel.read(cx).active_session()?;
 
                             let text = editor.text_for_range(
-                                editor
-                                    .selections
-                                    .newest(&editor.selections.display_map(cx))
-                                    .range(),
+                                editor.selections.newest(cx).range(),
                                 &mut None,
                                 window,
                                 cx,

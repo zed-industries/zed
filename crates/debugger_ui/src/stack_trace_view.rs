@@ -55,10 +55,7 @@ impl StackTraceView {
         cx.subscribe_in(&editor, window, |this, editor, event, window, cx| {
             if let EditorEvent::SelectionsChanged { local: true } = event {
                 let excerpt_id = editor.update(cx, |editor, cx| {
-                    let position: Point = editor
-                        .selections
-                        .newest(&editor.selections.display_map(cx))
-                        .head();
+                    let position: Point = editor.selections.newest(cx).head();
 
                     editor
                         .snapshot(window, cx)

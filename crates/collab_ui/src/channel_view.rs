@@ -290,12 +290,9 @@ impl ChannelView {
     }
 
     fn copy_link(&mut self, _: &CopyLink, window: &mut Window, cx: &mut Context<Self>) {
-        let position = self.editor.update(cx, |editor, cx| {
-            editor
-                .selections
-                .newest_display(&editor.selections.display_map(cx))
-                .start
-        });
+        let position = self
+            .editor
+            .update(cx, |editor, cx| editor.selections.newest_display(cx).start);
         self.copy_link_for_position(position, window, cx)
     }
 
