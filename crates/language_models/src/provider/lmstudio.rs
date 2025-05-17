@@ -1559,6 +1559,7 @@ impl ConfigurationView {
         log::info!("Fetching models from newly added server at {}", server_url);
         
         let http_client = self.state.read(cx).http_client.clone();
+        let state_entity = self.state.clone();
         
         // Spawn a background task to fetch models
         cx.spawn({
@@ -1572,8 +1573,41 @@ impl ConfigurationView {
                             return;
                         }
                         
-                        // Convert models to AvailableModel format
-                        let models = local_models.into_iter()
+                        // Convert LocalModelListing to Model for the state
+                        let models = local_models.iter().map(|local_model| {
+                            let id = local_model.id.clone();
+                            log::info!("Converting model {} to internal format", id);
+                            lmstudio::Model {
+                                name: local_model.id.clone(),
+                                display_name: Some(format!("{} - {}", id, cx.update(|cx| {
+                                    let settings = AllLanguageModelSettings::get_global(cx);
+                                    settings.lmstudio.servers.iter()
+                                        .find(|s| s.id == server_id)
+                                        .map(|s| s.name.clone())
+                                        .unwrap_or_else(|| "Unknown Server".to_string())
+                                }).unwrap_or_else(|_| "Unknown Server".to_string()))),
+                                max_tokens: local_model.max_context_length.unwrap_or(8192),
+                                supports_tools: Some(true),
+                                server_id: Some(server_id.clone()),
+                            }
+                        }).collect::<Vec<_>>();
+                        
+                        // Immediately update the state with new models
+                        state_entity.update(cx, |state, _cx| {
+                            log::info!("Adding {} models to provider state", models.len());
+                            // Add models to the state's available_models list
+                            for model in &models {
+                                // Check if this model is already in the list
+                                if !state.available_models.iter().any(|m| m.name == model.name && 
+                                                                      m.server_id == model.server_id) {
+                                    state.available_models.push(model.clone());
+                                    log::info!("Added model {} to provider state", model.name);
+                                }
+                            }
+                        }).ok();
+                        
+                        // Convert models to AvailableModel format for settings
+                        let converted_models = local_models.into_iter()
                             .map(|local_model| {
                                 // Store the ID first
                                 let model_id = local_model.id.clone();
@@ -1624,7 +1658,7 @@ impl ConfigurationView {
                             })
                             .collect::<Vec<_>>();
                         
-                        let models_count = models.len();
+                        let models_count = converted_models.len();
                         let server_id_clone = server_id.clone();
                         
                         log::info!("Found {} models on newly added server", models_count);
@@ -1641,18 +1675,13 @@ impl ConfigurationView {
                                                 // Find the server by ID
                                                 if let Some(server) = servers.iter_mut().find(|s| s.id == server_id) {
                                                     // Update the models
-                                                    server.available_models = Some(models.clone());
+                                                    server.available_models = Some(converted_models.clone());
                                                     log::info!("Updated server with {} models", models.len());
                                                 }
                                             }
                                         }
                                     }
                                 );
-                            });
-                            
-                            // Refresh the models list
-                            this.state.update(cx, |state, cx| {
-                                state.restart_fetch_models_task(cx);
                             });
                         }) {
                             log::info!("Successfully updated models for server {}", server_id_clone);
