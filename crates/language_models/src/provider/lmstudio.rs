@@ -364,6 +364,15 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
                             let key = format!("{}:{}", server_id, model.name);
                             log::info!("Marking model as enabled: {}", &key);
                             enabled_models.insert(key);
+                            
+                            // Update thread-local cache with custom max tokens if available
+                            if let Some(custom_max_tokens) = model.custom_max_tokens {
+                                log::info!("Updating custom max tokens for model {}: {}", model.name, custom_max_tokens);
+                                lmstudio::update_custom_max_tokens(server_id, &model.name, Some(custom_max_tokens));
+                            } else {
+                                // Clear any existing custom setting
+                                lmstudio::update_custom_max_tokens(server_id, &model.name, None);
+                            }
                         }
                     }
                 }
@@ -2200,6 +2209,33 @@ impl ConfigurationView {
                 }
             }
         });
+        
+        // Immediately update the thread-local cache
+        if new_max_tokens == self.edit_max_tokens_value.trim().parse::<usize>().unwrap_or(0) {
+            // Find the server default to check if we're resetting to default
+            let server_default = {
+                // Get current settings directly
+                let settings = AllLanguageModelSettings::get_global(cx);
+                settings.lmstudio.servers
+                    .iter()
+                    .find(|s| s.id == server_id)
+                    .and_then(|s| s.available_models.as_ref())
+                    .and_then(|models| models.iter().find(|m| m.name == model_name))
+                    .map(|m| m.server_max_tokens)
+                    .unwrap_or(8192)
+            };
+            
+            if new_max_tokens == server_default {
+                // If setting to server default, clear custom value
+                lmstudio::update_custom_max_tokens(&server_id, &model_name, None);
+                log::info!("Immediately cleared custom max tokens in thread-local cache for {}", model_name);
+            } else {
+                // Otherwise set custom value
+                lmstudio::update_custom_max_tokens(&server_id, &model_name, Some(new_max_tokens));
+                log::info!("Immediately updated custom max tokens in thread-local cache for {} to {}", 
+                    model_name, new_max_tokens);
+            }
+        }
         
         // Reset dialog state
         self.is_editing_max_tokens = false;

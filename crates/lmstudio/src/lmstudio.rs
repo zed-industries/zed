@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{convert::TryFrom, sync::Arc, time::Duration};
 use bytes::Bytes;
+use std::thread_local;
 
 pub const LMSTUDIO_API_URL: &str = "http://localhost:1234/api/v0";
 
@@ -89,6 +90,13 @@ impl Model {
     }
 
     pub fn max_token_count(&self) -> usize {
+        // Look up custom max tokens from settings if server_id is available
+        if let Some(server_id) = &self.server_id {
+            // Try to access App context - this requires a helper method outside this context
+            if let Some(custom_max_tokens) = get_custom_max_tokens_for_model(server_id, &self.name) {
+                return custom_max_tokens;
+            }
+        }
         self.max_tokens
     }
     
@@ -917,6 +925,42 @@ pub struct SimplifiedModelListing {
 pub struct SimplifiedListModelsResponse {
     pub data: Vec<SimplifiedModelListing>,
     pub object: String,
+}
+
+// Helper function to get custom max tokens from settings
+// This needs to be implemented outside the Model implementation
+// since it requires access to the App context
+fn get_custom_max_tokens_for_model(server_id: &str, model_name: &str) -> Option<usize> {
+    // Use thread-local storage to temporarily store custom max tokens values
+    thread_local! {
+        static CUSTOM_MAX_TOKENS: std::cell::RefCell<std::collections::HashMap<String, usize>> = std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+
+    // Create a key combining server_id and model_name
+    let key = format!("{}:{}", server_id, model_name);
+    
+    // Check if we have a cached value
+    CUSTOM_MAX_TOKENS.with(|tokens| tokens.borrow().get(&key).copied())
+}
+
+/// Update custom max tokens setting in the thread-local cache
+pub fn update_custom_max_tokens(server_id: &str, model_name: &str, max_tokens: Option<usize>) {
+    thread_local! {
+        static CUSTOM_MAX_TOKENS: std::cell::RefCell<std::collections::HashMap<String, usize>> = std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+
+    // Create a key combining server_id and model_name
+    let key = format!("{}:{}", server_id, model_name);
+    
+    // Update the cache
+    CUSTOM_MAX_TOKENS.with(|tokens| {
+        let mut map = tokens.borrow_mut();
+        if let Some(tokens) = max_tokens {
+            map.insert(key, tokens);
+        } else {
+            map.remove(&key);
+        }
+    });
 }
 
 #[cfg(test)]
