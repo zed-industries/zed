@@ -1445,67 +1445,69 @@ impl Interactivity {
     ) -> LayoutId {
         window.with_inspector_state(
             inspector_id,
-            |inspector_state: &mut Option<DivInspectorState>, _window| {
+            |inspector_state: &mut Option<DivInspectorState>, window| {
                 let inspector_state = inspector_state.get_or_insert_with(|| DivInspectorState {
                     background: self.base_style.background.clone(),
                 });
                 if let Some(background) = inspector_state.background.clone() {
                     self.base_style.background = Some(background);
                 }
-            },
-        );
 
-        window.with_optional_element_state::<InteractiveElementState, _>(
-            global_id,
-            |element_state, window| {
-                let mut element_state =
-                    element_state.map(|element_state| element_state.unwrap_or_default());
+                window.with_optional_element_state::<InteractiveElementState, _>(
+                    global_id,
+                    |element_state, window| {
+                        let mut element_state =
+                            element_state.map(|element_state| element_state.unwrap_or_default());
 
-                if let Some(element_state) = element_state.as_ref() {
-                    if cx.has_active_drag() {
-                        if let Some(pending_mouse_down) = element_state.pending_mouse_down.as_ref()
+                        if let Some(element_state) = element_state.as_ref() {
+                            if cx.has_active_drag() {
+                                if let Some(pending_mouse_down) =
+                                    element_state.pending_mouse_down.as_ref()
+                                {
+                                    *pending_mouse_down.borrow_mut() = None;
+                                }
+                                if let Some(clicked_state) = element_state.clicked_state.as_ref() {
+                                    *clicked_state.borrow_mut() = ElementClickedState::default();
+                                }
+                            }
+                        }
+
+                        // Ensure we store a focus handle in our element state if we're focusable.
+                        // If there's an explicit focus handle we're tracking, use that. Otherwise
+                        // create a new handle and store it in the element state, which lives for as
+                        // as frames contain an element with this id.
+                        if self.focusable && self.tracked_focus_handle.is_none() {
+                            if let Some(element_state) = element_state.as_mut() {
+                                self.tracked_focus_handle = Some(
+                                    element_state
+                                        .focus_handle
+                                        .get_or_insert_with(|| cx.focus_handle())
+                                        .clone(),
+                                );
+                            }
+                        }
+
+                        if let Some(scroll_handle) = self.tracked_scroll_handle.as_ref() {
+                            self.scroll_offset = Some(scroll_handle.0.borrow().offset.clone());
+                        } else if self.base_style.overflow.x == Some(Overflow::Scroll)
+                            || self.base_style.overflow.y == Some(Overflow::Scroll)
                         {
-                            *pending_mouse_down.borrow_mut() = None;
+                            if let Some(element_state) = element_state.as_mut() {
+                                self.scroll_offset = Some(
+                                    element_state
+                                        .scroll_offset
+                                        .get_or_insert_with(Rc::default)
+                                        .clone(),
+                                );
+                            }
                         }
-                        if let Some(clicked_state) = element_state.clicked_state.as_ref() {
-                            *clicked_state.borrow_mut() = ElementClickedState::default();
-                        }
-                    }
-                }
 
-                // Ensure we store a focus handle in our element state if we're focusable.
-                // If there's an explicit focus handle we're tracking, use that. Otherwise
-                // create a new handle and store it in the element state, which lives for as
-                // as frames contain an element with this id.
-                if self.focusable && self.tracked_focus_handle.is_none() {
-                    if let Some(element_state) = element_state.as_mut() {
-                        self.tracked_focus_handle = Some(
-                            element_state
-                                .focus_handle
-                                .get_or_insert_with(|| cx.focus_handle())
-                                .clone(),
-                        );
-                    }
-                }
-
-                if let Some(scroll_handle) = self.tracked_scroll_handle.as_ref() {
-                    self.scroll_offset = Some(scroll_handle.0.borrow().offset.clone());
-                } else if self.base_style.overflow.x == Some(Overflow::Scroll)
-                    || self.base_style.overflow.y == Some(Overflow::Scroll)
-                {
-                    if let Some(element_state) = element_state.as_mut() {
-                        self.scroll_offset = Some(
-                            element_state
-                                .scroll_offset
-                                .get_or_insert_with(Rc::default)
-                                .clone(),
-                        );
-                    }
-                }
-
-                let style = self.compute_style_internal(None, element_state.as_mut(), window, cx);
-                let layout_id = f(style, window, cx);
-                (layout_id, element_state)
+                        let style =
+                            self.compute_style_internal(None, element_state.as_mut(), window, cx);
+                        let layout_id = f(style, window, cx);
+                        (layout_id, element_state)
+                    },
+                )
             },
         )
     }
