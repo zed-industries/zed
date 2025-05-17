@@ -1694,7 +1694,7 @@ impl ConfigurationView {
             let http_client = http_client.clone();
             async move |this, cx| {
                 // Get server to use its healthcheck method
-                let server = {
+                let server_obj = {
                     let settings = cx.update(|cx| {
                         AllLanguageModelSettings::get_global(cx).lmstudio.servers
                             .iter()
@@ -1703,7 +1703,7 @@ impl ConfigurationView {
                     }).unwrap_or_else(|_| None);
                     
                     // If we can't find the server, create a temporary one with the provided info
-                    server.unwrap_or_else(|| LmStudioServer {
+                    settings.unwrap_or_else(|| LmStudioServer {
                         id: server_id.clone(),
                         name: "Unknown Server".to_string(),
                         api_url: server_url.clone(),
@@ -1713,17 +1713,17 @@ impl ConfigurationView {
                 };
                 
                 // First check if the server is healthy
-                let is_healthy = match server.healthcheck(&*http_client).await {
+                let is_healthy = match server_obj.healthcheck(&*http_client).await {
                     Ok(true) => {
-                        log::info!("Server {} is healthy, fetching models", server.name);
+                        log::info!("Server {} is healthy, fetching models", server_obj.name);
                         true
                     },
                     Ok(false) => {
-                        log::warn!("Server {} is not healthy, skipping model fetch", server.name);
+                        log::warn!("Server {} is not healthy, skipping model fetch", server_obj.name);
                         false
                     },
                     Err(e) => {
-                        log::error!("Health check failed for server {}: {}", server.name, e);
+                        log::error!("Health check failed for server {}: {}", server_obj.name, e);
                         false
                     }
                 };
@@ -2645,19 +2645,12 @@ impl Render for ConfigurationView {
                                                                                     // We use a synchronous approach here to avoid async complexity in UI rendering
                                                                                     let has_models = server.has_models();
                                                                                     
-                                                                                    // Schedule a background server check that will update UI when complete
-                                                                                    let server_id = server.id.clone();
-                                                                                    let state = self.state.clone();
-                                                                                    cx.spawn(move |_, cx| async move {
-                                                                                        // Force UI refresh after a delay to check actual connections
-                                                                                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                                                                                        cx.update(|cx| {
-                                                                                            state.update(cx, |state, cx| {
-                                                                                                // Just trigger a UI refresh
-                                                                                                cx.notify();
-                                                                                            }).ok();
-                                                                                        }).ok();
-                                                                                    }).detach();
+                                                                                    // Instead of trying to do an async check, use a simpler approach:
+                                                                                    // Just use the has_models as connection status
+                                                                                    let _server_name = server.name.clone();
+                                                                                    
+                                                                                    // We'll let the fetch_models in state handle 
+                                                                                    // the actual connection checking
                                                                                     
                                                                                     // Use has_models as connection status indication
                                                                                     let is_connected = has_models;
@@ -2712,19 +2705,9 @@ impl Render for ConfigurationView {
                                                                             // We'll check actual connection status in background
                                                                             let is_connected = has_models;
                                                                             
-                                                                            // Schedule a background check to update UI after a short delay
-                                                                            let server_clone = server.clone();
-                                                                            let state = self.state.clone();
-                                                                            cx.spawn(move |_, cx| async move {
-                                                                                // Wait briefly then update UI
-                                                                                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                                                                                cx.update(|cx| {
-                                                                                    state.update(cx, |_, cx| {
-                                                                                        // Just trigger a UI refresh
-                                                                                        cx.notify();
-                                                                                    }).ok();
-                                                                                }).ok();
-                                                                            }).detach();
+                                                                            // Simplified approach: don't try to do async connection check
+                                                                            // Just use simple approach to avoid complexity and lifetime issues
+                                                                            let _server_copy = server.name.clone();
                                                                             
                                                                             if server.enabled && !is_connected {
                                                                                 // Show Connect button for enabled but not connected servers
