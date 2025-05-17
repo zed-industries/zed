@@ -385,16 +385,18 @@ pub async fn stream_chat_completion(
             messages: request.messages.iter().map(|msg| {
                 match msg {
                     ChatMessage::User { content } => {
-                        let truncated = if content.len() > 100 {
-                            format!("{}... [truncated, total length: {} chars]", &content[..100], content.len())
+                        let truncated = if content.chars().count() > 100 {
+                            let prefix: String = content.chars().take(100).collect();
+                            format!("{}... [truncated, total length: {} chars]", prefix, content.chars().count())
                         } else {
                             content.clone()
                         };
                         ChatMessage::User { content: truncated }
                     },
                     ChatMessage::System { content } => {
-                        let truncated = if content.len() > 100 {
-                            format!("{}... [truncated, total length: {} chars]", &content[..100], content.len())
+                        let truncated = if content.chars().count() > 100 {
+                            let prefix: String = content.chars().take(100).collect();
+                            format!("{}... [truncated, total length: {} chars]", prefix, content.chars().count())
                         } else {
                             content.clone()
                         };
@@ -402,8 +404,9 @@ pub async fn stream_chat_completion(
                     },
                     ChatMessage::Assistant { content, tool_calls } => {
                         let truncated = content.as_ref().map(|c| {
-                            if c.len() > 100 {
-                                format!("{}... [truncated, total length: {} chars]", &c[..100], c.len())
+                            if c.chars().count() > 100 {
+                                let prefix: String = c.chars().take(100).collect();
+                                format!("{}... [truncated, total length: {} chars]", prefix, c.chars().count())
                             } else {
                                 c.clone()
                             }
@@ -414,8 +417,9 @@ pub async fn stream_chat_completion(
                         }
                     },
                     ChatMessage::Tool { content, tool_call_id } => {
-                        let truncated = if content.len() > 100 {
-                            format!("{}... [truncated, total length: {} chars]", &content[..100], content.len())
+                        let truncated = if content.chars().count() > 100 {
+                            let prefix: String = content.chars().take(100).collect();
+                            format!("{}... [truncated, total length: {} chars]", prefix, content.chars().count())
                         } else {
                             content.clone()
                         };
@@ -843,4 +847,62 @@ pub struct SimplifiedModelListing {
 pub struct SimplifiedListModelsResponse {
     pub data: Vec<SimplifiedModelListing>,
     pub object: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_string_truncation_with_utf8() {
+        let russian_text = "какой курс долаара и куда сходить в москве напиши доклад и сохрани в файл";
+        let chinese_text = "你好，世界！这是一个测试，看看我们的代码是否能够正确处理UTF-8字符。这是一个非常长的字符串，应该会被截断。";
+        let emoji_text = "🚀 🌟 🌈 💻 🔥 📱 🎮 🎯 🎲 🎮 🎲 🎯 🎮 🎲 🎯 🎮 🎲 🎯 🎮 🎲 🎯 🎮 🎲 🎯";
+        
+        // Test ChatMessage::User with Russian text
+        let user_message = ChatMessage::User { content: russian_text.to_string() };
+        if let ChatMessage::User { content } = user_message {
+            let truncated = if content.chars().count() > 100 {
+                let prefix: String = content.chars().take(100).collect();
+                format!("{}... [truncated, total length: {} chars]", prefix, content.chars().count())
+            } else {
+                content.clone()
+            };
+            assert_eq!(truncated, russian_text); // Should not be truncated as it's < 100 chars
+        }
+        
+        // Generate a very long Chinese text by repeating
+        let long_chinese_text = chinese_text.repeat(5);
+        
+        // Test ChatMessage::System with long Chinese text
+        let system_message = ChatMessage::System { content: long_chinese_text.clone() };
+        if let ChatMessage::System { content } = system_message {
+            let truncated = if content.chars().count() > 100 {
+                let prefix: String = content.chars().take(100).collect();
+                format!("{}... [truncated, total length: {} chars]", prefix, content.chars().count())
+            } else {
+                content.clone()
+            };
+            assert!(truncated.starts_with("你好"));
+            assert!(truncated.contains("... [truncated"));
+            assert_ne!(truncated, long_chinese_text); // Should be truncated
+        }
+        
+        // Test ChatMessage::Assistant with emoji text
+        let assistant_message = ChatMessage::Assistant { 
+            content: Some(emoji_text.to_string()),
+            tool_calls: None
+        };
+        if let ChatMessage::Assistant { content, .. } = assistant_message {
+            let truncated = content.map(|c| {
+                if c.chars().count() > 100 {
+                    let prefix: String = c.chars().take(100).collect();
+                    format!("{}... [truncated, total length: {} chars]", prefix, c.chars().count())
+                } else {
+                    c
+                }
+            });
+            assert_eq!(truncated.unwrap(), emoji_text); // Should not be truncated as it's < 100 chars
+        }
+    }
 }
