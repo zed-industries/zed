@@ -5728,20 +5728,29 @@ impl Render for Workspace {
         let centered_layout = self.centered_layout
             && self.center.panes().len() == 1
             && self.active_item(cx).is_some();
+
+        let centered_settings = WorkspaceSettings::get_global(cx).centered_layout;
+        let show_border = centered_layout && centered_settings.show_border;
+
         let render_padding = |size| {
             (size > 0.0).then(|| {
-                div()
+                let el = div()
                     .h_full()
                     .w(relative(size))
-                    .bg(cx.theme().colors().editor_background)
-                    .border_color(cx.theme().colors().pane_group_border)
+                    .bg(cx.theme().colors().editor_background);
+
+                if show_border {
+                    el.border_color(cx.theme().colors().pane_group_border)
+                } else {
+                    el
+                }
             })
         };
+
         let paddings = if centered_layout {
-            let settings = WorkspaceSettings::get_global(cx).centered_layout;
             (
-                render_padding(Self::adjust_padding(settings.left_padding)),
-                render_padding(Self::adjust_padding(settings.right_padding)),
+                render_padding(Self::adjust_padding(centered_settings.left_padding)),
+                render_padding(Self::adjust_padding(centered_settings.right_padding)),
             )
         } else {
             (None, None)
@@ -5792,9 +5801,11 @@ impl Render for Workspace {
                                 .flex()
                                 .flex_col()
                                 .overflow_hidden()
-                                .border_t_1()
-                                .border_b_1()
-                                .border_color(colors.border)
+                                .when(show_border, |el| {
+                                    el.border_t_1()
+                                        .border_b_1()
+                                        .border_color(colors.border)
+                                })
                                 .child({
                                     let this = cx.entity().clone();
                                     canvas(
@@ -5909,10 +5920,12 @@ impl Render for Workspace {
                                                                     .flex_1()
                                                                     .when_some(
                                                                         paddings.0,
-                                                                        |this, p| {
-                                                                            this.child(
-                                                                                p.border_r_1(),
-                                                                            )
+                                                                        move |this, p| {
+                                                                            this.child(if show_border {
+                                                                                p.border_r_1()
+                                                                            } else {
+                                                                                p
+                                                                            })
                                                                         },
                                                                     )
                                                                     .child(self.center.render(
@@ -5931,10 +5944,12 @@ impl Render for Workspace {
                                                                     ))
                                                                     .when_some(
                                                                         paddings.1,
-                                                                        |this, p| {
-                                                                            this.child(
-                                                                                p.border_l_1(),
-                                                                            )
+                                                                        move |this, p| {
+                                                                            this.child(if show_border {
+                                                                                p.border_l_1()
+                                                                            } else {
+                                                                                p
+                                                                            })
                                                                         },
                                                                     ),
                                                             ),
@@ -5978,7 +5993,13 @@ impl Render for Workspace {
                                                                     .child(
                                                                         h_flex()
                                                                             .flex_1()
-                                                                            .when_some(paddings.0, |this, p| this.child(p.border_r_1()))
+                                                                            .when_some(paddings.0, move |this, p| {
+                                                                                this.child(if show_border {
+                                                                                    p.border_r_1()
+                                                                                } else {
+                                                                                    p
+                                                                                })
+                                                                            })
                                                                             .child(self.center.render(
                                                                                 self.zoomed.as_ref(),
                                                                                 &PaneRenderContext {
@@ -5993,7 +6014,13 @@ impl Render for Workspace {
                                                                                 window,
                                                                                 cx,
                                                                             ))
-                                                                            .when_some(paddings.1, |this, p| this.child(p.border_l_1())),
+                                                                            .when_some(paddings.1, move |this, p| {
+                                                                                this.child(if show_border {
+                                                                                    p.border_l_1()
+                                                                                } else {
+                                                                                    p
+                                                                                })
+                                                                            }),
                                                                     )
                                                             )
                                                     )
@@ -6040,7 +6067,13 @@ impl Render for Workspace {
                                                                     .child(
                                                                         h_flex()
                                                                             .flex_1()
-                                                                            .when_some(paddings.0, |this, p| this.child(p.border_r_1()))
+                                                                            .when_some(paddings.0, move |this, p| {
+                                                                                this.child(if show_border {
+                                                                                    p.border_r_1()
+                                                                                } else {
+                                                                                    p
+                                                                                })
+                                                                            })
                                                                             .child(self.center.render(
                                                                                 self.zoomed.as_ref(),
                                                                                 &PaneRenderContext {
@@ -6055,7 +6088,13 @@ impl Render for Workspace {
                                                                                 window,
                                                                                 cx,
                                                                             ))
-                                                                            .when_some(paddings.1, |this, p| this.child(p.border_l_1())),
+                                                                            .when_some(paddings.1, move |this, p| {
+                                                                                this.child(if show_border {
+                                                                                    p.border_l_1()
+                                                                                } else {
+                                                                                    p
+                                                                                })
+                                                                            }),
                                                                     )
                                                             )
                                                             .children(self.render_dock(DockPosition::Right, &self.right_dock, window, cx))
@@ -6086,8 +6125,12 @@ impl Render for Workspace {
                                                     .child(
                                                         h_flex()
                                                             .flex_1()
-                                                            .when_some(paddings.0, |this, p| {
-                                                                this.child(p.border_r_1())
+                                                            .when_some(paddings.0, move |this, p| {
+                                                                this.child(if show_border {
+                                                                    p.border_r_1()
+                                                                } else {
+                                                                    p
+                                                                })
                                                             })
                                                             .child(self.center.render(
                                                                 self.zoomed.as_ref(),
@@ -6103,8 +6146,12 @@ impl Render for Workspace {
                                                                 window,
                                                                 cx,
                                                             ))
-                                                            .when_some(paddings.1, |this, p| {
-                                                                this.child(p.border_l_1())
+                                                            .when_some(paddings.1, move |this, p| {
+                                                                this.child(if show_border {
+                                                                    p.border_l_1()
+                                                                } else {
+                                                                    p
+                                                                })
                                                             }),
                                                     )
                                                     .children(self.render_dock(
@@ -6124,22 +6171,51 @@ impl Render for Workspace {
                                 })
                                 .children(self.zoomed.as_ref().and_then(|view| {
                                     let zoomed_view = view.upgrade()?;
-                                    let div = div()
+                                    let mut div = div()
                                         .occlude()
                                         .absolute()
                                         .overflow_hidden()
-                                        .border_color(colors.border)
                                         .bg(colors.background)
                                         .child(zoomed_view)
                                         .inset_0()
                                         .shadow_lg();
 
+                                    if show_border {
+                                        div = div.border_color(colors.border);
+                                    }
+
                                     Some(match self.zoomed_position {
-                                        Some(DockPosition::Left) => div.right_2().border_r_1(),
-                                        Some(DockPosition::Right) => div.left_2().border_l_1(),
-                                        Some(DockPosition::Bottom) => div.top_2().border_t_1(),
+                                        Some(DockPosition::Left) => {
+                                            let positioned_div = div.right_2();
+                                            if show_border {
+                                                positioned_div.border_r_1()
+                                            } else {
+                                                positioned_div
+                                            }
+                                        },
+                                        Some(DockPosition::Right) => {
+                                            let positioned_div = div.left_2();
+                                            if show_border {
+                                                positioned_div.border_l_1()
+                                            } else {
+                                                positioned_div
+                                            }
+                                        },
+                                        Some(DockPosition::Bottom) => {
+                                            let positioned_div = div.top_2();
+                                            if show_border {
+                                                positioned_div.border_t_1()
+                                            } else {
+                                                positioned_div
+                                            }
+                                        },
                                         None => {
-                                            div.top_2().bottom_2().left_2().right_2().border_1()
+                                            let positioned_div = div.top_2().bottom_2().left_2().right_2();
+                                            if show_border {
+                                                positioned_div.border_1()
+                                            } else {
+                                                positioned_div
+                                            }
                                         }
                                     })
                                 }))

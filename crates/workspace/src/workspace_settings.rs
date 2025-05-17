@@ -262,6 +262,15 @@ pub struct CenteredLayoutSettings {
     ///
     /// Default: 0.2
     pub right_padding: Option<f32>,
+    /// Whether to show the border around panes.
+    ///
+    /// Default: true
+    #[serde(default = "default_show_border")]
+    pub show_border: bool,
+}
+
+fn default_show_border() -> bool {
+    true
 }
 
 impl Settings for WorkspaceSettings {
