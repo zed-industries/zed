@@ -2135,6 +2135,7 @@ impl AgentPanel {
 
         v_flex()
             .size_full()
+            .bg(cx.theme().colors().panel_background)
             .when(recent_history.is_empty(), |this| {
                 let configuration_error_ref = &configuration_error;
                 this.child(

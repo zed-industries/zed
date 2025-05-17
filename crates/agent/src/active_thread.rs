@@ -2363,6 +2363,7 @@ impl ActiveThread {
                                             move |el, range, metadata, _, cx| {
                                                 let can_expand = metadata.line_count
                                                     >= MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK;
+
                                                 if !can_expand {
                                                     return el;
                                                 }
@@ -2370,6 +2371,7 @@ impl ActiveThread {
                                                 let is_expanded = active_thread
                                                     .read(cx)
                                                     .is_codeblock_expanded(message_id, range.start);
+
                                                 if is_expanded {
                                                     return el;
                                                 }
@@ -3392,14 +3394,14 @@ impl ActiveThread {
         self.expanded_code_blocks
             .get(&(message_id, ix))
             .copied()
-            .unwrap_or(false)
+            .unwrap_or(true)
     }
 
     pub fn toggle_codeblock_expanded(&mut self, message_id: MessageId, ix: usize) {
         let is_expanded = self
             .expanded_code_blocks
             .entry((message_id, ix))
-            .or_insert(false);
+            .or_insert(true);
         *is_expanded = !*is_expanded;
     }
 }
@@ -3415,6 +3417,7 @@ impl Render for ActiveThread {
         v_flex()
             .size_full()
             .relative()
+            .bg(cx.theme().colors().panel_background)
             .on_mouse_move(cx.listener(|this, _, _, cx| {
                 this.show_scrollbar = true;
                 this.hide_scrollbar_later(cx);
