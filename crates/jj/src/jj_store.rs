@@ -2,18 +2,18 @@ use std::sync::Arc;
 
 use gpui::prelude::*;
 
-use crate::JjRepository;
+use crate::JujutsuRepository;
 
-pub struct JjStore {
-    repository: Arc<dyn JjRepository>,
+pub struct JujutsuStore {
+    repository: Arc<dyn JujutsuRepository>,
 }
 
-impl JjStore {
-    pub fn new(repository: Arc<dyn JjRepository>, cx: &mut Context<Self>) -> Self {
+impl JujutsuStore {
+    pub fn new(repository: Arc<dyn JujutsuRepository>, _cx: &mut Context<Self>) -> Self {
         Self { repository }
     }
 
-    pub fn repository(&self) -> &Arc<dyn JjRepository> {
+    pub fn repository(&self) -> &Arc<dyn JujutsuRepository> {
         &self.repository
     }
 }

@@ -13,15 +13,15 @@ pub struct Bookmark {
     pub ref_name: SharedString,
 }
 
-pub trait JjRepository: Send + Sync {
+pub trait JujutsuRepository: Send + Sync {
     fn list_bookmarks(&self) -> Vec<Bookmark>;
 }
 
-pub struct RealJjRepository {
+pub struct RealJujutsuRepository {
     repository: Arc<jj_lib::repo::ReadonlyRepo>,
 }
 
-impl RealJjRepository {
+impl RealJujutsuRepository {
     pub fn new(workspace_root: &Path) -> Result<Self> {
         let workspace_loader_factory = DefaultWorkspaceLoaderFactory;
         let workspace_loader = workspace_loader_factory.create(workspace_root)?;
@@ -48,7 +48,7 @@ impl RealJjRepository {
     }
 }
 
-impl JjRepository for RealJjRepository {
+impl JujutsuRepository for RealJujutsuRepository {
     fn list_bookmarks(&self) -> Vec<Bookmark> {
         let bookmarks = self.repository.view().bookmarks().collect::<Vec<_>>();
         dbg!(&bookmarks);
@@ -68,9 +68,9 @@ impl JjRepository for RealJjRepository {
     }
 }
 
-pub struct FakeJjRepository {}
+pub struct FakeJujutsuRepository {}
 
-impl JjRepository for FakeJjRepository {
+impl JujutsuRepository for FakeJujutsuRepository {
     fn list_bookmarks(&self) -> Vec<Bookmark> {
         todo!()
     }

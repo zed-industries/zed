@@ -5,7 +5,7 @@ use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
     App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task, Window, prelude::*,
 };
-use jj::{Bookmark, JjRepository, JjStore, RealJjRepository};
+use jj::{Bookmark, JujutsuRepository, JujutsuStore, RealJujutsuRepository};
 use picker::{Picker, PickerDelegate};
 use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt as _;
@@ -21,7 +21,7 @@ fn open(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let repository = Arc::new(RealJjRepository::new(&Path::new(".")).unwrap());
+    let repository = Arc::new(RealJujutsuRepository::new(&Path::new(".")).unwrap());
 
     workspace.toggle_modal(window, cx, |window, cx| {
         let delegate = BookmarkPickerDelegate::new(repository, cx);
@@ -73,8 +73,8 @@ pub struct BookmarkPickerDelegate {
 }
 
 impl BookmarkPickerDelegate {
-    fn new(repository: Arc<dyn JjRepository>, cx: &mut Context<BookmarkPicker>) -> Self {
-        let jj_store = cx.new(|cx| JjStore::new(repository, cx));
+    fn new(repository: Arc<dyn JujutsuRepository>, cx: &mut Context<BookmarkPicker>) -> Self {
+        let jj_store = cx.new(|cx| JujutsuStore::new(repository, cx));
 
         let bookmarks = jj_store.read(cx).repository().list_bookmarks();
 
