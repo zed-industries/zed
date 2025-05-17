@@ -1460,7 +1460,6 @@ impl BufferSearchBar {
                             self.select_next_match(&SelectNextMatch, window, cx);
                         }
                         should_propagate = false;
-                        self.focus_editor(&FocusEditor, window, cx);
                     }
                 }
             }
