@@ -38,7 +38,6 @@ const PROVIDER_NAME: &str = "LM Studio";
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct LmStudioSettings {
     pub servers: Vec<LmStudioServer>,
-    pub available_models: Vec<AvailableModel>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -47,6 +46,7 @@ pub struct LmStudioServer {
     pub name: String, // User-friendly name
     pub api_url: String, // Server URL
     pub enabled: bool, // Whether this server is enabled
+    pub available_models: Option<Vec<AvailableModel>>, // Models available on this server
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -169,21 +169,21 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
         }
 
         // Override with available models from settings
-        for model in AllLanguageModelSettings::get_global(cx)
-            .lmstudio
-            .available_models
-            .iter()
-        {
-            models.insert(
-                model.name.clone(),
-                lmstudio::Model {
-                    name: model.name.clone(),
-                    display_name: model.display_name.clone(),
-                    max_tokens: model.max_tokens,
-                    supports_tools: Some(true),
-                    server_id: model.server_id.clone(),
-                },
-            );
+        for server in &AllLanguageModelSettings::get_global(cx).lmstudio.servers {
+            if let Some(available_models) = &server.available_models {
+                for model in available_models {
+                    models.insert(
+                        model.name.clone(),
+                        lmstudio::Model {
+                            name: model.name.clone(),
+                            display_name: model.display_name.clone(),
+                            max_tokens: model.max_tokens,
+                            supports_tools: Some(true),
+                            server_id: Some(server.id.clone()),
+                        },
+                    );
+                }
+            }
         }
 
         models
@@ -974,6 +974,7 @@ impl ConfigurationView {
             name: self.server_edit_name.trim().to_string(),
             api_url: self.server_edit_url.trim().to_string(),
             enabled,
+            available_models: servers[index].available_models.clone(),
         };
         
         let name_for_log = updated_server.name.clone();
@@ -1132,14 +1133,23 @@ impl ConfigurationView {
         // Update settings
         update_settings_file::<crate::AllLanguageModelSettings>(fs, cx, move |settings, _| {
             if let Some(lmstudio) = &mut settings.lmstudio {
-                if let Some(models) = &mut lmstudio.available_models {
-                    // Remove model with matching name and server_id
-                    models.retain(|m| {
-                        m.name != model_name_clone || 
-                        m.server_id.as_ref().map_or(true, |id| id != &server_id_clone)
-                    });
-                    
-                    log::info!("Removed model {} for server {}", model_name_clone, server_id_clone);
+                if let Some(servers) = &mut lmstudio.servers {
+                    // Find the server with matching ID
+                    for server in servers.iter_mut() {
+                        if server.id == server_id_clone {
+                            if let Some(models) = &mut server.available_models {
+                                // Remove model with matching name
+                                let before_len = models.len();
+                                models.retain(|m| m.name != model_name_clone);
+                                let after_len = models.len();
+                                
+                                if before_len > after_len {
+                                    log::info!("Removed model {} from server {}", model_name_clone, server.name);
+                                }
+                            }
+                            break;
+                        }
+                    }
                 }
             }
         });
@@ -1186,6 +1196,7 @@ impl ConfigurationView {
             name: self.new_server_name.trim().to_string(),
             api_url: self.new_server_url.trim().to_string(),
             enabled: true,
+            available_models: None,
         };
         
         // Log server addition
@@ -1283,8 +1294,8 @@ impl ConfigurationView {
             }
         };
         
-        // Get server ID
-        let server_id = {
+        // Get server ID and index
+        let (server_id, server_idx) = {
             let settings = AllLanguageModelSettings::get_global(cx);
             let servers = &settings.lmstudio.servers;
             let server_idx = self.selected_server_index.unwrap();
@@ -1294,7 +1305,7 @@ impl ConfigurationView {
                 return;
             }
             
-            servers[server_idx].id.clone()
+            (servers[server_idx].id.clone(), server_idx)
         };
         
         // Create new model
@@ -1318,6 +1329,7 @@ impl ConfigurationView {
         
         // Clone for closure
         let model_clone = new_model.clone();
+        let server_index = server_idx;
         
         // Get filesystem
         let fs = <dyn fs::Fs>::global(cx);
@@ -1325,14 +1337,24 @@ impl ConfigurationView {
         // Update settings
         update_settings_file::<crate::AllLanguageModelSettings>(fs, cx, move |settings, _| {
             if let Some(lmstudio) = &mut settings.lmstudio {
-                if lmstudio.available_models.is_none() {
-                    lmstudio.available_models = Some(Vec::new());
-                }
-                
-                if let Some(models) = &mut lmstudio.available_models {
-                    // Check for duplicates
-                    if !models.iter().any(|m| m.name == model_clone.name) {
-                        models.push(model_clone);
+                if let Some(servers) = &mut lmstudio.servers {
+                    if server_index < servers.len() {
+                        // Initialize available_models if it's None
+                        if servers[server_index].available_models.is_none() {
+                            servers[server_index].available_models = Some(Vec::new());
+                        }
+                        
+                        // Add the model to the server's available_models
+                        if let Some(models) = &mut servers[server_index].available_models {
+                            // Check if model with same name already exists
+                            if !models.iter().any(|m| m.name == model_clone.name) {
+                                let model_name = model_clone.name.clone();
+                                models.push(model_clone);
+                                log::info!("Added model {} to server {}", model_name, servers[server_index].name);
+                            } else {
+                                log::warn!("Model {} already exists for server {}", model_clone.name, servers[server_index].name);
+                            }
+                        }
                     }
                 }
             }
@@ -1354,21 +1376,12 @@ impl ConfigurationView {
     }
 
     fn render_models_for_server(&self, server: &LmStudioServer, cx: &mut Context<Self>) -> ui::AnyElement {
-        let settings = AllLanguageModelSettings::get_global(cx);
-        let models = &settings.lmstudio.available_models;
-        
-        // Filter models for this server
-        let server_models: Vec<&AvailableModel> = models.iter()
-            .filter(|model| {
-                // If a model has a server_id, check if it matches this server
-                if let Some(model_server_id) = &model.server_id {
-                    model_server_id == &server.id
-                } else {
-                    // Models without server_id are assumed to be available on all servers
-                    true
-                }
-            })
-            .collect();
+        // Get the server's models if they exist
+        let server_models = if let Some(models) = &server.available_models {
+            models.as_slice()
+        } else {
+            &[] // Empty slice if no models
+        };
             
         if server_models.is_empty() {
             div()
@@ -1779,6 +1792,7 @@ impl Render for ConfigurationView {
                                                                 name: server.name.clone(),
                                                                 api_url: server.api_url.clone(),
                                                                 enabled: server.enabled,
+                                                                available_models: server.available_models.clone(),
                                                             }, cx)
                                                         })
                                                 )
@@ -1881,7 +1895,6 @@ impl LmStudioSettings {
     pub fn default_with_legacy() -> Self {
         Self {
             servers: Vec::new(),
-            available_models: Vec::new(),
         }
     }
     
@@ -1896,6 +1909,7 @@ impl LmStudioSettings {
                 name: "Default LM Studio Server".to_string(),
                 api_url: legacy_api_url.to_string(),
                 enabled: true,
+                available_models: None,
             };
             
             settings.servers.push(server);

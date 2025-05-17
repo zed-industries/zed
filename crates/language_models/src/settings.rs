@@ -179,6 +179,8 @@ pub struct OllamaSettingsContent {
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct LmStudioSettingsContent {
     pub api_url: Option<String>,
+    pub active_server: Option<String>,
+    pub servers: Option<Vec<provider::lmstudio::LmStudioServer>>,
     pub available_models: Option<Vec<provider::lmstudio::AvailableModel>>,
 }
 
@@ -341,14 +343,39 @@ impl settings::Settings for AllLanguageModelSettings {
             // LM Studio
             let lmstudio = value.lmstudio.clone();
 
-            merge(
-                &mut settings.lmstudio.api_url,
-                value.lmstudio.as_ref().and_then(|s| s.api_url.clone()),
-            );
-            merge(
-                &mut settings.lmstudio.available_models,
-                lmstudio.as_ref().and_then(|s| s.available_models.clone()),
-            );
+            // Handle migration from old structure to new structure
+            if let Some(api_url) = lmstudio.as_ref().and_then(|s| s.api_url.clone()) {
+                if !api_url.is_empty() && settings.lmstudio.servers.is_empty() {
+                    // Migrate from old api_url to new server structure
+                    settings.lmstudio = provider::lmstudio::LmStudioSettings::migrate_from_legacy(&api_url);
+                }
+            }
+
+            // Update the servers list from settings
+            if let Some(servers) = lmstudio.as_ref().and_then(|s| s.servers.clone()) {
+                settings.lmstudio.servers = servers;
+            }
+
+            // Handle legacy model list and migrate to server-specific models if needed
+            if let Some(models) = lmstudio.as_ref().and_then(|s| s.available_models.clone()) {
+                // If we have servers and legacy models, add models to first server
+                if !settings.lmstudio.servers.is_empty() {
+                    // Get first server and ensure it has an available_models collection
+                    let first_server = &mut settings.lmstudio.servers[0];
+                    if first_server.available_models.is_none() {
+                        first_server.available_models = Some(Vec::new());
+                    }
+                    
+                    // Only add models that don't already exist
+                    if let Some(server_models) = &mut first_server.available_models {
+                        for model in models {
+                            if !server_models.iter().any(|m| m.name == model.name) {
+                                server_models.push(model);
+                            }
+                        }
+                    }
+                }
+            }
 
             // DeepSeek
             let deepseek = value.deepseek.clone();
