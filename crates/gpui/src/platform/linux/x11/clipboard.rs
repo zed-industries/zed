@@ -983,7 +983,7 @@ impl Clipboard {
         // format that the contents can be converted to
         format_atoms[0..IMAGE_FORMAT_COUNT].copy_from_slice(&image_format_atoms);
         format_atoms[IMAGE_FORMAT_COUNT..].copy_from_slice(&text_format_atoms);
-        debug_assert!(!format_atoms.iter().any(|&a| a == atom_none));
+        debug_assert!(!format_atoms.contains(&atom_none));
 
         let result = self.inner.read(&format_atoms, selection)?;
 

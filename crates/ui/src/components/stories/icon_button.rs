@@ -7,7 +7,7 @@ use crate::{IconButtonShape, Tooltip, prelude::*};
 pub struct IconButtonStory;
 
 impl Render for IconButtonStory {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let default_button = StoryItem::new(
             "Default",
             IconButton::new("default_icon_button", IconName::Hash),
@@ -113,8 +113,8 @@ impl Render for IconButtonStory {
             selected_with_tooltip_button,
         ];
 
-        Story::container()
-            .child(Story::title_for::<IconButton>())
+        Story::container(cx)
+            .child(Story::title_for::<IconButton>(cx))
             .child(StorySection::new().children(buttons))
             .child(
                 StorySection::new().child(StoryItem::new(
