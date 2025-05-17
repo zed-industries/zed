@@ -26,8 +26,8 @@ fn build_menu(
 pub struct ContextMenuStory;
 
 impl Render for ContextMenuStory {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        Story::container()
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        Story::container(cx)
             .on_action(|_: &PrintCurrentDate, _, _| {
                 println!("printing unix time!");
                 if let Ok(unix_time) = std::time::UNIX_EPOCH.elapsed() {

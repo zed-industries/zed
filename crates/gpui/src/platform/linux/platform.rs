@@ -426,8 +426,8 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn app_path(&self) -> Result<PathBuf> {
         // get the path of the executable of the current process
-        let exe_path = env::current_exe()?;
-        Ok(exe_path)
+        let app_path = env::current_exe()?;
+        return Ok(app_path);
     }
 
     fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {

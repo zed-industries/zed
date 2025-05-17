@@ -20,7 +20,6 @@ pub struct MessageStream<S> {
     encoding_buffer: Vec<u8>,
 }
 
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum Message {
     Envelope(Envelope),

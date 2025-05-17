@@ -2854,12 +2854,9 @@ impl ProjectPanel {
                 }
                 let precedes_new_entry = if let Some(new_entry_id) = new_entry_parent_id {
                     entry.id == new_entry_id || {
-                        self.ancestors.get(&entry.id).map_or(false, |entries| {
-                            entries
-                                .ancestors
-                                .iter()
-                                .any(|entry_id| *entry_id == new_entry_id)
-                        })
+                        self.ancestors
+                            .get(&entry.id)
+                            .map_or(false, |entries| entries.ancestors.contains(&new_entry_id))
                     }
                 } else {
                     false
@@ -3369,10 +3366,7 @@ impl ProjectPanel {
                                     .ancestors
                                     .get(&entry.id)
                                     .is_some_and(|auto_folded_dirs| {
-                                        auto_folded_dirs
-                                            .ancestors
-                                            .iter()
-                                            .any(|entry_id| *entry_id == edit_state.entry_id)
+                                        auto_folded_dirs.ancestors.contains(&edit_state.entry_id)
                                     })
                         };
 

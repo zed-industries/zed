@@ -451,7 +451,7 @@ impl<T: 'static> PromptEditor<T> {
                     editor.move_to_end(&Default::default(), window, cx)
                 });
             }
-        } else {
+        } else if self.context_strip.read(cx).has_context_items(cx) {
             self.context_strip.focus_handle(cx).focus(window);
         }
     }
