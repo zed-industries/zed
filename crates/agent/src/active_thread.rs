@@ -456,13 +456,9 @@ fn render_markdown_code_block(
         .copied_code_block_ids
         .contains(&(message_id, ix));
 
-    let can_expand = metadata.line_count >= MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK;
+    // let can_expand = metadata.line_count >= MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK;
 
-    let is_expanded = if can_expand {
-        active_thread.read(cx).is_codeblock_expanded(message_id, ix)
-    } else {
-        false
-    };
+    let is_expanded = active_thread.read(cx).is_codeblock_expanded(message_id, ix);
 
     let codeblock_header_bg = cx
         .theme()
@@ -519,44 +515,50 @@ fn render_markdown_code_block(
                 }
             }),
         )
-        .when(can_expand, |header| {
-            header.child(
-                IconButton::new(
-                    ("expand-collapse-code", ix),
-                    if is_expanded {
-                        IconName::ChevronUp
-                    } else {
-                        IconName::ChevronDown
-                    },
-                )
-                .icon_color(Color::Muted)
-                .shape(ui::IconButtonShape::Square)
-                .tooltip(Tooltip::text(if is_expanded {
-                    "Collapse Code"
+        .child(
+            IconButton::new(
+                ("expand-collapse-code", ix),
+                if is_expanded {
+                    IconName::ChevronUp
                 } else {
-                    "Expand Code"
-                }))
-                .on_click({
-                    let active_thread = active_thread.clone();
-                    move |_event, _window, cx| {
-                        active_thread.update(cx, |this, cx| {
-                            this.toggle_codeblock_expanded(message_id, ix);
-                            cx.notify();
-                        });
-                    }
-                }),
+                    IconName::ChevronDown
+                },
             )
-        });
+            .icon_color(Color::Muted)
+            .shape(ui::IconButtonShape::Square)
+            .tooltip(Tooltip::text(if is_expanded {
+                "Collapse Code"
+            } else {
+                "Expand Code"
+            }))
+            .on_click({
+                let active_thread = active_thread.clone();
+                move |_event, _window, cx| {
+                    active_thread.update(cx, |this, cx| {
+                        this.toggle_codeblock_expanded(message_id, ix);
+                        cx.notify();
+                    });
+                }
+            }),
+        );
 
     let codeblock_header = h_flex()
         .relative()
         .p_1()
         .gap_1()
         .justify_between()
-        .border_b_1()
-        .border_color(cx.theme().colors().border.opacity(0.6))
         .bg(codeblock_header_bg)
-        .rounded_t_md()
+        .when(is_expanded, |this| {
+            this.border_b_1()
+                .border_color(cx.theme().colors().border.opacity(0.6))
+        })
+        .map(|this| {
+            if !is_expanded {
+                this.rounded_md()
+            } else {
+                this.rounded_t_md()
+            }
+        })
         .children(label)
         .child(control_buttons);
 
@@ -569,7 +571,7 @@ fn render_markdown_code_block(
         .border_color(cx.theme().colors().border.opacity(0.6))
         .bg(cx.theme().colors().editor_background)
         .child(codeblock_header)
-        .when(can_expand && !is_expanded, |this| this.max_h_80())
+        .when(!is_expanded, |this| this.h(rems_from_px(29.)))
 }
 
 fn open_path(
@@ -2369,41 +2371,20 @@ impl ActiveThread {
                                         }),
                                         transform: Some(Arc::new({
                                             let active_thread = cx.entity();
-                                            let editor_bg = cx.theme().colors().editor_background;
 
-                                            move |el, range, metadata, _, cx| {
+                                            move |element, range, metadata, _, cx| {
                                                 let can_expand = metadata.line_count
                                                     >= MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK;
-
-                                                if !can_expand {
-                                                    return el;
-                                                }
 
                                                 let is_expanded = active_thread
                                                     .read(cx)
                                                     .is_codeblock_expanded(message_id, range.start);
 
-                                                if is_expanded {
-                                                    return el;
+                                                if !can_expand || is_expanded {
+                                                    return element;
                                                 }
 
-                                                el.child(
-                                                    div()
-                                                        .absolute()
-                                                        .bottom_0()
-                                                        .left_0()
-                                                        .w_full()
-                                                        .h_1_4()
-                                                        .rounded_b_lg()
-                                                        .bg(linear_gradient(
-                                                            0.,
-                                                            linear_color_stop(editor_bg, 0.),
-                                                            linear_color_stop(
-                                                                editor_bg.opacity(0.),
-                                                                1.,
-                                                            ),
-                                                        )),
-                                                )
+                                                element
                                             }
                                         })),
                                     },
