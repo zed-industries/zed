@@ -419,6 +419,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
         &self,
         _config: &serde_json::Value,
     ) -> Result<StartDebuggingRequestArgumentsRequest> {
+        dbg!("In default validate config");
         bail!("Not yet implemented for {}", self.name())
     }
 

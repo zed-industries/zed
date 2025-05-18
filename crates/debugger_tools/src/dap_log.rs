@@ -321,7 +321,7 @@ impl LogStore {
     }
 
     fn remove_debug_client(&mut self, client_id: SessionId, cx: &mut Context<Self>) {
-        self.debug_clients.remove(&client_id);
+        // self.debug_clients.remove(&client_id);
         cx.notify();
     }
 
@@ -560,26 +560,40 @@ impl DapLogView {
     }
 
     fn menu_items(&self, cx: &App) -> Option<Vec<DapMenuItem>> {
-        let mut menu_items = self
-            .project
-            .read(cx)
-            .dap_store()
-            .read(cx)
-            .sessions()
-            .filter_map(|session| {
-                let session = session.read(cx);
-                session.adapter();
-                let client = session.adapter_client()?;
-                Some(DapMenuItem {
-                    client_id: client.id(),
-                    client_name: session.adapter().to_string(),
-                    has_adapter_logs: client.has_adapter_logs(),
-                    selected_entry: self.current_view.map_or(LogKind::Adapter, |(_, kind)| kind),
+        let test_name = "test".to_string();
+        Some(self.log_store.read_with(cx, |store, cx| {
+            store
+                .debug_clients
+                .iter()
+                .map(|(session_id, state)| DapMenuItem {
+                    client_id: *session_id,
+                    client_name: test_name.clone(),
+                    has_adapter_logs: true,
+                    selected_entry: LogKind::Rpc,
                 })
-            })
-            .collect::<Vec<_>>();
-        menu_items.sort_by_key(|item| item.client_id.0);
-        Some(menu_items)
+                .collect()
+        }))
+        // todo!()
+        // let mut menu_items = self
+        //     .project
+        //     .read(cx)
+        //     .dap_store()
+        //     .read(cx)
+        //     .sessions()
+        //     .filter_map(|session| {
+        //         let session = session.read(cx);
+        //         session.adapter();
+        //         let client = session.adapter_client()?;
+        //         Some(DapMenuItem {
+        //             client_id: client.id(),
+        //             client_name: session.adapter().to_string(),
+        //             has_adapter_logs: client.has_adapter_logs(),
+        //             selected_entry: self.current_view.map_or(LogKind::Adapter, |(_, kind)| kind),
+        //         })
+        //     })
+        //     .collect::<Vec<_>>();
+        // menu_items.sort_by_key(|item| item.client_id.0);
+        // Some(menu_items)
     }
 
     fn show_rpc_trace_for_server(
