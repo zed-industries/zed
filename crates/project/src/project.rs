@@ -4004,7 +4004,7 @@ impl Project {
         })
     }
 
-    pub fn resolve_path_in_worktree(
+    fn resolve_path_in_worktree(
         worktree: &Entity<Worktree>,
         path: &PathBuf,
         cx: &mut AsyncApp,
@@ -4026,28 +4026,6 @@ impl Project {
                 })
             })
             .ok()?
-    }
-
-    pub fn resolve_path_in_worktree_sync(
-        worktree: &Entity<Worktree>,
-        path: &PathBuf,
-        cx: &mut App,
-    ) -> Option<ResolvedPath> {
-        worktree.update(cx, |worktree, _| {
-            let root_entry_path = &worktree.root_entry()?.path;
-            let resolved = resolve_path(root_entry_path, path);
-            let stripped = resolved.strip_prefix(root_entry_path).unwrap_or(&resolved);
-            worktree.entry_for_path(stripped).map(|entry| {
-                let project_path = ProjectPath {
-                    worktree_id: worktree.id(),
-                    path: entry.path.clone(),
-                };
-                ResolvedPath::ProjectPath {
-                    project_path,
-                    is_dir: entry.is_dir(),
-                }
-            })
-        })
     }
 
     pub fn list_directory(

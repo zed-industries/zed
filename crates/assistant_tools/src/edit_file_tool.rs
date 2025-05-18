@@ -196,13 +196,6 @@ impl Tool for EditFileTool {
                 })?
                 .await?;
 
-            let exists = buffer.read_with(cx, |buffer, _| {
-                buffer
-                    .file()
-                    .as_ref()
-                    .map_or(false, |file| file.disk_state().exists())
-            })?;
-
             let old_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
             let old_text = cx
                 .background_spawn({
@@ -348,55 +341,59 @@ fn resolve_path(
     project: Entity<Project>,
     cx: &mut App,
 ) -> Result<ProjectPath> {
-    let project_path = project.read(cx).find_project_path(&input.path, cx);
-    let entry = project_path
-        .as_ref()
-        .map(|path| project.read(cx).entry_for_path(path, cx))
-        .flatten();
-    let exists = entry.is_some();
-    let is_file = entry.map_or(false, |entry| entry.is_file());
+    let project = project.read(cx);
 
     match input.mode {
-        EditFileMode::Edit | EditFileMode::Overwrite => project_path
-            .filter(|_| exists)
-            .ok_or_else(|| anyhow!("Can't edit file: path not found"))
-            .and_then(|path| {
-                if is_file {
-                    Ok(path)
-                } else {
-                    Err(anyhow!("Can't edit file: path is a directory"))
-                }
-            }),
+        EditFileMode::Edit | EditFileMode::Overwrite => {
+            let path = project
+                .find_project_path(&input.path, cx)
+                .ok_or_else(|| anyhow!("Can't edit file: path not found"))?;
+
+            let entry = project
+                .entry_for_path(&path, cx)
+                .ok_or_else(|| anyhow!("Can't edit file: path not found"))?;
+
+            if !entry.is_file() {
+                return Err(anyhow!("Can't edit file: path is a directory"));
+            }
+
+            Ok(path)
+        }
 
         EditFileMode::Create => {
-            if let Some(path) = project_path {
-                let exists = project.read(cx).entry_for_path(&path, cx).is_some();
-                if exists {
-                    return Err(anyhow!("Can't create file: file already exists."));
+            if let Some(path) = project.find_project_path(&input.path, cx) {
+                if project.entry_for_path(&path, cx).is_some() {
+                    return Err(anyhow!("Can't create file: file already exists"));
                 }
             }
-            let Some(parent_path) = input.path.parent() else {
-                return Err(anyhow!("Can't create file: incorrect path"));
-            };
-            let parent_project_path = project.read(cx).find_project_path(&parent_path, cx);
+
+            let parent_path = input
+                .path
+                .parent()
+                .ok_or_else(|| anyhow!("Can't create file: incorrect path"))?;
+
+            let parent_project_path = project.find_project_path(&parent_path, cx);
 
             let parent_entry = parent_project_path
                 .as_ref()
-                .map(|path| project.read(cx).entry_for_path(&path, cx))
-                .flatten();
+                .and_then(|path| project.entry_for_path(&path, cx))
+                .ok_or_else(|| anyhow!("Can't create file: parent directory doesn't exist"))?;
 
-            let Some(parent_entry) = parent_entry else {
-                return Err(anyhow!("Can't create file: parent directory doesn't exist"));
-            };
             if !parent_entry.is_dir() {
                 return Err(anyhow!("Can't create file: parent is not a directory"));
             }
 
+            let file_name = input
+                .path
+                .file_name()
+                .ok_or_else(|| anyhow!("Can't create file: invalid filename"))?;
+
             let new_file_path = parent_project_path.map(|parent| ProjectPath {
-                path: Arc::from(parent.path.join(input.path.file_name().unwrap())),
+                path: Arc::from(parent.path.join(file_name)),
                 ..parent
             });
-            new_file_path.ok_or(anyhow!("Can't create file"))
+
+            new_file_path.ok_or_else(|| anyhow!("Can't create file"))
         }
     }
 }
@@ -963,7 +960,7 @@ mod tests {
             .await;
         assert_eq!(
             result.unwrap_err().to_string(),
-            "root/nonexistent_file.txt not found"
+            "Can't edit file: path not found"
         );
     }
 
@@ -983,7 +980,7 @@ mod tests {
         let result = test_resolve_path(mode, "root/dir/subdir/existing.txt", cx);
         assert_eq!(
             result.await.unwrap_err().to_string(),
-            "Can't create file: file already exists."
+            "Can't create file: file already exists"
         );
 
         let result = test_resolve_path(mode, "root/dir/nonexistent_dir/new.txt", cx);
