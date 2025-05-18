@@ -1582,8 +1582,22 @@ impl ConfigurationView {
             }
         });
         
-        // Refresh models
-        self.state.update(cx, |state, cx| state.restart_fetch_models_task(cx));
+        // Update in-memory state directly rather than reloading from server
+        self.state.update(cx, |state, cx| {
+            // Find and remove the model from in-memory state
+            let before = state.available_models.len();
+            state.available_models.retain(|model| {
+                if let Some(id) = &model.server_id {
+                    !(id == &server_id && model.name == model_name)
+                } else {
+                    true
+                }
+            });
+            let after = state.available_models.len();
+            
+            log::info!("Removed {} models from in-memory state", before - after);
+            cx.notify();
+        });
         
         cx.notify();
     }
@@ -2216,9 +2230,13 @@ impl ConfigurationView {
                                 .child(
                                     // Add the toggle button 
                                     toggle_button
-                                        .on_click(cx.listener(move |this, _toggle_state, _, cx| {
-                                            log::info!("Toggle clicked for model: {}", model_name);
-                                            this.toggle_model_enabled(server_id.clone(), model_name.clone(), cx);
+                                        .on_click(cx.listener({
+                                            let model_name_for_toggle = model_name.clone();
+                                            let server_id_for_toggle = server_id.clone();
+                                            move |this, _toggle_state, _, cx| {
+                                                log::info!("Toggle clicked for model: {}", model_name_for_toggle);
+                                                this.toggle_model_enabled(server_id_for_toggle.clone(), model_name_for_toggle.clone(), cx);
+                                            }
                                         }))
                                 )
                             )
@@ -2411,28 +2429,28 @@ impl ConfigurationView {
                                         // Get the server default
                                         let server_default = model.server_max_tokens;
                                         
-                                                                                            // Log current state before update
-                                                    log::info!("Before update: model {}, server_max_tokens={}, custom_max_tokens={:?}", 
-                                                        model_name_clone, 
-                                                        model.server_max_tokens,
-                                                        model.custom_max_tokens);
-                                                    
-                                                    // Update the custom max tokens
-                                                    if new_max_tokens == server_default {
-                                                        // If value equals server default, remove the custom value
-                                                        model.custom_max_tokens = None;
-                                                        log::info!("Reset max tokens to server default for model {}", model_name_clone);
-                                                    } else {
-                                                        model.custom_max_tokens = Some(new_max_tokens);
-                                                        log::info!("Updated custom max tokens for model {} to {}", 
-                                                            model_name_clone, new_max_tokens);
-                                                    }
-                                                    
-                                                    // Log state after update
-                                                    log::info!("After update: model {}, server_max_tokens={}, custom_max_tokens={:?}", 
-                                                        model_name_clone, 
-                                                        model.server_max_tokens,
-                                                        model.custom_max_tokens);
+                                        // Log current state before update
+                                        log::info!("Before update: model {}, server_max_tokens={}, custom_max_tokens={:?}", 
+                                            model_name_clone, 
+                                            model.server_max_tokens,
+                                            model.custom_max_tokens);
+                                        
+                                        // Update the custom max tokens
+                                        if new_max_tokens == server_default {
+                                            // If value equals server default, remove the custom value
+                                            model.custom_max_tokens = None;
+                                            log::info!("Reset max tokens to server default for model {}", model_name_clone);
+                                        } else {
+                                            model.custom_max_tokens = Some(new_max_tokens);
+                                            log::info!("Updated custom max tokens for model {} to {}", 
+                                                model_name_clone, new_max_tokens);
+                                        }
+                                        
+                                        // Log state after update
+                                        log::info!("After update: model {}, server_max_tokens={}, custom_max_tokens={:?}", 
+                                            model_name_clone, 
+                                            model.server_max_tokens,
+                                            model.custom_max_tokens);
                                         break;
                                     }
                                 }
@@ -2477,9 +2495,11 @@ impl ConfigurationView {
         self.editing_model_name = None;
         self.edit_max_tokens_input = None;
         
-        // Refresh the models
-        self.state.update(cx, |state, cx| {
-            state.restart_fetch_models_task(cx);
+        // Update in-memory models but don't refresh from server
+        self.state.update(cx, |_state, cx| {
+            // No need to change the in-memory model's max_tokens since the UI reads from settings
+            // We just need to trigger a UI refresh
+            cx.notify();
         });
         
         cx.notify();
@@ -2996,10 +3016,30 @@ impl Render for ConfigurationView {
                                                 .child(
                                                     // Add the toggle button 
                                                     toggle_button
-                                                        .on_click(cx.listener(move |this, _toggle_state, _, cx| {
-                                                            log::info!("Toggle clicked for model: {}", model_name);
-                                                            this.toggle_model_enabled(server_id.clone(), model_name.clone(), cx);
+                                                        .on_click(cx.listener({
+                                                            let model_name_for_toggle = model_name.clone();
+                                                            let server_id_for_toggle = server_id.clone();
+                                                            move |this, _toggle_state, _, cx| {
+                                                                log::info!("Toggle clicked for model: {}", model_name_for_toggle);
+                                                                this.toggle_model_enabled(server_id_for_toggle.clone(), model_name_for_toggle.clone(), cx);
+                                                            }
                                                         }))
+                                                )
+                                                // Add a delete button for models
+                                                .child(
+                                                    IconButton::new(
+                                                        ElementId::NamedInteger("remove-model".into(), ((idx * 1000) + model_idx) as u64),
+                                                        IconName::Trash
+                                                    )
+                                                    .tooltip(Tooltip::text("Remove Model"))
+                                                    .icon_color(Color::Error)
+                                                    .on_click(cx.listener({
+                                                        let model_name_for_delete = model_name.clone();
+                                                        let server_id_for_delete = server_id.clone();
+                                                        move |this, _, _, cx| {
+                                                            this.remove_model(model_name_for_delete.clone(), server_id_for_delete.clone(), cx);
+                                                        }
+                                                    }))
                                                 )
                                             )
                                     )
@@ -3095,6 +3135,53 @@ impl Render for ConfigurationView {
                                                 Button::new("add-new-model", "Add Model")
                                                     .on_click(cx.listener(move |this, _, _, cx| {
                                                         this.add_custom_model(cx);
+                                                    }))
+                                            )
+                                    )
+                            )
+                            .into_any_element()
+                    );
+                }
+                
+                // Add max tokens edit dialog if needed
+                if self.is_editing_max_tokens && 
+                   self.editing_model_server_id.as_ref() == Some(&server.id) {
+                    list_items.push(
+                        ListItem::new(ElementId::NamedInteger("edit-max-tokens".into(), idx as u64))
+                            .indent_level(1)
+                            .child(
+                                v_flex()
+                                    .gap_2()
+                                    .p_2()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .bg(cx.theme().colors().background)
+                                    .rounded_md()
+                                    .my_2()
+                                    .w_full()
+                                    .child(Label::new("Edit Max Tokens"))
+                                    .child(
+                                        v_flex()
+                                            .gap_1()
+                                            .child(Label::new("Max Tokens:").size(LabelSize::Small))
+                                            .child(self.edit_max_tokens_input.clone().unwrap())
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .justify_end()
+                                            .gap_2()
+                                            .mt_2()
+                                            .child(
+                                                Button::new("cancel-max-tokens", "Cancel")
+                                                    .style(ButtonStyle::Subtle)
+                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                        this.cancel_max_tokens_edit(cx);
+                                                    }))
+                                            )
+                                            .child(
+                                                Button::new("save-max-tokens", "Save")
+                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                        this.save_max_tokens_edit(cx);
                                                     }))
                                             )
                                     )
