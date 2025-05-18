@@ -62,7 +62,6 @@ impl RecentProjects {
             }
         });
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
-
         // We do not want to block the UI on a potentially lengthy call to DB, so we're gonna swap
         // out workspace locations once the future runs to completion.
         cx.spawn_in(window, async move |this, cx| {

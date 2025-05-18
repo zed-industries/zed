@@ -1,4 +1,4 @@
-use collections::BTreeSet;
+use std::collections::BTreeSet;
 
 pub fn parse_ssh_config_hosts(config: &str) -> BTreeSet<String> {
     let mut hosts = BTreeSet::new();
@@ -7,15 +7,14 @@ pub fn parse_ssh_config_hosts(config: &str) -> BTreeSet<String> {
         let line = line.trim_start();
         if let Some(line) = line.strip_prefix("Host") {
             match line.chars().next() {
-                Some(c) if c == '\\' => {
+                Some('\\') => {
                     needs_another_line = true;
                 }
+                Some('\n' | '\r') => {
+                    needs_another_line = false;
+                }
                 Some(c) if c.is_whitespace() => {
-                    if c == '\n' || c == '\r' {
-                        needs_another_line = false;
-                    } else {
-                        parse_hosts_from(line, &mut hosts);
-                    }
+                    parse_hosts_from(line, &mut hosts);
                 }
                 Some(_) | None => {
                     needs_another_line = false;

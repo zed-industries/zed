@@ -2,6 +2,7 @@ use std::any::Any;
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic;
 use std::sync::atomic::AtomicUsize;
@@ -846,7 +847,7 @@ impl RemoteServerProjects {
         let container_element_id_base =
             SharedString::from(format!("remote-project-container-{element_id_base}"));
 
-        let callback = Arc::new({
+        let callback = Rc::new({
             let project = project.clone();
             move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
                 let Some(app_state) = this
@@ -1384,12 +1385,14 @@ impl RemoteServerProjects {
                 extra_servers_from_config.remove(&connection.host);
             }
         }
-        servers.extend(extra_servers_from_config.into_iter().map(|host_alias| {
-            RemoteEntry::SshConfig {
-                open_folder: NavigableEntry::new(&state.handle, cx),
-                host: host_alias.into(),
-            }
-        }));
+        servers.extend(
+            extra_servers_from_config
+                .into_iter()
+                .map(|host| RemoteEntry::SshConfig {
+                    open_folder: NavigableEntry::new(&state.handle, cx),
+                    host,
+                }),
+        );
 
         let scroll_state = state.scrollbar.parent_entity(&cx.entity());
         let connect_button = div()
