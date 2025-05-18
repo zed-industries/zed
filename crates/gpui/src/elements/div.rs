@@ -21,7 +21,7 @@ use crate::{
     IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
     Render, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task, TooltipId,
-    Visibility, Window, point, px, size,
+    Visibility, Window, WindowControlArea, point, px, size,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -545,28 +545,10 @@ impl Interactivity {
         self.occlude_mouse = true;
     }
 
-    /// Set the bounds of this element as a drag region for the platform window.
-    /// The imperative API equivalent to [`InteractiveElement::window_drag_area`]
-    pub fn window_drag_area(&mut self) {
-        self.window_drag = true;
-    }
-
-    /// Set the bounds of this element as a close button for the platform window.
-    /// The imperative API equivalent to [`InteractiveElement::window_close_area`]
-    pub fn window_close_area(&mut self) {
-        self.window_close = true;
-    }
-
-    /// Set the bounds of this element as a max button for the platform window.
-    /// The imperative API equivalent to [`InteractiveElement::window_max_area`]
-    pub fn window_max_area(&mut self) {
-        self.window_max = true;
-    }
-
-    /// Set the bounds of this element as a min button for the platform window.
-    /// The imperative API equivalent to [`InteractiveElement::window_min_area`]
-    pub fn window_min_area(&mut self) {
-        self.window_min = true;
+    /// Set the bounds of this element as a window control area for the platform window.
+    /// The imperative API equivalent to [`InteractiveElement::window_control_area`]
+    pub fn window_control_area(&mut self, area: WindowControlArea) {
+        self.window_control = Some(area);
     }
 
     /// Registers event handles that stop propagation of mouse events for non-scroll events.
@@ -952,31 +934,10 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Set the bounds of this element as a drag region for the platform window.
-    /// The fluent API equivalent to [`Interactivity::window_drag_area`]
-    fn window_drag_area(mut self) -> Self {
-        self.interactivity().window_drag_area();
-        self
-    }
-
-    /// Set the bounds of this element as a close button for the platform window.
-    /// The fluent API equivalent to [`Interactivity::window_close_area`]
-    fn window_close_area(mut self) -> Self {
-        self.interactivity().window_close_area();
-        self
-    }
-
-    /// Set the bounds of this element as a max button for the platform window.
-    /// The fluent API equivalent to [`Interactivity::window_max_area`]
-    fn window_max_area(mut self) -> Self {
-        self.interactivity().window_max_area();
-        self
-    }
-
-    /// Set the bounds of this element as a min button for the platform window.
-    /// The fluent API equivalent to [`Interactivity::window_min_area`]
-    fn window_min_area(mut self) -> Self {
-        self.interactivity().window_min_area();
+    /// Set the bounds of this element as a window control area for the platform window.
+    /// The fluent API equivalent to [`Interactivity::window_control_area`]
+    fn window_control_area(mut self, area: WindowControlArea) -> Self {
+        self.interactivity().window_control_area(area);
         self
     }
 
@@ -1453,11 +1414,8 @@ pub struct Interactivity {
     pub(crate) drag_listener: Option<(Arc<dyn Any>, DragListener)>,
     pub(crate) hover_listener: Option<Box<dyn Fn(&bool, &mut Window, &mut App)>>,
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
+    pub(crate) window_control: Option<WindowControlArea>,
     pub(crate) occlude_mouse: bool,
-    pub(crate) window_drag: bool,
-    pub(crate) window_close: bool,
-    pub(crate) window_max: bool,
-    pub(crate) window_min: bool,
 
     #[cfg(debug_assertions)]
     pub(crate) location: Option<core::panic::Location<'static>>,
@@ -1589,10 +1547,7 @@ impl Interactivity {
 
     fn should_insert_hitbox(&self, style: &Style) -> bool {
         self.occlude_mouse
-            || self.window_drag
-            || self.window_close
-            || self.window_max
-            || self.window_min
+            || self.window_control.is_some()
             || style.mouse_cursor.is_some()
             || self.group.is_some()
             || self.scroll_offset.is_some()
@@ -1720,20 +1675,9 @@ impl Interactivity {
                                             GroupHitboxes::push(group, hitbox.id, cx);
                                         }
 
-                                        if self.window_drag {
-                                            window.insert_window_drag_hitbox(hitbox.clone());
-                                        }
-
-                                        if self.window_close {
-                                            window.insert_window_close_hitbox(hitbox.clone());
-                                        }
-
-                                        if self.window_max {
-                                            window.insert_window_max_hitbox(hitbox.clone());
-                                        }
-
-                                        if self.window_min {
-                                            window.insert_window_min_hitbox(hitbox.clone());
+                                        if let Some(area) = self.window_control {
+                                            window
+                                                .insert_window_control_hitbox(area, hitbox.clone());
                                         }
 
                                         self.paint_mouse_listeners(

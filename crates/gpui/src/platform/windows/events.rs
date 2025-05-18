@@ -983,42 +983,21 @@ fn handle_hit_test_msg(
     }
 
     let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.hit_test_window_close.take() {
+    if let Some(mut callback) = lock.callbacks.hit_test_window_control.take() {
         drop(lock);
-        let hit = callback();
-        state_ptr.state.borrow_mut().callbacks.hit_test_window_close = Some(callback);
-        if hit {
-            return Some(HTCLOSE as _);
-        }
-    }
-
-    let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.hit_test_window_max.take() {
-        drop(lock);
-        let hit = callback();
-        state_ptr.state.borrow_mut().callbacks.hit_test_window_max = Some(callback);
-        if hit {
-            return Some(HTMAXBUTTON as _);
-        }
-    }
-
-    let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.hit_test_window_min.take() {
-        drop(lock);
-        let hit = callback();
-        state_ptr.state.borrow_mut().callbacks.hit_test_window_min = Some(callback);
-        if hit {
-            return Some(HTMINBUTTON as _);
-        }
-    }
-
-    let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.hit_test_window_drag.take() {
-        drop(lock);
-        let hit = callback();
-        state_ptr.state.borrow_mut().callbacks.hit_test_window_drag = Some(callback);
-        if hit {
-            return Some(HTCAPTION as _);
+        let area = callback();
+        state_ptr
+            .state
+            .borrow_mut()
+            .callbacks
+            .hit_test_window_control = Some(callback);
+        if let Some(area) = area {
+            return match area {
+                WindowControlArea::Close => Some(HTCLOSE as _),
+                WindowControlArea::Max => Some(HTMAXBUTTON as _),
+                WindowControlArea::Min => Some(HTMINBUTTON as _),
+                WindowControlArea::Drag => Some(HTCAPTION as _),
+            };
         }
     }
 

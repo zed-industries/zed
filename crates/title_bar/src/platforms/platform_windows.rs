@@ -1,4 +1,4 @@
-use gpui::{Rgba, WindowAppearance, prelude::*};
+use gpui::{Rgba, WindowAppearance, WindowControlArea, prelude::*};
 
 use ui::prelude::*;
 
@@ -122,6 +122,7 @@ impl RenderOnce for WindowsCaptionButton {
             .id(self.id)
             .justify_center()
             .content_center()
+            .occlude()
             .w(px(36.))
             .h_full()
             .text_size(px(10.0))
@@ -132,21 +133,17 @@ impl RenderOnce for WindowsCaptionButton {
 
                 style.bg(active_color)
             })
-            .when(
-                matches!(self.icon, WindowsCaptionButtonIcon::Close),
-                |this| this.window_close_area(),
-            )
-            .when(
-                matches!(
-                    self.icon,
-                    WindowsCaptionButtonIcon::Maximize | WindowsCaptionButtonIcon::Restore
-                ),
-                |this| this.window_max_area(),
-            )
-            .when(
-                matches!(self.icon, WindowsCaptionButtonIcon::Minimize),
-                |this| this.window_min_area(),
-            )
+            .map(|this| match self.icon {
+                WindowsCaptionButtonIcon::Close => {
+                    this.window_control_area(WindowControlArea::Close)
+                }
+                WindowsCaptionButtonIcon::Maximize | WindowsCaptionButtonIcon::Restore => {
+                    this.window_control_area(WindowControlArea::Max)
+                }
+                WindowsCaptionButtonIcon::Minimize => {
+                    this.window_control_area(WindowControlArea::Min)
+                }
+            })
             .child(match self.icon {
                 WindowsCaptionButtonIcon::Minimize => "\u{e921}",
                 WindowsCaptionButtonIcon::Restore => "\u{e923}",

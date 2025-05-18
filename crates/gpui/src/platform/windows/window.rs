@@ -313,10 +313,7 @@ pub(crate) struct Callbacks {
     pub(crate) moved: Option<Box<dyn FnMut()>>,
     pub(crate) should_close: Option<Box<dyn FnMut() -> bool>>,
     pub(crate) close: Option<Box<dyn FnOnce()>>,
-    pub(crate) hit_test_window_drag: Option<Box<dyn FnMut() -> bool>>,
-    pub(crate) hit_test_window_close: Option<Box<dyn FnMut() -> bool>>,
-    pub(crate) hit_test_window_max: Option<Box<dyn FnMut() -> bool>>,
-    pub(crate) hit_test_window_min: Option<Box<dyn FnMut() -> bool>>,
+    pub(crate) hit_test_window_control: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
     pub(crate) appearance_changed: Option<Box<dyn FnMut()>>,
 }
 
@@ -766,20 +763,8 @@ impl PlatformWindow for WindowsWindow {
         self.0.state.borrow_mut().callbacks.close = Some(callback);
     }
 
-    fn on_hit_test_window_drag(&self, callback: Box<dyn FnMut() -> bool>) {
-        self.0.state.borrow_mut().callbacks.hit_test_window_drag = Some(callback);
-    }
-
-    fn on_hit_test_window_close(&self, callback: Box<dyn FnMut() -> bool>) {
-        self.0.state.borrow_mut().callbacks.hit_test_window_close = Some(callback);
-    }
-
-    fn on_hit_test_window_max(&self, callback: Box<dyn FnMut() -> bool>) {
-        self.0.state.borrow_mut().callbacks.hit_test_window_max = Some(callback);
-    }
-
-    fn on_hit_test_window_min(&self, callback: Box<dyn FnMut() -> bool>) {
-        self.0.state.borrow_mut().callbacks.hit_test_window_min = Some(callback);
+    fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>) {
+        self.0.state.borrow_mut().callbacks.hit_test_window_control = Some(callback);
     }
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
