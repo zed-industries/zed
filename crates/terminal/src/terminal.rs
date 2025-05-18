@@ -1247,12 +1247,13 @@ impl Terminal {
             return;
         }
 
-        let mut key = keystroke.key.clone();
-        if keystroke.modifiers.shift {
-            key = key.to_uppercase();
-        }
+        let key: Cow<'_, str> = if keystroke.modifiers.shift {
+            Cow::Owned(keystroke.key.to_uppercase())
+        } else {
+            Cow::Borrowed(keystroke.key.as_str())
+        };
 
-        let motion: Option<ViMotion> = match key.as_str() {
+        let motion: Option<ViMotion> = match key.as_ref() {
             "h" | "left" => Some(ViMotion::Left),
             "j" | "down" => Some(ViMotion::Down),
             "k" | "up" => Some(ViMotion::Up),
@@ -1282,7 +1283,7 @@ impl Terminal {
             return;
         }
 
-        let scroll_motion = match key.as_str() {
+        let scroll_motion = match key.as_ref() {
             "g" => Some(AlacScroll::Top),
             "G" => Some(AlacScroll::Bottom),
             "b" if keystroke.modifiers.control => Some(AlacScroll::PageUp),
@@ -1303,7 +1304,7 @@ impl Terminal {
             return;
         }
 
-        match key.as_str() {
+        match key.as_ref() {
             "v" => {
                 let point = self.last_content.cursor.point;
                 let selection_type = SelectionType::Simple;
