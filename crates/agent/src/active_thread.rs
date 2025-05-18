@@ -1542,11 +1542,15 @@ impl ActiveThread {
         let project = self.thread.read(cx).project().clone();
         let prompt_store = self.thread_store.read(cx).prompt_store().clone();
 
+        let git_store = project.read(cx).git_store().clone();
+        let checkpoint = git_store.update(cx, |git_store, cx| git_store.checkpoint(cx));
+
         let load_context_task =
             crate::context::load_context(new_context, &project, &prompt_store, cx);
         self._load_edited_message_context_task =
             Some(cx.spawn_in(window, async move |this, cx| {
-                let context = load_context_task.await;
+                let (context, checkpoint) =
+                    futures::future::join(load_context_task, checkpoint).await;
                 let _ = this
                     .update_in(cx, |this, window, cx| {
                         this.thread.update(cx, |thread, cx| {
@@ -1555,6 +1559,7 @@ impl ActiveThread {
                                 Role::User,
                                 vec![MessageSegment::Text(edited_text)],
                                 Some(context.loaded_context),
+                                checkpoint.ok(),
                                 cx,
                             );
                             for message_id in this.messages_after(message_id) {

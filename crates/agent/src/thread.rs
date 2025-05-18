@@ -214,7 +214,7 @@ pub struct GitState {
     pub diff: Option<String>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ThreadCheckpoint {
     message_id: MessageId,
     git_checkpoint: GitStoreCheckpoint,
@@ -996,6 +996,7 @@ impl Thread {
         new_role: Role,
         new_segments: Vec<MessageSegment>,
         loaded_context: Option<LoadedContext>,
+        checkpoint: Option<GitStoreCheckpoint>,
         cx: &mut Context<Self>,
     ) -> bool {
         let Some(message) = self.messages.iter_mut().find(|message| message.id == id) else {
@@ -1005,6 +1006,15 @@ impl Thread {
         message.segments = new_segments;
         if let Some(context) = loaded_context {
             message.loaded_context = context;
+        }
+        if let Some(git_checkpoint) = checkpoint {
+            self.checkpoints_by_message.insert(
+                id,
+                ThreadCheckpoint {
+                    message_id: id,
+                    git_checkpoint,
+                },
+            );
         }
         self.touch_updated_at();
         cx.emit(ThreadEvent::MessageEdited(id));
