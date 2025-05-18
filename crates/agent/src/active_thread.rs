@@ -333,7 +333,6 @@ fn tool_use_markdown_style(window: &Window, cx: &mut App) -> MarkdownStyle {
 }
 
 const CODEBLOCK_CONTAINER_GROUP: &str = "codeblock_container";
-const MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK: usize = 10;
 
 fn render_markdown_code_block(
     message_id: MessageId,
@@ -2370,15 +2369,12 @@ impl ActiveThread {
                                         transform: Some(Arc::new({
                                             let active_thread = cx.entity();
 
-                                            move |element, range, metadata, _, cx| {
-                                                let can_expand = metadata.line_count
-                                                    >= MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK;
-
+                                            move |element, range, _, _, cx| {
                                                 let is_expanded = active_thread
                                                     .read(cx)
                                                     .is_codeblock_expanded(message_id, range.start);
 
-                                                if !can_expand || is_expanded {
+                                                if is_expanded {
                                                     return element;
                                                 }
 
