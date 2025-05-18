@@ -3,6 +3,8 @@ use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic;
+use std::sync::atomic::AtomicUsize;
 
 use editor::Editor;
 use file_finder::OpenPathDelegate;
@@ -674,7 +676,7 @@ impl RemoteServerProjects {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let connection = ssh_server.connection();
+        let connection = ssh_server.connection().into_owned();
         let (main_label, aux_label) = if let Some(nickname) = connection.nickname.clone() {
             let aux_label = SharedString::from(format!("({})", connection.host));
             (nickname.into(), Some(aux_label))
@@ -799,9 +801,10 @@ impl RemoteServerProjects {
                         .anchor_scroll(open_folder.scroll_anchor.clone())
                         .on_action(cx.listener({
                             let ssh_connection = connection.clone();
+                            let host = host.clone();
                             move |this, _: &menu::Confirm, window, cx| {
-                                // TODO kb this needs to insert the new project first
-                                this.create_ssh_project(ix, ssh_connection.clone(), window, cx);
+                                let new_ix = this.create_host_from_ssh_config(&host, cx);
+                                this.create_ssh_project(new_ix, ssh_connection.clone(), window, cx);
                             }
                         }))
                         .child(
@@ -813,10 +816,11 @@ impl RemoteServerProjects {
                                 .child(Label::new("Open Folder"))
                                 .on_click(cx.listener({
                                     let ssh_connection = connection.clone();
+                                    let host = host.clone();
                                     move |this, _, window, cx| {
-                                        // TODO kb this needs to insert the new project first
+                                        let new_ix = this.create_host_from_ssh_config(&host, cx);
                                         this.create_ssh_project(
-                                            ix,
+                                            new_ix,
                                             ssh_connection.clone(),
                                             window,
                                             cx,
@@ -1517,6 +1521,35 @@ impl RemoteServerProjects {
                 ),
             )
             .into_any_element()
+    }
+
+    fn create_host_from_ssh_config(
+        &mut self,
+        ssh_config_host: &SharedString,
+        cx: &mut Context<'_, Self>,
+    ) -> usize {
+        let new_ix = Arc::new(AtomicUsize::new(0));
+
+        let update_new_ix = new_ix.clone();
+        self.update_settings_file(cx, move |settings, _| {
+            update_new_ix.store(
+                settings
+                    .ssh_connections
+                    .as_ref()
+                    .map_or(0, |connections| connections.len()),
+                atomic::Ordering::Release,
+            );
+        });
+
+        self.add_ssh_server(
+            SshConnectionOptions {
+                host: ssh_config_host.to_string(),
+                ..SshConnectionOptions::default()
+            },
+            cx,
+        );
+        self.mode = Mode::default_mode(cx);
+        new_ix.load(atomic::Ordering::Acquire)
     }
 }
 
