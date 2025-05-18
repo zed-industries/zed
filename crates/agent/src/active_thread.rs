@@ -392,7 +392,7 @@ fn render_markdown_code_block(
                         .id(("code-block-header-label", ix))
                         .ml_1()
                         .gap_1()
-                        .child(Label::new(file_name).size(LabelSize::Small))
+                        .child(div().text_size(rems(0.8125)).child(file_name))
                         .child(Label::new(path).color(Color::Muted).size(LabelSize::Small))
                         .tooltip(move |window, cx| {
                             Tooltip::with_meta(
@@ -461,7 +461,7 @@ fn render_markdown_code_block(
         .theme()
         .colors()
         .element_background
-        .blend(cx.theme().colors().editor_foreground.opacity(0.01));
+        .blend(cx.theme().colors().editor_foreground.opacity(0.025));
 
     let control_buttons = h_flex()
         .visible_on_hover(CODEBLOCK_CONTAINER_GROUP)
@@ -545,15 +545,13 @@ fn render_markdown_code_block(
         .gap_1()
         .justify_between()
         .bg(codeblock_header_bg)
-        .when(is_expanded, |this| {
-            this.border_b_1()
-                .border_color(cx.theme().colors().border.opacity(0.6))
-        })
         .map(|this| {
             if !is_expanded {
                 this.rounded_md()
             } else {
                 this.rounded_t_md()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border.opacity(0.6))
             }
         })
         .children(label)
@@ -563,12 +561,12 @@ fn render_markdown_code_block(
         .group(CODEBLOCK_CONTAINER_GROUP)
         .my_2()
         .overflow_hidden()
-        .rounded_lg()
+        .rounded_md()
         .border_1()
         .border_color(cx.theme().colors().border.opacity(0.6))
         .bg(cx.theme().colors().editor_background)
         .child(codeblock_header)
-        .when(!is_expanded, |this| this.h(rems_from_px(29.)))
+        .when(!is_expanded, |this| this.h(rems_from_px(31.)))
 }
 
 fn open_path(
