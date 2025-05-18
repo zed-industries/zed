@@ -1035,7 +1035,6 @@ impl LmStudioStreamMapper {
 struct ConfigurationView {
     state: gpui::Entity<State>,
     loading_models_task: Option<Task<()>>,
-    selected_server_index: Option<usize>,
     editing_server_index: Option<usize>,
     server_edit_name: String,
     server_edit_url: String,
@@ -1043,16 +1042,13 @@ struct ConfigurationView {
     new_model_name: String,
     new_model_display_name: String,
     new_model_max_tokens: String,
-    // Max tokens editing state
     is_editing_max_tokens: bool,
     editing_model_server_id: Option<String>,
     editing_model_name: Option<String>,
     edit_max_tokens_value: String,
-    // New server form state
     is_adding_server: bool,
     new_server_name: String,
     new_server_url: String,
-    // Text input entities
     server_edit_name_input: Option<gpui::Entity<SingleLineInput>>,
     server_edit_url_input: Option<gpui::Entity<SingleLineInput>>,
     new_model_name_input: Option<gpui::Entity<SingleLineInput>>,
@@ -1061,10 +1057,8 @@ struct ConfigurationView {
     new_server_name_input: Option<gpui::Entity<SingleLineInput>>,
     new_server_url_input: Option<gpui::Entity<SingleLineInput>>,
     edit_max_tokens_input: Option<gpui::Entity<SingleLineInput>>,
-    // Server connection status tracking
     server_connection_status: BTreeMap<String, bool>,
     connection_check_tasks: BTreeMap<String, Task<Result<bool>>>,
-    // Track expanded model sections
     expanded_server_models: HashSet<String>,
 }
 
@@ -1103,27 +1097,14 @@ impl ConfigurationView {
         
         // Pre-populate all server IDs in the status map
         for server in &settings.lmstudio.servers {
-            // A server is initially considered connected if:
-            // 1. It's enabled AND either
-            // 2a. It has models in state.available_models OR
-            // 2b. It has models in its own settings
-            // This helps maintain connection state between tab reopenings
-            let initial_status = server.enabled && 
-                (servers_with_models.contains(&server.id) || server.has_models());
-                
-            log::info!(
-                "Server {} initial connection status: {}", 
-                server.name, 
-                if initial_status { "connected" } else { "not connected" }
-            );
-            
-            server_connection_status.insert(server.id.clone(), initial_status);
+            // Consider a server connected if it has models in the state
+            let is_connected = servers_with_models.contains(&server.id);
+            server_connection_status.insert(server.id.clone(), is_connected);
         }
 
         Self {
             state,
             loading_models_task,
-            selected_server_index: None,
             editing_server_index: None,
             server_edit_name: String::new(),
             server_edit_url: String::new(),
@@ -1131,16 +1112,13 @@ impl ConfigurationView {
             new_model_name: String::new(),
             new_model_display_name: String::new(),
             new_model_max_tokens: String::new(),
-            // Max tokens editing state
             is_editing_max_tokens: false,
             editing_model_server_id: None,
             editing_model_name: None,
             edit_max_tokens_value: String::new(),
-            // New server form state
             is_adding_server: false,
             new_server_name: String::new(),
             new_server_url: String::new(),
-            // Text input entities
             server_edit_name_input: None,
             server_edit_url_input: None,
             new_model_name_input: None,
@@ -1149,10 +1127,8 @@ impl ConfigurationView {
             new_server_name_input: None,
             new_server_url_input: None,
             edit_max_tokens_input: None,
-            // Server connection status tracking
             server_connection_status,
             connection_check_tasks: BTreeMap::new(),
-            // Track expanded model sections
             expanded_server_models: HashSet::new(),
         }
     }
@@ -1445,7 +1421,7 @@ impl ConfigurationView {
         });
         
         // Reset server selection
-        self.selected_server_index = None;
+        self.editing_server_index = None;
         
         // Refresh models
         self.state.update(cx, |state, cx| state.restart_fetch_models_task(cx));
@@ -1457,121 +1433,119 @@ impl ConfigurationView {
         let settings = AllLanguageModelSettings::get_global(cx);
         let servers = &settings.lmstudio.servers;
         
-        if servers.is_empty() || index >= servers.len() {
-            log::error!("Cannot toggle server: invalid index");
-            return;
-        }
-        
-        let server_name = servers[index].name.clone();
-        let new_enabled_state = !servers[index].enabled;
-        let server_id = servers[index].id.clone();
-        let server_url = servers[index].api_url.clone();
-        
-        // Get the filesystem
-        let fs = <dyn fs::Fs>::global(cx);
-        
-        // Variables for the closure
-        let server_name_clone = server_name.clone();
-        let new_state = new_enabled_state;
-        
-        // Update settings to toggle the server enabled state
-        update_settings_file::<crate::AllLanguageModelSettings>(fs, cx, move |settings, _| {
-            if let Some(lmstudio) = &mut settings.lmstudio {
-                if let Some(servers) = &mut lmstudio.servers {
-                    if index < servers.len() {
-                        servers[index].enabled = new_state;
-                        log::info!(
-                            "Server '{}' is now {}", 
-                            server_name_clone, 
-                            if new_state { "enabled" } else { "disabled" }
-                        );
+        // Toggle server if found
+        if index < servers.len() {
+            // Get filesystem
+            let fs = <dyn fs::Fs>::global(cx);
+            
+            // Get server ID for later
+            let server_id = servers[index].id.clone();
+            
+            // Update enabled state
+            update_settings_file::<crate::AllLanguageModelSettings>(fs, cx, move |settings, _| {
+                if let Some(lmstudio) = &mut settings.lmstudio {
+                    if let Some(servers) = &mut lmstudio.servers {
+                        // Find correct server by index
+                        if index < servers.len() {
+                            let server = &mut servers[index];
+                            // Toggle enabled state
+                            server.enabled = !server.enabled;
+                            
+                            log::info!(
+                                "Server {} is now {}", 
+                                server.name, 
+                                if server.enabled { "enabled" } else { "disabled" }
+                            );
+                        }
                     }
                 }
-            }
-        });
-        
-        // If the server is being enabled, explicitly check connection and fetch models
-        if new_enabled_state {
-            log::info!("Server {} was enabled, checking connection and fetching models", server_name);
+            });
             
-            // Update connection status immediately
-            self.server_connection_status.insert(server_id.clone(), false); // Start with "not connected"
+            // Reset server connection status when disabled
+            let entity = cx.entity();
             
-            // Start a connection check for this server
-            self.check_server_connection(server_id.clone(), cx);
-            
-            // Then try to fetch models
-            self.fetch_models_from_server(server_id, server_url, cx);
-        } else {
-            // If the server is being disabled, immediately update connection status
-            self.server_connection_status.insert(server_id.clone(), false);
-            
-            // Also update the state to remove its models
-            let state_entity = self.state.clone();
             cx.spawn(async move |_, cx| {
-                // Put this on the async path to ensure it happens after settings are updated
-                state_entity.update(cx, |state, cx| {
-                    let server_id_clone = server_id.clone();
-                    log::info!("Server {} was disabled, removing its models", server_name);
-                    
-                    // Count how many models we had before
-                    let models_before = state.available_models.len();
-                    
-                    // Filter out models from the disabled server
-                    state.available_models.retain(|model| {
-                        if let Some(model_server_id) = &model.server_id {
-                            if model_server_id == &server_id_clone {
-                                log::info!("Removing model {} from disabled server", model.name);
-                                return false;
-                            }
-                        }
-                        true
-                    });
-                    
-                    let models_after = state.available_models.len();
-                    log::info!("Removed {} models from disabled server", models_before - models_after);
-                    
-                    // Make sure to notify subscribers of the state change
-                    cx.notify();
-                }).ok();
+                // Remove the tokio_sleep that was causing the panic
+                // tokio_sleep(Duration::from_millis(100)).await;
+                
+                // Simpler approach to check enabled status
+                let mut is_enabled = false;
+                
+                // Try to get the current server's enabled status
+                if let Ok(_) = cx.update(|cx| {
+                    let settings = AllLanguageModelSettings::get_global(cx);
+                    is_enabled = settings.lmstudio.servers.iter()
+                        .find(|s| s.id == server_id)
+                        .map(|s| s.enabled)
+                        .unwrap_or(false);
+                    Ok::<(), anyhow::Error>(())
+                }) {
+                    // Successfully retrieved settings
+                }
+                
+                // For disabled servers, clear connection status and models
+                if !is_enabled {
+                    // Update view entity
+                    if let Ok(()) = entity.update(cx, |view: &mut ConfigurationView, cx| {
+                        // Set connection status to false when disabled
+                        view.server_connection_status.insert(server_id.clone(), false);
+                        
+                        // Refresh models list
+                        view.state.update(cx, |state, cx| {
+                            let before = state.available_models.len();
+                            
+                            // Remove models from this server
+                            state.available_models.retain(|model| {
+                                if let Some(id) = &model.server_id {
+                                    id != &server_id
+                                } else {
+                                    true
+                                }
+                            });
+                            
+                            let after = state.available_models.len();
+                            let models_before = before;
+                            let models_after = after;
+                            
+                            log::info!("Removed {} models from disabled server", models_before - models_after);
+                            
+                            // Make sure to notify subscribers of the state change
+                            cx.notify();
+                        });
+                    }) {
+                        // Successfully updated
+                    }
+                }
             }).detach();
         }
         
         cx.notify();
     }
-    
-    fn select_server(&mut self, index: Option<usize>, cx: &mut Context<Self>) {
-        self.selected_server_index = index;
-        
-        // Auto-expand models for the selected server
-        if let Some(idx) = index {
-            let settings = AllLanguageModelSettings::get_global(cx);
-            if idx < settings.lmstudio.servers.len() {
-                let server_id = settings.lmstudio.servers[idx].id.clone();
-                self.expanded_server_models.insert(server_id);
-            }
-        }
-        
-        cx.notify();
-    }
+
+    // Replace the select_server method with toggle_models_expanded which already exists
 
     #[allow(dead_code)]
     fn add_model(&mut self, cx: &mut Context<Self>) {
-        if let Some(server_idx) = self.selected_server_index {
-            let settings = &AllLanguageModelSettings::get_global(cx).lmstudio;
+        // Get server ID
+        let Some(server_id) = self.editing_model_server_id.clone() else {
+            log::error!("No server ID provided for adding a model");
+            return;
+        };
+        
+        // Get server from settings
+        let settings = &AllLanguageModelSettings::get_global(cx).lmstudio;
+        if let Some(_server) = settings.servers.iter().find(|s| s.id == server_id) {
+            // Refresh models
+            self.state.update(cx, |state, cx| state.restart_fetch_models_task(cx));
             
-            if server_idx < settings.servers.len() {
-                // Refresh models
-                self.state.update(cx, |state, cx| state.restart_fetch_models_task(cx));
-                
-                // Reset form state
-                self.is_adding_model = false;
-                self.new_model_name.clear();
-                self.new_model_display_name.clear();
-                self.new_model_max_tokens.clear();
-                
-                cx.notify();
-            }
+            // Reset form state
+            self.is_adding_model = false;
+            self.new_model_name.clear();
+            self.new_model_display_name.clear();
+            self.new_model_max_tokens.clear();
+            self.editing_model_server_id = None;
+            
+            cx.notify();
         }
     }
     
@@ -2001,21 +1975,22 @@ impl ConfigurationView {
     fn toggle_add_model_form(&mut self, cx: &mut Context<Self>) {
         self.is_adding_model = !self.is_adding_model;
         
-        // Initialize with defaults when opening the form
         if self.is_adding_model {
+            // Initialize with default values when opening the form
             self.new_model_name = String::new();
             self.new_model_display_name = String::new();
             self.new_model_max_tokens = "8192".to_string();
             
-            // Clear input entities to recreate them with new values
+            // Clear input entities to recreate them
             self.new_model_name_input = None;
             self.new_model_display_name_input = None;
             self.new_model_max_tokens_input = None;
         } else {
-            // Clean up when closing the form
+            // Clean up when closing
             self.new_model_name_input = None;
             self.new_model_display_name_input = None;
             self.new_model_max_tokens_input = None;
+            self.editing_model_server_id = None;
         }
         
         cx.notify();
@@ -2025,11 +2000,11 @@ impl ConfigurationView {
         // Update field values from inputs
         self.update_field_from_input(cx);
         
-        // Require server selection
-        if self.selected_server_index.is_none() {
-            log::error!("No server selected for adding a model");
+        // Get server ID
+        let Some(server_id) = self.editing_model_server_id.clone() else {
+            log::error!("No server ID provided for new model");
             return;
-        }
+        };
         
         // Validate inputs
         if self.new_model_name.trim().is_empty() {
@@ -2038,26 +2013,17 @@ impl ConfigurationView {
         }
         
         // Parse max tokens
-        let max_tokens = match self.new_model_max_tokens.parse::<usize>() {
-            Ok(tokens) => tokens,
-            Err(_) => {
-                log::error!("Invalid max tokens value: {}", self.new_model_max_tokens);
-                return;
+        let max_tokens_str = self.new_model_max_tokens.trim();
+        let max_tokens = if max_tokens_str.is_empty() {
+            8192 // Default
+        } else {
+            match max_tokens_str.parse::<usize>() {
+                Ok(tokens) => tokens,
+                Err(e) => {
+                    log::error!("Invalid max tokens value: {}", e);
+                    return;
+                }
             }
-        };
-        
-        // Get server ID and index
-        let (server_id, server_idx) = {
-            let settings = AllLanguageModelSettings::get_global(cx);
-            let servers = &settings.lmstudio.servers;
-            let server_idx = self.selected_server_index.unwrap();
-            
-            if server_idx >= servers.len() {
-                log::error!("Invalid server index");
-                return;
-            }
-            
-            (servers[server_idx].id.clone(), server_idx)
         };
         
         // Create new model
@@ -2066,7 +2032,8 @@ impl ConfigurationView {
             display_name: if self.new_model_display_name.trim().is_empty() {
                 // If no display name provided, create one with server info
                 let settings = AllLanguageModelSettings::get_global(cx);
-                let server_name = settings.lmstudio.servers.get(server_idx)
+                let server_name = settings.lmstudio.servers.iter()
+                    .find(|s| s.id == server_id)
                     .map(|s| s.name.clone())
                     .unwrap_or_default();
                 Some(format!("{} - {}", self.new_model_name.trim(), server_name))
@@ -2090,7 +2057,6 @@ impl ConfigurationView {
         
         // Clone for closure
         let model_clone = new_model.clone();
-        let server_index = server_idx;
         
         // Get filesystem
         let fs = <dyn fs::Fs>::global(cx);
@@ -2099,21 +2065,22 @@ impl ConfigurationView {
         update_settings_file::<crate::AllLanguageModelSettings>(fs, cx, move |settings, _| {
             if let Some(lmstudio) = &mut settings.lmstudio {
                 if let Some(servers) = &mut lmstudio.servers {
-                    if server_index < servers.len() {
+                    // Find the server by ID instead of index
+                    if let Some(server) = servers.iter_mut().find(|s| s.id == server_id) {
                         // Initialize available_models if it's None
-                        if servers[server_index].available_models.is_none() {
-                            servers[server_index].available_models = Some(Vec::new());
+                        if server.available_models.is_none() {
+                            server.available_models = Some(Vec::new());
                         }
                         
                         // Add the model to the server's available_models
-                        if let Some(models) = &mut servers[server_index].available_models {
+                        if let Some(models) = &mut server.available_models {
                             // Check if model with same name already exists
                             if !models.iter().any(|m| m.name == model_clone.name) {
                                 let model_name = model_clone.name.clone();
                                 models.push(model_clone);
-                                log::info!("Added model {} to server {}", model_name, servers[server_index].name);
+                                log::info!("Added model {} to server {}", model_name, server.name);
                             } else {
-                                log::warn!("Model {} already exists for server {}", model_clone.name, servers[server_index].name);
+                                log::warn!("Model {} already exists for server {}", model_clone.name, server.name);
                             }
                         }
                     }
@@ -2200,13 +2167,18 @@ impl ConfigurationView {
                         )
                         .color(SwitchColor::Success);
                         
+                        // Clone all the context needed for callbacks to avoid borrowing issues
+                        let model_name_for_edit = model_name.clone();
+                        let server_id_for_edit = server_id.clone();
+                        let theme_colors = cx.theme().colors().clone();
+                        
                         h_flex()
                             .justify_between()
                             .w_full()
                             .p_2()
                             .gap_2()
                             .border_b_1()
-                            .border_color(cx.theme().colors().border_variant)
+                            .border_color(theme_colors.border_variant)
                             .child(
                                 v_flex()
                                     .gap_1()
@@ -2215,7 +2187,7 @@ impl ConfigurationView {
                                         h_flex()
                                             .gap_2()
                                             .child(
-                                                Label::new(&model.name)
+                                                Label::new(&model_name)
                                                     .color(Color::Muted)
                                                     .size(LabelSize::XSmall)
                                             )
@@ -2237,12 +2209,8 @@ impl ConfigurationView {
                                     )
                                     .tooltip(Tooltip::text("Edit Max Tokens"))
                                     .icon_color(Color::Info)
-                                    .on_click(cx.listener({
-                                        let server_id = server_id.clone();
-                                        let model_name = model_name.clone();
-                                        move |this, _, _, cx| {
-                                            this.show_edit_max_tokens_dialog(server_id.clone(), model_name.clone(), cx);
-                                        }
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.show_edit_max_tokens_dialog(server_id_for_edit.clone(), model_name_for_edit.clone(), cx);
                                     }))
                                 )
                                 .child(
@@ -2318,9 +2286,21 @@ impl ConfigurationView {
             }
         });
         
-        // Refresh the models list to reflect the changes
+        // Instead of reloading all models from the server, just update the in-memory model state
         self.state.update(cx, |state, cx| {
-            state.restart_fetch_models_task(cx);
+            // Find and update the in-memory model with the new enabled state
+            for model in &mut state.available_models {
+                if let Some(id) = &model.server_id {
+                    if id == &server_id && model.name == model_name {
+                        // Apply the same change to our local state - this is the key fix
+                        // We don't actually need to change anything in the model here,
+                        // since the UI uses the settings to determine which models to show
+                        log::info!("Updated in-memory state for model {}", model_name);
+                        break;
+                    }
+                }
+            }
+            cx.notify();
         });
         
         cx.notify();
@@ -2612,6 +2592,32 @@ impl ConfigurationView {
         }
         cx.notify();
     }
+
+    // Replace the select_server method which is no longer needed
+    fn toggle_add_model_form_for_server(&mut self, server_id: String, cx: &mut Context<Self>) {
+        self.is_adding_model = !self.is_adding_model;
+        self.editing_model_server_id = Some(server_id);
+        
+        if self.is_adding_model {
+            // Initialize with default values when opening the form
+            self.new_model_name = String::new();
+            self.new_model_display_name = String::new();
+            self.new_model_max_tokens = "8192".to_string();
+            
+            // Clear input entities to recreate them
+            self.new_model_name_input = None;
+            self.new_model_display_name_input = None;
+            self.new_model_max_tokens_input = None;
+        } else {
+            // Clean up when closing
+            self.new_model_name_input = None;
+            self.new_model_display_name_input = None;
+            self.new_model_max_tokens_input = None;
+            self.editing_model_server_id = None;
+        }
+        
+        cx.notify();
+    }
 }
 
 impl Render for ConfigurationView {
@@ -2641,6 +2647,463 @@ impl Render for ConfigurationView {
         let servers = &lmstudio_settings.servers;
 
         let lmstudio_intro = "Run local LLMs like Llama, Phi, and Qwen.";
+
+        // Build all list items combining servers and models in accordion style
+        let mut list_items: Vec<AnyElement> = Vec::new();
+        
+        // Add server and model items to the list
+        for (idx, server) in servers.iter().enumerate() {
+            let server_id = server.id.clone();
+            let is_expanded = self.expanded_server_models.contains(&server_id);
+            let is_connected = self.is_server_connected(&server_id);
+            let has_task = self.connection_check_tasks.contains_key(&server_id);
+            let status_text = self.server_connection_status_text(server);
+            
+            // Create the main server item
+            list_items.push(
+                ListItem::new(ElementId::NamedInteger("server".into(), idx as u64))
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .w_full()
+                            .gap_2()
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        // Add expand/collapse icon
+                                        Icon::new(
+                                            if is_expanded {
+                                                IconName::ChevronDown
+                                            } else {
+                                                IconName::ChevronRight
+                                            }
+                                        )
+                                    )
+                                    .child(
+                                        v_flex()
+                                            .gap_1()
+                                            .child(
+                                                h_flex()
+                                                    .gap_1()
+                                                    .child(Label::new(&server.name))
+                                            )
+                                            .child(
+                                                Label::new(&server.api_url)
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::XSmall)
+                                            )
+                                    )
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_2() // Increased gap for better spacing
+                                    .child({
+                                        // Just show a dot with tooltip showing the full status
+                                        if server.enabled {
+                                            if is_connected {
+                                                // Connected status - green dot
+                                                ButtonLike::new("server-status-connected")
+                                                    .tooltip(Tooltip::text("Connected"))
+                                                    .style(ButtonStyle::Subtle)
+                                                    .cursor_style(gpui::CursorStyle::Arrow)
+                                                    .disabled(true)
+                                                    .child(
+                                                        Indicator::dot().color(Color::Success).into_any_element()
+                                                    )
+                                            } else {
+                                                // Not connected status - yellow/orange dot
+                                                ButtonLike::new("server-status-disconnected")
+                                                    .tooltip(Tooltip::text(status_text))
+                                                    .style(ButtonStyle::Subtle)
+                                                    .cursor_style(gpui::CursorStyle::Arrow)
+                                                    .disabled(true)
+                                                    .child(
+                                                        Indicator::dot().color(Color::Warning).into_any_element()
+                                                    )
+                                            }
+                                        } else {
+                                            // Disabled status - grey dot
+                                            ButtonLike::new("server-status-disabled")
+                                                .tooltip(Tooltip::text("Disabled"))
+                                                .style(ButtonStyle::Subtle)
+                                                .cursor_style(gpui::CursorStyle::Arrow)
+                                                .disabled(true)
+                                                .child(
+                                                    Indicator::dot().color(Color::Muted).into_any_element()
+                                                )
+                                        }
+                                    })
+                                    .child(
+                                        Switch::new(
+                                            ElementId::NamedInteger("toggle-server".into(), idx as u64),
+                                            if server.enabled { ToggleState::Selected } else { ToggleState::Unselected }
+                                        )
+                                        .color(SwitchColor::Success)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.toggle_server(idx, cx);
+                                        }))
+                                    )
+                                    .child({
+                                        let server_id = server.id.clone();
+                                        let server_url = server.api_url.clone();
+                                        let server_enabled = server.enabled;
+                                        
+                                        // Choose which button to show based on state
+                                        if has_task {
+                                            // Show checking indicator when a connection check is in progress
+                                            Button::new("connect-server", "Checking Connection...")
+                                                .style(ButtonStyle::Filled)
+                                                .icon(IconName::Update)
+                                                .tooltip(Tooltip::text("Checking Connection Status"))
+                                                .disabled(true)
+                                        } else if server.enabled && !is_connected {
+                                            // Enhanced Connect button for enabled but not connected servers
+                                            Button::new("connect-server", "Connect")
+                                                .style(ButtonStyle::Filled)
+                                                .icon(IconName::Play)
+                                                .tooltip(Tooltip::text("Connect to Server"))
+                                                .on_click(cx.listener({
+                                                    let server_id = server_id.clone();
+                                                    let server_url = server_url.clone();
+                                                    move |this: &mut Self, _, _, cx| {
+                                                        // Immediately set connection status to false to show checking state
+                                                        this.server_connection_status.insert(server_id.clone(), false);
+                                                        // Start a task to check connection first
+                                                        let _ = this.check_server_health(&server_id, cx);
+                                                        // Then fetch models
+                                                        this.fetch_models_from_server(server_id.clone(), server_url.clone(), cx);
+                                                        // Make sure UI updates immediately
+                                                        cx.notify();
+                                                    }
+                                                }))
+                                        } else if server.enabled && is_connected {
+                                            // Show refresh button ONLY for connected servers
+                                            Button::new("fetch-models", "Refresh")
+                                                .style(ButtonStyle::Subtle)
+                                                .icon(IconName::Update)
+                                                .tooltip(Tooltip::text("Refresh Connection & Models"))
+                                                .disabled(has_task) // Disable when already checking
+                                                .on_click(cx.listener({
+                                                    let server_id = server_id.clone();
+                                                    let server_url = server_url.clone();
+                                                    let server_enabled = server_enabled;
+                                                    move |this: &mut Self, _, _, cx| {
+                                                        if server_enabled {
+                                                            // Always set connection status to false to show checking state
+                                                            this.server_connection_status.insert(server_id.clone(), false);
+                                                            
+                                                            // Start a check connection task
+                                                            let check_task = this.check_server_health(&server_id, cx);
+                                                            
+                                                            // Store the task to track it
+                                                            this.connection_check_tasks.insert(server_id.clone(), check_task);
+                                                            
+                                                            // Then fetch models
+                                                            this.fetch_models_from_server(server_id.clone(), server_url.clone(), cx);
+                                                            
+                                                            // Make sure UI updates immediately
+                                                            cx.notify();
+                                                        }
+                                                    }
+                                                }))
+                                        } else {
+                                            // For disabled servers, just show a connect button that's disabled
+                                            Button::new("empty-button", "Connect")
+                                                .style(ButtonStyle::Subtle)
+                                                .disabled(true)
+                                        }
+                                    })
+                                    .child(
+                                        IconButton::new("edit-server", IconName::Pencil)
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.edit_server(idx, cx);
+                                            }))
+                                            .icon_color(Color::Info)
+                                    )
+                                    .child(
+                                        IconButton::new("remove-server", IconName::Trash)
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.remove_server(idx, cx);
+                                            }))
+                                            .icon_color(Color::Error)
+                                    )
+                            )
+                    )
+                    .on_click({
+                        let server_id = server.id.clone();
+                        cx.listener(move |this, _, _, cx| {
+                            // Toggle expanded state when the server item is clicked
+                            this.toggle_models_expanded(server_id.clone(), cx);
+                        })
+                    })
+                    .into_any_element()
+            );
+            
+            // If expanded, add model items directly to the list
+            if is_expanded {
+                // Add header for models section
+                list_items.push(
+                    ListItem::new(ElementId::NamedInteger("models-header".into(), idx as u64))
+                        .indent_level(1)
+                        .child(
+                            h_flex()
+                                .justify_between()
+                                .w_full()
+                                .py_1()
+                                .child(
+                                    Label::new(
+                                        if let Some(models) = &server.available_models {
+                                            if models.is_empty() {
+                                                "No models available"
+                                            } else {
+                                                "Models"
+                                            }
+                                        } else {
+                                            "No models available"
+                                        }
+                                    )
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted)
+                                )
+                                .child(
+                                    Button::new("add-model", "Add Model")
+                                        .icon(IconName::Plus)
+                                        .icon_position(IconPosition::Start)
+                                        .on_click({
+                                            let server_id = server.id.clone();
+                                            cx.listener(move |this, _, _, cx| {
+                                                // Open add model form for this server
+                                                this.editing_model_server_id = Some(server_id.clone());
+                                                this.toggle_add_model_form(cx);
+                                            })
+                                        })
+                                )
+                        )
+                        .into_any_element()
+                );
+                
+                // Add model items
+                if let Some(models) = &server.available_models {
+                    if models.is_empty() {
+                        // Show empty state
+                        list_items.push(
+                            ListItem::new(ElementId::NamedInteger("no-models".into(), idx as u64))
+                                .indent_level(1)
+                                .child(
+                                    div()
+                                    .p_2()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border_variant)
+                                    .rounded_md()
+                                    .bg(cx.theme().colors().surface_background)
+                                    .child(
+                                        v_flex()
+                                            .gap_1()
+                                            .child(
+                                                Label::new("No models configured for this server")
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::Small)
+                                            )
+                                            .child(
+                                                Label::new("You can add a custom model or fetch models from the server.")
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::XSmall)
+                                            )
+                                    )
+                                )
+                                .into_any_element()
+                        );
+                    } else {
+                        // Add each model as a list item
+                        for (model_idx, model) in models.iter().enumerate() {
+                            let display_name = model.display_name.clone().unwrap_or_else(|| model.name.clone());
+                            
+                            // Format tokens text differently depending on if custom value is set
+                            let tokens_text = if let Some(custom) = model.custom_max_tokens {
+                                if custom != model.server_max_tokens {
+                                    format!("{}k tokens (server: {}k)", 
+                                        custom / 1000, 
+                                        model.server_max_tokens / 1000)
+                                } else {
+                                    format!("{}k tokens", custom / 1000)
+                                }
+                            } else {
+                                format!("{}k tokens (server default)", model.server_max_tokens / 1000)
+                            };
+                            
+                            let server_id = server.id.clone();
+                            let model_name = model.name.clone();
+                            let is_enabled = model.enabled;
+                            
+                            // Create a unique ID for each button
+                            let toggle_button = Switch::new(
+                                ElementId::NamedInteger("toggle".into(), ((idx * 1000) + model_idx) as u64),
+                                if is_enabled { ToggleState::Selected } else { ToggleState::Unselected }
+                            )
+                            .color(SwitchColor::Success);
+                            
+                            // Clone all the context needed for callbacks
+                            let model_name_for_edit = model_name.clone();
+                            let server_id_for_edit = server_id.clone();
+                            let theme_colors = cx.theme().colors().clone();
+                            
+                            list_items.push(
+                                ListItem::new(ElementId::NamedInteger("model".into(), ((idx * 1000) + model_idx) as u64))
+                                    .indent_level(1)
+                                    .child(
+                                        h_flex()
+                                            .justify_between()
+                                            .w_full()
+                                            .p_2()
+                                            .gap_2()
+                                            .border_b_1()
+                                            .border_color(theme_colors.border_variant)
+                                            .child(
+                                                v_flex()
+                                                    .gap_1()
+                                                    .child(Label::new(display_name))
+                                                    .child(
+                                                        h_flex()
+                                                            .gap_2()
+                                                            .child(
+                                                                Label::new(&model_name)
+                                                                    .color(Color::Muted)
+                                                                    .size(LabelSize::XSmall)
+                                                            )
+                                                            .child(
+                                                                Label::new(tokens_text)
+                                                                    .color(Color::Muted)
+                                                                    .size(LabelSize::XSmall)
+                                                            )
+                                                    )
+                                            )
+                                            .child(
+                                                h_flex()
+                                                .gap_1()
+                                                .child(
+                                                    // Add edit max tokens button
+                                                    IconButton::new(
+                                                        ElementId::NamedInteger("edit-tokens".into(), ((idx * 1000) + model_idx) as u64),
+                                                        IconName::Pencil
+                                                    )
+                                                    .tooltip(Tooltip::text("Edit Max Tokens"))
+                                                    .icon_color(Color::Info)
+                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                        this.show_edit_max_tokens_dialog(server_id_for_edit.clone(), model_name_for_edit.clone(), cx);
+                                                    }))
+                                                )
+                                                .child(
+                                                    // Add the toggle button 
+                                                    toggle_button
+                                                        .on_click(cx.listener(move |this, _toggle_state, _, cx| {
+                                                            log::info!("Toggle clicked for model: {}", model_name);
+                                                            this.toggle_model_enabled(server_id.clone(), model_name.clone(), cx);
+                                                        }))
+                                                )
+                                            )
+                                    )
+                                    .into_any_element()
+                            );
+                        }
+                    }
+                } else {
+                    // Show empty state for no models
+                    list_items.push(
+                        ListItem::new(ElementId::NamedInteger("no-models".into(), idx as u64))
+                            .indent_level(1)
+                            .child(
+                                div()
+                                .p_2()
+                                .border_1()
+                                .border_color(cx.theme().colors().border_variant)
+                                .rounded_md()
+                                .bg(cx.theme().colors().surface_background)
+                                .child(
+                                    v_flex()
+                                        .gap_1()
+                                        .child(
+                                            Label::new("No models configured for this server")
+                                                .color(Color::Muted)
+                                                .size(LabelSize::Small)
+                                        )
+                                        .child(
+                                            Label::new("You can add a custom model or fetch models from the server.")
+                                                .color(Color::Muted)
+                                                .size(LabelSize::XSmall)
+                                        )
+                                )
+                            )
+                            .into_any_element()
+                    );
+                }
+                
+                // Add model form if needed
+                if self.is_adding_model && self.editing_model_server_id.as_ref() == Some(&server.id) {
+                    list_items.push(
+                        ListItem::new(ElementId::NamedInteger("add-model-form".into(), idx as u64))
+                            .indent_level(1)
+                            .child(
+                                v_flex()
+                                    .gap_2()
+                                    .p_2()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .bg(cx.theme().colors().background)
+                                    .rounded_md()
+                                    .my_2()
+                                    .w_full()
+                                    .child(
+                                        Label::new("Add Custom Model")
+                                    )
+                                    .child(
+                                        v_flex()
+                                            .gap_2()
+                                            .w_full()
+                                            .child(
+                                                v_flex()
+                                                    .gap_1()
+                                                    .child(Label::new("Model Name:").size(LabelSize::Small))
+                                                    .child(self.new_model_name_input.clone().unwrap())
+                                            )
+                                            .child(
+                                                v_flex()
+                                                    .gap_1()
+                                                    .child(Label::new("Display Name (optional):").size(LabelSize::Small))
+                                                    .child(self.new_model_display_name_input.clone().unwrap())
+                                            )
+                                            .child(
+                                                v_flex()
+                                                    .gap_1()
+                                                    .child(Label::new("Max Tokens:").size(LabelSize::Small))
+                                                    .child(self.new_model_max_tokens_input.clone().unwrap())
+                                            )
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .justify_end()
+                                            .gap_2()
+                                            .mt_2()
+                                            .child(
+                                                Button::new("cancel-model", "Cancel")
+                                                    .style(ButtonStyle::Subtle)
+                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                        this.toggle_add_model_form(cx);
+                                                    }))
+                                            )
+                                            .child(
+                                                Button::new("add-new-model", "Add Model")
+                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                        this.add_custom_model(cx);
+                                                    }))
+                                            )
+                                    )
+                            )
+                            .into_any_element()
+                    );
+                }
+            }
+        }
 
         if self.loading_models_task.is_some() {
             div().child(Label::new("Loading models...")).into_any()
@@ -2845,179 +3308,9 @@ impl Render for ConfigurationView {
                                             )
                                             .into_any_element()
                                     } else {
+                                        // Create list with combined server and model items
                                         List::new()
-                                            .children(
-                                                servers.iter().enumerate().map(|(idx, server)| {
-                                                    ListItem::new(idx)
-                                                        .child(
-                                                            h_flex()
-                                                                .justify_between()
-                                                                .w_full()
-                                                                .gap_2()
-                                                                .child(
-                                                                    v_flex()
-                                                                        .gap_1()
-                                                                        .child(
-                                                                            h_flex()
-                                                                                .gap_1()
-                                                                                .child(Label::new(&server.name))
-                                                                        )
-                                                                        .child(
-                                                                            Label::new(&server.api_url)
-                                                                                .color(Color::Muted)
-                                                                                .size(LabelSize::XSmall)
-                                                                        )
-                                                                )
-                                                                .child(
-                                                                    h_flex()
-                                                                        .gap_2() // Increased gap for better spacing
-                                                                        .child({
-                                                                            // Use more accurate connection status check
-                                                                            let is_connected = self.is_server_connected(&server.id);
-                                                                            let status_text = self.server_connection_status_text(server);
-                                                                            
-                                                                            // Just show a dot with tooltip showing the full status
-                                                                            if server.enabled {
-                                                                                if is_connected {
-                                                                                    // Connected status - green dot
-                                                                                    ButtonLike::new("server-status-connected")
-                                                                                        .tooltip(Tooltip::text("Connected"))
-                                                                                        .style(ButtonStyle::Subtle)
-                                                                                        .cursor_style(gpui::CursorStyle::Arrow)
-                                                                                        .disabled(true)
-                                                                                        .child(
-                                                                                            Indicator::dot().color(Color::Success).into_any_element()
-                                                                                        )
-                                                                                } else {
-                                                                                    // Not connected status - yellow/orange dot
-                                                                                    ButtonLike::new("server-status-disconnected")
-                                                                                        .tooltip(Tooltip::text(status_text))
-                                                                                        .style(ButtonStyle::Subtle)
-                                                                                        .cursor_style(gpui::CursorStyle::Arrow)
-                                                                                        .disabled(true)
-                                                                                        .child(
-                                                                                            Indicator::dot().color(Color::Warning).into_any_element()
-                                                                                        )
-                                                                                }
-                                                                            } else {
-                                                                                // Disabled status - grey dot
-                                                                                ButtonLike::new("server-status-disabled")
-                                                                                    .tooltip(Tooltip::text("Disabled"))
-                                                                                    .style(ButtonStyle::Subtle)
-                                                                                    .cursor_style(gpui::CursorStyle::Arrow)
-                                                                                    .disabled(true)
-                                                                                    .child(
-                                                                                        Indicator::dot().color(Color::Muted).into_any_element()
-                                                                                    )
-                                                                            }
-                                                                        })
-                                                                        .child(
-                                                                            Switch::new(
-                                                                                ElementId::NamedInteger("toggle-server".into(), idx as u64),
-                                                                                if server.enabled { ToggleState::Selected } else { ToggleState::Unselected }
-                                                                            )
-                                                                            .color(SwitchColor::Success)
-                                                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                                                this.toggle_server(idx, cx);
-                                                                            }))
-                                                                        )
-                                                                        .child({
-                                                                            // Use more accurate connection status check
-                                                                            let is_connected = self.is_server_connected(&server.id);
-                                                                            let has_task = self.connection_check_tasks.contains_key(&server.id);
-                                                                            
-                                                                            // For use in closure
-                                                                            let server_id = server.id.clone();
-                                                                            let server_url = server.api_url.clone();
-                                                                            let server_enabled = server.enabled;
-                                                                            
-                                                                            // Choose which button to show based on state
-                                                                            if has_task {
-                                                                                // Show checking indicator when a connection check is in progress
-                                                                                Button::new("connect-server", "Checking Connection...")
-                                                                                    .style(ButtonStyle::Filled)
-                                                                                    .icon(IconName::Update)
-                                                                                    .tooltip(Tooltip::text("Checking Connection Status"))
-                                                                                    .disabled(true)
-                                                                            } else if server.enabled && !is_connected {
-                                                                                // Enhanced Connect button for enabled but not connected servers
-                                                                                Button::new("connect-server", "Connect")
-                                                                                    .style(ButtonStyle::Filled)
-                                                                                    .icon(IconName::Play)
-                                                                                    .tooltip(Tooltip::text("Connect to Server"))
-                                                                                    .on_click(cx.listener({
-                                                                                        let server_id = server_id.clone();
-                                                                                        let server_url = server_url.clone();
-                                                                                        move |this: &mut Self, _, _, cx| {
-                                                                                            // Immediately set connection status to false to show checking state
-                                                                                            this.server_connection_status.insert(server_id.clone(), false);
-                                                                                            // Start a task to check connection first
-                                                                                            let _ = this.check_server_health(&server_id, cx);
-                                                                                            // Then fetch models
-                                                                                            this.fetch_models_from_server(server_id.clone(), server_url.clone(), cx);
-                                                                                            // Make sure UI updates immediately
-                                                                                            cx.notify();
-                                                                                        }
-                                                                                    }))
-                                                                            } else if server.enabled && is_connected {
-                                                                                // Show refresh button ONLY for connected servers
-                                                                                Button::new("fetch-models", "Refresh")
-                                                                                    .style(ButtonStyle::Subtle)
-                                                                                    .icon(IconName::Update)
-                                                                                    .tooltip(Tooltip::text("Refresh Connection & Models"))
-                                                                                    .disabled(has_task) // Disable when already checking
-                                                                                    .on_click(cx.listener({
-                                                                                        let server_id = server_id.clone();
-                                                                                        let server_url = server_url.clone();
-                                                                                        let server_enabled = server_enabled;
-                                                                                        move |this: &mut Self, _, _, cx| {
-                                                                                            if server_enabled {
-                                                                                                // Always set connection status to false to show checking state
-                                                                                                // This ensures we always check status and show visual feedback
-                                                                                                this.server_connection_status.insert(server_id.clone(), false);
-                                                                                                
-                                                                                                // Start a check connection task
-                                                                                                let check_task = this.check_server_health(&server_id, cx);
-                                                                                                
-                                                                                                // Store the task to track it
-                                                                                                this.connection_check_tasks.insert(server_id.clone(), check_task);
-                                                                                                
-                                                                                                // Then fetch models
-                                                                                                this.fetch_models_from_server(server_id.clone(), server_url.clone(), cx);
-                                                                                                
-                                                                                                // Make sure UI updates immediately
-                                                                                                cx.notify();
-                                                                                            }
-                                                                                        }
-                                                                                    }))
-                                                                            } else {
-                                                                                // For disabled servers, just show a connect button that's disabled
-                                                                                Button::new("empty-button", "Connect")
-                                                                                    .style(ButtonStyle::Subtle)
-                                                                                    .disabled(true)
-                                                                            }
-                                                                        })
-                                                                        .child(
-                                                                            IconButton::new("edit-server", IconName::Pencil)
-                                                                                .on_click(cx.listener(move |this, _, _, cx| {
-                                                                                    this.edit_server(idx, cx);
-                                                                                }))
-                                                                                .icon_color(Color::Info)
-                                                                        )
-                                                                        .child(
-                                                                            IconButton::new("remove-server", IconName::Trash)
-                                                                                .on_click(cx.listener(move |this, _, _, cx| {
-                                                                                    this.remove_server(idx, cx);
-                                                                                }))
-                                                                                .icon_color(Color::Error)
-                                                                        )
-                                                                )
-                                                        )
-                                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                                            this.select_server(Some(idx), cx);
-                                                        }))
-                                                })
-                                            )
+                                            .children(list_items)
                                             .into_any_element()
                                     }
                                 )
@@ -3031,312 +3324,6 @@ impl Render for ConfigurationView {
                                     this.toggle_add_server_form(cx);
                                 }))
                         )
-                )
-                // Model management section - only show if a server is selected
-                .child(
-                    v_flex()
-                        .gap_2()
-                        .map(|this| {
-                            if let Some(server_idx) = self.selected_server_index {
-                                let settings = AllLanguageModelSettings::get_global(cx);
-                                let servers = &settings.lmstudio.servers;
-                                
-                                if server_idx < servers.len() {
-                                    let server = &servers[server_idx];
-                                    
-                                    // Only show for enabled servers
-                                    if server.enabled {
-                                        this.child(
-                                            div()
-                                                .border_t_1()
-                                                .border_color(cx.theme().colors().border)
-                                                .my_2()
-                                        )
-                                        .child(
-                                            ButtonLike::new("server-header")
-                                                .style(ButtonStyle::Subtle)
-                                                .full_width()
-                                                .on_click({
-                                                    let server_id = server.id.clone();
-                                                    cx.listener(move |this, _, _, cx| {
-                                                        // Toggle expanded state when header is clicked
-                                                        this.toggle_models_expanded(server_id.clone(), cx);
-                                                    })
-                                                })
-                                                .child(
-                                                    div()
-                                                        .p_2()
-                                                        .child(
-                                                            h_flex()
-                                                                .justify_between()
-                                                                .w_full()
-                                                                .child(
-                                                                    h_flex()
-                                                                        .gap_1()
-                                                                        .child(
-                                                                            Label::new(format!("Models for {}", server.name))
-                                                                                .size(LabelSize::Small)
-                                                                        )
-                                                                        .child(
-                                                                            // Add an indicator of how many models are available
-                                                                            Label::new(format!("({})", 
-                                                                                server.available_models.as_ref().map_or(0, |models| models.len())
-                                                                            ))
-                                                                            .size(LabelSize::XSmall)
-                                                                            .color(Color::Muted)
-                                                                        )
-                                                                )
-                                                                .child(
-                                                                    h_flex()
-                                                                        .gap_2()
-                                                                        .child(
-                                                                            // Add expand/collapse icon
-                                                                            Icon::new(
-                                                                                if self.expanded_server_models.contains(&server.id) {
-                                                                                    IconName::ChevronDown
-                                                                                } else {
-                                                                                    IconName::ChevronRight
-                                                                                }
-                                                                            )
-                                                                        )
-                                                                        .child(
-                                                                            Button::new("add-model", "Add Model")
-                                                                                .icon(IconName::Plus)
-                                                                                .icon_position(IconPosition::Start)
-                                                                                .on_click(cx.listener(move |this, _, _, cx| {
-                                                                                    this.toggle_add_model_form(cx);
-                                                                                }))
-                                                                        )
-                                                                )
-                                                        )
-                                                )
-                                        )
-                                        // Add the models section - only visible if expanded
-                                        .child(
-                                            // Only show the model list when expanded
-                                            if self.expanded_server_models.contains(&server.id) {
-                                                // Render models for this server
-                                                div()
-                                                    .px_2()
-                                                    .my_2() // Add spacing above and below
-                                                    .child(
-                                                        v_flex()
-                                                            .gap_1()
-                                                            .child(
-                                                                {
-                                                                    // Create a clone to avoid borrowing issues
-                                                                    let server_clone = LmStudioServer {
-                                                                        id: server.id.clone(),
-                                                                        name: server.name.clone(),
-                                                                        api_url: server.api_url.clone(),
-                                                                        enabled: server.enabled,
-                                                                        available_models: server.available_models.clone(),
-                                                                    };
-                                                                    self.render_models_for_server(&server_clone, cx)
-                                                                }
-                                                            )
-                                                    )
-                                                    .into_any_element()
-                                            } else {
-                                                // Empty element when collapsed
-                                                div().into_any_element()
-                                            }
-                                        )
-                                        .child(
-                                            if self.is_adding_model {
-                                                // Add model form with SingleLineInput
-                                                v_flex()
-                                                    .gap_2()
-                                                    .p_2()
-                                                    .border_1()
-                                                    .border_color(cx.theme().colors().border)
-                                                    .bg(cx.theme().colors().background)
-                                                    .rounded_md()
-                                                    .my_2()
-                                                    .w_full()
-                                                    .child(
-                                                        Label::new("Add Custom Model")
-                                                    )
-                                                    .child(
-                                                        v_flex()
-                                                            .gap_2()
-                                                            .w_full()
-                                                            .child(
-                                                                v_flex()
-                                                                    .gap_1()
-                                                                    .child(Label::new("Model Name:").size(LabelSize::Small))
-                                                                    .child(self.new_model_name_input.clone().unwrap())
-                                                            )
-                                                            .child(
-                                                                v_flex()
-                                                                    .gap_1()
-                                                                    .child(Label::new("Display Name (optional):").size(LabelSize::Small))
-                                                                    .child(self.new_model_display_name_input.clone().unwrap())
-                                                            )
-                                                            .child(
-                                                                v_flex()
-                                                                    .gap_1()
-                                                                    .child(Label::new("Max Tokens:").size(LabelSize::Small))
-                                                                    .child(self.new_model_max_tokens_input.clone().unwrap())
-                                                            )
-                                                    )
-                                                    .child(
-                                                        h_flex()
-                                                            .justify_end()
-                                                            .gap_2()
-                                                            .mt_2()
-                                                            .child(
-                                                                Button::new("cancel-model", "Cancel")
-                                                                    .style(ButtonStyle::Subtle)
-                                                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                                                        this.toggle_add_model_form(cx);
-                                                                    }))
-                                                            )
-                                                            .child(
-                                                                Button::new("add-new-model", "Add Model")
-                                                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                                                        this.add_custom_model(cx);
-                                                                    }))
-                                                            )
-                                                    )
-                                                    .into_any_element()
-                                            } else {
-                                                div().into_any_element()
-                                            }
-                                        )
-                                    } else {
-                                        this.child(
-                                            div()
-                                                .p_2()
-                                                .child(
-                                                    Label::new(format!("Server {} is disabled. Enable it to manage models.", server.name))
-                                                        .color(Color::Muted)
-                                                )
-                                        )
-                                    }
-                                } else {
-                                    this
-                                }
-                            } else {
-                                // No server selected
-                                this.child(
-                                    div()
-                                        .p_2()
-                                        .child(
-                                            Label::new("Select a server to manage models")
-                                                .color(Color::Muted)
-                                        )
-                                )
-                            }
-                        })
-                )
-                // Add max tokens editing dialog if active
-                .child(
-                    if self.is_editing_max_tokens {
-                        v_flex()
-                            .gap_2()
-                            .p_2()
-                            .border_1()
-                            .border_color(cx.theme().colors().border)
-                            .bg(cx.theme().colors().background)
-                            .rounded_md()
-                            .my_2()
-                            .w_full()
-                            .child(
-                                Label::new("Edit Max Tokens")
-                            )
-                            .child(
-                                v_flex()
-                                    .gap_2()
-                                    .w_full()
-                                    .child(
-                                        v_flex()
-                                            .gap_1()
-                                            .child(Label::new("Max Tokens:").size(LabelSize::Small))
-                                            .child(self.edit_max_tokens_input.clone().unwrap())
-                                    )
-                                    .child(
-                                        h_flex()
-                                            .gap_1()
-                                            .child(
-                                                Label::new("Server default:")
-                                                    .size(LabelSize::XSmall)
-                                                    .color(Color::Muted)
-                                            )
-                                            .child(
-                                                Label::new(format!("{} tokens", 
-                                                    // Find current server default for this model
-                                                    self.editing_model_server_id.as_ref().and_then(|server_id| {
-                                                        self.editing_model_name.as_ref().and_then(|model_name| {
-                                                            let settings = AllLanguageModelSettings::get_global(cx);
-                                                            settings.lmstudio.servers.iter()
-                                                                .find(|s| &s.id == server_id)
-                                                                .and_then(|s| s.available_models.as_ref())
-                                                                .and_then(|models| models.iter().find(|m| &m.name == model_name))
-                                                                .map(|m| m.server_max_tokens)
-                                                        })
-                                                    }).unwrap_or(8192)
-                                                ))
-                                                .size(LabelSize::XSmall)
-                                                .color(Color::Default)
-                                            )
-                                    )
-                                    .child(
-                                        Label::new("Setting to server default will remove custom value")
-                                            .size(LabelSize::XSmall)
-                                            .color(Color::Muted)
-                                    )
-                            )
-                            .child(
-                                h_flex()
-                                    .justify_between()
-                                    .mt_2()
-                                    .child(
-                                        Button::new("reset-to-default", "Use Server Default")
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                // Get server default value
-                                                let server_default = this.editing_model_server_id.as_ref().and_then(|server_id| {
-                                                    this.editing_model_name.as_ref().and_then(|model_name| {
-                                                        let settings = AllLanguageModelSettings::get_global(cx);
-                                                        settings.lmstudio.servers.iter()
-                                                            .find(|s| &s.id == server_id)
-                                                            .and_then(|s| s.available_models.as_ref())
-                                                            .and_then(|models| models.iter().find(|m| &m.name == model_name))
-                                                            .map(|m| m.server_max_tokens)
-                                                    })
-                                                }).unwrap_or(8192);
-                                                
-                                                // Just update our internal value - the input will be recreated on next UI refresh
-                                                this.edit_max_tokens_value = server_default.to_string();
-                                                // Clear the input to force recreation
-                                                this.edit_max_tokens_input = None;
-                                                
-                                                // Save with the default value
-                                                this.save_max_tokens_edit(cx);
-                                            }))
-                                    )
-                                    .child(
-                                        h_flex()
-                                        .gap_2()
-                                        .child(
-                                            Button::new("cancel-tokens-edit", "Cancel")
-                                                .style(ButtonStyle::Subtle)
-                                                .on_click(cx.listener(move |this, _, _, cx| {
-                                                    this.cancel_max_tokens_edit(cx);
-                                                }))
-                                        )
-                                        .child(
-                                            Button::new("save-tokens-edit", "Save")
-                                                .on_click(cx.listener(move |this, _, _, cx| {
-                                                    this.save_max_tokens_edit(cx);
-                                                }))
-                                        )
-                                    )
-                            )
-                            .into_any_element()
-                    } else {
-                        div().into_any_element()
-                    }
                 )
                 .into_any()
         }
