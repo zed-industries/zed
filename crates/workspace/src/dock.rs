@@ -1,5 +1,5 @@
 use crate::persistence::model::DockData;
-use crate::{DraggedDock, Event, ModalLayer, Pane};
+use crate::{DraggedDock, Event, ModalLayer, Pane, WorkspaceSettings};
 use crate::{Workspace, status_bar::StatusItemView};
 use anyhow::Context as _;
 use client::proto;
@@ -11,12 +11,14 @@ use gpui::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::SettingsStore;
+use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use ui::{ContextMenu, Divider, DividerColor, IconButton, Tooltip, h_flex};
 use ui::{prelude::*, right_click_menu};
 
 pub(crate) const RESIZE_HANDLE_SIZE: Pixels = Pixels(6.);
+
+pub(crate) const DEFAULT_DOCK_SIZE: Pixels = Pixels(300.);
 
 pub enum PanelEvent {
     ZoomIn,
@@ -201,6 +203,7 @@ pub struct Dock {
     pub(crate) serialized_dock: Option<DockData>,
     zoom_layer_open: bool,
     modal_layer: Entity<ModalLayer>,
+    size: Pixels,
     _subscriptions: [Subscription; 2],
 }
 
@@ -277,6 +280,7 @@ impl Dock {
                 serialized_dock: None,
                 zoom_layer_open: false,
                 modal_layer,
+                size: DEFAULT_DOCK_SIZE,
             }
         });
 
@@ -331,6 +335,10 @@ impl Dock {
 
     pub fn is_open(&self) -> bool {
         self.is_open
+    }
+
+    pub fn size(&self) -> Pixels {
+        self.size
     }
 
     fn resizable(&self, cx: &App) -> bool {
@@ -576,6 +584,7 @@ impl Dock {
                     panel.set_zoomed(true, window, cx)
                 }
             }
+            self.set_size(Some(serialized.size));
             self.set_open(serialized.visible, window, cx);
             return true;
         }
@@ -656,11 +665,16 @@ impl Dock {
         }
     }
 
-    pub fn panel_size(&self, panel: &dyn PanelHandle, window: &Window, cx: &App) -> Option<Pixels> {
-        self.panel_entries
-            .iter()
-            .find(|entry| entry.panel.panel_id() == panel.panel_id())
-            .map(|entry| entry.panel.size(window, cx))
+    pub fn panel_size(&self, panel: &dyn PanelHandle, window: &Window, cx: &App) -> Pixels {
+        if WorkspaceSettings::get_global(cx).stable_size_docks {
+            self.size
+        } else {
+            self.panel_entries
+                .iter()
+                .find(|entry| entry.panel.panel_id() == panel.panel_id())
+                .map(|entry| entry.panel.size(window, cx))
+                .unwrap_or(DEFAULT_DOCK_SIZE)
+        }
     }
 
     pub fn active_panel_size(&self, window: &Window, cx: &App) -> Option<Pixels> {
@@ -680,8 +694,11 @@ impl Dock {
     ) {
         if let Some(entry) = self.active_panel_entry() {
             let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
-
-            entry.panel.set_size(size, window, cx);
+            if WorkspaceSettings::get_global(cx).stable_size_docks {
+                self.set_size(size);
+            } else {
+                entry.panel.set_size(size, window, cx);
+            }
             cx.notify();
         }
     }
@@ -709,13 +726,17 @@ impl Dock {
             }
         }
     }
+
+    fn set_size(&mut self, size: Option<Pixels>) {
+        self.size = size.unwrap_or(DEFAULT_DOCK_SIZE);
+    }
 }
 
 impl Render for Dock {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let dispatch_context = Self::dispatch_context();
         if let Some(entry) = self.visible_entry() {
-            let size = entry.panel.size(window, cx);
+            let size = self.panel_size(entry.panel.as_ref(), window, cx);
 
             let position = self.position;
             let create_resize_handle = || {

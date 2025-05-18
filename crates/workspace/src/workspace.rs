@@ -4938,6 +4938,7 @@ impl Workspace {
         ) -> DockStructure {
             let left_dock = this.left_dock.read(cx);
             let left_visible = left_dock.is_open();
+            let left_dock_size = left_dock.size();
             let left_active_panel = left_dock
                 .active_panel()
                 .map(|panel| panel.persistent_name().to_string());
@@ -4948,6 +4949,7 @@ impl Workspace {
 
             let right_dock = this.right_dock.read(cx);
             let right_visible = right_dock.is_open();
+            let right_dock_size = right_dock.size();
             let right_active_panel = right_dock
                 .active_panel()
                 .map(|panel| panel.persistent_name().to_string());
@@ -4958,6 +4960,7 @@ impl Workspace {
 
             let bottom_dock = this.bottom_dock.read(cx);
             let bottom_visible = bottom_dock.is_open();
+            let bottom_dock_size = bottom_dock.size();
             let bottom_active_panel = bottom_dock
                 .active_panel()
                 .map(|panel| panel.persistent_name().to_string());
@@ -4971,16 +4974,19 @@ impl Workspace {
                     visible: left_visible,
                     active_panel: left_active_panel,
                     zoom: left_dock_zoom,
+                    size: left_dock_size,
                 },
                 right: DockData {
                     visible: right_visible,
                     active_panel: right_active_panel,
                     zoom: right_dock_zoom,
+                    size: right_dock_size,
                 },
                 bottom: DockData {
                     visible: bottom_visible,
                     active_panel: bottom_active_panel,
                     zoom: bottom_dock_zoom,
+                    size: bottom_dock_size,
                 },
             }
         }

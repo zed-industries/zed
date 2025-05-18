@@ -11,6 +11,7 @@ use settings::{Settings, SettingsSources};
 pub struct WorkspaceSettings {
     pub active_pane_modifiers: ActivePanelModifiers,
     pub bottom_dock_layout: BottomDockLayout,
+    pub stable_size_docks: bool,
     pub pane_split_direction_horizontal: PaneSplitDirectionHorizontal,
     pub pane_split_direction_vertical: PaneSplitDirectionVertical,
     pub centered_layout: CenteredLayoutSettings,
@@ -127,6 +128,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: contained
     pub bottom_dock_layout: Option<BottomDockLayout>,
+    /// Maintain the same docks size regardless of the active panel
+    ///
+    /// Default: false
+    pub stable_size_docks: Option<bool>,
     /// Direction to split horizontally.
     ///
     /// Default: "up"
