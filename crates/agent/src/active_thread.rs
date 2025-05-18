@@ -456,8 +456,6 @@ fn render_markdown_code_block(
         .copied_code_block_ids
         .contains(&(message_id, ix));
 
-    // let can_expand = metadata.line_count >= MAX_UNCOLLAPSED_LINES_IN_CODE_BLOCK;
-
     let is_expanded = active_thread.read(cx).is_codeblock_expanded(message_id, ix);
 
     let codeblock_header_bg = cx
