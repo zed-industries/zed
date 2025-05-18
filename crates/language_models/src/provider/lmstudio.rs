@@ -1064,6 +1064,8 @@ struct ConfigurationView {
     // Server connection status tracking
     server_connection_status: BTreeMap<String, bool>,
     connection_check_tasks: BTreeMap<String, Task<Result<bool>>>,
+    // Track expanded model sections
+    expanded_server_models: HashSet<String>,
 }
 
 impl ConfigurationView {
@@ -1150,6 +1152,8 @@ impl ConfigurationView {
             // Server connection status tracking
             server_connection_status,
             connection_check_tasks: BTreeMap::new(),
+            // Track expanded model sections
+            expanded_server_models: HashSet::new(),
         }
     }
 
@@ -1538,6 +1542,16 @@ impl ConfigurationView {
     
     fn select_server(&mut self, index: Option<usize>, cx: &mut Context<Self>) {
         self.selected_server_index = index;
+        
+        // Auto-expand models for the selected server
+        if let Some(idx) = index {
+            let settings = AllLanguageModelSettings::get_global(cx);
+            if idx < settings.lmstudio.servers.len() {
+                let server_id = settings.lmstudio.servers[idx].id.clone();
+                self.expanded_server_models.insert(server_id);
+            }
+        }
+        
         cx.notify();
     }
 
@@ -2133,10 +2147,23 @@ impl ConfigurationView {
         if server_models.is_empty() {
             div()
                 .p_2()
+                .border_1()
+                .border_color(cx.theme().colors().border_variant)
+                .rounded_md()
+                .bg(cx.theme().colors().surface_background)
                 .child(
-                    Label::new("No models configured for this server")
-                        .color(Color::Muted)
-                        .size(LabelSize::XSmall)
+                    v_flex()
+                        .gap_1()
+                        .child(
+                            Label::new("No models configured for this server")
+                                .color(Color::Muted)
+                                .size(LabelSize::Small)
+                        )
+                        .child(
+                            Label::new("You can add a custom model or fetch models from the server.")
+                                .color(Color::Muted)
+                                .size(LabelSize::XSmall)
+                        )
                 )
                 .into_any_element()
         } else {
@@ -2564,6 +2591,26 @@ impl ConfigurationView {
         } else {
             "Not connected"
         }
+    }
+
+    fn toggle_max_tokens_edit(&mut self, cx: &mut Context<Self>) {
+        // Reset state
+        self.is_editing_max_tokens = false;
+        self.editing_model_server_id = None;
+        self.editing_model_name = None;
+        self.edit_max_tokens_input = None;
+        
+        cx.notify();
+    }
+
+    // Method to toggle the expanded state of a server's models section
+    fn toggle_models_expanded(&mut self, server_id: String, cx: &mut Context<Self>) {
+        if self.expanded_server_models.contains(&server_id) {
+            self.expanded_server_models.remove(&server_id);
+        } else {
+            self.expanded_server_models.insert(server_id);
+        }
+        cx.notify();
     }
 }
 
@@ -3006,39 +3053,94 @@ impl Render for ConfigurationView {
                                                 .my_2()
                                         )
                                         .child(
-                                            h_flex()
-                                                .justify_between()
+                                            ButtonLike::new("server-header")
+                                                .style(ButtonStyle::Subtle)
+                                                .full_width()
+                                                .on_click({
+                                                    let server_id = server.id.clone();
+                                                    cx.listener(move |this, _, _, cx| {
+                                                        // Toggle expanded state when header is clicked
+                                                        this.toggle_models_expanded(server_id.clone(), cx);
+                                                    })
+                                                })
                                                 .child(
-                                                    Label::new(format!("Models for {}", server.name))
-                                                        .size(LabelSize::Small)
-                                                )
-                                                .child(
-                                                    Button::new("add-model", "Add Model")
-                                                        .icon(IconName::Plus)
-                                                        .icon_position(IconPosition::Start)
-                                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                                            this.toggle_add_model_form(cx);
-                                                        }))
+                                                    div()
+                                                        .p_2()
+                                                        .child(
+                                                            h_flex()
+                                                                .justify_between()
+                                                                .w_full()
+                                                                .child(
+                                                                    h_flex()
+                                                                        .gap_1()
+                                                                        .child(
+                                                                            Label::new(format!("Models for {}", server.name))
+                                                                                .size(LabelSize::Small)
+                                                                        )
+                                                                        .child(
+                                                                            // Add an indicator of how many models are available
+                                                                            Label::new(format!("({})", 
+                                                                                server.available_models.as_ref().map_or(0, |models| models.len())
+                                                                            ))
+                                                                            .size(LabelSize::XSmall)
+                                                                            .color(Color::Muted)
+                                                                        )
+                                                                )
+                                                                .child(
+                                                                    h_flex()
+                                                                        .gap_2()
+                                                                        .child(
+                                                                            // Add expand/collapse icon
+                                                                            Icon::new(
+                                                                                if self.expanded_server_models.contains(&server.id) {
+                                                                                    IconName::ChevronDown
+                                                                                } else {
+                                                                                    IconName::ChevronRight
+                                                                                }
+                                                                            )
+                                                                        )
+                                                                        .child(
+                                                                            Button::new("add-model", "Add Model")
+                                                                                .icon(IconName::Plus)
+                                                                                .icon_position(IconPosition::Start)
+                                                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                                                    this.toggle_add_model_form(cx);
+                                                                                }))
+                                                                        )
+                                                                )
+                                                        )
                                                 )
                                         )
+                                        // Add the models section - only visible if expanded
                                         .child(
-                                            v_flex()
-                                                .gap_1()
-                                                .child(
-                                                    v_flex()
-                                                        .gap_1()
-                                                        .child({
-                                                            // Create model display element separately to avoid borrowing issue
-                                                            let server_id = server.id.clone();
-                                                            self.render_models_for_server(&LmStudioServer {
-                                                                id: server_id,
-                                                                name: server.name.clone(),
-                                                                api_url: server.api_url.clone(),
-                                                                enabled: server.enabled,
-                                                                available_models: server.available_models.clone(),
-                                                            }, cx)
-                                                        })
-                                                )
+                                            // Only show the model list when expanded
+                                            if self.expanded_server_models.contains(&server.id) {
+                                                // Render models for this server
+                                                div()
+                                                    .px_2()
+                                                    .my_2() // Add spacing above and below
+                                                    .child(
+                                                        v_flex()
+                                                            .gap_1()
+                                                            .child(
+                                                                {
+                                                                    // Create a clone to avoid borrowing issues
+                                                                    let server_clone = LmStudioServer {
+                                                                        id: server.id.clone(),
+                                                                        name: server.name.clone(),
+                                                                        api_url: server.api_url.clone(),
+                                                                        enabled: server.enabled,
+                                                                        available_models: server.available_models.clone(),
+                                                                    };
+                                                                    self.render_models_for_server(&server_clone, cx)
+                                                                }
+                                                            )
+                                                    )
+                                                    .into_any_element()
+                                            } else {
+                                                // Empty element when collapsed
+                                                div().into_any_element()
+                                            }
                                         )
                                         .child(
                                             if self.is_adding_model {
