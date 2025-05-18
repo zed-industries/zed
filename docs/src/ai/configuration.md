@@ -167,7 +167,7 @@ Depending on your hardware or use-case you may wish to limit or increase the con
         {
           "name": "qwen2.5-coder",
           "display_name": "qwen 2.5 coder 32K",
-          "max_tokens": 32768
+          "max_tokens": 32768,
           "supports_tools": true
         }
       ]
