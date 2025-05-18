@@ -4702,6 +4702,7 @@ dependencies = [
  "theme",
  "time",
  "tree-sitter-html",
+ "tree-sitter-python",
  "tree-sitter-rust",
  "tree-sitter-typescript",
  "ui",
