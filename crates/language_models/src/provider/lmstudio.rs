@@ -122,14 +122,19 @@ pub struct State {
 impl State {
     fn is_authenticated(&self) -> bool {
         // A provider is considered authenticated if it has at least one model available
-        if self.available_models.is_empty() {
-            return false;
+        if !self.available_models.is_empty() {
+            return true;
         }
         
         // Additional check: verify that at least one model has a valid server_id
         // We're not checking if the server is enabled here, but our model refresh
         // mechanism should have already removed models from disabled servers
-        self.available_models.iter().any(|model| model.server_id.is_some())
+        if self.available_models.iter().any(|model| model.server_id.is_some()) {
+            return true;
+        }
+        
+        // No models in state, so we're not authenticated
+        false
     }
 
     fn fetch_models(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -1082,6 +1087,37 @@ impl ConfigurationView {
             }
         }));
 
+        // Initialize server connection status map based on available models
+        let mut server_connection_status = BTreeMap::new();
+        let settings = AllLanguageModelSettings::get_global(cx);
+        
+        // Get available models from state to check which servers are already connected
+        let available_models = state.read(cx).available_models.clone();
+        
+        // Track which servers have models in the state (indicating they were connected)
+        let servers_with_models: HashSet<String> = available_models.iter()
+            .filter_map(|model| model.server_id.clone())
+            .collect();
+        
+        // Pre-populate all server IDs in the status map
+        for server in &settings.lmstudio.servers {
+            // A server is initially considered connected if:
+            // 1. It's enabled AND either
+            // 2a. It has models in state.available_models OR
+            // 2b. It has models in its own settings
+            // This helps maintain connection state between tab reopenings
+            let initial_status = server.enabled && 
+                (servers_with_models.contains(&server.id) || server.has_models());
+                
+            log::info!(
+                "Server {} initial connection status: {}", 
+                server.name, 
+                if initial_status { "connected" } else { "not connected" }
+            );
+            
+            server_connection_status.insert(server.id.clone(), initial_status);
+        }
+
         Self {
             state,
             loading_models_task,
@@ -1112,7 +1148,7 @@ impl ConfigurationView {
             new_server_url_input: None,
             edit_max_tokens_input: None,
             // Server connection status tracking
-            server_connection_status: BTreeMap::new(),
+            server_connection_status,
             connection_check_tasks: BTreeMap::new(),
         }
     }
@@ -1260,11 +1296,6 @@ impl ConfigurationView {
         }
     }
 
-    fn retry_connection(&self, cx: &mut App) {
-        self.state
-            .update(cx, |state, cx| state.fetch_models(cx))
-            .detach_and_log_err(cx);
-    }
     
     fn edit_server(&mut self, index: usize, cx: &mut Context<Self>) {
         let settings = AllLanguageModelSettings::get_global(cx);
@@ -1686,24 +1717,49 @@ impl ConfigurationView {
         
         let http_client = self.state.read(cx).http_client.clone();
         let server_clone = server.clone();
+        let server_id = server_id.to_string();
+        let view_entity = cx.entity();
         
         // Spawn a background task to check server health
-        cx.spawn(async move |_, _| {
+        cx.spawn(async move |_, cx| {
             // Use the server's healthcheck method
-            match server_clone.healthcheck(&*http_client).await {
+            let is_healthy = match server_clone.healthcheck(&*http_client).await {
                 Ok(true) => {
                     log::info!("Server {} is healthy", server_clone.name);
-                    Ok(true)
+                    // Update connection status map on completion
+                    view_entity.update(cx, |view: &mut ConfigurationView, cx| {
+                        view.server_connection_status.insert(server_id.clone(), true);
+                        // Remove from tracking map
+                        view.connection_check_tasks.remove(&server_id);
+                        cx.notify();
+                    }).ok();
+                    true
                 },
                 Ok(false) => {
                     log::warn!("Server {} is not healthy", server_clone.name);
-                    Ok(false)
+                    // Update connection status map on completion
+                    view_entity.update(cx, |view: &mut ConfigurationView, cx| {
+                        view.server_connection_status.insert(server_id.clone(), false);
+                        // Remove from tracking map
+                        view.connection_check_tasks.remove(&server_id);
+                        cx.notify();
+                    }).ok();
+                    false
                 },
                 Err(e) => {
                     log::error!("Health check failed for server {}: {}", server_clone.name, e);
-                    Ok(false) // Consider server unhealthy if check fails
+                    // Update connection status map on completion
+                    view_entity.update(cx, |view: &mut ConfigurationView, cx| {
+                        view.server_connection_status.insert(server_id.clone(), false);
+                        // Remove from tracking map
+                        view.connection_check_tasks.remove(&server_id);
+                        cx.notify();
+                    }).ok();
+                    false
                 }
-            }
+            };
+            
+            Ok(is_healthy)
         })
     }
     
@@ -2447,26 +2503,21 @@ impl ConfigurationView {
             ))
             .collect();
         
-        // Clear existing connection status and set all to false initially
-        self.server_connection_status.clear();
+        // Keep track of servers we're checking
+        let mut checking_servers = HashSet::new();
         
-        // Immediately mark all servers as not connected to show checking state
-        for (server_id, _enabled, _) in &servers_to_check {
-            self.server_connection_status.insert(server_id.clone(), false);
-        }
-        
-        // Notify UI to update immediately with "not connected" status
-        cx.notify();
-        
-        // Check each enabled server
+        // Check each enabled server (without resetting existing status)
         for (server_id, enabled, maybe_url) in servers_to_check {
             if enabled {
                 if let Some(_) = maybe_url {
                     // Start a server check task and ignore the result
-                    let _ = self.check_server_health(&server_id, cx);
+                    let check_task = self.check_server_health(&server_id, cx);
                     
-                    // Initially set status to false, the check task will update it
-                    self.server_connection_status.insert(server_id, false);
+                    // Add to our set of checking servers
+                    checking_servers.insert(server_id.clone());
+                    
+                    // Store the task to track it
+                    self.connection_check_tasks.insert(server_id, check_task);
                 } else {
                     // Mark as disconnected if URL isn't available (shouldn't happen)
                     self.server_connection_status.insert(server_id, false);
@@ -2503,6 +2554,9 @@ impl ConfigurationView {
     fn server_connection_status_text(&self, server: &LmStudioServer) -> &'static str {
         if !server.enabled {
             "Disabled"
+        } else if self.connection_check_tasks.contains_key(&server.id) {
+            // If there's an active check task, show "Checking" status
+            "Checking Connection..."
         } else if self.is_server_connected(&server.id) {
             "Connected"
         } else if server.has_models() {
@@ -2609,18 +2663,8 @@ impl Render for ConfigurationView {
                         )
                         .map(|this| {
                             if is_authenticated {
-                                this.child(
-                                    ButtonLike::new("connected")
-                                        .disabled(true)
-                                        .cursor_style(gpui::CursorStyle::Arrow)
-                                        .child(
-                                            h_flex()
-                                                .gap_2()
-                                                .child(Indicator::dot().color(Color::Success))
-                                                .child(Label::new("Connected"))
-                                                .into_any_element(),
-                                        ),
-                                )
+                                // Remove the global connection status indicator
+                                this
                             } else {
                                 // No global connect button
                                 this
@@ -2806,7 +2850,56 @@ impl Render for ConfigurationView {
                                                                 )
                                                                 .child(
                                                                     h_flex()
-                                                                        .gap_1()
+                                                                        .gap_2() // Increased gap for better spacing
+                                                                        .child({
+                                                                            // Use more accurate connection status check
+                                                                            let is_connected = self.is_server_connected(&server.id);
+                                                                            let status_text = self.server_connection_status_text(server);
+                                                                            
+                                                                            // Add a more prominent connection status indicator
+                                                                            if server.enabled {
+                                                                                if is_connected {
+                                                                                    // Connected status
+                                                                                    ButtonLike::new("server-status")
+                                                                                        .style(ButtonStyle::Subtle)
+                                                                                        .disabled(true)
+                                                                                        .cursor_style(gpui::CursorStyle::Arrow)
+                                                                                        .child(
+                                                                                            h_flex()
+                                                                                                .gap_1()
+                                                                                                .child(Indicator::dot().color(Color::Success))
+                                                                                                .child(Label::new("Connected"))
+                                                                                                .into_any_element()
+                                                                                        )
+                                                                                } else {
+                                                                                    // Not connected or checking status
+                                                                                    ButtonLike::new("server-status")
+                                                                                        .style(ButtonStyle::Subtle)
+                                                                                        .disabled(true)
+                                                                                        .cursor_style(gpui::CursorStyle::Arrow)
+                                                                                        .child(
+                                                                                            h_flex()
+                                                                                                .gap_1()
+                                                                                                .child(Indicator::dot().color(Color::Warning))
+                                                                                                .child(Label::new(status_text))
+                                                                                                .into_any_element()
+                                                                                        )
+                                                                                }
+                                                                            } else {
+                                                                                // Disabled server
+                                                                                ButtonLike::new("server-status")
+                                                                                    .style(ButtonStyle::Subtle)
+                                                                                    .disabled(true)
+                                                                                    .cursor_style(gpui::CursorStyle::Arrow)
+                                                                                    .child(
+                                                                                        h_flex()
+                                                                                            .gap_1()
+                                                                                            .child(Indicator::dot().color(Color::Muted))
+                                                                                            .child(Label::new("Disabled"))
+                                                                                            .into_any_element()
+                                                                                    )
+                                                                            }
+                                                                        })
                                                                         .child(
                                                                             Switch::new(
                                                                                 ElementId::NamedInteger("toggle-server".into(), idx as u64),
@@ -2822,49 +2915,44 @@ impl Render for ConfigurationView {
                                                                             let is_connected = self.is_server_connected(&server.id);
                                                                             let has_task = self.connection_check_tasks.contains_key(&server.id);
                                                                             
-                                                                                                                                                        if server.enabled && !is_connected {
-                                                                                if has_task {
-                                                                                    // Show checking indicator when a connection check is in progress
-                                                                                    Button::new("connect-server", "Checking Connection...")
-                                                                                        .style(ButtonStyle::Filled)
-                                                                                        .icon(IconName::Update)
-                                                                                        .tooltip(Tooltip::text("Checking Connection Status"))
-                                                                                        .disabled(true)
-                                                                                } else {
-                                                                                    // For use in closure
-                                                                                    let server_id = server.id.clone();
-                                                                                    let server_url = server.api_url.clone();
-                                                                                    
-                                                                                    // Enhanced Connect button for enabled but not connected servers
-                                                                                    Button::new("connect-server", "Connect")
-                                                                                        .style(ButtonStyle::Filled)
-                                                                                        .icon(IconName::Play)
-                                                                                        .tooltip(Tooltip::text("Connect to Server"))
-                                                                                        .on_click(cx.listener({
-                                                                                            let server_id = server_id.clone();
-                                                                                            let server_url = server_url.clone();
-                                                                                            move |this: &mut Self, _, _, cx| {
-                                                                                                // Immediately set connection status to false to show checking state
-                                                                                                this.server_connection_status.insert(server_id.clone(), false);
-                                                                                                // Start a task to check connection first
-                                                                                                let _ = this.check_server_health(&server_id, cx);
-                                                                                                // Then fetch models
-                                                                                                this.fetch_models_from_server(server_id.clone(), server_url.clone(), cx);
-                                                                                                // Make sure UI updates immediately
-                                                                                                cx.notify();
-                                                                                            }
-                                                                                        }))
-                                                                                }
-                                                                            } else {
-                                                                                // For use in closure
-                                                                                let server_id = server.id.clone();
-                                                                                let server_url = server.api_url.clone();
-                                                                                let server_enabled = server.enabled;
-                                                                                
-                                                                                // Show refresh button for connected servers
+                                                                            // For use in closure
+                                                                            let server_id = server.id.clone();
+                                                                            let server_url = server.api_url.clone();
+                                                                            let server_enabled = server.enabled;
+                                                                            
+                                                                            // Choose which button to show based on state
+                                                                            if has_task {
+                                                                                // Show checking indicator when a connection check is in progress
+                                                                                Button::new("connect-server", "Checking Connection...")
+                                                                                    .style(ButtonStyle::Filled)
+                                                                                    .icon(IconName::Update)
+                                                                                    .tooltip(Tooltip::text("Checking Connection Status"))
+                                                                                    .disabled(true)
+                                                                            } else if server.enabled && !is_connected {
+                                                                                // Enhanced Connect button for enabled but not connected servers
+                                                                                Button::new("connect-server", "Connect")
+                                                                                    .style(ButtonStyle::Filled)
+                                                                                    .icon(IconName::Play)
+                                                                                    .tooltip(Tooltip::text("Connect to Server"))
+                                                                                    .on_click(cx.listener({
+                                                                                        let server_id = server_id.clone();
+                                                                                        let server_url = server_url.clone();
+                                                                                        move |this: &mut Self, _, _, cx| {
+                                                                                            // Immediately set connection status to false to show checking state
+                                                                                            this.server_connection_status.insert(server_id.clone(), false);
+                                                                                            // Start a task to check connection first
+                                                                                            let _ = this.check_server_health(&server_id, cx);
+                                                                                            // Then fetch models
+                                                                                            this.fetch_models_from_server(server_id.clone(), server_url.clone(), cx);
+                                                                                            // Make sure UI updates immediately
+                                                                                            cx.notify();
+                                                                                        }
+                                                                                    }))
+                                                                            } else if server.enabled && is_connected {
+                                                                                // Show refresh button ONLY for connected servers
                                                                                 Button::new("fetch-models", "Refresh")
                                                                                     .style(ButtonStyle::Subtle)
-                                                                                    .icon(if has_task { IconName::Update } else { IconName::Update })
+                                                                                    .icon(IconName::Update)
                                                                                     .tooltip(Tooltip::text("Refresh Connection & Models"))
                                                                                     .disabled(has_task) // Disable when already checking
                                                                                     .on_click(cx.listener({
@@ -2873,17 +2961,29 @@ impl Render for ConfigurationView {
                                                                                         let server_enabled = server_enabled;
                                                                                         move |this: &mut Self, _, _, cx| {
                                                                                             if server_enabled {
-                                                                                                // Immediately set connection status to false to show checking state
+                                                                                                // Always set connection status to false to show checking state
+                                                                                                // This ensures we always check status and show visual feedback
                                                                                                 this.server_connection_status.insert(server_id.clone(), false);
-                                                                                                // Start a check connection task 
-                                                                                                let _ = this.check_server_health(&server_id, cx);
+                                                                                                
+                                                                                                // Start a check connection task
+                                                                                                let check_task = this.check_server_health(&server_id, cx);
+                                                                                                
+                                                                                                // Store the task to track it
+                                                                                                this.connection_check_tasks.insert(server_id.clone(), check_task);
+                                                                                                
                                                                                                 // Then fetch models
                                                                                                 this.fetch_models_from_server(server_id.clone(), server_url.clone(), cx);
+                                                                                                
                                                                                                 // Make sure UI updates immediately
                                                                                                 cx.notify();
                                                                                             }
                                                                                         }
                                                                                     }))
+                                                                            } else {
+                                                                                // For disabled servers, just show a connect button that's disabled
+                                                                                Button::new("empty-button", "Connect")
+                                                                                    .style(ButtonStyle::Subtle)
+                                                                                    .disabled(true)
                                                                             }
                                                                         })
                                                                         .child(
