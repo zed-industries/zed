@@ -1087,7 +1087,7 @@ impl Terminal {
         }
 
         self.last_content.last_hovered_word = Some(HoveredWord {
-            word: word.clone(),
+            word,
             word_match,
             id: self.next_link_id(),
         });
