@@ -14,7 +14,7 @@ pub(crate) struct GdbDebugAdapter;
 impl GdbDebugAdapter {
     const ADAPTER_NAME: &'static str = "GDB";
 
-    fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
+    fn request_args(&self, _config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
         // let mut args = json!({
         //     "request": match config.request {
         //         DebugRequest::Launch(_) => "launch",

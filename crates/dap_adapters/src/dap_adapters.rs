@@ -26,7 +26,7 @@ use javascript::JsDebugAdapter;
 use php::PhpDebugAdapter;
 use python::PythonDebugAdapter;
 use ruby::RubyDebugAdapter;
-use serde_json::{Value, json};
+use serde_json::json;
 use task::{DebugScenario, TcpArgumentsTemplate, ZedDebugConfig};
 
 pub fn init(cx: &mut App) {

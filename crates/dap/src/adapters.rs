@@ -22,10 +22,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{
-    AttachRequest, DebugRequest, DebugScenario, LaunchRequest, Request, TcpArgumentsTemplate,
-    ZedDebugConfig,
-};
+use task::{DebugRequest, DebugScenario, TcpArgumentsTemplate, ZedDebugConfig};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DapStatus {

@@ -10,7 +10,7 @@ use futures::StreamExt;
 use gpui::AsyncApp;
 use serde_json::Value;
 use task::{DebugRequest, DebugScenario, ZedDebugConfig};
-use util::{ResultExt, fs::remove_matching};
+use util::fs::remove_matching;
 
 use crate::*;
 

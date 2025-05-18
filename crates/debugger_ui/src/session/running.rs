@@ -39,7 +39,7 @@ use settings::Settings;
 use stack_frame_list::StackFrameList;
 use task::{
     BuildTaskDefinition, DebugScenario, LaunchRequest, ShellBuilder, SpawnInTerminal, TaskContext,
-    substitute_variables_in_map, substitute_variables_in_str,
+    ZedDebugConfig, substitute_variables_in_map, substitute_variables_in_str,
 };
 use terminal_view::TerminalView;
 use ui::{
@@ -730,6 +730,7 @@ impl RunningState {
         };
         let project = workspace.read(cx).project().clone();
         let dap_store = project.read(cx).dap_store().downgrade();
+        let dap_registry = cx.global::<DapRegistry>().clone();
         let task_store = project.read(cx).task_store().downgrade();
         let weak_project = project.downgrade();
         let weak_workspace = workspace.downgrade();
@@ -745,12 +746,11 @@ impl RunningState {
             } = scenario;
             Self::substitute_variables_in_config(&mut config, &task_context);
 
-            let request_type = cx.read_global::<DapRegistry, _>(|dap_registry, _, _| {
-                dap_registry
-                    .adapter(&adapter)
-                    .ok_or_else(|| anyhow!("{}: is not a valid adapter name", &adapter))
-                    .and_then(|adapter| adapter.validate_config(&config))
-            })?;
+            let request_type = dap_registry
+                .adapter(&adapter)
+                .ok_or_else(|| anyhow!("{}: is not a valid adapter name", &adapter))
+                .and_then(|adapter| adapter.validate_config(&config));
+
             let config_is_valid = request_type.is_ok();
 
             let build_output = if let Some(build) = build {
@@ -782,29 +782,27 @@ impl RunningState {
 
                 let locator_name = if let Some(locator_name) = locator_name {
                     debug_assert!(!config_is_valid);
-
                     Some(locator_name)
-                // todo!() ^^
-                // } else if request.is_none() {
-                //     dap_store
-                //         .update(cx, |this, cx| {
-                //             this.debug_scenario_for_build_task(
-                //                 task.original_task().clone(),
-                //                 adapter.clone().into(),
-                //                 task.display_label().to_owned().into(),
-                //                 cx,
-                //             )
-                //             .and_then(|scenario| {
-                //                 match scenario.build {
-                //                     Some(BuildTaskDefinition::Template {
-                //                         locator_name, ..
-                //                     }) => locator_name,
-                //                     _ => None,
-                //                 }
-                //             })
-                //         })
-                //         .ok()
-                //         .flatten()
+                } else if !config_is_valid {
+                    dap_store
+                        .update(cx, |this, cx| {
+                            this.debug_scenario_for_build_task(
+                                task.original_task().clone(),
+                                adapter.clone().into(),
+                                task.display_label().to_owned().into(),
+                                cx,
+                            )
+                            .and_then(|scenario| {
+                                match scenario.build {
+                                    Some(BuildTaskDefinition::Template {
+                                        locator_name, ..
+                                    }) => locator_name,
+                                    _ => None,
+                                }
+                            })
+                        })
+                        .ok()
+                        .flatten()
                 } else {
                     None
                 };
@@ -867,12 +865,24 @@ impl RunningState {
             } else if let Some((task, locator_name)) = build_output {
                 let locator_name = locator_name
                     .ok_or_else(|| anyhow!("Could not find a valid locator for a build task"))?;
-                dap_store
+                let request = dap_store
                     .update(cx, |this, cx| {
                         this.run_debug_locator(&locator_name, task, cx)
                     })?
                     .await?;
-                todo!("We want to get the new debug request and convert it to the adapter's type")
+
+                let zed_config = ZedDebugConfig {
+                    label: label.clone(),
+                    adapter: adapter.clone(),
+                    request,
+                    stop_on_entry,
+                };
+
+                let scenario = dap_registry
+                    .adapter(&adapter)
+                    .ok_or_else(|| anyhow!("{}: is not a valid adapter name", &adapter))
+                    .map(|adapter| adapter.config_from_zed_format(zed_config))?;
+                config = scenario.config;
             } else {
                 return Err(anyhow!("No request or build provided"));
             };
