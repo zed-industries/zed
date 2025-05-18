@@ -2814,33 +2814,6 @@ impl Render for ConfigurationView {
                                                                             h_flex()
                                                                                 .gap_1()
                                                                                 .child(Label::new(&server.name))
-                                                                                .child({
-                                                                                    // Use the more accurate connection status
-                                                                                    let is_connected = self.is_server_connected(&server.id);
-                                                                                    let status_text = self.server_connection_status_text(server);
-                                                                                    
-                                                                                    if server.enabled {
-                                                                                        if is_connected {
-                                                                                            // Connected status
-                                                                                            h_flex()
-                                                                                                .gap_1()
-                                                                                                .child(Indicator::dot().color(Color::Success))
-                                                                                                .child(Label::new("Connected").size(LabelSize::XSmall).color(Color::Success))
-                                                                                        } else {
-                                                                                            // Not connected status
-                                                                                            h_flex()
-                                                                                                .gap_1()
-                                                                                                .child(Indicator::dot().color(Color::Warning))
-                                                                                                .child(Label::new(status_text).size(LabelSize::XSmall).color(Color::Warning))
-                                                                                        }
-                                                                                    } else {
-                                                                                        // Disabled status
-                                                                                        h_flex()
-                                                                                            .gap_1()
-                                                                                            .child(Indicator::dot().color(Color::Muted))
-                                                                                            .child(Label::new("Disabled").size(LabelSize::XSmall).color(Color::Muted))
-                                                                                    }
-                                                                                })
                                                                         )
                                                                         .child(
                                                                             Label::new(&server.api_url)
@@ -2856,47 +2829,38 @@ impl Render for ConfigurationView {
                                                                             let is_connected = self.is_server_connected(&server.id);
                                                                             let status_text = self.server_connection_status_text(server);
                                                                             
-                                                                            // Add a more prominent connection status indicator
+                                                                            // Just show a dot with tooltip showing the full status
                                                                             if server.enabled {
                                                                                 if is_connected {
-                                                                                    // Connected status
-                                                                                    ButtonLike::new("server-status")
+                                                                                    // Connected status - green dot
+                                                                                    ButtonLike::new("server-status-connected")
+                                                                                        .tooltip(Tooltip::text("Connected"))
                                                                                         .style(ButtonStyle::Subtle)
-                                                                                        .disabled(true)
                                                                                         .cursor_style(gpui::CursorStyle::Arrow)
+                                                                                        .disabled(true)
                                                                                         .child(
-                                                                                            h_flex()
-                                                                                                .gap_1()
-                                                                                                .child(Indicator::dot().color(Color::Success))
-                                                                                                .child(Label::new("Connected"))
-                                                                                                .into_any_element()
+                                                                                            Indicator::dot().color(Color::Success).into_any_element()
                                                                                         )
                                                                                 } else {
-                                                                                    // Not connected or checking status
-                                                                                    ButtonLike::new("server-status")
+                                                                                    // Not connected status - yellow/orange dot
+                                                                                    ButtonLike::new("server-status-disconnected")
+                                                                                        .tooltip(Tooltip::text(status_text))
                                                                                         .style(ButtonStyle::Subtle)
-                                                                                        .disabled(true)
                                                                                         .cursor_style(gpui::CursorStyle::Arrow)
+                                                                                        .disabled(true)
                                                                                         .child(
-                                                                                            h_flex()
-                                                                                                .gap_1()
-                                                                                                .child(Indicator::dot().color(Color::Warning))
-                                                                                                .child(Label::new(status_text))
-                                                                                                .into_any_element()
+                                                                                            Indicator::dot().color(Color::Warning).into_any_element()
                                                                                         )
                                                                                 }
                                                                             } else {
-                                                                                // Disabled server
-                                                                                ButtonLike::new("server-status")
+                                                                                // Disabled status - grey dot
+                                                                                ButtonLike::new("server-status-disabled")
+                                                                                    .tooltip(Tooltip::text("Disabled"))
                                                                                     .style(ButtonStyle::Subtle)
-                                                                                    .disabled(true)
                                                                                     .cursor_style(gpui::CursorStyle::Arrow)
+                                                                                    .disabled(true)
                                                                                     .child(
-                                                                                        h_flex()
-                                                                                            .gap_1()
-                                                                                            .child(Indicator::dot().color(Color::Muted))
-                                                                                            .child(Label::new("Disabled"))
-                                                                                            .into_any_element()
+                                                                                        Indicator::dot().color(Color::Muted).into_any_element()
                                                                                     )
                                                                             }
                                                                         })
