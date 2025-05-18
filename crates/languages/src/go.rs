@@ -375,6 +375,12 @@ impl super::LspAdapter for GoLspAdapter {
             filter_range,
         })
     }
+
+    fn diagnostic_message_to_markdown(&self, message: &str) -> Option<String> {
+        static REGEX: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"(?m)\n\s*").expect("Failed to create REGEX"));
+        Some(REGEX.replace_all(message, "\n\n").to_string())
+    }
 }
 
 fn parse_version_output(output: &Output) -> Result<&str> {
