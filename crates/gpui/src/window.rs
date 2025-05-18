@@ -900,7 +900,7 @@ impl Window {
                     .update(&mut cx, |_, window, _cx| {
                         for (area, hitbox) in &window.rendered_frame.window_control_hitboxes {
                             if window.mouse_hit_test.0.contains(&hitbox.id) {
-                                return Some(area.clone());
+                                return Some(*area);
                             }
                         }
                         None
