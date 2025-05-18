@@ -89,6 +89,7 @@ pub struct AssistantSettings {
     pub default_profile: AgentProfileId,
     pub profiles: IndexMap<AgentProfileId, AgentProfile>,
     pub always_allow_tool_actions: bool,
+    pub confirm_file_deletions: bool,
     pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
     pub stream_edits: bool,
     pub single_file_review: bool,
@@ -257,6 +258,7 @@ impl AssistantSettingsContent {
                     default_profile: None,
                     profiles: None,
                     always_allow_tool_actions: None,
+                    confirm_file_deletions: None,
                     notify_when_agent_waiting: None,
                     stream_edits: None,
                     single_file_review: None,
@@ -288,6 +290,7 @@ impl AssistantSettingsContent {
                 default_profile: None,
                 profiles: None,
                 always_allow_tool_actions: None,
+                confirm_file_deletions: None,
                 notify_when_agent_waiting: None,
                 stream_edits: None,
                 single_file_review: None,
@@ -492,6 +495,14 @@ impl AssistantSettingsContent {
         .ok();
     }
 
+    pub fn confirm_file_deletions(&mut self, allow: bool) {
+        self.v2_setting(|setting| {
+            setting.confirm_file_deletions = Some(allow);
+            Ok(())
+        })
+        .ok();
+    }
+
     pub fn set_single_file_review(&mut self, allow: bool) {
         self.v2_setting(|setting| {
             setting.single_file_review = Some(allow);
@@ -571,6 +582,7 @@ impl Default for VersionedAssistantSettingsContent {
             default_profile: None,
             profiles: None,
             always_allow_tool_actions: None,
+            confirm_file_deletions: None,
             notify_when_agent_waiting: None,
             stream_edits: None,
             single_file_review: None,
@@ -625,6 +637,7 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: false
     always_allow_tool_actions: Option<bool>,
+    confirm_file_deletions: Option<bool>,
     /// Where to show a popup notification when the agent is waiting for user input.
     ///
     /// Default: "primary_screen"
@@ -851,6 +864,10 @@ impl Settings for AssistantSettings {
                 value.always_allow_tool_actions,
             );
             merge(
+                &mut settings.confirm_file_deletions,
+                value.confirm_file_deletions,
+            );
+            merge(
                 &mut settings.notify_when_agent_waiting,
                 value.notify_when_agent_waiting,
             );
@@ -995,6 +1012,7 @@ mod tests {
                                 default_profile: None,
                                 profiles: None,
                                 always_allow_tool_actions: None,
+                                confirm_file_deletions: None,
                                 notify_when_agent_waiting: None,
                                 stream_edits: None,
                                 single_file_review: None,

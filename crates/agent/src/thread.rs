@@ -1980,8 +1980,10 @@ impl Thread {
 
         for tool_use in pending_tool_uses.iter() {
             if let Some(tool) = self.tools.read(cx).tool(&tool_use.name, cx) {
-                if tool.needs_confirmation(&tool_use.input, cx)
-                    && !AssistantSettings::get_global(cx).always_allow_tool_actions
+                if (tool.needs_confirmation(&tool_use.input, cx)
+                    && !AssistantSettings::get_global(cx).always_allow_tool_actions)
+                    || (tool.name() == "delete_path"
+                        && AssistantSettings::get_global(cx).confirm_file_deletions)
                 {
                     self.tool_use.confirm_tool_use(
                         tool_use.id.clone(),

@@ -1,5 +1,6 @@
 use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
+use assistant_settings::AssistantSettings;
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use futures::{SinkExt, StreamExt, channel::mpsc};
 use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
@@ -7,9 +8,9 @@ use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchem
 use project::{Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::sync::Arc;
 use ui::IconName;
-
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct DeletePathToolInput {
     /// The path of the file or directory to delete.
@@ -33,8 +34,8 @@ impl Tool for DeletePathTool {
         "delete_path".into()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
-        false
+    fn needs_confirmation(&self, _: &serde_json::Value, cx: &App) -> bool {
+        AssistantSettings::get_global(cx).confirm_file_deletions
     }
 
     fn description(&self) -> String {

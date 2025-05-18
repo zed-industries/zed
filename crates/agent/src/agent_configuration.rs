@@ -248,45 +248,86 @@ impl AgentConfiguration {
             )
     }
 
+    fn render_confirm_delete_permission(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let confirm_file_deletions = AssistantSettings::get_global(cx).confirm_file_deletions;
+
+        h_flex()
+                .gap_4()
+                .justify_between()
+                .flex_wrap()
+                .child(
+                    v_flex()
+                        .gap_0p5()
+                        .max_w_5_6()
+                        .child(Label::new("Always ask for confirmation before deleting files?"))
+                        .child(
+                            Label::new(
+                                "If disabled, The agent can delete potentially important files without asking for your confirmation.",
+                            )
+                            .color(Color::Muted),
+                        ),
+                )
+                .child(
+                    Switch::new(
+                        "confirm-file-deletions-switch",
+                        confirm_file_deletions.into(),
+                    )
+                    .color(SwitchColor::Accent)
+                    .on_click({
+                        let fs = self.fs.clone();
+                        move |state, _window, cx| {
+                            let allow = state == &ToggleState::Selected;
+                            update_settings_file::<AssistantSettings>(
+                                fs.clone(),
+                                cx,
+                                move |settings, _| {
+                                    settings.confirm_file_deletions(allow);
+                                },
+                            );
+                        }
+                    }),
+                )
+    }
+
     fn render_command_permission(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let always_allow_tool_actions = AssistantSettings::get_global(cx).always_allow_tool_actions;
 
         h_flex()
-            .gap_4()
-            .justify_between()
-            .flex_wrap()
-            .child(
-                v_flex()
-                    .gap_0p5()
-                    .max_w_5_6()
-                    .child(Label::new("Allow running editing tools without asking for confirmation"))
-                    .child(
-                        Label::new(
-                            "The agent can perform potentially destructive actions without asking for your confirmation.",
-                        )
-                        .color(Color::Muted),
-                    ),
-            )
-            .child(
-                Switch::new(
-                    "always-allow-tool-actions-switch",
-                    always_allow_tool_actions.into(),
+                .gap_4()
+                .justify_between()
+                .flex_wrap()
+                .child(
+                    v_flex()
+                        .gap_0p5()
+                        .max_w_5_6()
+                        .child(Label::new("Allow running editing tools without asking for confirmation"))
+                        .child(
+                            Label::new(
+                                "The agent can perform potentially destructive actions without asking for your confirmation.",
+                            )
+                            .color(Color::Muted),
+                        ),
                 )
-                .color(SwitchColor::Accent)
-                .on_click({
-                    let fs = self.fs.clone();
-                    move |state, _window, cx| {
-                        let allow = state == &ToggleState::Selected;
-                        update_settings_file::<AssistantSettings>(
-                            fs.clone(),
-                            cx,
-                            move |settings, _| {
-                                settings.set_always_allow_tool_actions(allow);
-                            },
-                        );
-                    }
-                }),
-            )
+                .child(
+                    Switch::new(
+                        "always-allow-tool-actions-switch",
+                        always_allow_tool_actions.into(),
+                    )
+                    .color(SwitchColor::Accent)
+                    .on_click({
+                        let fs = self.fs.clone();
+                        move |state, _window, cx| {
+                            let allow = state == &ToggleState::Selected;
+                            update_settings_file::<AssistantSettings>(
+                                fs.clone(),
+                                cx,
+                                move |settings, _| {
+                                    settings.set_always_allow_tool_actions(allow);
+                                },
+                            );
+                        }
+                    }),
+                )
     }
 
     fn render_single_file_review(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -336,6 +377,7 @@ impl AgentConfiguration {
             .border_color(cx.theme().colors().border)
             .child(Headline::new("General Settings"))
             .child(self.render_command_permission(cx))
+            .child(self.render_confirm_delete_permission(cx))
             .child(self.render_single_file_review(cx))
     }
 
