@@ -567,6 +567,15 @@ impl AgentPanel {
                         menu = menu.header("Recently Opened");
 
                         for entry in recently_opened.iter() {
+                            if let RecentEntry::Context(context) = entry {
+                                if context.read(cx).path().is_none() {
+                                    log::error!(
+                                        "bug: text thread in recent history list was never saved"
+                                    );
+                                    continue;
+                                }
+                            }
+
                             let summary = entry.summary(cx);
 
                             menu = menu.entry_with_end_slot_on_hover(
@@ -1290,14 +1299,26 @@ impl AgentPanel {
         let new_is_history = matches!(new_view, ActiveView::History);
 
         match &self.active_view {
-            ActiveView::Thread { thread, .. } => self.history_store.update(cx, |store, cx| {
+            ActiveView::Thread { thread, .. } => {
                 if let Some(thread) = thread.upgrade() {
                     if thread.read(cx).is_empty() {
                         let id = thread.read(cx).id().clone();
-                        store.remove_recently_opened_thread(id, cx);
+                        self.history_store.update(cx, |store, cx| {
+                            store.remove_recently_opened_thread(id, cx);
+                        });
                     }
                 }
-            }),
+            }
+            ActiveView::PromptEditor { context_editor, .. } => {
+                let context = context_editor.read(cx).context();
+                // When switching away from an unsaved text thread, delete its entry.
+                if context.read(cx).path().is_none() {
+                    let context = context.clone();
+                    self.history_store.update(cx, |store, cx| {
+                        store.remove_recently_opened_entry(&RecentEntry::Context(context), cx);
+                    });
+                }
+            }
             _ => {}
         }
 
