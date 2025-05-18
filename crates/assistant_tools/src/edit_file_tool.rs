@@ -171,9 +171,9 @@ impl Tool for EditFileTool {
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
-        let project_path = resolve_path(&input, project.clone(), cx);
-        let Ok(project_path) = project_path else {
-            return Task::ready(Err(project_path.unwrap_err())).into();
+        let project_path = match resolve_path(&input, project.clone(), cx) {
+            Ok(path) => path,
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
         let card = window.and_then(|window| {
@@ -202,13 +202,6 @@ impl Tool for EditFileTool {
                     .as_ref()
                     .map_or(false, |file| file.disk_state().exists())
             })?;
-            let create_or_overwrite = match input.mode {
-                EditFileMode::Create | EditFileMode::Overwrite => true,
-                _ => false,
-            };
-            if !create_or_overwrite && !exists {
-                return Err(anyhow!("{} not found", input.path.display()));
-            }
 
             let old_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
             let old_text = cx
@@ -218,15 +211,15 @@ impl Tool for EditFileTool {
                 })
                 .await;
 
-            let (output, mut events) = if create_or_overwrite {
-                edit_agent.overwrite(
+            let (output, mut events) = if matches!(input.mode, EditFileMode::Edit) {
+                edit_agent.edit(
                     buffer.clone(),
                     input.display_description.clone(),
                     &request,
                     cx,
                 )
             } else {
-                edit_agent.edit(
+                edit_agent.overwrite(
                     buffer.clone(),
                     input.display_description.clone(),
                     &request,
@@ -346,19 +339,34 @@ impl Tool for EditFileTool {
     }
 }
 
+/// Validate that the file path is valid, meaning:
+///
+/// - For `edit` and `overwrite`, the path must point to an existing file.
+/// - For `create`, the file must not already exist, but it's parent dir must exist.
 fn resolve_path(
     input: &EditFileToolInput,
     project: Entity<Project>,
     cx: &mut App,
 ) -> Result<ProjectPath> {
     let project_path = project.read(cx).find_project_path(&input.path, cx);
+    let entry = project_path
+        .as_ref()
+        .map(|path| project.read(cx).entry_for_path(path, cx))
+        .flatten();
+    let exists = entry.is_some();
+    let is_file = entry.map_or(false, |entry| entry.is_file());
 
     match input.mode {
-        EditFileMode::Edit => project_path.ok_or(anyhow!("Can't edit file: path not found")),
-
-        EditFileMode::Overwrite => {
-            project_path.ok_or(anyhow!("Can't overwrite file: path not found"))
-        }
+        EditFileMode::Edit | EditFileMode::Overwrite => project_path
+            .filter(|_| exists)
+            .ok_or_else(|| anyhow!("Can't edit file: path not found"))
+            .and_then(|path| {
+                if is_file {
+                    Ok(path)
+                } else {
+                    Err(anyhow!("Can't edit file: path is a directory"))
+                }
+            }),
 
         EditFileMode::Create => {
             if let Some(path) = project_path {
@@ -984,6 +992,30 @@ mod tests {
             "Can't create file: parent directory doesn't exist"
         );
     }
+    #[gpui::test]
+    async fn test_resolve_path_for_editing_file(cx: &mut TestAppContext) {
+        let mode = &EditFileMode::Edit;
+
+        let path_with_root = "root/dir/subdir/existing.txt";
+        let path_without_root = "dir/subdir/existing.txt";
+        let result = test_resolve_path(mode, path_with_root, cx);
+        assert_eq!(result.await.unwrap().path.to_str(), Some(path_without_root));
+
+        let result = test_resolve_path(mode, path_without_root, cx);
+        assert_eq!(result.await.unwrap().path.to_str(), Some(path_without_root));
+
+        let result = test_resolve_path(mode, "root/nonexistent.txt", cx);
+        assert_eq!(
+            result.await.unwrap_err().to_string(),
+            "Can't edit file: path not found"
+        );
+
+        let result = test_resolve_path(mode, "root/dir", cx);
+        assert_eq!(
+            result.await.unwrap_err().to_string(),
+            "Can't edit file: path is a directory"
+        );
+    }
 
     async fn test_resolve_path(
         mode: &EditFileMode,
@@ -1013,7 +1045,6 @@ mod tests {
         };
 
         let result = cx.update(|cx| resolve_path(&input, project, cx));
-
         result
     }
 
