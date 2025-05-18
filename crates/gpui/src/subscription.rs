@@ -1,5 +1,10 @@
 use collections::{BTreeMap, BTreeSet};
-use std::{cell::{Cell, RefCell}, fmt::Debug, mem, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    fmt::Debug,
+    mem,
+    rc::Rc,
+};
 use util::post_inc;
 
 pub(crate) struct SubscriberSet<EmitterKey, Callback>(
