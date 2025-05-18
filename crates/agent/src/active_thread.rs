@@ -383,6 +383,7 @@ fn render_markdown_code_block(
                     cx,
                 )
             } else {
+                let text_size = rems(0.8125);
                 let content = if let Some(parent) = path_range.path.parent() {
                     let file_name = file_name.to_string_lossy().to_string();
                     let path = parent.to_string_lossy().to_string();
@@ -392,7 +393,7 @@ fn render_markdown_code_block(
                         .id(("code-block-header-label", ix))
                         .ml_1()
                         .gap_1()
-                        .child(div().text_size(rems(0.8125)).child(file_name))
+                        .child(div().text_size(text_size).child(file_name))
                         .child(Label::new(path).color(Color::Muted).size(LabelSize::Small))
                         .tooltip(move |window, cx| {
                             Tooltip::with_meta(
@@ -405,9 +406,10 @@ fn render_markdown_code_block(
                         })
                         .into_any_element()
                 } else {
-                    Label::new(path_range.path.to_string_lossy().to_string())
-                        .size(LabelSize::Small)
+                    div()
                         .ml_1()
+                        .text_size(text_size)
+                        .child(path_range.path.to_string_lossy().to_string())
                         .into_any_element()
                 };
 
