@@ -400,7 +400,7 @@ impl EditFileToolCard {
             diff_task: None,
             preview_expanded: true,
             error_expanded: None,
-            full_height_expanded: false,
+            full_height_expanded: true,
             total_lines: None,
         }
     }
