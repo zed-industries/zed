@@ -49,6 +49,7 @@ use theme::{ActiveTheme, Theme};
 use util::{paths::home_dir, truncate_and_trailoff};
 
 use std::{
+    borrow::Cow,
     cmp::{self, min},
     fmt::Display,
     ops::{Deref, Index, RangeInclusive},
