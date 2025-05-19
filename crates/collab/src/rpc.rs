@@ -1,5 +1,6 @@
 mod connection_pool;
 
+use crate::api::billing::find_or_create_billing_customer;
 use crate::api::{CloudflareIpCountryHeader, SystemIdHeader};
 use crate::db::billing_subscription::SubscriptionKind;
 use crate::llm::db::LlmDatabase;
@@ -4024,7 +4025,56 @@ async fn get_llm_api_token(
         Err(anyhow!("terms of service not accepted"))?
     }
 
-    let billing_subscription = db.get_active_billing_subscription(user.id).await?;
+    let Some(stripe_client) = session.app_state.stripe_client.as_ref() else {
+        Err(anyhow!("failed to retrieve Stripe client"))?
+    };
+
+    let Some(stripe_billing) = session.app_state.stripe_billing.as_ref() else {
+        Err(anyhow!("failed to retrieve Stripe billing object"))?
+    };
+
+    let billing_customer =
+        if let Some(billing_customer) = db.get_billing_customer_by_user_id(user.id).await? {
+            billing_customer
+        } else {
+            let customer_id = stripe_billing
+                .find_or_create_customer_by_email(user.email_address.as_deref())
+                .await?;
+
+            find_or_create_billing_customer(
+                &session.app_state,
+                &stripe_client,
+                stripe::Expandable::Id(customer_id),
+            )
+            .await?
+            .ok_or_else(|| anyhow!("billing customer not found"))?
+        };
+
+    let billing_subscription =
+        if let Some(billing_subscription) = db.get_active_billing_subscription(user.id).await? {
+            billing_subscription
+        } else {
+            let stripe_customer_id = billing_customer
+                .stripe_customer_id
+                .parse::<stripe::CustomerId>()
+                .context("failed to parse Stripe customer ID from database")?;
+
+            let stripe_subscription = stripe_billing
+                .subscribe_to_zed_free(stripe_customer_id)
+                .await?;
+
+            db.create_billing_subscription(&db::CreateBillingSubscriptionParams {
+                billing_customer_id: billing_customer.id,
+                kind: Some(SubscriptionKind::ZedFree),
+                stripe_subscription_id: stripe_subscription.id.to_string(),
+                stripe_subscription_status: stripe_subscription.status.into(),
+                stripe_cancellation_reason: None,
+                stripe_current_period_start: Some(stripe_subscription.current_period_start),
+                stripe_current_period_end: Some(stripe_subscription.current_period_end),
+            })
+            .await?
+        };
+
     let billing_preferences = db.get_billing_preferences(user.id).await?;
 
     let token = LlmTokenClaims::create(
