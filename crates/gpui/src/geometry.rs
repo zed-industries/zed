@@ -2,13 +2,14 @@
 //! can be used to describe common units, concepts, and the relationships
 //! between them.
 
+use anyhow::{Context as _, anyhow};
 use core::fmt::Debug;
 use derive_more::{Add, AddAssign, Div, DivAssign, Mul, Neg, Sub, SubAssign};
 use refineable::Refineable;
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{
     cmp::{self, PartialOrd},
-    fmt,
+    fmt::{self, Display},
     hash::Hash,
     ops::{Add, Div, Mul, MulAssign, Neg, Sub},
 };
@@ -1609,7 +1610,7 @@ impl<T: Clone + Debug + Copy + Default> Copy for Bounds<T> {}
 /// assert_eq!(edges.left, 40.0);
 /// ```
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
-#[refineable(Debug)]
+#[refineable(Debug, Serialize, Deserialize)]
 #[repr(C)]
 pub struct Edges<T: Clone + Default + Debug> {
     /// The size of the top edge.
@@ -2086,7 +2087,7 @@ impl Corner {
 ///
 /// Each field represents the size of the corner on one side of the box: `top_left`, `top_right`, `bottom_right`, and `bottom_left`.
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
-#[refineable(Debug)]
+#[refineable(Debug, Serialize, Deserialize)]
 #[repr(C)]
 pub struct Corners<T: Clone + Default + Debug> {
     /// The value associated with the top left corner.
@@ -2474,12 +2475,6 @@ impl From<Percentage> for Radians {
 #[repr(transparent)]
 pub struct Pixels(pub f32);
 
-impl std::fmt::Display for Pixels {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_fmt(format_args!("{}px", self.0))
-    }
-}
-
 impl Div for Pixels {
     type Output = f32;
 
@@ -2543,6 +2538,30 @@ impl Mul<Pixels> for usize {
 impl MulAssign<f32> for Pixels {
     fn mul_assign(&mut self, rhs: f32) {
         self.0 *= rhs;
+    }
+}
+
+impl std::fmt::Display for Pixels {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}px", self.0)
+    }
+}
+
+impl Debug for Pixels {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Display::fmt(self, f)
+    }
+}
+
+impl TryFrom<&'_ str> for Pixels {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &'_ str) -> Result<Self, Self::Error> {
+        value
+            .strip_suffix("px")
+            .context("expected `px` suffix")
+            .and_then(|number| Ok(number.parse()?))
+            .map(Self)
     }
 }
 
@@ -2665,12 +2684,6 @@ impl From<f64> for Pixels {
 impl From<f32> for Pixels {
     fn from(pixels: f32) -> Self {
         Pixels(pixels)
-    }
-}
-
-impl Debug for Pixels {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} px", self.0)
     }
 }
 
@@ -2994,9 +3007,27 @@ impl Mul<Pixels> for Rems {
     }
 }
 
+impl std::fmt::Display for Rems {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}rem", self.0)
+    }
+}
+
 impl Debug for Rems {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} rem", self.0)
+        Display::fmt(self, f)
+    }
+}
+
+impl TryFrom<&'_ str> for Rems {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &'_ str) -> Result<Self, Self::Error> {
+        value
+            .strip_suffix("rem")
+            .context("expected `rem` suffix")
+            .and_then(|number| Ok(number.parse()?))
+            .map(Self)
     }
 }
 
@@ -3006,7 +3037,7 @@ impl Debug for Rems {
 /// affected by the current font size, or a number of rems, which is relative to the font size of
 /// the root element. It is used for specifying dimensions that are either independent of or
 /// related to the typographic scale.
-#[derive(Clone, Copy, Debug, Neg, PartialEq)]
+#[derive(Clone, Copy, Neg, PartialEq)]
 pub enum AbsoluteLength {
     /// A length in pixels.
     Pixels(Pixels),
@@ -3085,6 +3116,66 @@ impl AbsoluteLength {
 impl Default for AbsoluteLength {
     fn default() -> Self {
         px(0.).into()
+    }
+}
+
+impl Display for AbsoluteLength {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Pixels(pixels) => write!(f, "{pixels}"),
+            Self::Rems(rems) => write!(f, "{rems}"),
+        }
+    }
+}
+
+impl Debug for AbsoluteLength {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Display::fmt(self, f)
+    }
+}
+
+impl TryFrom<&'_ str> for AbsoluteLength {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &'_ str) -> Result<Self, Self::Error> {
+        if let Ok(pixels) = value.try_into() {
+            Ok(Self::Pixels(pixels))
+        } else if let Ok(rems) = value.try_into() {
+            Ok(Self::Rems(rems))
+        } else {
+            Err(anyhow!(
+                "invalid AbsoluteLength `{value}`, expected to end with `px` or `rem`"
+            ))
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for AbsoluteLength {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct StringVisitor;
+
+        impl de::Visitor<'_> for StringVisitor {
+            type Value = AbsoluteLength;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a string in the format `5px` or `5rem`")
+            }
+
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<AbsoluteLength, E> {
+                AbsoluteLength::try_from(value).map_err(E::custom)
+            }
+        }
+
+        deserializer.deserialize_str(StringVisitor)
+    }
+}
+
+impl Serialize for AbsoluteLength {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&format!("{self}"))
     }
 }
 

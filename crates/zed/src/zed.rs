@@ -126,45 +126,6 @@ pub fn init(cx: &mut App) {
                             .detach_and_log_err(cx);
                     }
                 }))
-                .child(Button::new("red", "Red").on_click({
-                    let inspector_id = inspector_id.clone();
-                    move |_event, window, _cx| {
-                        window.update_inspector_state::<gpui::DivInspectorState, _>(
-                            &inspector_id,
-                            |state, _window| {
-                                if let Some(state) = state {
-                                    state.base_style.background = Some(gpui::rgb(0xff0000).into());
-                                }
-                            },
-                        );
-                    }
-                }))
-                .child(Button::new("green", "Green").on_click({
-                    let inspector_id = inspector_id.clone();
-                    move |_event, window, _cx| {
-                        window.update_inspector_state::<gpui::DivInspectorState, _>(
-                            &inspector_id,
-                            |state, _window| {
-                                if let Some(state) = state {
-                                    state.base_style.background = Some(gpui::rgb(0x00ff00).into());
-                                }
-                            },
-                        );
-                    }
-                }))
-                .child(Button::new("blue", "Blue").on_click({
-                    let inspector_id = inspector_id.clone();
-                    move |_event, window, _cx| {
-                        window.update_inspector_state::<gpui::DivInspectorState, _>(
-                            &inspector_id,
-                            |state, _window| {
-                                if let Some(state) = state {
-                                    state.base_style.background = Some(gpui::rgb(0x0000ff).into());
-                                }
-                            },
-                        );
-                    }
-                }))
         },
     );
 

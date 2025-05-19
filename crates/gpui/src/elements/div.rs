@@ -16,15 +16,17 @@
 //! constructed by combining these two systems into an all-in-one element.
 
 use crate::{
-    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
-    Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox, HitboxId,
-    InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
-    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, fill, point, px, size,
+    AbsoluteLength, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent,
+    DispatchPhase, EdgesRefinement, Element, ElementId, Entity, FocusHandle, Global,
+    GlobalElementId, Hitbox, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext,
+    KeyDownEvent, KeyUpEvent, LayoutId, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollWheelEvent,
+    SharedString, Size, Style, StyleRefinement, Styled, Task, TooltipId, Visibility, Window, fill,
+    point, px, size,
 };
 use collections::HashMap;
 use refineable::Refineable;
+use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
@@ -1192,9 +1194,10 @@ pub struct DivFrameState {
 }
 
 /// todo!("document")
+#[derive(Serialize, Deserialize)]
 pub struct DivInspectorState {
     /// todo!("document")
-    pub base_style: Box<StyleRefinement>,
+    pub border_widths: EdgesRefinement<AbsoluteLength>,
 }
 
 impl Styled for Div {
@@ -1449,9 +1452,11 @@ impl Interactivity {
                 // todo! This seems inefficient to do for every single div. Load DivInspectorState
                 // on demand?
                 let inspector_state = inspector_state.get_or_insert_with(|| DivInspectorState {
-                    base_style: self.base_style.clone(),
+                    border_widths: self.base_style.border_widths.clone(),
                 });
-                self.base_style = inspector_state.base_style.clone();
+                self.base_style
+                    .border_widths
+                    .refine(&inspector_state.border_widths);
 
                 window.with_optional_element_state::<InteractiveElementState, _>(
                     global_id,
