@@ -133,7 +133,7 @@ pub fn init(cx: &mut App) {
                             &inspector_id,
                             |state, _window| {
                                 if let Some(state) = state {
-                                    state.background = Some(gpui::rgb(0xff0000).into());
+                                    state.base_style.background = Some(gpui::rgb(0xff0000).into());
                                 }
                             },
                         );
@@ -146,7 +146,7 @@ pub fn init(cx: &mut App) {
                             &inspector_id,
                             |state, _window| {
                                 if let Some(state) = state {
-                                    state.background = Some(gpui::rgb(0x00ff00).into());
+                                    state.base_style.background = Some(gpui::rgb(0x00ff00).into());
                                 }
                             },
                         );
@@ -159,7 +159,7 @@ pub fn init(cx: &mut App) {
                             &inspector_id,
                             |state, _window| {
                                 if let Some(state) = state {
-                                    state.background = Some(gpui::rgb(0x0000ff).into());
+                                    state.base_style.background = Some(gpui::rgb(0x0000ff).into());
                                 }
                             },
                         );

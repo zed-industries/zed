@@ -17,7 +17,7 @@
 
 use crate::{
     Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
-    Element, ElementId, Entity, Fill, FocusHandle, Global, GlobalElementId, Hitbox, HitboxId,
+    Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox, HitboxId,
     InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
@@ -1194,7 +1194,7 @@ pub struct DivFrameState {
 /// todo!("document")
 pub struct DivInspectorState {
     /// todo!("document")
-    pub background: Option<Fill>,
+    pub base_style: Box<StyleRefinement>,
 }
 
 impl Styled for Div {
@@ -1446,12 +1446,12 @@ impl Interactivity {
         window.with_inspector_state(
             inspector_id,
             |inspector_state: &mut Option<DivInspectorState>, window| {
+                // todo! This seems inefficient to do for every single div. Load DivInspectorState
+                // on demand?
                 let inspector_state = inspector_state.get_or_insert_with(|| DivInspectorState {
-                    background: self.base_style.background.clone(),
+                    base_style: self.base_style.clone(),
                 });
-                if let Some(background) = inspector_state.background.clone() {
-                    self.base_style.background = Some(background);
-                }
+                self.base_style = inspector_state.base_style.clone();
 
                 window.with_optional_element_state::<InteractiveElementState, _>(
                     global_id,
