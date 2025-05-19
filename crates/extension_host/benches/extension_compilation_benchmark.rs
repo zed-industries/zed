@@ -31,26 +31,18 @@ fn extension_benchmarks(c: &mut Criterion) {
     }));
     let wasm_host = wasm_host(&cx, &extensions_dir);
 
-    for i in 1..=3 {
-        group.bench_with_input(BenchmarkId::from_parameter(i), &i, |b, i| {
-            b.iter_batched(
-                || {
-                    std::iter::repeat(wasm_bytes.clone())
-                        .take(*i)
-                        .collect::<Vec<_>>()
-                },
-                |wasm_bytes| {
-                    for wasm_bytes in wasm_bytes {
-                        let _extension = cx
-                            .executor()
-                            .block(wasm_host.load_extension(wasm_bytes, &manifest, cx.executor()))
-                            .unwrap();
-                    }
-                },
-                BatchSize::SmallInput,
-            );
-        });
-    }
+    group.bench_function(BenchmarkId::from_parameter(1), |b| {
+        b.iter_batched(
+            || wasm_bytes.clone(),
+            |wasm_bytes| {
+                let _extension = cx
+                    .executor()
+                    .block(wasm_host.load_extension(wasm_bytes, &manifest, cx.executor()))
+                    .unwrap();
+            },
+            BatchSize::SmallInput,
+        );
+    });
 }
 
 fn init() -> TestAppContext {
