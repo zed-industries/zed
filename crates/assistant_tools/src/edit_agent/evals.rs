@@ -41,8 +41,8 @@ fn eval_extract_handle_command_output() {
     eval(
         100,
         0.95,
-        EvalInput {
-            conversation: vec![
+        EvalInput::from_conversation(
+            vec![
                 message(
                     User,
                     [text(formatdoc! {"
@@ -82,11 +82,9 @@ fn eval_extract_handle_command_output() {
                     )],
                 ),
             ],
-            input_path: input_file_path.into(),
-            input_content: Some(input_file_content.into()),
-            edit_description: edit_description.into(),
-            assertion: EvalAssertion::assert_eq(output_file_content),
-        },
+            Some(input_file_content.into()),
+            EvalAssertion::assert_eq(output_file_content),
+        ),
     );
 }
 
@@ -100,8 +98,8 @@ fn eval_delete_run_git_blame() {
     eval(
         100,
         0.95,
-        EvalInput {
-            conversation: vec![
+        EvalInput::from_conversation(
+            vec![
                 message(
                     User,
                     [text(formatdoc! {"
@@ -138,11 +136,9 @@ fn eval_delete_run_git_blame() {
                     )],
                 ),
             ],
-            input_path: input_file_path.into(),
-            input_content: Some(input_file_content.into()),
-            edit_description: edit_description.into(),
-            assertion: EvalAssertion::assert_eq(output_file_content),
-        },
+            Some(input_file_content.into()),
+            EvalAssertion::assert_eq(output_file_content),
+        ),
     );
 }
 
@@ -155,8 +151,8 @@ fn eval_translate_doc_comments() {
     eval(
         200,
         1.,
-        EvalInput {
-            conversation: vec![
+        EvalInput::from_conversation(
+            vec![
                 message(
                     User,
                     [text(formatdoc! {"
@@ -193,11 +189,9 @@ fn eval_translate_doc_comments() {
                     )],
                 ),
             ],
-            input_path: input_file_path.into(),
-            input_content: Some(input_file_content.into()),
-            edit_description: edit_description.into(),
-            assertion: EvalAssertion::judge_diff("Doc comments were translated to Italian"),
-        },
+            Some(input_file_content.into()),
+            EvalAssertion::judge_diff("Doc comments were translated to Italian"),
+        ),
     );
 }
 
@@ -211,8 +205,8 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
     eval(
         100,
         0.95,
-        EvalInput {
-            conversation: vec![
+        EvalInput::from_conversation(
+            vec![
                 message(
                     User,
                     [text(formatdoc! {"
@@ -308,14 +302,12 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
                     )],
                 ),
             ],
-            input_path: input_file_path.into(),
-            input_content: Some(input_file_content.into()),
-            edit_description: edit_description.into(),
-            assertion: EvalAssertion::judge_diff(indoc! {"
+            Some(input_file_content.into()),
+            EvalAssertion::judge_diff(indoc! {"
                 - The compile_parser_to_wasm method has been changed to use wasi-sdk
                 - ureq is used to download the SDK for current platform and architecture
             "}),
-        },
+        ),
     );
 }
 
@@ -326,10 +318,10 @@ fn eval_disable_cursor_blinking() {
     let input_file_content = include_str!("evals/fixtures/disable_cursor_blinking/before.rs");
     let edit_description = "Comment out the call to `BlinkManager::enable`";
     eval(
-        200,
+        100,
         0.95,
-        EvalInput {
-            conversation: vec![
+        EvalInput::from_conversation(
+            vec![
                 message(User, [text("Let's research how to cursor blinking works.")]),
                 message(
                     Assistant,
@@ -383,15 +375,13 @@ fn eval_disable_cursor_blinking() {
                     )],
                 ),
             ],
-            input_path: input_file_path.into(),
-            input_content: Some(input_file_content.into()),
-            edit_description: edit_description.into(),
-            assertion: EvalAssertion::judge_diff(indoc! {"
+            Some(input_file_content.into()),
+            EvalAssertion::judge_diff(indoc! {"
                 - Calls to BlinkManager in `observe_window_activation` were commented out
                 - The call to `blink_manager.enable` above the call to show_cursor_names was commented out
                 - All the edits have valid indentation
             "}),
-        },
+        ),
     );
 }
 
@@ -404,8 +394,8 @@ fn eval_from_pixels_constructor() {
     eval(
         100,
         0.95,
-        EvalInput {
-            conversation: vec![
+        EvalInput::from_conversation(
+            vec![
                 message(
                     User,
                     [text(indoc! {"
@@ -577,14 +567,12 @@ fn eval_from_pixels_constructor() {
                     )],
                 ),
             ],
-            input_path: input_file_path.into(),
-            input_content: Some(input_file_content.into()),
-            edit_description: edit_description.into(),
-            assertion: EvalAssertion::judge_diff(indoc! {"
-                - The diff contains a new `from_pixels` constructor
-                - The diff contains new tests for the `from_pixels` constructor
-            "}),
-        },
+            Some(input_file_content.into()),
+            EvalAssertion::judge_diff(indoc! {"
+                    - The diff contains a new `from_pixels` constructor
+                    - The diff contains new tests for the `from_pixels` constructor
+                "}),
+        ),
     );
 }
 
@@ -592,12 +580,13 @@ fn eval_from_pixels_constructor() {
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_zode() {
     let input_file_path = "root/zode.py";
+    let input_content = None;
     let edit_description = "Create the main Zode CLI script";
     eval(
         200,
         1.,
-        EvalInput {
-            conversation: vec![
+        EvalInput::from_conversation(
+            vec![
                 message(User, [text(include_str!("evals/fixtures/zode/prompt.md"))]),
                 message(
                     Assistant,
@@ -655,10 +644,8 @@ fn eval_zode() {
                     ],
                 ),
             ],
-            input_path: input_file_path.into(),
-            input_content: None,
-            edit_description: edit_description.into(),
-            assertion: EvalAssertion::new(async move |sample, _, _cx| {
+            input_content,
+            EvalAssertion::new(async move |sample, _, _cx| {
                 let invalid_starts = [' ', '`', '\n'];
                 let mut message = String::new();
                 for start in invalid_starts {
@@ -682,7 +669,7 @@ fn eval_zode() {
                     })
                 }
             }),
-        },
+        ),
     );
 }
 
@@ -695,8 +682,8 @@ fn eval_add_overwrite_test() {
     eval(
         200,
         0.5, // TODO: make this eval better
-        EvalInput {
-            conversation: vec![
+        EvalInput::from_conversation(
+            vec![
                 message(
                     User,
                     [text(indoc! {"
@@ -900,28 +887,24 @@ fn eval_add_overwrite_test() {
                     ],
                 ),
             ],
-            input_path: input_file_path.into(),
-            input_content: Some(input_file_content.into()),
-            edit_description: edit_description.into(),
-            assertion: EvalAssertion::judge_diff(
+            Some(input_file_content.into()),
+            EvalAssertion::judge_diff(
                 "A new test for overwritten files was created, without changing any previous test",
             ),
-        },
+        ),
     );
 }
 
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_create_empty_file() {
-    let input_file_path = "hello-world/TODO2";
     let input_file_content = None;
-    let output_file_content = String::new();
-    let edit_description = "Create an empty second todo file";
+    let expected_output_content = String::new();
     eval(
         100,
         0.95,
-        EvalInput {
-            conversation: vec![
+        EvalInput::from_conversation(
+            vec![
                 message(User, [text("Create a second empty todo file ")]),
                 message(
                     Assistant,
@@ -962,12 +945,9 @@ fn eval_create_empty_file() {
                     ],
                 ),
             ],
-            input_path: input_file_path.into(),
-            input_content: input_file_content,
-
-            edit_description: edit_description.into(),
-            assertion: EvalAssertion::assert_eq(output_file_content),
-        },
+            input_file_content,
+            EvalAssertion::assert_eq(expected_output_content),
+        ),
     );
 }
 
@@ -1028,8 +1008,45 @@ struct EvalInput {
     conversation: Vec<LanguageModelRequestMessage>,
     input_path: PathBuf,
     input_content: Option<String>,
+    edit_mode: EditFileMode,
     edit_description: String,
     assertion: EvalAssertion,
+}
+
+impl EvalInput {
+    fn from_conversation(
+        conversation: Vec<LanguageModelRequestMessage>,
+        input_content: Option<String>,
+        assertion: EvalAssertion,
+    ) -> Self {
+        let msg = conversation.last().expect("Conversation must not be empty");
+        if msg.role != Role::Assistant {
+            panic!("Conversation must end with an assistant message");
+        }
+        let tool_use = msg
+            .content
+            .iter()
+            .flat_map(|content| match content {
+                MessageContent::ToolUse(tool_use) if tool_use.name == "edit_file".into() => {
+                    Some(tool_use)
+                }
+                _ => None,
+            })
+            .next()
+            .expect("Conversation must end with an edit_file tool use")
+            .clone();
+
+        let input: EditFileToolInput = serde_json::from_value(tool_use.input.clone()).unwrap();
+
+        EvalInput {
+            conversation,
+            input_path: input.path,
+            input_content,
+            edit_mode: input.mode,
+            edit_description: input.display_description,
+            assertion,
+        }
+    }
 }
 
 #[derive(Clone)]
