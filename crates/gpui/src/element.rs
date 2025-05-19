@@ -332,25 +332,12 @@ impl<E: Element> Drawable<E> {
                     GlobalElementId(window.element_id_stack.clone())
                 });
 
-                let inspector_id = if let Some(source) = self.element.source() {
-                    let key = (window.element_id_stack.clone(), source);
-                    // todo!(avoid cloning when not needed, extract a function in the window)
-                    let next_instance_id = window
+                let inspector_id = self.element.source().map(|source| {
+                    window
                         .next_frame
                         .inspector_state
-                        .next_instance_ids
-                        .entry(key.clone())
-                        .or_insert(0);
-                    let instance_id = *next_instance_id;
-                    *next_instance_id += 1;
-                    Some(InspectorElementId {
-                        global_id: GlobalElementId(key.0),
-                        source: key.1,
-                        instance_id,
-                    })
-                } else {
-                    None
-                };
+                        .build_inspector_element_id(&window.element_id_stack, source)
+                });
 
                 let (layout_id, request_layout) = self.element.request_layout(
                     global_id.as_ref(),

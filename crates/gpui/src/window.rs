@@ -500,15 +500,32 @@ pub(crate) struct DeferredDraw {
 
 #[derive(Default)]
 pub(crate) struct FrameInspectorState {
-    pub(crate) next_instance_ids:
+    pub(crate) next_element_instance_ids:
         HashMap<(SmallVec<[ElementId; 32]>, &'static panic::Location<'static>), usize>,
     pub(crate) element_states: FxHashMap<InspectorElementId, FxHashMap<TypeId, Box<dyn Any>>>,
 }
 
 impl FrameInspectorState {
     fn clear(&mut self) {
-        self.next_instance_ids.clear();
+        self.next_element_instance_ids.clear();
         self.element_states.clear();
+    }
+
+    pub(crate) fn build_inspector_element_id(
+        &mut self,
+        element_id: &SmallVec<[ElementId; 32]>,
+        location: &'static panic::Location<'static>,
+    ) -> InspectorElementId {
+        // todo!(avoid cloning when not needed, extract a function in the window)
+        let key = (element_id.clone(), location);
+        let next_instance_id = self.next_element_instance_ids.entry(key).or_insert(0);
+        let instance_id = *next_instance_id;
+        *next_instance_id += 1;
+        InspectorElementId {
+            global_id: GlobalElementId(element_id.clone()),
+            source: location,
+            instance_id,
+        }
     }
 }
 

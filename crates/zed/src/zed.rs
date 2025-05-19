@@ -117,6 +117,7 @@ pub fn init(cx: &mut App) {
                 .mr_4()
                 .rounded_lg()
                 .shadow_lg()
+                .child(format!("{:?}", inspector_id))
                 .child(Button::new("red", "Red").on_click({
                     let inspector_id = inspector_id.clone();
                     move |_event, window, _cx| {

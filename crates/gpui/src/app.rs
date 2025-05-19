@@ -31,11 +31,11 @@ pub use test_context::*;
 use util::{ResultExt, debug_panic};
 
 use crate::{
-    Action, ActionBuildError, ActionRegistry, Any, AnyElement, AnyView, AnyWindowHandle,
-    AppContext, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle,
-    DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global,
-    InspectorElementId, IntoElement, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu,
-    MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
+    Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Asset,
+    AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
+    EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, InspectorElementId,
+    InspectorElementRegistry, IntoElement, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId,
+    Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
     PlatformKeyboardLayout, Point, PromptBuilder, PromptHandle, PromptLevel, Render, RenderImage,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
     Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
@@ -270,11 +270,7 @@ pub struct App {
     pub(crate) window_invalidators_by_entity:
         FxHashMap<EntityId, FxHashMap<WindowId, WindowInvalidator>>,
     pub(crate) tracked_entities: FxHashMap<WindowId, FxHashSet<EntityId>>,
-    // todo!(Pull this out into a struct)
-    pub(crate) inspector_element_registry: FxHashMap<
-        TypeId,
-        Box<dyn Fn(InspectorElementId, &dyn Any, &mut Window, &mut App) -> AnyElement>,
-    >,
+    pub(crate) inspector_element_registry: InspectorElementRegistry,
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
     quitting: bool,
@@ -339,7 +335,7 @@ impl App {
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
                 prompt_builder: Some(PromptBuilder::Default),
-                inspector_element_registry: FxHashMap::default(),
+                inspector_element_registry: InspectorElementRegistry::default(),
                 quitting: false,
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
@@ -1664,18 +1660,12 @@ impl App {
         }
     }
 
-    /// todo!(Document/rename)
+    /// Registers a renderer for the given inspector state.
     pub fn register_inspector_element<T: 'static, R: IntoElement>(
         &mut self,
         f: impl 'static + Fn(InspectorElementId, &T, &mut Window, &mut App) -> R,
     ) {
-        self.inspector_element_registry.insert(
-            TypeId::of::<T>(),
-            Box::new(move |id, value, window, cx| {
-                let value = value.downcast_ref().unwrap();
-                f(id, value, window, cx).into_any_element()
-            }),
-        );
+        self.inspector_element_registry.register(f);
     }
 }
 

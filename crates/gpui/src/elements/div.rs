@@ -1427,7 +1427,7 @@ pub struct Interactivity {
     pub(crate) occlude_mouse: bool,
 
     #[cfg(debug_assertions)]
-    pub(crate) location: Option<&'static core::panic::Location<'static>>, // todo!(should this be optional?)
+    pub(crate) location: Option<&'static core::panic::Location<'static>>,
 
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_selector: Option<String>,

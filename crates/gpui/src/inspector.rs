@@ -1,10 +1,14 @@
+use collections::FxHashMap;
 use smallvec::SmallVec;
 
 use crate::{
-    AnyElement, Context, GlobalElementId, InteractiveElement, IntoElement, ParentElement, Render,
-    Styled, Window, div,
+    AnyElement, App, Context, GlobalElementId, InteractiveElement, IntoElement, ParentElement,
+    Render, Styled, Window, div,
 };
-use std::panic;
+use std::{
+    any::{Any, TypeId},
+    panic,
+};
 
 /// A unique identifier for an element that can be debugged.
 #[cfg(debug_assertions)]
@@ -64,7 +68,11 @@ impl Inspector {
                 .remove(&inspected_element_id)
             {
                 for (type_id, state) in &states_by_type_id {
-                    if let Some(render_inspector) = cx.inspector_element_registry.remove(&type_id) {
+                    if let Some(render_inspector) = cx
+                        .inspector_element_registry
+                        .renderers_by_type_id
+                        .remove(&type_id)
+                    {
                         let mut element = (render_inspector)(
                             inspected_element_id.clone(),
                             state.as_ref(),
@@ -73,6 +81,7 @@ impl Inspector {
                         );
                         elements.push(element);
                         cx.inspector_element_registry
+                            .renderers_by_type_id
                             .insert(*type_id, render_inspector);
                     }
                 }
@@ -100,5 +109,28 @@ impl Render for Inspector {
                 .occlude()
                 .children(self.render_elements(window, cx)),
         )
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct InspectorElementRegistry {
+    renderers_by_type_id: FxHashMap<
+        TypeId,
+        Box<dyn Fn(InspectorElementId, &dyn Any, &mut Window, &mut App) -> AnyElement>,
+    >,
+}
+
+impl InspectorElementRegistry {
+    pub fn register<T: 'static, R: IntoElement>(
+        &mut self,
+        f: impl 'static + Fn(InspectorElementId, &T, &mut Window, &mut App) -> R,
+    ) {
+        self.renderers_by_type_id.insert(
+            TypeId::of::<T>(),
+            Box::new(move |id, value, window, cx| {
+                let value = value.downcast_ref().unwrap();
+                f(id, value, window, cx).into_any_element()
+            }),
+        );
     }
 }
