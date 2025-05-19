@@ -134,7 +134,6 @@ unicode-normalization = { version = "0.1" }
 unicode-properties = { version = "0.1" }
 url = { version = "2", features = ["serde"] }
 uuid = { version = "1", features = ["serde", "v4", "v5", "v7"] }
-wasm-encoder = { version = "0.221", features = ["wasmparser"] }
 wasmparser = { version = "0.221" }
 wasmtime = { version = "29", default-features = false, features = ["async", "component-model", "cranelift", "demangle", "gc-drc", "incremental-cache", "parallel-compilation"] }
 wasmtime-cranelift = { version = "29", default-features = false, features = ["component-model", "gc-drc", "incremental-cache"] }
@@ -273,7 +272,6 @@ unicode-normalization = { version = "0.1" }
 unicode-properties = { version = "0.1" }
 url = { version = "2", features = ["serde"] }
 uuid = { version = "1", features = ["serde", "v4", "v5", "v7"] }
-wasm-encoder = { version = "0.221", features = ["wasmparser"] }
 wasmparser = { version = "0.221" }
 wasmtime = { version = "29", default-features = false, features = ["async", "component-model", "cranelift", "demangle", "gc-drc", "incremental-cache", "parallel-compilation"] }
 wasmtime-cranelift = { version = "29", default-features = false, features = ["component-model", "gc-drc", "incremental-cache"] }
