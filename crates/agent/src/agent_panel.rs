@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use markdown::Markdown;
 use serde::{Deserialize, Serialize};
 
@@ -66,8 +66,8 @@ use crate::ui::AgentOnboardingModal;
 use crate::{
     AddContextServer, AgentDiffPane, ContextStore, DeleteRecentlyOpenThread, ExpandMessageEditor,
     Follow, InlineAssistant, NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
-    OpenHistory, ResetTrialUpsell, TextThreadStore, ThreadEvent, ToggleContextPicker,
-    ToggleNavigationMenu, ToggleOptionsMenu,
+    OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell, TextThreadStore, ThreadEvent,
+    ToggleContextPicker, ToggleNavigationMenu, ToggleOptionsMenu,
 };
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
@@ -157,7 +157,10 @@ pub fn init(cx: &mut App) {
                     window.refresh();
                 })
                 .register_action(|_workspace, _: &ResetTrialUpsell, _window, cx| {
-                    set_trial_upsell_dismissed(false, cx);
+                    TrialUpsell::set_dismissed(false, cx);
+                })
+                .register_action(|_workspace, _: &ResetTrialEndUpsell, _window, cx| {
+                    TrialEndUpsell::set_dismissed(false, cx);
                 });
         },
     )
@@ -1932,12 +1935,26 @@ impl AgentPanel {
         }
     }
 
+    fn should_render_trial_end_upsell(&self, cx: &mut Context<Self>) -> bool {
+        if self.should_render_upsell(cx) {
+            return false;
+        }
+
+        if TrialEndUpsell::dismissed() {
+            return false;
+        }
+
+        // TODO: Detect trial end state
+
+        true
+    }
+
     fn should_render_upsell(&self, cx: &mut Context<Self>) -> bool {
         if !matches!(self.active_view, ActiveView::Thread { .. }) {
             return false;
         }
 
-        if self.hide_trial_upsell || dismissed_trial_upsell() {
+        if self.hide_trial_upsell || TrialUpsell::dismissed() {
             return false;
         }
 
@@ -1983,129 +2000,202 @@ impl AgentPanel {
             move |toggle_state, _window, cx| {
                 let toggle_state_bool = toggle_state.selected();
 
-                set_trial_upsell_dismissed(toggle_state_bool, cx);
+                TrialUpsell::set_dismissed(toggle_state_bool, cx);
             },
         );
 
-        Some(
-            div().p_2().child(
-                v_flex()
+        let contents = div()
+            .size_full()
+            .gap_2()
+            .flex()
+            .flex_col()
+            .child(Headline::new("Build better with Zed Pro").size(HeadlineSize::Small))
+            .child(
+                Label::new("Try Zed Pro for free for 14 days - no credit card required.")
+                    .size(LabelSize::Small),
+            )
+            .child(
+                Label::new(
+                    "Use your own API keys or enable usage-based billing once you hit the cap.",
+                )
+                .color(Color::Muted),
+            )
+            .child(
+                h_flex()
                     .w_full()
-                    .elevation_2(cx)
-                    .rounded(px(8.))
-                    .bg(cx.theme().colors().background.alpha(0.5))
-                    .p(px(3.))
-
+                    .px_neg_1()
+                    .justify_between()
+                    .items_center()
+                    .child(h_flex().items_center().gap_1().child(checkbox))
                     .child(
-                        div()
+                        h_flex()
                             .gap_2()
-                            .flex()
-                            .flex_col()
-                            .size_full()
-                            .border_1()
-                            .rounded(px(5.))
-                            .border_color(cx.theme().colors().text.alpha(0.1))
-                            .overflow_hidden()
-                            .relative()
-                            .bg(cx.theme().colors().panel_background)
-                            .px_4()
-                            .py_3()
                             .child(
-                                div()
-                                    .absolute()
-                                    .top_0()
-                                    .right(px(-1.0))
-                                    .w(px(441.))
-                                    .h(px(167.))
-                                    .child(
-                                    Vector::new(VectorName::Grid, rems_from_px(441.), rems_from_px(167.)).color(ui::Color::Custom(cx.theme().colors().text.alpha(0.1)))
-                                )
+                                Button::new("dismiss-button", "Not Now")
+                                    .style(ButtonStyle::Transparent)
+                                    .color(Color::Muted)
+                                    .on_click({
+                                        let agent_panel = cx.entity();
+                                        move |_, _, cx| {
+                                            agent_panel.update(cx, |this, cx| {
+                                                this.hide_trial_upsell = true;
+                                                cx.notify();
+                                            });
+                                        }
+                                    }),
                             )
                             .child(
-                                div()
-                                    .absolute()
-                                    .top(px(-8.0))
-                                    .right_0()
-                                    .w(px(400.))
-                                    .h(px(92.))
-                                    .child(
-                                    Vector::new(VectorName::AiGrid, rems_from_px(400.), rems_from_px(92.)).color(ui::Color::Custom(cx.theme().colors().text.alpha(0.32)))
-                                )
-                            )
-                            // .child(
-                            //     div()
-                            //         .absolute()
-                            //         .top_0()
-                            //         .right(px(360.))
-                            //         .size(px(401.))
-                            //         .overflow_hidden()
-                            //         .bg(cx.theme().colors().panel_background)
-                            // )
-                            .child(
-                                div()
-                                    .absolute()
-                                    .top_0()
-                                    .right_0()
-                                    .w(px(660.))
-                                    .h(px(401.))
-                                    .overflow_hidden()
-                                    .bg(linear_gradient(
-                                        75.,
-                                        linear_color_stop(cx.theme().colors().panel_background.alpha(0.01), 1.0),
-                                        linear_color_stop(cx.theme().colors().panel_background, 0.45),
-                                    ))
-                            )
-                            .child(Headline::new("Build better with Zed Pro").size(HeadlineSize::Small))
-                            .child(Label::new("Try Zed Pro for free for 14 days - no credit card required.").size(LabelSize::Small))
-                            .child(Label::new("Use your own API keys or enable usage-based billing once you hit the cap.").color(Color::Muted))
+                                Button::new("cta-button", "Start Trial")
+                                    .style(ButtonStyle::Transparent)
+                                    .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx))),
+                            ),
+                    ),
+            );
+
+        Some(self.render_upsell_container(cx, contents))
+    }
+
+    fn render_trial_end_upsell(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
+        if !self.should_render_trial_end_upsell(cx) {
+            return None;
+        }
+
+        Some(
+            self.render_upsell_container(
+                cx,
+                div()
+                    .size_full()
+                    .gap_2()
+                    .flex()
+                    .flex_col()
+                    .child(Headline::new("Your Free Trial has expired.").size(HeadlineSize::Small))
+                    .child(
+                        Label::new("You've been automatically reset to the free plan.")
+                            .size(LabelSize::Small),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .px_neg_1()
+                            .justify_between()
+                            .items_center()
+                            .child(div())
                             .child(
                                 h_flex()
-                                    .w_full()
-                                    .px_neg_1()
-                                    .justify_between()
-                                    .items_center()
-                                    .child(h_flex().items_center().gap_1().child(checkbox))
+                                    .gap_2()
                                     .child(
-                                        h_flex()
-                                            .gap_2()
-                                            .child(
-                                                Button::new("dismiss-button", "Not Now")
-                                                    .style(ButtonStyle::Transparent)
-                                                    .color(Color::Muted)
-                                                    .on_click({
-                                                        let agent_panel = cx.entity();
-                                                        move |_, _, cx| {
-                                                            agent_panel.update(
-                                                                cx,
-                                                                |this, cx| {
-                                                                    let hidden =
-                                                                        this.hide_trial_upsell;
-                                                                    println!("hidden: {}", hidden);
-                                                                    this.hide_trial_upsell = true;
-                                                                    let new_hidden =
-                                                                        this.hide_trial_upsell;
-                                                                    println!(
-                                                                        "new_hidden: {}",
-                                                                        new_hidden
-                                                                    );
-
-                                                                    cx.notify();
-                                                                },
-                                                            );
-                                                        }
-                                                    }),
-                                            )
-                                            .child(
-                                                Button::new("cta-button", "Start Trial")
-                                                    .style(ButtonStyle::Transparent)
-                                                    .on_click(|_, _, cx| {
-                                                        cx.open_url(&zed_urls::account_url(cx))
-                                                    }),
-                                            ),
+                                        Button::new("dismiss-button", "Ok")
+                                            .style(ButtonStyle::Transparent)
+                                            .color(Color::Muted)
+                                            .on_click({
+                                                let agent_panel = cx.entity();
+                                                move |_, _, cx| {
+                                                    agent_panel.update(cx, |_this, cx| {
+                                                        TrialEndUpsell::set_dismissed(true, cx);
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            }),
+                                    )
+                                    .child(
+                                        Button::new("cta-button", "Upgrade to Pro")
+                                            .style(ButtonStyle::Transparent)
+                                            .on_click(|_, _, cx| {
+                                                cx.open_url(&zed_urls::account_url(cx))
+                                            }),
                                     ),
                             ),
                     ),
             ),
+        )
+    }
+
+    fn render_upsell_container(&self, cx: &mut Context<Self>, content: Div) -> Div {
+        div().p_2().child(
+            v_flex()
+                .w_full()
+                .elevation_2(cx)
+                .rounded(px(8.))
+                .bg(cx.theme().colors().background.alpha(0.5))
+                .p(px(3.))
+                .child(
+                    div()
+                        .gap_2()
+                        .flex()
+                        .flex_col()
+                        .size_full()
+                        .border_1()
+                        .rounded(px(5.))
+                        .border_color(cx.theme().colors().text.alpha(0.1))
+                        .overflow_hidden()
+                        .relative()
+                        .bg(cx.theme().colors().panel_background)
+                        .px_4()
+                        .py_3()
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .right(px(-1.0))
+                                .w(px(441.))
+                                .h(px(167.))
+                                .child(
+                                    Vector::new(
+                                        VectorName::Grid,
+                                        rems_from_px(441.),
+                                        rems_from_px(167.),
+                                    )
+                                    .color(ui::Color::Custom(cx.theme().colors().text.alpha(0.1))),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .top(px(-8.0))
+                                .right_0()
+                                .w(px(400.))
+                                .h(px(92.))
+                                .child(
+                                    Vector::new(
+                                        VectorName::AiGrid,
+                                        rems_from_px(400.),
+                                        rems_from_px(92.),
+                                    )
+                                    .color(ui::Color::Custom(cx.theme().colors().text.alpha(0.32))),
+                                ),
+                        )
+                        // .child(
+                        //     div()
+                        //         .absolute()
+                        //         .top_0()
+                        //         .right(px(360.))
+                        //         .size(px(401.))
+                        //         .overflow_hidden()
+                        //         .bg(cx.theme().colors().panel_background)
+                        // )
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .right_0()
+                                .w(px(660.))
+                                .h(px(401.))
+                                .overflow_hidden()
+                                .bg(linear_gradient(
+                                    75.,
+                                    linear_color_stop(
+                                        cx.theme().colors().panel_background.alpha(0.01),
+                                        1.0,
+                                    ),
+                                    linear_color_stop(cx.theme().colors().panel_background, 0.45),
+                                )),
+                        )
+                        .child(content),
+                ),
         )
     }
 
@@ -2827,6 +2917,7 @@ impl Render for AgentPanel {
             .on_action(cx.listener(Self::toggle_zoom))
             .child(self.render_toolbar(window, cx))
             .children(self.render_trial_upsell(window, cx))
+            .children(self.render_trial_end_upsell(window, cx))
             .map(|parent| match &self.active_view {
                 ActiveView::Thread { .. } => parent
                     .relative()
@@ -3014,25 +3105,14 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
     }
 }
 
-const DISMISSED_TRIAL_UPSELL_KEY: &str = "dismissed-trial-upsell";
+struct TrialUpsell;
 
-fn dismissed_trial_upsell() -> bool {
-    db::kvp::KEY_VALUE_STORE
-        .read_kvp(DISMISSED_TRIAL_UPSELL_KEY)
-        .log_err()
-        .map_or(false, |s| s.is_some())
+impl Dismissable for TrialUpsell {
+    const KEY: &'static str = "dismissed-trial-upsell";
 }
 
-fn set_trial_upsell_dismissed(is_dismissed: bool, cx: &mut App) {
-    db::write_and_log(cx, move || async move {
-        if is_dismissed {
-            db::kvp::KEY_VALUE_STORE
-                .write_kvp(DISMISSED_TRIAL_UPSELL_KEY.into(), "1".into())
-                .await
-        } else {
-            db::kvp::KEY_VALUE_STORE
-                .delete_kvp(DISMISSED_TRIAL_UPSELL_KEY.into())
-                .await
-        }
-    })
+struct TrialEndUpsell;
+
+impl Dismissable for TrialEndUpsell {
+    const KEY: &'static str = "dismissed-trial-end-upsell";
 }

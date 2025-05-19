@@ -72,6 +72,10 @@ pub trait Settings: 'static + Send + Sync {
     /// Use [the helpers in the vscode_import module](crate::vscode_import) to apply known
     /// equivalent settings from a vscode config to our config
     fn import_from_vscode(vscode: &VsCodeSettings, current: &mut Self::FileContent);
+    fn import_from_cursor(vscode: &VsCodeSettings, current: &mut Self::FileContent) {
+        Self::import_from_vscode(vscode, current);
+        // Agent panel & edit predictions can override this
+    }
 
     #[track_caller]
     fn register(cx: &mut App)
