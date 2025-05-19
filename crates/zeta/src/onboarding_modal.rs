@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use crate::{ZED_PREDICT_DATA_COLLECTION_CHOICE, onboarding_event};
 use anyhow::Context as _;
-use client::{Client, UserStore, zed_urls};
+use client::{Client, UserStore};
 use db::kvp::KEY_VALUE_STORE;
 use fs::Fs;
 use gpui::{
@@ -477,7 +477,7 @@ impl Render for ZedPredictModal {
                         .w_full()
                         .child(
                             Button::new("accept-tos", "Enable Edit Prediction")
-                                .disabled(plan.is_none() || !self.terms_of_service)
+                                .disabled(!self.terms_of_service)
                                 .style(ButtonStyle::Tinted(TintColor::Accent))
                                 .full_width()
                                 .on_click(cx.listener(Self::accept_and_enable)),

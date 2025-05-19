@@ -2069,7 +2069,9 @@ impl AgentPanel {
                     .gap_2()
                     .flex()
                     .flex_col()
-                    .child(Headline::new("Your Free Trial has expired.").size(HeadlineSize::Small))
+                    .child(
+                        Headline::new("Your Zed Pro trial has expired.").size(HeadlineSize::Small),
+                    )
                     .child(
                         Label::new("You've been automatically reset to the free plan.")
                             .size(LabelSize::Small),
@@ -2085,7 +2087,7 @@ impl AgentPanel {
                                 h_flex()
                                     .gap_2()
                                     .child(
-                                        Button::new("dismiss-button", "Ok")
+                                        Button::new("dismiss-button", "Stay on Free")
                                             .style(ButtonStyle::Transparent)
                                             .color(Color::Muted)
                                             .on_click({
@@ -2099,7 +2101,7 @@ impl AgentPanel {
                                             }),
                                     )
                                     .child(
-                                        Button::new("cta-button", "Upgrade to Pro")
+                                        Button::new("cta-button", "Upgrade to Zed Pro")
                                             .style(ButtonStyle::Transparent)
                                             .on_click(|_, _, cx| {
                                                 cx.open_url(&zed_urls::account_url(cx))
