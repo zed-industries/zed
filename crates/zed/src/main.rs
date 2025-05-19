@@ -199,6 +199,11 @@ Error: Running Zed as root or via sudo is unsupported.
         return;
     }
 
+    if args.dump_all_actions {
+        dump_all_gpui_actions();
+        return;
+    }
+
     // Set custom data directory.
     if let Some(dir) = &args.user_data_dir {
         paths::set_custom_data_dir(dir);
@@ -1055,7 +1060,7 @@ struct Args {
     #[arg(long, hide = true)]
     askpass: Option<String>,
 
-    /// Run zed in the foreground, only used on Windows, to match the behavior of the behavior on macOS.
+    /// Run zed in the foreground, only used on Windows, to match the behavior on macOS.
     #[arg(long)]
     #[cfg(target_os = "windows")]
     #[arg(hide = true)]
@@ -1066,6 +1071,9 @@ struct Args {
     #[cfg(target_os = "windows")]
     #[arg(hide = true)]
     dock_action: Option<usize>,
+
+    #[arg(long, hide = true)]
+    dump_all_actions: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1278,3 +1286,28 @@ fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>, cx: &m
 
 #[cfg(not(debug_assertions))]
 fn watch_languages(_fs: Arc<dyn fs::Fs>, _languages: Arc<LanguageRegistry>, _cx: &mut App) {}
+
+fn dump_all_gpui_actions() {
+    #[derive(Debug, serde::Serialize)]
+    struct ActionDef {
+        name: &'static str,
+        human_name: String,
+        aliases: &'static [&'static str],
+    }
+    let mut actions = gpui::generate_list_of_all_registered_actions()
+        .into_iter()
+        .map(|action| ActionDef {
+            name: action.name,
+            human_name: command_palette::humanize_action_name(action.name),
+            aliases: action.aliases,
+        })
+        .collect::<Vec<ActionDef>>();
+
+    actions.sort_by_key(|a| a.name);
+
+    io::Write::write(
+        &mut std::io::stdout(),
+        serde_json::to_string_pretty(&actions).unwrap().as_bytes(),
+    )
+    .unwrap();
+}
