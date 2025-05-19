@@ -12,6 +12,8 @@ fn main() {
     #[cfg(any(not(target_os = "macos"), feature = "macos-blade"))]
     check_wgsl_shaders();
 
+    current_commit_sha::generate_current_commit_sha("GPUI", "../../", false);
+
     match target.as_deref() {
         Ok("macos") => {
             #[cfg(target_os = "macos")]

@@ -117,6 +117,11 @@ impl<T: IntoElement> FluentBuilder for T {}
 /// An object that can be drawn to the screen. This is the trait that distinguishes "views" from
 /// other entities. Views are `Entity`'s which `impl Render` and drawn to the screen.
 pub trait Render: 'static + Sized {
+    /// The accessibility node for this view, if nescessary.
+    fn accessibility_node(&self, _window: &mut Window, _cx: &mut Context<Self>) -> accesskit::Node {
+        accesskit::Node::new(accesskit::Role::GenericContainer)
+    }
+
     /// Render this view into an element tree.
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement;
 }

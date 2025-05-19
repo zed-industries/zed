@@ -55,6 +55,8 @@ use zed::{
     open_paths_with_positions,
 };
 
+use crate::zed::component_preview;
+
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -660,7 +662,7 @@ fn main() {
 
         let app_state = app_state.clone();
 
-        crate::zed::component_preview::init(app_state.clone(), cx);
+        component_preview::init(app_state.clone(), cx);
 
         cx.spawn(async move |cx| {
             while let Some(urls) = open_rx.next().await {
@@ -1034,6 +1036,10 @@ struct Args {
     #[cfg(target_os = "windows")]
     #[arg(hide = true)]
     dock_action: Option<usize>,
+
+    #[arg(long)]
+    #[arg(hide = true)]
+    component_preview: Option<String>,
 }
 
 #[derive(Clone, Debug)]

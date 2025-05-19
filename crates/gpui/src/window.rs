@@ -13,8 +13,9 @@ use crate::{
     SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
     TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
     WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, px, size, transparent_black,
+    accessibility::AccessibilityData, point, prelude::*, px, size, transparent_black,
 };
+use accesskit::Tree;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
 #[cfg(target_os = "macos")]
@@ -31,7 +32,7 @@ use std::{
     any::{Any, TypeId},
     borrow::Cow,
     cell::{Cell, RefCell},
-    cmp,
+    cmp, env,
     fmt::{Debug, Display},
     hash::{Hash, Hasher},
     marker::PhantomData,
@@ -648,6 +649,7 @@ pub struct Window {
     pub(crate) pending_input_observers: SubscriberSet<(), AnyObserver>,
     prompt: Option<RenderablePromptHandle>,
     pub(crate) client_inset: Option<Pixels>,
+    pub(crate) accessibility: AccessibilityData,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -945,6 +947,7 @@ impl Window {
             prompt: None,
             client_inset: None,
             image_cache_stack: Vec::new(),
+            accessibility: AccessibilityData::new(),
         })
     }
 
@@ -1629,9 +1632,43 @@ impl Window {
         debug_assert!(self.rendered_entity_stack.is_empty());
         self.record_entities_accessed(cx);
         self.reset_cursor_style(cx);
+
+        if self.platform_window.accesskit_active() {
+            let update = self.accesskit_tree_diff();
+            self.platform_window.accesskit_update(update);
+        }
+
         self.refreshing = false;
         self.invalidator.set_phase(DrawPhase::None);
         self.needs_present.set(true);
+    }
+
+    fn accesskit_tree_diff(&mut self) -> accesskit::TreeUpdate {
+        let root = self.root.clone().unwrap();
+        let root_id = self.accessibility.node_id_for_entity(root.entity_id());
+
+        let focus_node_id = self
+            .focus
+            .as_ref()
+            .and_then(|focus_id| {
+                self.accessibility
+                    .nearest_node_id(*focus_id, &self.rendered_frame.dispatch_tree)
+            })
+            .unwrap_or(root_id);
+
+        let new_nodes = self.accessibility.updated_nodes();
+
+        accesskit::TreeUpdate {
+            focus: focus_node_id,
+            nodes: new_nodes,
+            tree: Some(Tree {
+                root: root_id,
+                toolkit_name: Some("GPUI".to_string()),
+                toolkit_version: current_commit_sha::current_commit_sha("GPUI")
+                    .or_else(|| env::var("CARGO_PKG_VERSION").ok())
+                    .or_else(|| Some("<unknown>".to_string())),
+            }),
+        }
     }
 
     fn record_entities_accessed(&mut self, cx: &mut App) {
@@ -2887,10 +2924,13 @@ impl Window {
     pub(crate) fn with_rendered_view<R>(
         &mut self,
         id: EntityId,
+        node: accesskit::Node,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         self.rendered_entity_stack.push(id);
+        let node_id = self.accessibility.node_id_for_entity(id);
         let result = f(self);
+        self.accessibility.pop_node();
         self.rendered_entity_stack.pop();
         result
     }
@@ -3613,6 +3653,20 @@ impl Window {
         _cx: &mut App,
     ) {
         dbg!(action_request);
+    }
+
+    /// Run the given closure with a given accessibility node.
+    pub fn with_accessibility_node<R>(
+        &mut self,
+        node_id: accesskit::NodeId,
+        node: accesskit::Node,
+        f: impl FnOnce(&mut Window) -> R,
+    ) -> R {
+        node.push_child(item);
+        self.accessibility.push_node(node_id, node);
+        let result = f(self);
+        self.accessibility.pop_node();
+        result
     }
 
     /// Register the given handler to be invoked whenever the global of the given type

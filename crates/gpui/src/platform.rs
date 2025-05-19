@@ -38,6 +38,7 @@ use crate::{
     ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SvgSize, Task, TaskLabel, Window,
     hash, point, px, size,
 };
+
 use anyhow::Result;
 use async_task::Runnable;
 use futures::channel::oneshot;
@@ -471,6 +472,9 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn gpu_specs(&self) -> Option<GpuSpecs>;
 
     fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>);
+
+    fn accesskit_active(&self) -> bool;
+    fn accesskit_update(&self, tree: accesskit::TreeUpdate);
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {

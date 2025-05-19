@@ -286,6 +286,12 @@ impl PlatformWindow for TestWindow {
     fn gpu_specs(&self) -> Option<GpuSpecs> {
         None
     }
+
+    fn accesskit_active(&self) -> bool {
+        false
+    }
+
+    fn accesskit_update(&self, _update: accesskit::TreeUpdate) {}
 }
 
 pub(crate) struct TestAtlasState {

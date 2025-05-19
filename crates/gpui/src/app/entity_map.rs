@@ -13,6 +13,7 @@ use std::{
     marker::PhantomData,
     mem,
     num::NonZeroU64,
+    rc::Rc,
     sync::{
         Arc, Weak,
         atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},

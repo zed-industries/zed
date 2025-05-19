@@ -7,6 +7,7 @@ use crate::{
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowParams,
     platform::PlatformInputHandler, point, px, size,
 };
+use accesskit::ActivationHandler;
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
@@ -746,6 +747,8 @@ impl MacWindow {
                 }
             }
 
+            window.activate_accessibility();
+
             if focus && show {
                 native_window.makeKeyAndOrderFront_(nil);
             } else if show {
@@ -799,6 +802,19 @@ impl MacWindow {
 
             window_handles
         }
+    }
+
+    pub fn activate_accessibility(&self) {
+        // We'll send the first tree update on the next frame draw
+        struct NoActivation;
+        impl ActivationHandler for NoActivation {
+            fn request_initial_tree(&mut self) -> Option<accesskit::TreeUpdate> {
+                None
+            }
+        }
+
+        let mut window = self.0.lock();
+        window.accesskit_adapter.focus(&mut NoActivation);
     }
 }
 
@@ -1165,6 +1181,17 @@ impl PlatformWindow for MacWindow {
 
     fn on_accesskit_action(&self, callback: Box<dyn FnMut(accesskit::ActionRequest)>) {
         self.0.lock().accesskit_action_handler_callback = Some(callback);
+    }
+
+    fn accesskit_active(&self) -> bool {
+        self.0.lock().accesskit_adapter.active()
+    }
+
+    fn accesskit_update(&self, update: accesskit::TreeUpdate) {
+        dbg!(&update);
+        if let Some(events) = self.0.lock().accesskit_adapter.update(update) {
+            events.raise();
+        }
     }
 
     fn draw(&self, scene: &crate::Scene) {

@@ -24,9 +24,7 @@ impl Render for HelloWorld {
             .child(
                 div()
                     .child(
-                        div()
-                            .child("Button label")
-                            .aria_role(accesskit::Role::Label),
+                        div().child("Button label"), // .aria_role(accesskit::Role::Label),
                     )
                     .flex()
                     .gap_2()
@@ -39,7 +37,7 @@ impl Render for HelloWorld {
                             .border_dashed()
                             .rounded_md()
                             .border_color(gpui::white())
-                            .aria_role(accesskit::Role::Button)
+                            // .aria_role(accesskit::Role::Button)
                             .on_click(|_, _, _| println!("button clicked")),
                     ),
             )

@@ -154,6 +154,9 @@ winresource = "0.1"
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 ashpd.workspace = true
 
+[build-dependencies]
+current_commit_sha.workspace = true
+
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }
 dap = { workspace = true, features = ["test-support"] }

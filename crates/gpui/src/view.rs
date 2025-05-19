@@ -1,7 +1,7 @@
 use crate::{
     AnyElement, AnyEntity, AnyWeakEntity, App, Bounds, ContentMask, Context, Element, ElementId,
     Entity, EntityId, GlobalElementId, IntoElement, LayoutId, PaintIndex, Pixels,
-    PrepaintStateIndex, Render, Style, StyleRefinement, TextStyle, WeakEntity,
+    PrepaintStateIndex, Render, Style, StyleRefinement, TextStyle, WeakEntity, element,
 };
 use crate::{Empty, Window};
 use anyhow::Result;
@@ -26,7 +26,7 @@ struct ViewCacheKey {
 }
 
 impl<V: Render> Element for Entity<V> {
-    type RequestLayoutState = AnyElement;
+    type RequestLayoutState = (AnyElement, accesskit::Node);
     type PrepaintState = ();
 
     fn id(&self) -> Option<ElementId> {
@@ -39,30 +39,39 @@ impl<V: Render> Element for Entity<V> {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let mut element = self.update(cx, |view, cx| view.render(window, cx).into_any_element());
-        let layout_id = window.with_rendered_view(self.entity_id(), |window| {
-            element.request_layout(window, cx)
+        let node_id = window.accessibility.node_id_for_entity(self.entity_id);
+        let (mut node, mut element) = self.update(cx, |view, cx| {
+            let node = view.accessibility_node(window, cx);
+            let element = view.render(window, cx).into_any_element();
+            (node, element)
         });
-        (layout_id, element)
+        let layout_id = window.with_rendered_view(self.entity_id(), |window| {
+            window.with_accessibility_node(node_id, node.clone(), |window| {
+                element.request_layout(window, cx)
+            })
+        });
+        (layout_id, (element, node))
     }
 
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
         _: Bounds<Pixels>,
-        element: &mut Self::RequestLayoutState,
+        (element, node): &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
     ) {
         window.set_view_id(self.entity_id());
-        window.with_rendered_view(self.entity_id(), |window| element.prepaint(window, cx));
+        window.with_rendered_view(self.entity_id(), |window| {
+            element.prepaint(window, cx)
+        });
     }
 
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
         _: Bounds<Pixels>,
-        element: &mut Self::RequestLayoutState,
+        (element, node): &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
@@ -75,6 +84,7 @@ impl<V: Render> Element for Entity<V> {
 #[derive(Clone, Debug)]
 pub struct AnyView {
     entity: AnyEntity,
+    accessibility_node: fn(&AnyView, &mut Window, &mut App) -> accesskit::Node,
     render: fn(&AnyView, &mut Window, &mut App) -> AnyElement,
     cached_style: Option<Rc<StyleRefinement>>,
 }
@@ -84,6 +94,7 @@ impl<V: Render> From<Entity<V>> for AnyView {
         AnyView {
             entity: value.into_any(),
             render: any_view::render::<V>,
+            accessibility_node: any_view::accessibility_node::<V>,
             cached_style: None,
         }
     }
@@ -103,6 +114,7 @@ impl AnyView {
         AnyWeakView {
             entity: self.entity.downgrade(),
             render: self.render,
+            accessibility_node: self.accessibility_node,
         }
     }
 
@@ -114,6 +126,7 @@ impl AnyView {
             Err(entity) => Err(Self {
                 entity,
                 render: self.render,
+                accessibility_node: self.accessibility_node,
                 cached_style: self.cached_style,
             }),
         }
@@ -296,6 +309,7 @@ impl IntoElement for AnyView {
 pub struct AnyWeakView {
     entity: AnyWeakEntity,
     render: fn(&AnyView, &mut Window, &mut App) -> AnyElement,
+    accessibility_node: fn(&AnyView, &mut Window, &mut App) -> accesskit::Node,
 }
 
 impl AnyWeakView {
@@ -305,6 +319,7 @@ impl AnyWeakView {
         Some(AnyView {
             entity,
             render: self.render,
+            accessibility_node: self.accessibility_node,
             cached_style: None,
         })
     }
@@ -315,6 +330,7 @@ impl<V: 'static + Render> From<WeakEntity<V>> for AnyWeakView {
         AnyWeakView {
             entity: view.into(),
             render: any_view::render::<V>,
+            accessibility_node: any_view::accessibility_node::<V>,
         }
     }
 }
@@ -343,6 +359,14 @@ mod any_view {
     ) -> AnyElement {
         let view = view.clone().downcast::<V>().unwrap();
         view.update(cx, |view, cx| view.render(window, cx).into_any_element())
+    }
+    pub(crate) fn accessibility_node<V: 'static + Render>(
+        view: &AnyView,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> accesskit::Node {
+        let view = view.clone().downcast::<V>().unwrap();
+        view.update(cx, |view, cx| view.accessibility_node(window, cx))
     }
 }
 

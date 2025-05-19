@@ -5,14 +5,10 @@ version = 4
 [[package]]
 name = "accesskit"
 version = "0.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e25ae84c0260bdf5df07796d7cc4882460de26a2b406ec0e6c42461a723b271b"
 
 [[package]]
 name = "accesskit_consumer"
 version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8bfae7c152994a31dc7d99b8eeac7784a919f71d1b306f4b83217e110fd3824c"
 dependencies = [
  "accesskit",
  "hashbrown 0.15.2",
@@ -21,8 +17,6 @@ dependencies = [
 [[package]]
 name = "accesskit_macos"
 version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "692dd318ff8a7a0ffda67271c4bd10cf32249656f4e49390db0b26ca92b095f2"
 dependencies = [
  "accesskit",
  "accesskit_consumer",
@@ -3938,6 +3932,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "current_commit_sha"
+version = "0.1.0"
+
+[[package]]
 name = "cursor-icon"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6220,6 +6218,7 @@ dependencies = [
  "core-video",
  "cosmic-text",
  "ctor",
+ "current_commit_sha",
  "derive_more",
  "embed-resource",
  "env_logger 0.11.8",
@@ -18688,6 +18687,7 @@ dependencies = [
  "command_palette",
  "component",
  "copilot",
+ "current_commit_sha",
  "dap",
  "dap_adapters",
  "db",

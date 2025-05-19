@@ -68,6 +68,7 @@
 mod action;
 mod app;
 
+mod accessibility;
 mod arena;
 mod asset_cache;
 mod assets;

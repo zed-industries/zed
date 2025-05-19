@@ -85,6 +85,7 @@ blade-util = { workspace = true, optional = true }
 bytemuck = { version = "1", optional = true }
 collections.workspace = true
 ctor.workspace = true
+current_commit_sha.workspace = true
 derive_more.workspace = true
 etagere = "0.2"
 futures.workspace = true
@@ -144,7 +145,7 @@ objc2 = { version = "0.6", optional = true }
 objc2-metal = { version = "0.3", optional = true }
 #TODO: replace with "objc2"
 metal.workspace = true
-accesskit_macos = "0.20.0"
+accesskit_macos = { path = "../../../accesskit/platforms/macos"}
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))'.dependencies]
 pathfinder_geometry = "0.5"
@@ -246,6 +247,8 @@ naga.workspace = true
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.build-dependencies]
 naga.workspace = true
 
+[build-dependencies]
+current_commit_sha.workspace = true
 
 [[example]]
 name = "hello_world"
