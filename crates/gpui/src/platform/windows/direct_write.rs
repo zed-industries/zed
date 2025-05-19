@@ -5,7 +5,6 @@ use anyhow::{Result, anyhow};
 use collections::HashMap;
 use itertools::Itertools;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
-use smallvec::SmallVec;
 use windows::{
     Win32::{
         Foundation::*,
@@ -1089,7 +1088,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             } else {
                 context.text_system.select_font(&font_struct)
             };
-            let mut glyphs = SmallVec::new();
+            let mut glyphs = Vec::with_capacity(glyph_count);
             for index in 0..glyph_count {
                 let id = GlyphId(*glyphrun.glyphIndices.add(index) as u32);
                 context

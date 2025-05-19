@@ -942,8 +942,8 @@ impl MentionLink {
                 format!("[@{}]({}:{})", title, Self::THREAD, id)
             }
             ThreadContextEntry::Context { path, title } => {
-                let filename = path.file_name().unwrap_or_default();
-                let escaped_filename = urlencoding::encode(&filename.to_string_lossy()).to_string();
+                let filename = path.file_name().unwrap_or_default().to_string_lossy();
+                let escaped_filename = urlencoding::encode(&filename);
                 format!(
                     "[@{}]({}:{}{})",
                     title,

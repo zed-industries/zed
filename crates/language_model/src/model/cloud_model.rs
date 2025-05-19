@@ -134,18 +134,6 @@ impl fmt::Display for PaymentRequiredError {
 }
 
 #[derive(Error, Debug)]
-pub struct MaxMonthlySpendReachedError;
-
-impl fmt::Display for MaxMonthlySpendReachedError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "Maximum spending limit reached for this month. For more usage, increase your spending limit."
-        )
-    }
-}
-
-#[derive(Error, Debug)]
 pub struct ModelRequestLimitReachedError {
     pub plan: Plan,
 }

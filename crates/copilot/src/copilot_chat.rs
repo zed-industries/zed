@@ -96,6 +96,10 @@ struct ModelSupportedFeatures {
     streaming: bool,
     #[serde(default)]
     tool_calls: bool,
+    #[serde(default)]
+    parallel_tool_calls: bool,
+    #[serde(default)]
+    vision: bool,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -105,6 +109,20 @@ pub enum ModelVendor {
     OpenAI,
     Google,
     Anthropic,
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
+#[serde(tag = "type")]
+pub enum ChatMessagePart {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image_url")]
+    Image { image_url: ImageUrl },
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
+pub struct ImageUrl {
+    pub url: String,
 }
 
 impl Model {
@@ -130,6 +148,14 @@ impl Model {
 
     pub fn vendor(&self) -> ModelVendor {
         self.vendor
+    }
+
+    pub fn supports_vision(&self) -> bool {
+        self.capabilities.supports.vision
+    }
+
+    pub fn supports_parallel_tool_calls(&self) -> bool {
+        self.capabilities.supports.parallel_tool_calls
     }
 }
 
@@ -168,24 +194,53 @@ pub enum ToolChoice {
     None,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum ChatMessage {
     Assistant {
-        content: Option<String>,
+        content: ChatMessageContent,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
     },
     User {
-        content: String,
+        content: ChatMessageContent,
     },
     System {
         content: String,
     },
     Tool {
-        content: String,
+        content: ChatMessageContent,
         tool_call_id: String,
     },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ChatMessageContent {
+    Plain(String),
+    Multipart(Vec<ChatMessagePart>),
+}
+
+impl ChatMessageContent {
+    pub fn empty() -> Self {
+        ChatMessageContent::Multipart(vec![])
+    }
+}
+
+impl From<Vec<ChatMessagePart>> for ChatMessageContent {
+    fn from(mut parts: Vec<ChatMessagePart>) -> Self {
+        if let [ChatMessagePart::Text { text }] = parts.as_mut_slice() {
+            ChatMessageContent::Plain(std::mem::take(text))
+        } else {
+            ChatMessageContent::Multipart(parts)
+        }
+    }
+}
+
+impl From<String> for ChatMessageContent {
+    fn from(text: String) -> Self {
+        ChatMessageContent::Plain(text)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -211,7 +266,6 @@ pub struct FunctionContent {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub struct ResponseEvent {
     pub choices: Vec<ResponseChoice>,
-    pub created: u64,
     pub id: String,
 }
 
@@ -536,7 +590,8 @@ async fn stream_completion(
         )
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
-        .header("Copilot-Integration-Id", "vscode-chat");
+        .header("Copilot-Integration-Id", "vscode-chat")
+        .header("Copilot-Vision-Request", "true");
 
     let is_streaming = request.stream;
 

@@ -1,6 +1,7 @@
 use adapters::latest_github_release;
 use dap::adapters::{DebugTaskDefinition, TcpArguments};
-use gpui::AsyncApp;
+use gpui::{AsyncApp, SharedString};
+use language::LanguageName;
 use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 use util::ResultExt;
 
@@ -117,6 +118,10 @@ impl PhpDebugAdapter {
 impl DebugAdapter for PhpDebugAdapter {
     fn name(&self) -> DebugAdapterName {
         DebugAdapterName(Self::ADAPTER_NAME.into())
+    }
+
+    fn adapter_language_name(&self) -> Option<LanguageName> {
+        Some(SharedString::new_static("PHP").into())
     }
 
     async fn get_binary(

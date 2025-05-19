@@ -567,6 +567,15 @@ impl AgentPanel {
                         menu = menu.header("Recently Opened");
 
                         for entry in recently_opened.iter() {
+                            if let RecentEntry::Context(context) = entry {
+                                if context.read(cx).path().is_none() {
+                                    log::error!(
+                                        "bug: text thread in recent history list was never saved"
+                                    );
+                                    continue;
+                                }
+                            }
+
                             let summary = entry.summary(cx);
 
                             menu = menu.entry_with_end_slot_on_hover(
@@ -1290,14 +1299,26 @@ impl AgentPanel {
         let new_is_history = matches!(new_view, ActiveView::History);
 
         match &self.active_view {
-            ActiveView::Thread { thread, .. } => self.history_store.update(cx, |store, cx| {
+            ActiveView::Thread { thread, .. } => {
                 if let Some(thread) = thread.upgrade() {
                     if thread.read(cx).is_empty() {
                         let id = thread.read(cx).id().clone();
-                        store.remove_recently_opened_thread(id, cx);
+                        self.history_store.update(cx, |store, cx| {
+                            store.remove_recently_opened_thread(id, cx);
+                        });
                     }
                 }
-            }),
+            }
+            ActiveView::PromptEditor { context_editor, .. } => {
+                let context = context_editor.read(cx).context();
+                // When switching away from an unsaved text thread, delete its entry.
+                if context.read(cx).path().is_none() {
+                    let context = context.clone();
+                    self.history_store.update(cx, |store, cx| {
+                        store.remove_recently_opened_entry(&RecentEntry::Context(context), cx);
+                    });
+                }
+            }
             _ => {}
         }
 
@@ -2135,6 +2156,7 @@ impl AgentPanel {
 
         v_flex()
             .size_full()
+            .bg(cx.theme().colors().panel_background)
             .when(recent_history.is_empty(), |this| {
                 let configuration_error_ref = &configuration_error;
                 this.child(
@@ -2439,9 +2461,6 @@ impl AgentPanel {
                 .occlude()
                 .child(match last_error {
                     ThreadError::PaymentRequired => self.render_payment_required_error(cx),
-                    ThreadError::MaxMonthlySpendReached => {
-                        self.render_max_monthly_spend_reached_error(cx)
-                    }
                     ThreadError::ModelRequestLimitReached { plan } => {
                         self.render_model_request_limit_reached_error(plan, cx)
                     }
@@ -2488,56 +2507,6 @@ impl AgentPanel {
                             cx.notify();
                         },
                     )))
-                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
-                        |this, _, _, cx| {
-                            this.thread.update(cx, |this, _cx| {
-                                this.clear_last_error();
-                            });
-
-                            cx.notify();
-                        },
-                    ))),
-            )
-            .into_any()
-    }
-
-    fn render_max_monthly_spend_reached_error(&self, cx: &mut Context<Self>) -> AnyElement {
-        const ERROR_MESSAGE: &str = "You have reached your maximum monthly spend. Increase your spend limit to continue using Zed LLMs.";
-
-        v_flex()
-            .gap_0p5()
-            .child(
-                h_flex()
-                    .gap_1p5()
-                    .items_center()
-                    .child(Icon::new(IconName::XCircle).color(Color::Error))
-                    .child(Label::new("Max Monthly Spend Reached").weight(FontWeight::MEDIUM)),
-            )
-            .child(
-                div()
-                    .id("error-message")
-                    .max_h_24()
-                    .overflow_y_scroll()
-                    .child(Label::new(ERROR_MESSAGE)),
-            )
-            .child(
-                h_flex()
-                    .justify_end()
-                    .mt_1()
-                    .gap_1()
-                    .child(self.create_copy_button(ERROR_MESSAGE))
-                    .child(
-                        Button::new("subscribe", "Update Monthly Spend Limit").on_click(
-                            cx.listener(|this, _, _, cx| {
-                                this.thread.update(cx, |this, _cx| {
-                                    this.clear_last_error();
-                                });
-
-                                cx.open_url(&zed_urls::account_url(cx));
-                                cx.notify();
-                            }),
-                        ),
-                    )
                     .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
                         |this, _, _, cx| {
                             this.thread.update(cx, |this, _cx| {
