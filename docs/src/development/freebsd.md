@@ -1,56 +1,57 @@
-# Unofficial FreeBSD port for Zed Editor
+# Building Zed for Linux
 
-This is an unofficial FreeBSD port for [Zed Editor](https://github.com/zed-industries/zed).
+## Repository
 
-I noticed that there has been great progress around FreeBSD support for Zed recently:
+Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
-- [Zed running on FreeBSD! (#10247)](https://github.com/zed-industries/zed/discussions/10247)
-- [Add initial FreeBSD support (#20480)](https://github.com/zed-industries/zed/pull/20480)
-- [FreeBSD support for remote sessions (#25601)](https://github.com/zed-industries/zed/discussions/25601)
+## Dependencies
 
-As a Arch Linux user, I'm familiar with the AUR (Arch User Repository) ecosystem.
-I want to approaching this FreeBSD port effort with a similar mindset.
+- Install [rustup](https://www.rust-lang.org/tools/install)
 
----
+- Install the necessary system libraries:
 
-## Goals
+  ```sh
+  script/linux
+  ```
 
-- Build and run Zed on FreeBSD 14.2-RELEASE (amd64)
-- Package it as a FreeBSD port (`editors/zed-editor` or similar)
-- Track upstream changes and maintain patches as needed
-- Help with upstream FreeBSD compatibility improvements if appropriate
+  If you prefer to install the system libraries manually, you can find the list of required packages in the `script/linux` file.
 
 ---
 
-## Roadmap
+# Building Zed for Linux
 
-- [x] Study previous discussions and pull requests
-- [ ] Compile Zed natively on FreeBSD
-- [ ] Identify and patch platform-specific issues
-- [ ] Write initial FreeBSD port Makefile and patches
-- [ ] Test installation via ports system
-- [ ] Share working port for community feedback
+## Repository
 
----
+Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
-## step
+## Dependencies
 
-Clone down the Zed [repository](https://github.com/zed-industries/zed).
-run `script/linux`
-Add "x86_64-unknown-freebsd" to rust-toolchain.toml.
+* Install [rustup](https://www.rust-lang.org/tools/install)
 
-cargo build
----
+* Install the necessary system libraries:
 
-This will initially be an **unofficial** effort.  
-However, if maintainers are interested, I'd be happy to collaborate further to make FreeBSD a supported platform in the future!
+  ```sh
+  script/linux
+  ```
 
-Thanks again for this amazing editor.  
-I'm excited to help bring it to more users!
+  If you prefer to install the system libraries manually, you can find the list of required packages in the `script/linux` file.
 
 ---
 
-*Environment:  
-FreeBSD 14.2-RELEASE  
+**Environment:**
+
+* FreeBSD 14.2-RELEASE
+* Architecture: amd64 (x86\_64)
+
+---
+
+### ⚠️ WebRTC Notice
+
+Currently, building `webrtc-sys` on FreeBSD fails due to missing upstream support and unavailable prebuilt binaries.
+This is actively being worked on.
+
+More progress and discussion can be found in [Zed’s GitHub Discussions](https://github.com/zed-industries/zed/discussions/29550).
+
+*Environment:
+FreeBSD 14.2-RELEASE
 Architecture: amd64 (x86_64)*
-
