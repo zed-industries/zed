@@ -134,7 +134,7 @@ impl<'a> Iterator for CustomHighlightsChunks<'a> {
             .buffer_chunk
             .get_or_insert_with(|| self.buffer_chunks.next().unwrap());
         if chunk.text.is_empty() {
-            *chunk = self.buffer_chunks.next().unwrap();
+            *chunk = self.buffer_chunks.next()?;
         }
 
         let (prefix, suffix) = chunk
