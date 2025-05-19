@@ -420,26 +420,34 @@ impl ExtensionBuilder {
     }
 
     // This was adapted from:
-    // https://github.com/bytecodealliance/wasm-tools/blob/1791a8f139722e9f8679a2bd3d8e423e55132b22/src/bin/wasm-tools/strip.rs
+    // https://github.com/bytecodealliance/wasm-tools/blob/e8809bb17fcf69aa8c85cd5e6db7cff5cf36b1de/src/bin/wasm-tools/strip.rs
     fn strip_custom_sections(&self, input: &Vec<u8>) -> Result<Vec<u8>> {
         use wasmparser::Payload::*;
 
-        let strip_custom_section = |name: &str| name.starts_with(".debug");
+        let strip_custom_section = |name: &str| {
+            // Default strip everything but:
+            // * the `name` section
+            // * any `component-type` sections
+            // * the `dylink.0` section
+            // * our custom version section
+            name != "name"
+                && !name.starts_with("component-type:")
+                && name != "dylink.0"
+                && name != "zed:api-version"
+        };
 
         let mut output = Vec::new();
         let mut stack = Vec::new();
 
-        for payload in Parser::new(0).parse_all(input) {
+        for payload in Parser::new(0).parse_all(&input) {
             let payload = payload?;
-            let component_header = wasm_encoder::Component::HEADER;
-            let module_header = wasm_encoder::Module::HEADER;
 
             // Track nesting depth, so that we don't mess with inner producer sections:
             match payload {
                 Version { encoding, .. } => {
                     output.extend_from_slice(match encoding {
-                        wasmparser::Encoding::Component => &component_header,
-                        wasmparser::Encoding::Module => &module_header,
+                        wasmparser::Encoding::Component => &wasm_encoder::Component::HEADER,
+                        wasmparser::Encoding::Module => &wasm_encoder::Module::HEADER,
                     });
                 }
                 ModuleSection { .. } | ComponentSection { .. } => {
@@ -451,7 +459,7 @@ impl ExtensionBuilder {
                         Some(c) => c,
                         None => break,
                     };
-                    if output.starts_with(&component_header) {
+                    if output.starts_with(&wasm_encoder::Component::HEADER) {
                         parent.push(ComponentSectionId::Component as u8);
                         output.encode(&mut parent);
                     } else {
@@ -463,12 +471,15 @@ impl ExtensionBuilder {
                 _ => {}
             }
 
-            if let CustomSection(c) = &payload {
-                if strip_custom_section(c.name()) {
-                    continue;
+            match &payload {
+                CustomSection(c) => {
+                    if strip_custom_section(c.name()) {
+                        continue;
+                    }
                 }
-            }
 
+                _ => {}
+            }
             if let Some((id, range)) = payload.as_section() {
                 RawSection {
                     id,
