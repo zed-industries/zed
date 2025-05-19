@@ -345,17 +345,20 @@ fn render_markdown_code_block(
     _window: &Window,
     cx: &App,
 ) -> Div {
+    let label_size = rems(0.8125);
+
     let label = match kind {
         CodeBlockKind::Indented => None,
         CodeBlockKind::Fenced => Some(
             h_flex()
+                .px_1()
                 .gap_1()
                 .child(
                     Icon::new(IconName::Code)
                         .color(Color::Muted)
                         .size(IconSize::XSmall),
                 )
-                .child(Label::new("untitled").size(LabelSize::Small))
+                .child(div().text_size(label_size).child("Plain Text"))
                 .into_any_element(),
         ),
         CodeBlockKind::FencedLang(raw_language_name) => Some(render_code_language(
@@ -383,7 +386,6 @@ fn render_markdown_code_block(
                     cx,
                 )
             } else {
-                let text_size = rems(0.8125);
                 let content = if let Some(parent) = path_range.path.parent() {
                     let file_name = file_name.to_string_lossy().to_string();
                     let path = parent.to_string_lossy().to_string();
@@ -393,7 +395,7 @@ fn render_markdown_code_block(
                         .id(("code-block-header-label", ix))
                         .ml_1()
                         .gap_1()
-                        .child(div().text_size(text_size).child(file_name))
+                        .child(div().text_size(label_size).child(file_name))
                         .child(Label::new(path).color(Color::Muted).size(LabelSize::Small))
                         .tooltip(move |window, cx| {
                             Tooltip::with_meta(
@@ -408,7 +410,7 @@ fn render_markdown_code_block(
                 } else {
                     div()
                         .ml_1()
-                        .text_size(text_size)
+                        .text_size(label_size)
                         .child(path_range.path.to_string_lossy().to_string())
                         .into_any_element()
                 };
@@ -629,10 +631,13 @@ fn render_code_language(
         .map(|language| language.name().into())
         .unwrap_or(name_fallback);
 
+    let label_size = rems(0.8125);
+
     h_flex()
-        .gap_1()
-        .children(icon_path.map(|icon| icon.color(Color::Muted).size(IconSize::Small)))
-        .child(Label::new(language_label).size(LabelSize::Small))
+        .px_1()
+        .gap_1p5()
+        .children(icon_path.map(|icon| icon.color(Color::Muted).size(IconSize::XSmall)))
+        .child(div().text_size(label_size).child(language_label))
         .into_any_element()
 }
 
