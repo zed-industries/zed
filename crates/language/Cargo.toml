@@ -19,6 +19,7 @@ test-support = [
     "lsp/test-support",
     "text/test-support",
     "tree-sitter-rust",
+    "tree-sitter-python",
     "tree-sitter-typescript",
     "settings/test-support",
     "util/test-support",
@@ -58,6 +59,7 @@ sum_tree.workspace = true
 task.workspace = true
 text.workspace = true
 theme.workspace = true
+tree-sitter-python = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
 tree-sitter.workspace = true
@@ -76,15 +78,16 @@ pretty_assertions.workspace = true
 rand.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 text = { workspace = true, features = ["test-support"] }
+http_client = { workspace = true, features = ["test-support"] }
 tree-sitter-elixir.workspace = true
 tree-sitter-embedded-template.workspace = true
 tree-sitter-heex.workspace = true
 tree-sitter-html.workspace = true
 tree-sitter-json.workspace = true
 tree-sitter-md.workspace = true
+tree-sitter-python.workspace = true
 tree-sitter-ruby.workspace = true
 tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
-http_client = { workspace = true, features = ["test-support"] }

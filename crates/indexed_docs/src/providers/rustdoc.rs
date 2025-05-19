@@ -79,7 +79,7 @@ impl IndexedDocsProvider for LocalRustdocProvider {
 
         *WORKSPACE_CRATES.write() = Some((workspace_crates.clone(), Instant::now()));
 
-        Ok(workspace_crates.iter().cloned().collect())
+        Ok(workspace_crates.into_iter().collect())
     }
 
     async fn index(&self, package: PackageName, database: Arc<IndexedDocsDatabase>) -> Result<()> {

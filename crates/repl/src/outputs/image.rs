@@ -57,11 +57,7 @@ impl ImageView {
         };
 
         // Convert back to a GPUI image for use with the clipboard
-        let clipboard_image = Arc::new(Image {
-            format,
-            bytes,
-            id: gpui_image_data.id.0 as u64,
-        });
+        let clipboard_image = Arc::new(Image::from_bytes(format, bytes));
 
         Ok(ImageView {
             clipboard_image,

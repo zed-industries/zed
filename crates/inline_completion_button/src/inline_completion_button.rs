@@ -14,7 +14,6 @@ use gpui::{
     pulsating_between,
 };
 use indoc::indoc;
-use inline_completion::EditPredictionUsage;
 use language::{
     EditPredictionsMode, File, Language,
     language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
@@ -30,7 +29,6 @@ use ui::{
     Clickable, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconButtonShape,
     Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
 };
-use util::maybe;
 use workspace::{
     StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
     notifications::NotificationId,
@@ -106,14 +104,8 @@ impl Render for InlineCompletionButton {
                                             )
                                             .on_click(
                                                 "Reinstall Copilot",
-                                                |_, cx| {
-                                                    if let Some(copilot) = Copilot::global(cx) {
-                                                        copilot
-                                                            .update(cx, |copilot, cx| {
-                                                                copilot.reinstall(cx)
-                                                            })
-                                                            .detach();
-                                                    }
+                                                |window, cx| {
+                                                    copilot::reinstall_and_sign_in(window, cx)
                                                 },
                                             ),
                                             cx,
@@ -243,11 +235,17 @@ impl Render for InlineCompletionButton {
 
                 let current_user_terms_accepted =
                     self.user_store.read(cx).current_user_has_accepted_terms();
+                let has_subscription = self.user_store.read(cx).current_plan().is_some()
+                    && self.user_store.read(cx).subscription_period().is_some();
 
-                if !current_user_terms_accepted.unwrap_or(false) {
+                if !has_subscription || !current_user_terms_accepted.unwrap_or(false) {
                     let signed_in = current_user_terms_accepted.is_some();
                     let tooltip_meta = if signed_in {
-                        "Read Terms of Service"
+                        if has_subscription {
+                            "Read Terms of Service"
+                        } else {
+                            "Choose a Plan"
+                        }
                     } else {
                         "Sign in to use"
                     };
@@ -405,31 +403,14 @@ impl InlineCompletionButton {
         let fs = self.fs.clone();
         let line_height = window.line_height();
 
-        if let Some(provider) = self.edit_prediction_provider.as_ref() {
-            let usage = provider.usage(cx).or_else(|| {
-                let user_store = self.user_store.read(cx);
-
-                maybe!({
-                    let amount = user_store.edit_predictions_usage_amount()?;
-                    let limit = user_store.edit_predictions_usage_limit()?.variant?;
-
-                    Some(EditPredictionUsage {
-                        amount: amount as i32,
-                        limit: match limit {
-                            proto::usage_limit::Variant::Limited(limited) => {
-                                zed_llm_client::UsageLimit::Limited(limited.limit as i32)
-                            }
-                            proto::usage_limit::Variant::Unlimited(_) => {
-                                zed_llm_client::UsageLimit::Unlimited
-                            }
-                        },
-                    })
-                })
-            });
-
-            if let Some(usage) = usage {
-                menu = menu.header("Usage");
-                menu = menu.custom_entry(
+        if let Some(usage) = self
+            .edit_prediction_provider
+            .as_ref()
+            .and_then(|provider| provider.usage(cx))
+        {
+            menu = menu.header("Usage");
+            menu = menu
+                .custom_entry(
                     move |_window, cx| {
                         let used_percentage = match usage.limit {
                             UsageLimit::Limited(limit) => {
@@ -458,8 +439,8 @@ impl InlineCompletionButton {
                             .into_any_element()
                     },
                     move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
-                );
-            }
+                )
+                .separator();
         }
 
         menu = menu.header("Show Edit Predictions For");
@@ -854,7 +835,7 @@ async fn open_disabled_globs_setting_in_editor(
             });
 
             if !edits.is_empty() {
-                item.edit(edits.iter().cloned(), cx);
+                item.edit(edits, cx);
             }
 
             let text = item.buffer().read(cx).snapshot(cx).text();

@@ -40,12 +40,21 @@ struct UpdateRequestBody {
 }
 
 #[derive(Clone, PartialEq, Eq)]
+pub enum VersionCheckType {
+    Sha(String),
+    Semantic(SemanticVersion),
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub enum AutoUpdateStatus {
     Idle,
     Checking,
     Downloading,
     Installing,
-    Updated { binary_path: PathBuf },
+    Updated {
+        binary_path: PathBuf,
+        version: VersionCheckType,
+    },
     Errored,
 }
 
@@ -62,7 +71,7 @@ pub struct AutoUpdater {
     pending_poll: Option<Task<Option<()>>>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Clone, Debug)]
 pub struct JsonRelease {
     pub version: String,
     pub url: String,
@@ -307,7 +316,7 @@ impl AutoUpdater {
     }
 
     pub fn poll(&mut self, cx: &mut Context<Self>) {
-        if self.pending_poll.is_some() || self.status.is_updated() {
+        if self.pending_poll.is_some() {
             return;
         }
 
@@ -335,9 +344,13 @@ impl AutoUpdater {
         self.status.clone()
     }
 
-    pub fn dismiss_error(&mut self, cx: &mut Context<Self>) {
+    pub fn dismiss_error(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.status == AutoUpdateStatus::Idle {
+            return false;
+        }
         self.status = AutoUpdateStatus::Idle;
         cx.notify();
+        true
     }
 
     // If you are packaging Zed and need to override the place it downloads SSH remotes from,
@@ -479,36 +492,63 @@ impl AutoUpdater {
         Self::get_release(this, asset, os, arch, None, release_channel, cx).await
     }
 
+    fn installed_update_version(&self) -> Option<VersionCheckType> {
+        match &self.status {
+            AutoUpdateStatus::Updated { version, .. } => Some(version.clone()),
+            _ => None,
+        }
+    }
+
     async fn update(this: Entity<Self>, mut cx: AsyncApp) -> Result<()> {
-        let (client, current_version, release_channel) = this.update(&mut cx, |this, cx| {
-            this.status = AutoUpdateStatus::Checking;
-            cx.notify();
-            (
-                this.http_client.clone(),
-                this.current_version,
-                ReleaseChannel::try_global(cx),
-            )
-        })?;
+        let (client, current_version, installed_update_version, release_channel) =
+            this.update(&mut cx, |this, cx| {
+                this.status = AutoUpdateStatus::Checking;
+                cx.notify();
+                (
+                    this.http_client.clone(),
+                    this.current_version,
+                    this.installed_update_version(),
+                    ReleaseChannel::try_global(cx),
+                )
+            })?;
 
         let release =
             Self::get_latest_release(&this, "zed", OS, ARCH, release_channel, &mut cx).await?;
 
-        let should_download = match *RELEASE_CHANNEL {
-            ReleaseChannel::Nightly => cx
-                .update(|cx| AppCommitSha::try_global(cx).map(|sha| release.version != sha.0))
-                .ok()
-                .flatten()
-                .unwrap_or(true),
-            _ => release.version.parse::<SemanticVersion>()? > current_version,
+        let update_version_to_install = match *RELEASE_CHANNEL {
+            ReleaseChannel::Nightly => {
+                let should_download = cx
+                    .update(|cx| AppCommitSha::try_global(cx).map(|sha| release.version != sha.0))
+                    .ok()
+                    .flatten()
+                    .unwrap_or(true);
+
+                should_download.then(|| VersionCheckType::Sha(release.version.clone()))
+            }
+            _ => {
+                let installed_version =
+                    installed_update_version.unwrap_or(VersionCheckType::Semantic(current_version));
+                match installed_version {
+                    VersionCheckType::Sha(_) => {
+                        log::warn!("Unexpected SHA-based version in non-nightly build");
+                        Some(installed_version)
+                    }
+                    VersionCheckType::Semantic(semantic_comparison_version) => {
+                        let latest_release_version = release.version.parse::<SemanticVersion>()?;
+                        let should_download = latest_release_version > semantic_comparison_version;
+                        should_download.then(|| VersionCheckType::Semantic(latest_release_version))
+                    }
+                }
+            }
         };
 
-        if !should_download {
+        let Some(update_version) = update_version_to_install else {
             this.update(&mut cx, |this, cx| {
                 this.status = AutoUpdateStatus::Idle;
                 cx.notify();
             })?;
             return Ok(());
-        }
+        };
 
         this.update(&mut cx, |this, cx| {
             this.status = AutoUpdateStatus::Downloading;
@@ -530,7 +570,7 @@ impl AutoUpdater {
         );
 
         let downloaded_asset = installer_dir.path().join(filename);
-        download_release(&downloaded_asset, release, client, &cx).await?;
+        download_release(&downloaded_asset, release.clone(), client, &cx).await?;
 
         this.update(&mut cx, |this, cx| {
             this.status = AutoUpdateStatus::Installing;
@@ -547,7 +587,10 @@ impl AutoUpdater {
         this.update(&mut cx, |this, cx| {
             this.set_should_show_update_notification(true, cx)
                 .detach_and_log_err(cx);
-            this.status = AutoUpdateStatus::Updated { binary_path };
+            this.status = AutoUpdateStatus::Updated {
+                binary_path,
+                version: update_version,
+            };
             cx.notify();
         })?;
 

@@ -155,6 +155,7 @@ pub fn notify_if_app_was_updated(cx: &mut App) {
                                 }
                                 cx.emit(DismissEvent);
                             })
+                            .show_suppress_button(false)
                         })
                     },
                 );

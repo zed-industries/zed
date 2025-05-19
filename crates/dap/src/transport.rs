@@ -224,11 +224,6 @@ impl TransportDelegate {
         pending_requests.insert(sequence_id, request);
     }
 
-    pub(crate) async fn cancel_pending_request(&self, sequence_id: &u64) {
-        let mut pending_requests = self.pending_requests.lock().await;
-        pending_requests.remove(sequence_id);
-    }
-
     pub(crate) async fn send_message(&self, message: Message) -> Result<()> {
         if let Some(server_tx) = self.server_tx.lock().await.as_ref() {
             server_tx
@@ -580,21 +575,31 @@ impl TcpTransport {
                 .unwrap_or(2000u64)
         });
 
-        let (rx, tx) = select! {
+        let (mut process, (rx, tx)) = select! {
             _ = cx.background_executor().timer(Duration::from_millis(timeout)).fuse() => {
                 return Err(anyhow!(format!("Connection to TCP DAP timeout {}:{}", host, port)))
             },
             result = cx.spawn(async move |cx| {
                 loop {
                     match TcpStream::connect(address).await {
-                        Ok(stream) => return stream.split(),
+                        Ok(stream) => return Ok((process, stream.split())),
                         Err(_) => {
+                            if let Ok(Some(_)) = process.try_status() {
+                                let output = process.output().await?;
+                                let output = if output.stderr.is_empty() {
+                                    String::from_utf8_lossy(&output.stdout).to_string()
+                                } else {
+                                    String::from_utf8_lossy(&output.stderr).to_string()
+                                };
+                                return Err(anyhow!("{}\nerror: process exited before debugger attached.", output));
+                            }
                             cx.background_executor().timer(Duration::from_millis(100)).await;
                         }
                     }
                 }
-            }).fuse() => result
+            }).fuse() => result?
         };
+
         log::info!(
             "Debug adapter has connected to TCP server {}:{}",
             host,

@@ -35,6 +35,10 @@ impl GdbDebugAdapter {
                     map.insert("args".into(), launch.args.clone().into());
                 }
 
+                if !launch.env.is_empty() {
+                    map.insert("env".into(), launch.env_json());
+                }
+
                 if let Some(stop_on_entry) = config.stop_on_entry {
                     map.insert(
                         "stopAtBeginningOfMainSubprogram".into(),
@@ -89,27 +93,5 @@ impl DebugAdapter for GdbDebugAdapter {
             connection: None,
             request_args: self.request_args(config),
         })
-    }
-
-    async fn install_binary(
-        &self,
-        _version: AdapterVersion,
-        _delegate: &dyn DapDelegate,
-    ) -> Result<()> {
-        unimplemented!("GDB debug adapter cannot be installed by Zed (yet)")
-    }
-
-    async fn fetch_latest_adapter_version(&self, _: &dyn DapDelegate) -> Result<AdapterVersion> {
-        unimplemented!("Fetch latest GDB version not implemented (yet)")
-    }
-
-    async fn get_installed_binary(
-        &self,
-        _: &dyn DapDelegate,
-        _: &DebugTaskDefinition,
-        _: Option<std::path::PathBuf>,
-        _: &mut AsyncApp,
-    ) -> Result<DebugAdapterBinary> {
-        unimplemented!("GDB cannot be installed by Zed (yet)")
     }
 }

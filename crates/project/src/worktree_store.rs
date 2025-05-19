@@ -262,7 +262,7 @@ impl WorktreeStore {
         if abs_path.starts_with("/~") {
             abs_path = abs_path[1..].to_string();
         }
-        if abs_path.is_empty() || abs_path == "/" {
+        if abs_path.is_empty() {
             abs_path = "~/".to_string();
         }
         cx.spawn(async move |this, cx| {
@@ -876,7 +876,7 @@ impl WorktreeStore {
 
     async fn filter_paths(
         fs: &Arc<dyn Fs>,
-        mut input: Receiver<MatchingEntry>,
+        input: Receiver<MatchingEntry>,
         query: &SearchQuery,
     ) -> Result<()> {
         let mut input = pin!(input);

@@ -305,6 +305,7 @@ messages!(
     (DebugAdapterBinary, Background),
     (RunDebugLocators, Background),
     (DebugRequest, Background),
+    (LogToDebugConsole, Background),
 );
 
 request_messages!(
@@ -591,6 +592,7 @@ entity_messages!(
     ToggleBreakpoint,
     RunDebugLocators,
     GetDebugAdapterBinary,
+    LogToDebugConsole,
 );
 
 entity_messages!(

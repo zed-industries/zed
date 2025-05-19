@@ -21,6 +21,8 @@ mod dap_logger;
 #[cfg(test)]
 mod debugger_panel;
 #[cfg(test)]
+mod inline_values;
+#[cfg(test)]
 mod module_list;
 #[cfg(test)]
 mod persistence;
@@ -45,6 +47,7 @@ pub fn init_test(cx: &mut gpui::TestAppContext) {
         Project::init_settings(cx);
         editor::init(cx);
         crate::init(cx);
+        dap_adapters::init(cx);
     });
 }
 

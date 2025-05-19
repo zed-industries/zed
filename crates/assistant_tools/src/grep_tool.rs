@@ -4,7 +4,7 @@ use assistant_tool::{ActionLog, Tool, ToolResult};
 use futures::StreamExt;
 use gpui::{AnyWindowHandle, App, Entity, Task};
 use language::{OffsetRangeExt, ParseStatus, Point};
-use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::{
     Project,
     search::{SearchQuery, SearchResult},
@@ -96,9 +96,10 @@ impl Tool for GrepTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _model: Arc<dyn LanguageModel>,
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
@@ -260,16 +261,16 @@ impl Tool for GrepTool {
             }
 
             if matches_found == 0 {
-                Ok("No matches found".to_string())
+                Ok("No matches found".to_string().into())
             } else if has_more_matches {
                 Ok(format!(
                     "Showing matches {}-{} (there were more matches found; use offset: {} to see next page):\n{output}",
                     input.offset + 1,
                     input.offset + matches_found,
                     input.offset + RESULTS_PER_PAGE,
-                ))
+                ).into())
             } else {
-                Ok(format!("Found {matches_found} matches:\n{output}"))
+                Ok(format!("Found {matches_found} matches:\n{output}").into())
             }
         }).into()
     }
@@ -281,6 +282,7 @@ mod tests {
     use assistant_tool::Tool;
     use gpui::{AppContext, TestAppContext};
     use language::{Language, LanguageConfig, LanguageMatcher};
+    use language_model::fake_provider::FakeLanguageModel;
     use project::{FakeFs, Project};
     use settings::SettingsStore;
     use unindent::Unindent;
@@ -743,14 +745,16 @@ mod tests {
     ) -> String {
         let tool = Arc::new(GrepTool);
         let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
-        let task = cx.update(|cx| tool.run(input, &[], project, action_log, None, cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let task =
+            cx.update(|cx| tool.run(input, Arc::default(), project, action_log, model, None, cx));
 
         match task.output.await {
             Ok(result) => {
                 if cfg!(windows) {
-                    result.replace("root\\", "root/")
+                    result.content.as_str().unwrap().replace("root\\", "root/")
                 } else {
-                    result
+                    result.content.as_str().unwrap().to_string()
                 }
             }
             Err(e) => panic!("Failed to run grep tool: {}", e),

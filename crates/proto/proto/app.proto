@@ -26,6 +26,12 @@ message UpdateUserPlan {
     optional uint64 trial_started_at = 2;
     optional bool is_usage_based_billing_enabled = 3;
     optional SubscriptionUsage usage = 4;
+    optional SubscriptionPeriod subscription_period = 5;
+}
+
+message SubscriptionPeriod {
+    uint64 started_at = 1;
+    uint64 ended_at = 2;
 }
 
 message SubscriptionUsage {

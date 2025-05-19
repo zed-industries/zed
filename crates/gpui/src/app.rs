@@ -38,7 +38,9 @@ use crate::{
     PlatformDisplay, PlatformKeyboardLayout, Point, PromptBuilder, PromptHandle, PromptLevel,
     Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString,
     SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance,
-    WindowHandle, WindowId, WindowInvalidator, current_platform, hash, init_app_menus,
+    WindowHandle, WindowId, WindowInvalidator,
+    colors::{Colors, GlobalColors},
+    current_platform, hash, init_app_menus,
 };
 
 mod async_context;
@@ -1537,6 +1539,17 @@ impl App {
         self.active_drag.is_some()
     }
 
+    /// Stops active drag and clears any related effects.
+    pub fn stop_active_drag(&mut self, window: &mut Window) -> bool {
+        if self.active_drag.is_some() {
+            self.active_drag = None;
+            window.refresh();
+            true
+        } else {
+            false
+        }
+    }
+
     /// Set the prompt renderer for GPUI. This will replace the default or platform specific
     /// prompts with this custom implementation.
     pub fn set_prompt_builder(
@@ -1644,6 +1657,13 @@ impl App {
         if let Some(window) = current_window {
             _ = window.drop_image(image);
         }
+    }
+
+    /// Initializes gpui's default colors for the application.
+    ///
+    /// These colors can be accessed through `cx.default_colors()`.
+    pub fn init_colors(&mut self) {
+        self.set_global(GlobalColors(Arc::new(Colors::default())));
     }
 }
 

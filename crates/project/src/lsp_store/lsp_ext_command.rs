@@ -663,7 +663,9 @@ impl LspCommand for GetLspRunnables {
                                 // We cannot escape all shell arguments unconditionally, as we use this for ssh commands, which may involve paths starting with `~`.
                                 // That bit is not auto-expanded when using single quotes.
                                 // Escape extra cargo args unconditionally as those are unlikely to contain `~`.
-                                .map(|extra_arg| format!("'{extra_arg}'")),
+                                .flat_map(|extra_arg| {
+                                    shlex::try_quote(&extra_arg).ok().map(|s| s.to_string())
+                                }),
                         );
                     }
                 }

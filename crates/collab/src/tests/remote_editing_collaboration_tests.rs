@@ -581,7 +581,11 @@ async fn test_ssh_collaboration_formatting_with_prettier(
 }
 
 #[gpui::test]
-async fn test_remote_server_debugger(cx_a: &mut TestAppContext, server_cx: &mut TestAppContext) {
+async fn test_remote_server_debugger(
+    cx_a: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+    executor: BackgroundExecutor,
+) {
     cx_a.update(|cx| {
         release_channel::init(SemanticVersion::default(), cx);
         command_palette_hooks::init(cx);
@@ -679,7 +683,7 @@ async fn test_remote_server_debugger(cx_a: &mut TestAppContext, server_cx: &mut 
     });
 
     client_ssh.update(cx_a, |a, _| {
-        a.shutdown_processes(Some(proto::ShutdownRemoteServer {}))
+        a.shutdown_processes(Some(proto::ShutdownRemoteServer {}), executor)
     });
 
     shutdown_session.await.unwrap();

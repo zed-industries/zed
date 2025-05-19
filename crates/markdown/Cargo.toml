@@ -20,6 +20,7 @@ test-support = [
 
 [dependencies]
 anyhow.workspace = true
+base64.workspace = true
 gpui.workspace = true
 language.workspace = true
 linkify.workspace = true

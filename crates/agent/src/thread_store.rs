@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, anyhow};
-use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings};
+use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings, CompletionMode};
 use assistant_tool::{ToolId, ToolSource, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
@@ -19,7 +19,7 @@ use gpui::{
 };
 use heed::Database;
 use heed::types::SerdeBincode;
-use language_model::{LanguageModelToolUseId, Role, TokenUsage};
+use language_model::{LanguageModelToolResultContent, LanguageModelToolUseId, Role, TokenUsage};
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
@@ -28,6 +28,7 @@ use prompt_store::{
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
+use ui::Window;
 use util::ResultExt as _;
 
 use crate::context_server_tool::ContextServerTool;
@@ -385,21 +386,42 @@ impl ThreadStore {
         })
     }
 
+    pub fn create_thread_from_serialized(
+        &mut self,
+        serialized: SerializedThread,
+        cx: &mut Context<Self>,
+    ) -> Entity<Thread> {
+        cx.new(|cx| {
+            Thread::deserialize(
+                ThreadId::new(),
+                serialized,
+                self.project.clone(),
+                self.tools.clone(),
+                self.prompt_builder.clone(),
+                self.project_context.clone(),
+                None,
+                cx,
+            )
+        })
+    }
+
     pub fn open_thread(
         &self,
         id: &ThreadId,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Thread>>> {
         let id = id.clone();
         let database_future = ThreadsDatabase::global_future(cx);
-        cx.spawn(async move |this, cx| {
+        let this = cx.weak_entity();
+        window.spawn(cx, async move |cx| {
             let database = database_future.await.map_err(|err| anyhow!(err))?;
             let thread = database
                 .try_find_thread(id.clone())
                 .await?
                 .ok_or_else(|| anyhow!("no thread found with ID: {id:?}"))?;
 
-            let thread = this.update(cx, |this, cx| {
+            let thread = this.update_in(cx, |this, window, cx| {
                 cx.new(|cx| {
                     Thread::deserialize(
                         id.clone(),
@@ -408,6 +430,7 @@ impl ThreadStore {
                         this.tools.clone(),
                         this.prompt_builder.clone(),
                         this.project_context.clone(),
+                        Some(window),
                         cx,
                     )
                 })
@@ -482,8 +505,8 @@ impl ThreadStore {
                 ToolSource::Native,
                 &profile
                     .tools
-                    .iter()
-                    .filter_map(|(tool, enabled)| enabled.then(|| tool.clone()))
+                    .into_iter()
+                    .filter_map(|(tool, enabled)| enabled.then(|| tool))
                     .collect::<Vec<_>>(),
                 cx,
             );
@@ -507,32 +530,32 @@ impl ThreadStore {
                 });
             }
             // Enable all the tools from all context servers, but disable the ones that are explicitly disabled
-            for (context_server_id, preset) in &profile.context_servers {
+            for (context_server_id, preset) in profile.context_servers {
                 self.tools.update(cx, |tools, cx| {
                     tools.disable(
                         ToolSource::ContextServer {
-                            id: context_server_id.clone().into(),
+                            id: context_server_id.into(),
                         },
                         &preset
                             .tools
-                            .iter()
-                            .filter_map(|(tool, enabled)| (!enabled).then(|| tool.clone()))
+                            .into_iter()
+                            .filter_map(|(tool, enabled)| (!enabled).then(|| tool))
                             .collect::<Vec<_>>(),
                         cx,
                     )
                 })
             }
         } else {
-            for (context_server_id, preset) in &profile.context_servers {
+            for (context_server_id, preset) in profile.context_servers {
                 self.tools.update(cx, |tools, cx| {
                     tools.enable(
                         ToolSource::ContextServer {
-                            id: context_server_id.clone().into(),
+                            id: context_server_id.into(),
                         },
                         &preset
                             .tools
-                            .iter()
-                            .filter_map(|(tool, enabled)| enabled.then(|| tool.clone()))
+                            .into_iter()
+                            .filter_map(|(tool, enabled)| enabled.then(|| tool))
                             .collect::<Vec<_>>(),
                         cx,
                     )
@@ -651,6 +674,8 @@ pub struct SerializedThread {
     pub exceeded_window_error: Option<ExceededWindowError>,
     #[serde(default)]
     pub model: Option<SerializedLanguageModel>,
+    #[serde(default)]
+    pub completion_mode: Option<CompletionMode>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -769,7 +794,8 @@ pub struct SerializedToolUse {
 pub struct SerializedToolResult {
     pub tool_use_id: LanguageModelToolUseId,
     pub is_error: bool,
-    pub content: Arc<str>,
+    pub content: LanguageModelToolResultContent,
+    pub output: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -794,6 +820,7 @@ impl LegacySerializedThread {
             detailed_summary_state: DetailedSummaryState::default(),
             exceeded_window_error: None,
             model: None,
+            completion_mode: None,
         }
     }
 }

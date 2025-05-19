@@ -15,13 +15,15 @@ path = "src/language_models.rs"
 anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
 aws-config = { workspace = true, features = ["behavior-version-latest"] }
-aws-credential-types = { workspace = true, features = ["hardcoded-credentials"] }
+aws-credential-types = { workspace = true, features = [
+    "hardcoded-credentials",
+] }
 aws_http_client.workspace = true
 bedrock.workspace = true
 client.workspace = true
 collections.workspace = true
 credentials_provider.workspace = true
-copilot = { workspace = true, features = ["schemars"] }
+copilot.workspace = true
 deepseek = { workspace = true, features = ["schemars"] }
 editor.workspace = true
 feature_flags.workspace = true
@@ -41,6 +43,7 @@ open_ai = { workspace = true, features = ["schemars"] }
 partial-json-fixer.workspace = true
 project.workspace = true
 proto.workspace = true
+release_channel.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

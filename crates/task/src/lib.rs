@@ -16,7 +16,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 pub use debug_format::{
-    AttachRequest, DebugRequest, DebugScenario, DebugTaskFile, LaunchRequest, TcpArgumentsTemplate,
+    AttachRequest, BuildTaskDefinition, DebugRequest, DebugScenario, DebugTaskFile, LaunchRequest,
+    TcpArgumentsTemplate,
 };
 pub use task_template::{
     DebugArgsRequest, HideStrategy, RevealStrategy, TaskTemplate, TaskTemplates,
@@ -341,6 +342,7 @@ enum WindowsShellType {
 pub struct ShellBuilder {
     program: String,
     args: Vec<String>,
+    interactive: bool,
 }
 
 pub static DEFAULT_REMOTE_SHELL: &str = "\"${SHELL:-sh}\"";
@@ -359,7 +361,15 @@ impl ShellBuilder {
             Shell::Program(shell) => (shell.clone(), Vec::new()),
             Shell::WithArguments { program, args, .. } => (program.clone(), args.clone()),
         };
-        Self { program, args }
+        Self {
+            program,
+            args,
+            interactive: true,
+        }
+    }
+    pub fn non_interactive(mut self) -> Self {
+        self.interactive = false;
+        self
     }
 }
 
@@ -367,7 +377,8 @@ impl ShellBuilder {
 impl ShellBuilder {
     /// Returns the label to show in the terminal tab
     pub fn command_label(&self, command_label: &str) -> String {
-        format!("{} -i -c '{}'", self.program, command_label)
+        let interactivity = self.interactive.then_some("-i ").unwrap_or_default();
+        format!("{} {interactivity}-c '{}'", self.program, command_label)
     }
 
     /// Returns the program and arguments to run this task in a shell.
@@ -379,8 +390,12 @@ impl ShellBuilder {
                 command.push_str(&arg);
                 command
             });
-        self.args
-            .extend(["-i".to_owned(), "-c".to_owned(), combined_command]);
+        self.args.extend(
+            self.interactive
+                .then(|| "-i".to_owned())
+                .into_iter()
+                .chain(["-c".to_owned(), combined_command]),
+        );
 
         (self.program, self.args)
     }

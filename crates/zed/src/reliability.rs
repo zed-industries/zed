@@ -291,7 +291,7 @@ pub fn monitor_main_thread_hangs(
                     // ASYNC SIGNAL SAFETY: This lock is only accessed one other time,
                     // which can only be triggered by This signal handler. In addition,
                     // this signal handler is immediately removed by SA_RESETHAND, and this
-                    // signal handler cannot be re-entrant due to to the SIGUSR2 mask defined
+                    // signal handler cannot be re-entrant due to the SIGUSR2 mask defined
                     // below
                     let mut bt = BACKTRACE.lock();
                     bt.clear();

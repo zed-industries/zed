@@ -1,5 +1,4 @@
 mod provider_tests;
-mod subscription_usage_tests;
 
 use gpui::BackgroundExecutor;
 use parking_lot::Mutex;

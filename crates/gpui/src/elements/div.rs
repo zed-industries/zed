@@ -490,7 +490,7 @@ impl Interactivity {
 
     /// Bind the given callback on the hover start and end events of this element. Note that the boolean
     /// passed to the callback is true when the hover starts and false when it ends.
-    /// The imperative API equivalent to [`StatefulInteractiveElement::on_drag`]
+    /// The imperative API equivalent to [`StatefulInteractiveElement::on_hover`]
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_hover(&mut self, listener: impl Fn(&bool, &mut Window, &mut App) + 'static)
@@ -543,6 +543,15 @@ impl Interactivity {
     /// The imperative API equivalent to [`InteractiveElement::occlude`]
     pub fn occlude_mouse(&mut self) {
         self.occlude_mouse = true;
+    }
+
+    /// Registers event handles that stop propagation of mouse events for non-scroll events.
+    /// The imperative API equivalent to [`InteractiveElement::block_mouse_except_scroll`]
+    pub fn stop_mouse_events_except_scroll(&mut self) {
+        self.on_any_mouse_down(|_, _, cx| cx.stop_propagation());
+        self.on_any_mouse_up(|_, _, cx| cx.stop_propagation());
+        self.on_click(|_, _, cx| cx.stop_propagation());
+        self.on_hover(|_, _, cx| cx.stop_propagation());
     }
 }
 
@@ -919,10 +928,16 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Block the mouse from interacting with this element or any of its children
-    /// The fluent API equivalent to [`Interactivity::occlude_mouse`]
+    /// Stops propagation of left mouse down event.
     fn block_mouse_down(mut self) -> Self {
         self.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+    }
+
+    /// Registers event handles that stop propagation of mouse events for non-scroll events.
+    /// The fluent API equivalent to [`Interactivity::block_mouse_except_scroll`]
+    fn stop_mouse_events_except_scroll(mut self) -> Self {
+        self.interactivity().stop_mouse_events_except_scroll();
+        self
     }
 }
 
@@ -1544,32 +1559,20 @@ impl Interactivity {
     ) -> Point<Pixels> {
         if let Some(scroll_offset) = self.scroll_offset.as_ref() {
             let mut scroll_to_bottom = false;
-            if let Some(scroll_handle) = &self.tracked_scroll_handle {
-                let mut state = scroll_handle.0.borrow_mut();
-                state.overflow = style.overflow;
-                scroll_to_bottom = mem::take(&mut state.scroll_to_bottom);
+            let mut tracked_scroll_handle = self
+                .tracked_scroll_handle
+                .as_ref()
+                .map(|handle| handle.0.borrow_mut());
+            if let Some(mut scroll_handle_state) = tracked_scroll_handle.as_deref_mut() {
+                scroll_handle_state.overflow = style.overflow;
+                scroll_to_bottom = mem::take(&mut scroll_handle_state.scroll_to_bottom);
             }
 
             let rem_size = window.rem_size();
-            let padding_size = size(
-                style
-                    .padding
-                    .left
-                    .to_pixels(bounds.size.width.into(), rem_size)
-                    + style
-                        .padding
-                        .right
-                        .to_pixels(bounds.size.width.into(), rem_size),
-                style
-                    .padding
-                    .top
-                    .to_pixels(bounds.size.height.into(), rem_size)
-                    + style
-                        .padding
-                        .bottom
-                        .to_pixels(bounds.size.height.into(), rem_size),
-            );
-            let scroll_max = (self.content_size + padding_size - bounds.size).max(&Size::default());
+            let padding = style.padding.to_pixels(bounds.size.into(), rem_size);
+            let padding_size = size(padding.left + padding.right, padding.top + padding.bottom);
+            let padded_content_size = self.content_size + padding_size;
+            let scroll_max = (padded_content_size - bounds.size).max(&Size::default());
             // Clamp scroll offset in case scroll max is smaller now (e.g., if children
             // were removed or the bounds became larger).
             let mut scroll_offset = scroll_offset.borrow_mut();
@@ -1579,6 +1582,10 @@ impl Interactivity {
                 scroll_offset.y = -scroll_max.height;
             } else {
                 scroll_offset.y = scroll_offset.y.clamp(-scroll_max.height, px(0.));
+            }
+
+            if let Some(mut scroll_handle_state) = tracked_scroll_handle {
+                scroll_handle_state.padded_content_size = padded_content_size;
             }
 
             *scroll_offset
@@ -2898,6 +2905,7 @@ impl ScrollAnchor {
 struct ScrollHandleState {
     offset: Rc<RefCell<Point<Pixels>>>,
     bounds: Bounds<Pixels>,
+    padded_content_size: Size<Pixels>,
     child_bounds: Vec<Bounds<Pixels>>,
     scroll_to_bottom: bool,
     overflow: Point<Overflow>,
@@ -2958,6 +2966,11 @@ impl ScrollHandle {
     /// Get the bounds for a specific child.
     pub fn bounds_for_item(&self, ix: usize) -> Option<Bounds<Pixels>> {
         self.0.borrow().child_bounds.get(ix).cloned()
+    }
+
+    /// Get the size of the content with padding of the container.
+    pub fn padded_content_size(&self) -> Size<Pixels> {
+        self.0.borrow().padded_content_size
     }
 
     /// scroll_to_item scrolls the minimal amount to ensure that the child is

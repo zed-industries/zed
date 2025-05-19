@@ -6,8 +6,7 @@ use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet, hash_map};
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
-    App, AsyncApp, Context, Entity, EventEmitter, Img, Subscription, Task, WeakEntity, hash,
-    prelude::*,
+    App, AsyncApp, Context, Entity, EventEmitter, Img, Subscription, Task, WeakEntity, prelude::*,
 };
 pub use image::ImageFormat;
 use image::{ExtendedColorType, GenericImageView, ImageReader};
@@ -701,9 +700,8 @@ impl LocalImageStore {
 fn create_gpui_image(content: Vec<u8>) -> anyhow::Result<Arc<gpui::Image>> {
     let format = image::guess_format(&content)?;
 
-    Ok(Arc::new(gpui::Image {
-        id: hash(&content),
-        format: match format {
+    Ok(Arc::new(gpui::Image::from_bytes(
+        match format {
             image::ImageFormat::Png => gpui::ImageFormat::Png,
             image::ImageFormat::Jpeg => gpui::ImageFormat::Jpeg,
             image::ImageFormat::WebP => gpui::ImageFormat::Webp,
@@ -712,8 +710,8 @@ fn create_gpui_image(content: Vec<u8>) -> anyhow::Result<Arc<gpui::Image>> {
             image::ImageFormat::Tiff => gpui::ImageFormat::Tiff,
             _ => Err(anyhow::anyhow!("Image format not supported"))?,
         },
-        bytes: content,
-    }))
+        content,
+    )))
 }
 
 impl ImageStoreImpl for Entity<RemoteImageStore> {
