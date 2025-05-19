@@ -16,7 +16,8 @@ use std::{
 #[derive(Debug, Eq, PartialEq, Hash)]
 pub struct InspectorElementId {
     pub(crate) global_id: GlobalElementId,
-    pub(crate) source: &'static panic::Location<'static>,
+    /// Source location where this element was constructed.
+    pub source: &'static panic::Location<'static>,
     pub(crate) instance_id: usize,
 }
 

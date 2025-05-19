@@ -10,7 +10,7 @@ mod quick_action_bar;
 pub(crate) mod windows_only_instance;
 
 use agent::AgentDiffToolbar;
-use anyhow::Context as _;
+use anyhow::{Context as _, anyhow};
 pub use app_menus::*;
 use assets::Assets;
 use assistant_context_editor::AgentPanelDelegate;
@@ -59,6 +59,7 @@ use std::{borrow::Cow, path::Path, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{PopoverMenuHandle, prelude::*};
+use util::command::new_smol_command;
 use util::markdown::MarkdownString;
 use util::{ResultExt, asset_str};
 use uuid::Uuid;
@@ -118,6 +119,13 @@ pub fn init(cx: &mut App) {
                 .rounded_lg()
                 .shadow_lg()
                 .child(h_flex().child(Label::new(inspector_id.to_string()).size(LabelSize::XSmall)))
+                .child(Button::new("open", "Open").on_click({
+                    let inspector_id = inspector_id.clone();
+                    move |_event, _window, cx| {
+                        cx.background_spawn(open_zed_source_location(inspector_id.source))
+                            .detach_and_log_err(cx);
+                    }
+                }))
                 .child(Button::new("red", "Red").on_click({
                     let inspector_id = inspector_id.clone();
                     move |_event, window, _cx| {
@@ -162,6 +170,34 @@ pub fn init(cx: &mut App) {
 
     if ReleaseChannel::global(cx) == ReleaseChannel::Dev {
         cx.on_action(test_panic);
+    }
+}
+
+async fn open_zed_source_location(
+    location: &'static std::panic::Location<'static>,
+) -> anyhow::Result<()> {
+    let mut path = Path::new(env!("ZED_REPO_DIR")).to_path_buf();
+    path.push(Path::new(location.file()));
+    let path_arg = format!(
+        "{}:{}:{}",
+        path.display(),
+        location.line(),
+        location.column()
+    );
+
+    let output = new_smol_command("zed")
+        .arg(&path_arg)
+        .output()
+        .await
+        .with_context(|| format!("running zed to open {path_arg} failed"))?;
+
+    if !output.status.success() {
+        Err(anyhow!(
+            "running zed to open {path_arg} failed with stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    } else {
+        Ok(())
     }
 }
 
