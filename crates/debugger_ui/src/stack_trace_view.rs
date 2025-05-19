@@ -69,7 +69,7 @@ impl StackTraceView {
                     .filter(|id| Some(**id) != this.selected_stack_frame_id)
                 {
                     this.stack_frame_list.update(cx, |list, cx| {
-                        list.select_stack_frame_id(*stack_frame_id, window, cx);
+                        list.go_to_stack_frame(*stack_frame_id, window, cx).detach();
                     });
                 }
             }
@@ -82,7 +82,7 @@ impl StackTraceView {
             |this, stack_frame_list, event, window, cx| match event {
                 StackFrameListEvent::BuiltEntries => {
                     this.selected_stack_frame_id =
-                        stack_frame_list.read(cx).selected_stack_frame_id();
+                        stack_frame_list.read(cx).opened_stack_frame_id();
                     this.update_excerpts(window, cx);
                 }
                 StackFrameListEvent::SelectedStackFrameChanged(selected_frame_id) => {

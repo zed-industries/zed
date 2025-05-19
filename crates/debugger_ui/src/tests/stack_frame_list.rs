@@ -168,7 +168,7 @@ async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
             .update(cx, |state, _| state.stack_frame_list().clone());
 
         stack_frame_list.update(cx, |stack_frame_list, cx| {
-            assert_eq!(Some(1), stack_frame_list.selected_stack_frame_id());
+            assert_eq!(Some(1), stack_frame_list.opened_stack_frame_id());
             assert_eq!(stack_frames, stack_frame_list.dap_stack_frames(cx));
         });
     });
@@ -373,14 +373,14 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
         .unwrap();
 
     stack_frame_list.update(cx, |stack_frame_list, cx| {
-        assert_eq!(Some(1), stack_frame_list.selected_stack_frame_id());
+        assert_eq!(Some(1), stack_frame_list.opened_stack_frame_id());
         assert_eq!(stack_frames, stack_frame_list.dap_stack_frames(cx));
     });
 
     // select second stack frame
     stack_frame_list
         .update_in(cx, |stack_frame_list, window, cx| {
-            stack_frame_list.select_stack_frame(&stack_frames[1], true, window, cx)
+            stack_frame_list.go_to_stack_frame(stack_frames[1].id, window, cx)
         })
         .await
         .unwrap();
@@ -388,7 +388,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
     cx.run_until_parked();
 
     stack_frame_list.update(cx, |stack_frame_list, cx| {
-        assert_eq!(Some(2), stack_frame_list.selected_stack_frame_id());
+        assert_eq!(Some(2), stack_frame_list.opened_stack_frame_id());
         assert_eq!(stack_frames, stack_frame_list.dap_stack_frames(cx));
     });
 
@@ -718,11 +718,7 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
                 stack_frame_list.entries()
             );
 
-            stack_frame_list.expand_collapsed_entry(
-                1,
-                &vec![stack_frames[1].clone(), stack_frames[2].clone()],
-                cx,
-            );
+            stack_frame_list.expand_collapsed_entry(1);
 
             assert_eq!(
                 &vec![
@@ -739,11 +735,7 @@ async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppCo
                 stack_frame_list.entries()
             );
 
-            stack_frame_list.expand_collapsed_entry(
-                4,
-                &vec![stack_frames[4].clone(), stack_frames[5].clone()],
-                cx,
-            );
+            stack_frame_list.expand_collapsed_entry(4);
 
             assert_eq!(
                 &vec![

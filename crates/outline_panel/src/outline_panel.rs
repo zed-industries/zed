@@ -1620,7 +1620,7 @@ impl OutlinePanel {
                                     .get(&external_file.buffer_id)
                                     .into_iter()
                                     .flat_map(|excerpts| {
-                                        excerpts.iter().map(|(excerpt_id, _)| {
+                                        excerpts.keys().map(|excerpt_id| {
                                             CollapsedEntry::Excerpt(
                                                 external_file.buffer_id,
                                                 *excerpt_id,
@@ -1641,7 +1641,7 @@ impl OutlinePanel {
                             entries.extend(
                                 self.excerpts.get(&file.buffer_id).into_iter().flat_map(
                                     |excerpts| {
-                                        excerpts.iter().map(|(excerpt_id, _)| {
+                                        excerpts.keys().map(|excerpt_id| {
                                             CollapsedEntry::Excerpt(file.buffer_id, *excerpt_id)
                                         })
                                     },

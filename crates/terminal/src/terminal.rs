@@ -269,13 +269,12 @@ impl TerminalError {
                     Err(s) => s,
                 }
             })
-            .unwrap_or_else(|| {
-                let default_dir =
-                    dirs::home_dir().map(|buf| buf.into_os_string().to_string_lossy().to_string());
-                match default_dir {
-                    Some(dir) => format!("<none specified, using home directory> {}", dir),
-                    None => "<none specified, could not find home directory>".to_string(),
-                }
+            .unwrap_or_else(|| match dirs::home_dir() {
+                Some(dir) => format!(
+                    "<none specified, using home directory> {}",
+                    dir.into_os_string().to_string_lossy()
+                ),
+                None => "<none specified, could not find home directory>".to_string(),
             })
     }
 

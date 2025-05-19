@@ -6,9 +6,12 @@ Zed uses the [Model Context Protocol](https://modelcontextprotocol.io/) to inter
 
 Check out the [Anthropic news post](https://www.anthropic.com/news/model-context-protocol) and the [Zed blog post](https://zed.dev/blog/mcp) for an introduction to MCP.
 
-## Try it out
+## MCP Servers as Extensions
 
-Want to try it for yourself? Here are some MCP servers available as Zed extensions:
+Zed supports exposing MCP servers as extensions.
+You can check which servers are currently available in a few ways: through [the Zed website](https://zed.dev/extensions?filter=context-servers) or directly through the app by running the `zed: extensions` action or by going to the Agent Panel's top-right menu and looking for "View Server Extensions".
+
+In any case, here are some of the ones available:
 
 - [Postgres](https://github.com/zed-extensions/postgres-context-server)
 - [GitHub](https://github.com/LoamStudios/zed-mcp-server-github)
@@ -19,13 +22,11 @@ Want to try it for yourself? Here are some MCP servers available as Zed extensio
 - [Framelink Figma](https://github.com/LoamStudios/zed-mcp-server-figma)
 - [Linear](https://github.com/LoamStudios/zed-mcp-server-linear)
 
-Browse all available MCP extensions either on [Zed's website](https://zed.dev/extensions?filter=context-servers) or directly in Zed via the `zed: extensions` action in the Command Palette.
-
 If there's an existing MCP server you'd like to bring to Zed, check out the [context server extension docs](../extensions/context-servers.md) for how to make it available as an extension.
 
-## Bring your own context server
+## Bring your own MCP server
 
-You can bring your own context server by adding something like this to your settings:
+You can bring your own MCP server by adding something like this to your settings:
 
 ```json
 {
