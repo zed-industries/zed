@@ -243,7 +243,6 @@ impl<'a> Iterator for TokenChunks<'a> {
                 .min(self.transforms.end(&()).0 .0 - self.output_offset.0),
         );
         chunk.text = suffix;
-
         let chunk = match transform {
             Transform::Isomorphic(_) => {
                 self.output_offset.0 += prefix.len();
@@ -272,13 +271,12 @@ impl<'a> Iterator for TokenChunks<'a> {
                     }
                     prefix
                 };
-
                 self.output_offset.0 += prefix.len();
                 Chunk {
                     text: prefix,
                     syntax_highlight_id: None,
                     highlight_style: Some(token.style),
-                    ..Default::default()
+                    ..chunk.clone()
                 }
             }
         };
@@ -436,7 +434,7 @@ impl TokenMap {
                         break;
                     }
                     let prefix_start = new_transforms.summary().input.len;
-                    if buffer_offset >= prefix_start {
+                    if buffer_offset > prefix_start {
                         push_isomorphic(
                             &mut new_transforms,
                             buffer_snapshot.text_summary_for_range(prefix_start..buffer_offset),
