@@ -291,7 +291,7 @@ enum ProductCode {
 #[derive(Debug, Deserialize)]
 struct CreateBillingSubscriptionBody {
     github_user_id: i32,
-    product: Option<ProductCode>,
+    product: ProductCode,
 }
 
 #[derive(Debug, Serialize)]
@@ -383,12 +383,12 @@ async fn create_billing_subscription(
     );
 
     let checkout_session_url = match body.product {
-        Some(ProductCode::ZedPro) => {
+        ProductCode::ZedPro => {
             stripe_billing
                 .checkout_with_zed_pro(customer_id, &user.github_login, &success_url)
                 .await?
         }
-        Some(ProductCode::ZedProTrial) => {
+        ProductCode::ZedProTrial => {
             if let Some(existing_billing_customer) = &existing_billing_customer {
                 if existing_billing_customer.trial_started_at.is_some() {
                     return Err(Error::http(
@@ -409,16 +409,10 @@ async fn create_billing_subscription(
                 )
                 .await?
         }
-        Some(ProductCode::ZedFree) => {
+        ProductCode::ZedFree => {
             stripe_billing
                 .checkout_with_zed_free(customer_id, &user.github_login, &success_url)
                 .await?
-        }
-        None => {
-            return Err(Error::http(
-                StatusCode::BAD_REQUEST,
-                "No product selected".into(),
-            ));
         }
     };
 
