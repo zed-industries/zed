@@ -902,7 +902,7 @@ fn eval_create_empty_file() {
     let expected_output_content = String::new();
     eval(
         100,
-        0.95,
+        1.0,
         EvalInput::from_conversation(
             vec![
                 message(User, [text("Create a second empty todo file ")]),
@@ -917,21 +917,24 @@ fn eval_create_empty_file() {
                             "toolu_01GAF8TtsgpjKxCr8fgQLDgR",
                             "list_directory",
                             ListDirectoryToolInput {
-                                path: "hello-world".to_string(),
+                                path: "root".to_string(),
                             },
                         ),
-                        tool_result(
-                            "toolu_01GAF8TtsgpjKxCr8fgQLDgR",
-                            "list_directory",
-                            "hello-world/TODO\nhello-world/new.txt\n",
-                        ),
                     ],
+                ),
+                message(
+                    User,
+                    [tool_result(
+                        "toolu_01GAF8TtsgpjKxCr8fgQLDgR",
+                        "list_directory",
+                        "root/TODO\n",
+                    )],
                 ),
                 message(
                     Assistant,
                     [
                         text(formatdoc! {"
-                        I can see there's already a `TODO` file in the `hello-world` directory. Let me create a second empty todo file called `TODO2` in the same directory:
+                        I can see there's already a `TODO` file in the `root` directory. Let me create a second empty todo file called `TODO2` in the same directory:
                     "}),
                         tool_use(
                             "toolu_01Tb3iQ9griqSYMmVuykQPWU",
@@ -939,7 +942,7 @@ fn eval_create_empty_file() {
                             EditFileToolInput {
                                 display_description: "Create an empty second todo file".to_string(),
                                 mode: EditFileMode::Create,
-                                path: "hello-world/TODO2".into(),
+                                path: "root/TODO2".into(),
                             },
                         ),
                     ],
@@ -1006,10 +1009,8 @@ fn tool_result(
 #[derive(Clone)]
 struct EvalInput {
     conversation: Vec<LanguageModelRequestMessage>,
-    input_path: PathBuf,
+    edit_file_input: EditFileToolInput,
     input_content: Option<String>,
-    edit_mode: EditFileMode,
-    edit_description: String,
     assertion: EvalAssertion,
 }
 
@@ -1036,14 +1037,13 @@ impl EvalInput {
             .expect("Conversation must end with an edit_file tool use")
             .clone();
 
-        let input: EditFileToolInput = serde_json::from_value(tool_use.input.clone()).unwrap();
+        let edit_file_input: EditFileToolInput =
+            serde_json::from_value(tool_use.input.clone()).unwrap();
 
         EvalInput {
             conversation,
-            input_path: input.path,
+            edit_file_input,
             input_content,
-            edit_mode: input.mode,
-            edit_description: input.display_description,
             assertion,
         }
     }
@@ -1387,7 +1387,7 @@ impl EditAgentTest {
         let path = self
             .project
             .read_with(cx, |project, cx| {
-                project.find_project_path(eval.input_path, cx)
+                project.find_project_path(eval.edit_file_input.path, cx)
             })
             .unwrap();
         let buffer = self
@@ -1415,11 +1415,13 @@ impl EditAgentTest {
             }),
             ..Default::default()
         };
-        let edit_output = if let Some(input_content) = eval.input_content.as_deref() {
-            buffer.update(cx, |buffer, cx| buffer.set_text(input_content, cx));
+        let edit_output = if matches!(eval.edit_file_input.mode, EditFileMode::Edit) {
+            if let Some(input_content) = eval.input_content.as_deref() {
+                buffer.update(cx, |buffer, cx| buffer.set_text(input_content, cx));
+            }
             let (edit_output, _) = self.agent.edit(
                 buffer.clone(),
-                eval.edit_description,
+                eval.edit_file_input.display_description,
                 &conversation,
                 &mut cx.to_async(),
             );
@@ -1427,7 +1429,7 @@ impl EditAgentTest {
         } else {
             let (edit_output, _) = self.agent.overwrite(
                 buffer.clone(),
-                eval.edit_description,
+                eval.edit_file_input.display_description,
                 &conversation,
                 &mut cx.to_async(),
             );
