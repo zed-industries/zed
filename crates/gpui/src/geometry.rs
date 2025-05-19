@@ -2559,7 +2559,7 @@ impl TryFrom<&'_ str> for Pixels {
     fn try_from(value: &'_ str) -> Result<Self, Self::Error> {
         value
             .strip_suffix("px")
-            .context("expected `px` suffix")
+            .context("expected \"px\" suffix")
             .and_then(|number| Ok(number.parse()?))
             .map(Self)
     }
@@ -3025,7 +3025,7 @@ impl TryFrom<&'_ str> for Rems {
     fn try_from(value: &'_ str) -> Result<Self, Self::Error> {
         value
             .strip_suffix("rem")
-            .context("expected `rem` suffix")
+            .context("expected \"rem\" suffix")
             .and_then(|number| Ok(number.parse()?))
             .map(Self)
     }
@@ -3134,6 +3134,8 @@ impl Debug for AbsoluteLength {
     }
 }
 
+const EXPECTED_ABSOLUTE_LENGTH: &'static str = "number immediately followed by \"px\" or \"rem\"";
+
 impl TryFrom<&'_ str> for AbsoluteLength {
     type Error = anyhow::Error;
 
@@ -3144,7 +3146,7 @@ impl TryFrom<&'_ str> for AbsoluteLength {
             Ok(Self::Rems(rems))
         } else {
             Err(anyhow!(
-                "invalid AbsoluteLength `{value}`, expected to end with `px` or `rem`"
+                "invalid AbsoluteLength \"{value}\", expected {EXPECTED_ABSOLUTE_LENGTH}"
             ))
         }
     }
@@ -3157,11 +3159,11 @@ impl<'de> Deserialize<'de> for AbsoluteLength {
         impl de::Visitor<'_> for StringVisitor {
             type Value = AbsoluteLength;
 
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a string in the format `5px` or `5rem`")
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                write!(f, "{EXPECTED_ABSOLUTE_LENGTH}")
             }
 
-            fn visit_str<E: de::Error>(self, value: &str) -> Result<AbsoluteLength, E> {
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
                 AbsoluteLength::try_from(value).map_err(E::custom)
             }
         }
