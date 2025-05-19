@@ -14,13 +14,14 @@ pub(crate) struct GdbDebugAdapter;
 impl GdbDebugAdapter {
     const ADAPTER_NAME: &'static str = "GDB";
 
-    fn request_args(&self, _config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
-        // let mut args = json!({
-        //     "request": match config.request {
-        //         DebugRequest::Launch(_) => "launch",
-        //         DebugRequest::Attach(_) => "attach",
-        //     },
-        // });
+    fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
+        let request = match config.
+        let mut args = json!({
+            "request": match config.request {
+                DebugRequest::Launch(_) => "launch",
+                DebugRequest::Attach(_) => "attach",
+            },
+        });
 
         // let map = args.as_object_mut().unwrap();
         // match &config.request {

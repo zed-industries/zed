@@ -132,10 +132,8 @@ pub struct DebugTaskDefinition {
     pub label: SharedString,
     /// The debug adapter to use
     pub adapter: DebugAdapterName,
-    /// The launch/attach configuration to send to the debug adapter
+    /// The configuration to send to the debug adapter
     pub config: serde_json::Value,
-    /// Whether to tell the debug adapter to stop on entry
-    pub stop_on_entry: Option<bool>,
     /// Optional TCP connection information
     ///
     /// If provided, this will be used to connect to the debug adapter instead of
@@ -166,51 +164,22 @@ impl DebugTaskDefinition {
     }
 
     pub fn to_proto(&self) -> proto::DebugTaskDefinition {
-        // proto::DebugTaskDefinition {
-        //     adapter: self.adapter.to_string(),
-        //     request: Some(match &self.request {
-        //         DebugRequest::Launch(config) => {
-        //             // proto::debug_task_definition::Request::DebugLaunchRequest(
-        //             //     proto::DebugLaunchRequest {
-        //             //         program: config.program.clone(),
-        //             //         cwd: config.cwd.as_ref().map(|c| c.to_string_lossy().to_string()),
-        //             //         args: config.args.clone(),
-        //             //         env: config
-        //             //             .env
-        //             //             .iter()
-        //             //             .map(|(k, v)| (k.clone(), v.clone()))
-        //             //             .collect(),
-        //             //     },
-        //             // );
-        //             // todo!()
-        //         }
-        //         DebugRequest::Attach(attach_request) => {
-        //             // proto::debug_task_definition::Request::DebugAttachRequest(
-        //             //     proto::DebugAttachRequest {
-        //             //         process_id: attach_request.process_id.unwrap_or_default(),
-        //             //     },
-        //             // );
-        //             // todo!()
-        //         }
-        //     }),
-        //     label: self.label.to_string(),
-        //     initialize_args: Some(self.config.to_string()),
-        //     tcp_connection: self.tcp_connection.as_ref().map(|t| t.to_proto()),
-        //     stop_on_entry: self.stop_on_entry,
-        // };
-        todo!()
+        proto::DebugTaskDefinition {
+            label: self.label.clone(),
+            config: self.config.clone(),
+            tcp_connection: self.tcp_connection.clone().map(|v| v.into()),
+            adapter: self.adapter.clone().into(),
+        }
     }
 
     pub fn from_proto(proto: proto::DebugTaskDefinition) -> Result<Self> {
-        // todo!(remove request subtype from proto definition)
         Ok(Self {
             label: proto.label.into(),
-            config: proto.initialize_args.map(|v| v.into()).unwrap_or_default(),
+            config: proto.config,
             tcp_connection: proto
                 .tcp_connection
                 .map(TcpArgumentsTemplate::from_proto)
                 .transpose()?,
-            stop_on_entry: proto.stop_on_entry,
             adapter: DebugAdapterName(proto.adapter.into()),
         })
     }
