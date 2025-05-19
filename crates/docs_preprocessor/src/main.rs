@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{Arg, ArgMatches, Command};
 use mdbook::BookItem;
-use mdbook::book::Book;
+use mdbook::book::{Book, Chapter};
 use mdbook::preprocess::CmdPreprocessor;
 use regex::Regex;
 use settings::KeymapFile;
@@ -67,55 +67,51 @@ fn handle_supports(sub_args: &ArgMatches) -> ! {
 }
 
 fn template_keybinding(book: &mut Book) {
-    let regex = Regex::new(&format!(r"\{{#{}(.*?)\}}", "kb")).unwrap();
+    let regex = Regex::new(r"\{#kb (.*?)\}").unwrap();
 
-    book.for_each_mut(|item| {
-        if let BookItem::Chapter(chapter) = item {
-            chapter.content = regex
-                .replace_all(&chapter.content, |caps: &regex::Captures| {
-                    let action = caps[1].trim();
-                    let macos_binding = find_binding("macos", action).unwrap_or_default();
-                    let linux_binding = find_binding("linux", action).unwrap_or_default();
+    for_each_chapter_mut(book, |chapter| {
+        chapter.content = regex
+            .replace_all(&chapter.content, |caps: &regex::Captures| {
+                let action = caps[1].trim();
+                let macos_binding = find_binding("macos", action).unwrap_or_default();
+                let linux_binding = find_binding("linux", action).unwrap_or_default();
 
-                    if macos_binding.is_empty() && linux_binding.is_empty() {
-                        return "<div>No default binding</div>".to_string();
-                    }
+                if macos_binding.is_empty() && linux_binding.is_empty() {
+                    return "<div>No default binding</div>".to_string();
+                }
 
-                    format!("<kbd class=\"keybinding\">{macos_binding}|{linux_binding}</kbd>")
-                })
-                .into_owned()
-        }
+                format!("<kbd class=\"keybinding\">{macos_binding}|{linux_binding}</kbd>")
+            })
+            .into_owned()
     });
 }
 
 fn template_action(book: &mut Book) {
-    let regex = Regex::new(&format!(r"\{{#{}(.*?)\}}", "action")).unwrap();
+    let regex = Regex::new(r"\{#action (.*?)\}").unwrap();
 
-    book.for_each_mut(|item| {
-        if let BookItem::Chapter(chapter) = item {
-            chapter.content = regex
-                .replace_all(&chapter.content, |caps: &regex::Captures| {
-                    let name = caps[1].trim();
+    for_each_chapter_mut(book, |chapter| {
+        chapter.content = regex
+            .replace_all(&chapter.content, |caps: &regex::Captures| {
+                let name = caps[1].trim();
 
-                    let formatted_name = name
-                        .chars()
-                        .enumerate()
-                        .map(|(i, c)| {
-                            if i > 0 && c.is_uppercase() {
-                                format!(" {}", c.to_lowercase())
-                            } else {
-                                c.to_string()
-                            }
-                        })
-                        .collect::<String>()
-                        .trim()
-                        .to_string()
-                        .replace("::", ":");
+                let formatted_name = name
+                    .chars()
+                    .enumerate()
+                    .map(|(i, c)| {
+                        if i > 0 && c.is_uppercase() {
+                            format!(" {}", c.to_lowercase())
+                        } else {
+                            c.to_string()
+                        }
+                    })
+                    .collect::<String>()
+                    .trim()
+                    .to_string()
+                    .replace("::", ":");
 
-                    format!("<code class=\"hljs\">{}</code>", formatted_name)
-                })
-                .into_owned()
-        }
+                format!("<code class=\"hljs\">{}</code>", formatted_name)
+            })
+            .into_owned()
     });
 }
 
@@ -141,4 +137,16 @@ fn find_binding(os: &str, action: &str) -> Option<String> {
 fn load_keymap(asset_path: &str) -> Result<KeymapFile> {
     let content = util::asset_str::<settings::SettingsAssets>(asset_path);
     KeymapFile::parse(content.as_ref())
+}
+
+fn for_each_chapter_mut<F>(book: &mut Book, mut func: F)
+where
+    F: FnMut(&mut Chapter),
+{
+    book.for_each_mut(|item| {
+        let BookItem::Chapter(chapter) = item else {
+            return;
+        };
+        func(chapter);
+    });
 }
