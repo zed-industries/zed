@@ -26,14 +26,14 @@ use std::{
 };
 use supermaven::{AccountStatus, Supermaven};
 use ui::{
-    Clickable, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconButtonShape,
-    Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
+    Clickable, ContextMenu, ContextMenuEntry, ContextMenuItem, DocumentationSide, IconButton,
+    IconButtonShape, Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
 };
 use workspace::{
     StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
     notifications::NotificationId,
 };
-use zed_actions::OpenBrowser;
+use zed_actions::{OpenBrowser, OpenZedUrl};
 use zed_llm_client::UsageLimit;
 use zeta::RateCompletions;
 
@@ -277,14 +277,33 @@ impl Render for InlineCompletionButton {
                     );
                 }
 
+                let mut over_limit = false;
+
+                if let Some(mut usage) = self
+                    .edit_prediction_provider
+                    .as_ref()
+                    .and_then(|provider| provider.usage(cx))
+                {
+                    usage.limit = UsageLimit::Limited(10);
+
+                    over_limit = usage.over_limit()
+                }
+
                 let show_editor_predictions = self.editor_show_predictions;
 
                 let icon_button = IconButton::new("zed-predict-pending-button", zeta_icon)
                     .shape(IconButtonShape::Square)
-                    .when(enabled && !show_editor_predictions, |this| {
-                        this.indicator(Indicator::dot().color(Color::Muted))
+                    .when(
+                        enabled && (!show_editor_predictions || over_limit),
+                        |this| {
+                            this.indicator(Indicator::dot().when_else(
+                                over_limit,
+                                |dot| dot.color(Color::Error),
+                                |dot| dot.color(Color::Muted),
+                            ))
                             .indicator_border_color(Some(cx.theme().colors().status_bar_background))
-                    })
+                        },
+                    )
                     .when(!self.popover_menu_handle.is_deployed(), |element| {
                         element.tooltip(move |window, cx| {
                             if enabled {
@@ -403,7 +422,7 @@ impl InlineCompletionButton {
         let fs = self.fs.clone();
         let line_height = window.line_height();
 
-        if let Some(usage) = self
+        if let Some(mut usage) = self
             .edit_prediction_provider
             .as_ref()
             .and_then(|provider| provider.usage(cx))
@@ -440,6 +459,15 @@ impl InlineCompletionButton {
                     },
                     move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
                 )
+                .when(usage.over_limit(), |menu| -> ContextMenu {
+                    menu.entry(
+                        "Subscribe to increase your limit",
+                        Some(Box::new(OpenZedUrl {
+                            url: zed_urls::account_url(cx),
+                        })),
+                        |_, _| {},
+                    )
+                })
                 .separator();
         }
 
