@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, path::Path};
+use std::{collections::VecDeque, path::Path, sync::Arc};
 
 use anyhow::{Context as _, anyhow};
 use assistant_context_editor::{AssistantContext, SavedContextMetadata};
@@ -34,6 +34,20 @@ impl HistoryEntry {
             HistoryEntry::Context(context) => context.mtime.to_utc(),
         }
     }
+
+    pub fn id(&self) -> HistoryEntryId {
+        match self {
+            HistoryEntry::Thread(thread) => HistoryEntryId::Thread(thread.id.clone()),
+            HistoryEntry::Context(context) => HistoryEntryId::Context(context.path.clone()),
+        }
+    }
+}
+
+/// Generic identifier for a history entry.
+#[derive(Clone, PartialEq, Eq)]
+pub enum HistoryEntryId {
+    Thread(ThreadId),
+    Context(Arc<Path>),
 }
 
 #[derive(Clone, Debug)]
@@ -57,8 +71,8 @@ impl Eq for RecentEntry {}
 impl RecentEntry {
     pub(crate) fn summary(&self, cx: &App) -> SharedString {
         match self {
-            RecentEntry::Thread(_, thread) => thread.read(cx).summary_or_default(),
-            RecentEntry::Context(context) => context.read(cx).summary_or_default(),
+            RecentEntry::Thread(_, thread) => thread.read(cx).summary().or_default(),
+            RecentEntry::Context(context) => context.read(cx).summary().or_default(),
         }
     }
 }

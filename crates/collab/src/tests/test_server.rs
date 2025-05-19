@@ -313,6 +313,7 @@ impl TestServer {
         client
             .authenticate_and_connect(false, &cx.to_async())
             .await
+            .into_response()
             .unwrap();
 
         let client = TestClient {

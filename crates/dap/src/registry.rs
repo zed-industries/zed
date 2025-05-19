@@ -2,6 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use collections::FxHashMap;
 use gpui::{App, Global, SharedString};
+use language::LanguageName;
 use parking_lot::RwLock;
 use task::{DebugRequest, DebugScenario, SpawnInTerminal, TaskTemplate};
 
@@ -57,6 +58,11 @@ impl DapRegistry {
             _previous_value.is_none(),
             "Attempted to insert a new debug adapter when one is already registered"
         );
+    }
+
+    pub fn adapter_language(&self, adapter_name: &str) -> Option<LanguageName> {
+        self.adapter(adapter_name)
+            .and_then(|adapter| adapter.adapter_language_name())
     }
 
     pub fn add_locator(&self, locator: Arc<dyn DapLocator>) {

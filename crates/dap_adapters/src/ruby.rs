@@ -6,7 +6,8 @@ use dap::{
         self, DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition,
     },
 };
-use gpui::AsyncApp;
+use gpui::{AsyncApp, SharedString};
+use language::LanguageName;
 use std::path::PathBuf;
 use util::command::new_smol_command;
 
@@ -23,6 +24,10 @@ impl RubyDebugAdapter {
 impl DebugAdapter for RubyDebugAdapter {
     fn name(&self) -> DebugAdapterName {
         DebugAdapterName(Self::ADAPTER_NAME.into())
+    }
+
+    fn adapter_language_name(&self) -> Option<LanguageName> {
+        Some(SharedString::new_static("Ruby").into())
     }
 
     async fn get_binary(
@@ -62,7 +67,7 @@ impl DebugAdapter for RubyDebugAdapter {
         let tcp_connection = definition.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
-        let DebugRequest::Launch(mut launch) = definition.request.clone() else {
+        let DebugRequest::Launch(launch) = definition.request.clone() else {
             anyhow::bail!("rdbg does not yet support attaching");
         };
 
@@ -71,12 +76,6 @@ impl DebugAdapter for RubyDebugAdapter {
             format!("--port={}", port),
             format!("--host={}", host),
         ];
-        if launch.args.is_empty() {
-            let program = launch.program.clone();
-            let mut split = program.split(" ");
-            launch.program = split.next().unwrap().to_string();
-            launch.args = split.map(|s| s.to_string()).collect();
-        }
         if delegate.which(launch.program.as_ref()).is_some() {
             arguments.push("--command".to_string())
         }

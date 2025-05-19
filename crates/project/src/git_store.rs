@@ -163,7 +163,7 @@ struct LocalDownstreamState {
     _task: Task<Result<()>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct GitStoreCheckpoint {
     checkpoints_by_work_dir_abs_path: HashMap<Arc<Path>, GitRepositoryCheckpoint>,
 }
@@ -4278,9 +4278,9 @@ impl Repository {
                             }));
                         }
                         let mut cursor = prev_statuses.cursor::<PathProgress>(&());
-                        for path in changed_paths.iter() {
+                        for path in changed_paths.into_iter() {
                             if cursor.seek_forward(&PathTarget::Path(&path), Bias::Left, &()) {
-                                changed_path_statuses.push(Edit::Remove(PathKey(path.0.clone())));
+                                changed_path_statuses.push(Edit::Remove(PathKey(path.0)));
                             }
                         }
                         changed_path_statuses

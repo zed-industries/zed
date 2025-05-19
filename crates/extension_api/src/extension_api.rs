@@ -187,6 +187,16 @@ pub trait Extension: Send + Sync {
     ) -> Result<(), String> {
         Err("`index_docs` not implemented".to_string())
     }
+
+    /// Returns the debug adapter binary for the specified adapter name and configuration.
+    fn get_dap_binary(
+        &mut self,
+        _adapter_name: String,
+        _config: DebugTaskDefinition,
+        _user_provided_path: Option<String>,
+    ) -> Result<DebugAdapterBinary, String> {
+        Err("`get_dap_binary` not implemented".to_string())
+    }
 }
 
 /// Registers the provided type as a Zed extension.
@@ -228,7 +238,7 @@ mod wit {
 
     wit_bindgen::generate!({
         skip: ["init-extension"],
-        path: "./wit/since_v0.5.0",
+        path: "./wit/since_v0.6.0",
     });
 }
 
@@ -370,6 +380,14 @@ impl wit::Guest for Component {
         database: &KeyValueStore,
     ) -> Result<(), String> {
         extension().index_docs(provider, package, database)
+    }
+
+    fn get_dap_binary(
+        adapter_name: String,
+        config: DebugTaskDefinition,
+        user_installed_path: Option<String>,
+    ) -> Result<DebugAdapterBinary, String> {
+        extension().get_dap_binary(adapter_name, config, user_installed_path)
     }
 }
 

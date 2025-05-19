@@ -1740,6 +1740,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     fake_language_server
         .request::<lsp::request::InlayHintRefreshRequest>(())
         .await
+        .into_response()
         .expect("inlay refresh request failed");
 
     executor.run_until_parked();
@@ -1930,6 +1931,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
     fake_language_server
         .request::<lsp::request::InlayHintRefreshRequest>(())
         .await
+        .into_response()
         .expect("inlay refresh request failed");
     executor.run_until_parked();
     editor_a.update(cx_a, |editor, _| {

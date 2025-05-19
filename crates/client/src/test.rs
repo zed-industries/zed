@@ -107,6 +107,7 @@ impl FakeServer {
         client
             .authenticate_and_connect(false, &cx.to_async())
             .await
+            .into_response()
             .unwrap();
 
         server

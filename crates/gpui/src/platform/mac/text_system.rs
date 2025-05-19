@@ -480,7 +480,7 @@ impl MacTextSystemState {
             };
             let font_id = self.id_for_native_font(font);
 
-            let mut glyphs = SmallVec::new();
+            let mut glyphs = Vec::with_capacity(run.glyph_count().try_into().unwrap_or(0));
             for ((glyph_id, position), glyph_utf16_ix) in run
                 .glyphs()
                 .iter()

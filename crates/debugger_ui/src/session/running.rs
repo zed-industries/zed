@@ -43,11 +43,10 @@ use task::{
 };
 use terminal_view::TerminalView;
 use ui::{
-    ActiveTheme, AnyElement, App, ButtonCommon as _, Clickable as _, Context, ContextMenu,
-    Disableable, DropdownMenu, FluentBuilder, IconButton, IconName, IconSize, InteractiveElement,
-    IntoElement, Label, LabelCommon as _, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, Tab, Tooltip, VisibleOnHover, VisualContext, Window, div,
-    h_flex, v_flex,
+    ActiveTheme, AnyElement, App, ButtonCommon as _, Clickable as _, Context, FluentBuilder,
+    IconButton, IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon as _,
+    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Tab, Tooltip,
+    VisibleOnHover, VisualContext, Window, div, h_flex, v_flex,
 };
 use util::ResultExt;
 use variable_list::VariableList;
@@ -76,6 +75,16 @@ pub struct RunningState {
     pane_close_subscriptions: HashMap<EntityId, Subscription>,
     dock_axis: Axis,
     _schedule_serialize: Option<Task<()>>,
+}
+
+impl RunningState {
+    pub(crate) fn thread_id(&self) -> Option<ThreadId> {
+        self.thread_id
+    }
+
+    pub(crate) fn active_pane(&self) -> Option<&Entity<Pane>> {
+        self.active_pane.as_ref()
+    }
 }
 
 impl Render for RunningState {
@@ -119,7 +128,7 @@ impl Render for RunningState {
 
 pub(crate) struct SubView {
     inner: AnyView,
-    pane_focus_handle: FocusHandle,
+    item_focus_handle: FocusHandle,
     kind: DebuggerPaneItem,
     show_indicator: Box<dyn Fn(&App) -> bool>,
     hovered: bool,
@@ -127,7 +136,7 @@ pub(crate) struct SubView {
 
 impl SubView {
     pub(crate) fn new(
-        pane_focus_handle: FocusHandle,
+        item_focus_handle: FocusHandle,
         view: AnyView,
         kind: DebuggerPaneItem,
         show_indicator: Option<Box<dyn Fn(&App) -> bool>>,
@@ -136,7 +145,7 @@ impl SubView {
         cx.new(|_| Self {
             kind,
             inner: view,
-            pane_focus_handle,
+            item_focus_handle,
             show_indicator: show_indicator.unwrap_or(Box::new(|_| false)),
             hovered: false,
         })
@@ -148,7 +157,7 @@ impl SubView {
 }
 impl Focusable for SubView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.pane_focus_handle.clone()
+        self.item_focus_handle.clone()
     }
 }
 impl EventEmitter<()> for SubView {}
@@ -199,7 +208,7 @@ impl Render for SubView {
             .size_full()
             // Add border unconditionally to prevent layout shifts on focus changes.
             .border_1()
-            .when(self.pane_focus_handle.contains_focused(window, cx), |el| {
+            .when(self.item_focus_handle.contains_focused(window, cx), |el| {
                 el.border_color(cx.theme().colors().pane_focused_border)
             })
             .child(self.inner.clone())
@@ -497,25 +506,20 @@ impl DebugTerminal {
 
 impl gpui::Render for DebugTerminal {
     fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        if let Some(terminal) = self.terminal.clone() {
-            terminal.into_any_element()
-        } else {
-            div().track_focus(&self.focus_handle).into_any_element()
-        }
+        div()
+            .size_full()
+            .track_focus(&self.focus_handle)
+            .children(self.terminal.clone())
     }
 }
 impl Focusable for DebugTerminal {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        if let Some(terminal) = self.terminal.as_ref() {
-            return terminal.focus_handle(cx);
-        } else {
-            self.focus_handle.clone()
-        }
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
 impl RunningState {
-    pub fn new(
+    pub(crate) fn new(
         session: Entity<Session>,
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
@@ -1202,7 +1206,9 @@ impl RunningState {
             .as_ref()
             .and_then(|pane| self.panes.find_pane_in_direction(pane, direction, cx))
         {
-            window.focus(&pane.focus_handle(cx));
+            pane.update(cx, |pane, cx| {
+                pane.focus_active_item(window, cx);
+            })
         } else {
             self.workspace
                 .update(cx, |workspace, cx| {
@@ -1212,10 +1218,16 @@ impl RunningState {
         }
     }
 
-    pub(crate) fn go_to_selected_stack_frame(&self, window: &Window, cx: &mut Context<Self>) {
+    pub(crate) fn go_to_selected_stack_frame(&self, window: &mut Window, cx: &mut Context<Self>) {
         if self.thread_id.is_some() {
             self.stack_frame_list
-                .update(cx, |list, cx| list.go_to_selected_stack_frame(window, cx));
+                .update(cx, |list, cx| {
+                    let Some(stack_frame_id) = list.opened_stack_frame_id() else {
+                        return Task::ready(Ok(()));
+                    };
+                    list.go_to_stack_frame(stack_frame_id, window, cx)
+                })
+                .detach();
         }
     }
 
@@ -1232,11 +1244,10 @@ impl RunningState {
     }
 
     pub(crate) fn selected_stack_frame_id(&self, cx: &App) -> Option<dap::StackFrameId> {
-        self.stack_frame_list.read(cx).selected_stack_frame_id()
+        self.stack_frame_list.read(cx).opened_stack_frame_id()
     }
 
-    #[cfg(test)]
-    pub fn stack_frame_list(&self) -> &Entity<StackFrameList> {
+    pub(crate) fn stack_frame_list(&self) -> &Entity<StackFrameList> {
         &self.stack_frame_list
     }
 
@@ -1310,7 +1321,12 @@ impl RunningState {
             .map(|id| self.session().read(cx).thread_status(id))
     }
 
-    fn select_thread(&mut self, thread_id: ThreadId, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn select_thread(
+        &mut self,
+        thread_id: ThreadId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.thread_id.is_some_and(|id| id == thread_id) {
             return;
         }
@@ -1445,38 +1461,6 @@ impl RunningState {
         self.session.update(cx, |session, cx| {
             session.toggle_ignore_breakpoints(cx).detach();
         });
-    }
-
-    pub(crate) fn thread_dropdown(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<'_, RunningState>,
-    ) -> DropdownMenu {
-        let state = cx.entity();
-        let session_terminated = self.session.read(cx).is_terminated();
-        let threads = self.session.update(cx, |this, cx| this.threads(cx));
-        let selected_thread_name = threads
-            .iter()
-            .find(|(thread, _)| self.thread_id.map(|id| id.0) == Some(thread.id))
-            .map(|(thread, _)| thread.name.clone())
-            .unwrap_or("Threads".to_owned());
-        DropdownMenu::new(
-            ("thread-list", self.session_id.0),
-            selected_thread_name,
-            ContextMenu::build_eager(window, cx, move |mut this, _, _| {
-                for (thread, _) in threads {
-                    let state = state.clone();
-                    let thread_id = thread.id;
-                    this = this.entry(thread.name, None, move |window, cx| {
-                        state.update(cx, |state, cx| {
-                            state.select_thread(ThreadId(thread_id), window, cx);
-                        });
-                    });
-                }
-                this
-            }),
-        )
-        .disabled(session_terminated)
     }
 
     fn default_pane_layout(

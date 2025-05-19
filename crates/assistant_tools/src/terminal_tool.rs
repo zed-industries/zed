@@ -1,14 +1,19 @@
 use crate::schema::json_schema_for;
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
 use futures::{FutureExt as _, future::Shared};
-use gpui::{AnyWindowHandle, App, AppContext, Empty, Entity, EntityId, Task, WeakEntity, Window};
+use gpui::{
+    AnyWindowHandle, App, AppContext, Empty, Entity, EntityId, Task, TextStyleRefinement,
+    WeakEntity, Window,
+};
 use language::LineEnding;
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
+use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use project::{Project, terminals::TerminalKind};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::{
     env,
     path::{Path, PathBuf},
@@ -17,6 +22,7 @@ use std::{
     time::{Duration, Instant},
 };
 use terminal_view::TerminalView;
+use theme::ThemeSettings;
 use ui::{Disclosure, Tooltip, prelude::*};
 use util::{
     get_system_shell, markdown::MarkdownInlineCode, size::format_file_size,
@@ -119,14 +125,24 @@ impl Tool for TerminalTool {
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
-        let input_path = Path::new(&input.cd);
-        let working_dir = match working_dir(&input, &project, input_path, cx) {
+        let working_dir = match working_dir(&input, &project, cx) {
             Ok(dir) => dir,
             Err(err) => return Task::ready(Err(err)).into(),
         };
         let program = self.determine_shell.clone();
-        let command = format!("({}) </dev/null", input.command);
-        let args = vec!["-c".into(), command.clone()];
+        let command = if cfg!(windows) {
+            format!("$null | & {{{}}}", input.command.replace("\"", "'"))
+        } else if let Some(cwd) = working_dir
+            .as_ref()
+            .and_then(|cwd| cwd.as_os_str().to_str())
+        {
+            // Make sure once we're *inside* the shell, we cd into `cwd`
+            format!("(cd {cwd}; {}) </dev/null", input.command)
+        } else {
+            format!("({}) </dev/null", input.command)
+        };
+        let args = vec!["-c".into(), command];
+
         let cwd = working_dir.clone();
         let env = match &working_dir {
             Some(dir) => project.update(cx, |project, cx| {
@@ -211,8 +227,21 @@ impl Tool for TerminalTool {
             }
         });
 
+        let command_markdown = cx.new(|cx| {
+            Markdown::new(
+                format!("```bash\n{}\n```", input.command).into(),
+                None,
+                None,
+                cx,
+            )
+        });
+
         let card = cx.new(|cx| {
-            TerminalToolCard::new(input.command.clone(), working_dir.clone(), cx.entity_id())
+            TerminalToolCard::new(
+                command_markdown.clone(),
+                working_dir.clone(),
+                cx.entity_id(),
+            )
         });
 
         let output = cx.spawn({
@@ -296,19 +325,13 @@ fn process_content(
     } else {
         content
     };
-    let is_empty = content.trim().is_empty();
-
-    let content = format!(
-        "```\n{}{}```",
-        content,
-        if content.ends_with('\n') { "" } else { "\n" }
-    );
-
+    let content = content.trim();
+    let is_empty = content.is_empty();
+    let content = format!("```\n{content}\n```");
     let content = if should_truncate {
         format!(
-            "Command output too long. The first {} bytes:\n\n{}",
+            "Command output too long. The first {} bytes:\n\n{content}",
             content.len(),
-            content,
         )
     } else {
         content
@@ -348,47 +371,52 @@ fn process_content(
 fn working_dir(
     input: &TerminalToolInput,
     project: &Entity<Project>,
-    input_path: &Path,
     cx: &mut App,
 ) -> Result<Option<PathBuf>> {
     let project = project.read(cx);
+    let cd = &input.cd;
 
-    if input.cd == "." {
-        // Accept "." as meaning "the one worktree" if we only have one worktree.
+    if cd == "." || cd == "" {
+        // Accept "." or "" as meaning "the one worktree" if we only have one worktree.
         let mut worktrees = project.worktrees(cx);
 
         match worktrees.next() {
             Some(worktree) => {
-                if worktrees.next().is_some() {
-                    bail!(
+                if worktrees.next().is_none() {
+                    Ok(Some(worktree.read(cx).abs_path().to_path_buf()))
+                } else {
+                    Err(anyhow!(
                         "'.' is ambiguous in multi-root workspaces. Please specify a root directory explicitly.",
-                    );
+                    ))
                 }
-                Ok(Some(worktree.read(cx).abs_path().to_path_buf()))
             }
             None => Ok(None),
         }
-    } else if input_path.is_absolute() {
-        // Absolute paths are allowed, but only if they're in one of the project's worktrees.
-        if !project
-            .worktrees(cx)
-            .any(|worktree| input_path.starts_with(&worktree.read(cx).abs_path()))
-        {
-            bail!("The absolute path must be within one of the project's worktrees");
+    } else {
+        let input_path = Path::new(cd);
+
+        if input_path.is_absolute() {
+            // Absolute paths are allowed, but only if they're in one of the project's worktrees.
+            if project
+                .worktrees(cx)
+                .any(|worktree| input_path.starts_with(&worktree.read(cx).abs_path()))
+            {
+                return Ok(Some(input_path.into()));
+            }
+        } else {
+            if let Some(worktree) = project.worktree_for_root_name(cd, cx) {
+                return Ok(Some(worktree.read(cx).abs_path().to_path_buf()));
+            }
         }
 
-        Ok(Some(input_path.into()))
-    } else {
-        let Some(worktree) = project.worktree_for_root_name(&input.cd, cx) else {
-            bail!("`cd` directory {:?} not found in the project", input.cd);
-        };
-
-        Ok(Some(worktree.read(cx).abs_path().to_path_buf()))
+        Err(anyhow!(
+            "`cd` directory {cd:?} was not in any of the project's worktrees."
+        ))
     }
 }
 
 struct TerminalToolCard {
-    input_command: String,
+    input_command: Entity<Markdown>,
     working_dir: Option<PathBuf>,
     entity_id: EntityId,
     exit_status: Option<ExitStatus>,
@@ -404,7 +432,11 @@ struct TerminalToolCard {
 }
 
 impl TerminalToolCard {
-    pub fn new(input_command: String, working_dir: Option<PathBuf>, entity_id: EntityId) -> Self {
+    pub fn new(
+        input_command: Entity<Markdown>,
+        working_dir: Option<PathBuf>,
+        entity_id: EntityId,
+    ) -> Self {
         Self {
             input_command,
             working_dir,
@@ -427,7 +459,7 @@ impl ToolCard for TerminalToolCard {
     fn render(
         &mut self,
         status: &ToolUseStatus,
-        _window: &mut Window,
+        window: &mut Window,
         _workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -571,11 +603,25 @@ impl ToolCard for TerminalToolCard {
             .rounded_lg()
             .overflow_hidden()
             .child(
-                v_flex().p_2().gap_0p5().bg(header_bg).child(header).child(
-                    Label::new(self.input_command.clone())
-                        .buffer_font(cx)
-                        .size(LabelSize::Small),
-                ),
+                v_flex()
+                    .p_2()
+                    .gap_0p5()
+                    .bg(header_bg)
+                    .text_xs()
+                    .child(header)
+                    .child(
+                        MarkdownElement::new(
+                            self.input_command.clone(),
+                            markdown_style(window, cx),
+                        )
+                        .code_block_renderer(
+                            markdown::CodeBlockRenderer::Default {
+                                copy_button: false,
+                                copy_button_on_hover: true,
+                                border: false,
+                            },
+                        ),
+                    ),
             )
             .when(self.preview_expanded && !should_hide_terminal, |this| {
                 this.child(
@@ -591,6 +637,27 @@ impl ToolCard for TerminalToolCard {
                 )
             })
             .into_any()
+    }
+}
+
+fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+    let theme_settings = ThemeSettings::get_global(cx);
+    let buffer_font_size = TextSize::Default.rems(cx);
+    let mut text_style = window.text_style();
+
+    text_style.refine(&TextStyleRefinement {
+        font_family: Some(theme_settings.buffer_font.family.clone()),
+        font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
+        font_features: Some(theme_settings.buffer_font.features.clone()),
+        font_size: Some(buffer_font_size.into()),
+        color: Some(cx.theme().colors().text),
+        ..Default::default()
+    });
+
+    MarkdownStyle {
+        base_text_style: text_style.clone(),
+        selection_background_color: cx.theme().players().local().selection,
+        ..Default::default()
     }
 }
 
@@ -665,8 +732,8 @@ mod tests {
             )
         });
 
-        let output = result.output.await.log_err().map(|output| output.content);
-        assert_eq!(output, Some("Command executed successfully.".into()));
+        let output = result.output.await.log_err().unwrap().content;
+        assert_eq!(output.as_str().unwrap(), "Command executed successfully.");
     }
 
     #[gpui::test]
@@ -699,12 +766,13 @@ mod tests {
                 cx,
             );
             cx.spawn(async move |_| {
-                let output = headless_result
-                    .output
-                    .await
-                    .log_err()
-                    .map(|output| output.content);
-                assert_eq!(output, expected);
+                let output = headless_result.output.await.map(|output| output.content);
+                assert_eq!(
+                    output
+                        .ok()
+                        .and_then(|content| content.as_str().map(ToString::to_string)),
+                    expected
+                );
             })
         };
 
@@ -712,7 +780,7 @@ mod tests {
             check(
                 TerminalToolInput {
                     command: "pwd".into(),
-                    cd: "project".into(),
+                    cd: ".".into(),
                 },
                 Some(format!(
                     "```\n{}\n```",
@@ -727,12 +795,9 @@ mod tests {
             check(
                 TerminalToolInput {
                     command: "pwd".into(),
-                    cd: ".".into(),
+                    cd: "other-project".into(),
                 },
-                Some(format!(
-                    "```\n{}\n```",
-                    tree.path().join("project").display()
-                )),
+                None, // other-project is a dir, but *not* a worktree (yet)
                 cx,
             )
         })

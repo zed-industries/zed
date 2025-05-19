@@ -3,7 +3,9 @@ use std::{sync::Arc, time::Duration};
 use crate::schema::json_schema_for;
 use crate::ui::ToolCallCardHeader;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
+use assistant_tool::{
+    ActionLog, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
+};
 use futures::{Future, FutureExt, TryFutureExt};
 use gpui::{
     AnyWindowHandle, App, AppContext, Context, Entity, IntoElement, Task, WeakEntity, Window,
@@ -73,9 +75,13 @@ impl Tool for WebSearchTool {
             let search_task = search_task.clone();
             async move {
                 let response = search_task.await.map_err(|err| anyhow!(err))?;
-                serde_json::to_string(&response)
-                    .context("Failed to serialize search results")
-                    .map(Into::into)
+                Ok(ToolResultOutput {
+                    content: ToolResultContent::Text(
+                        serde_json::to_string(&response)
+                            .context("Failed to serialize search results")?,
+                    ),
+                    output: Some(serde_json::to_value(response)?),
+                })
             }
         });
 
@@ -83,6 +89,18 @@ impl Tool for WebSearchTool {
             output,
             card: Some(cx.new(|cx| WebSearchToolCard::new(search_task, cx)).into()),
         }
+    }
+
+    fn deserialize_card(
+        self: Arc<Self>,
+        output: serde_json::Value,
+        _project: Entity<Project>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Option<assistant_tool::AnyToolCard> {
+        let output = serde_json::from_value::<WebSearchResponse>(output).ok()?;
+        let card = cx.new(|cx| WebSearchToolCard::new(Task::ready(Ok(output)), cx));
+        Some(card.into())
     }
 }
 

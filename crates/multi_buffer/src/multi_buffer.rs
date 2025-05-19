@@ -5793,7 +5793,7 @@ impl MultiBufferSnapshot {
                 line_indent.len(tab_size) / tab_size
                     + ((line_indent.len(tab_size) % tab_size) > 0) as u32
             } else {
-                current_depth
+                0
             };
 
             match depth.cmp(&current_depth) {

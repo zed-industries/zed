@@ -1,6 +1,7 @@
 use crate::*;
 use dap::{DebugRequest, StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
-use gpui::AsyncApp;
+use gpui::{AsyncApp, SharedString};
+use language::LanguageName;
 use std::{collections::HashMap, ffi::OsStr, path::PathBuf, sync::OnceLock};
 use util::ResultExt;
 
@@ -32,6 +33,9 @@ impl PythonDebugAdapter {
             DebugRequest::Launch(launch) => {
                 map.insert("program".into(), launch.program.clone().into());
                 map.insert("args".into(), launch.args.clone().into());
+                if !launch.env.is_empty() {
+                    map.insert("env".into(), launch.env_json());
+                }
 
                 if let Some(stop_on_entry) = config.stop_on_entry {
                     map.insert("stopOnEntry".into(), stop_on_entry.into());
@@ -160,6 +164,10 @@ impl PythonDebugAdapter {
 impl DebugAdapter for PythonDebugAdapter {
     fn name(&self) -> DebugAdapterName {
         DebugAdapterName(Self::ADAPTER_NAME.into())
+    }
+
+    fn adapter_language_name(&self) -> Option<LanguageName> {
+        Some(SharedString::new_static("Python").into())
     }
 
     async fn get_binary(
