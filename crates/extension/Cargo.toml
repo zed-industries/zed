@@ -36,5 +36,4 @@ util.workspace = true
 wasi-preview1-component-adapter-provider.workspace = true
 wasm-encoder.workspace = true
 wasmparser.workspace = true
-wit-component.workspace = true
 workspace-hack.workspace = true
