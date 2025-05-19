@@ -1,9 +1,21 @@
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use clap::{Arg, ArgMatches, Command};
-use docs_preprocessor::ZedDocsPreprocessor;
-use mdbook::preprocess::{CmdPreprocessor, Preprocessor};
+use mdbook::BookItem;
+use mdbook::book::Book;
+use mdbook::preprocess::CmdPreprocessor;
+use regex::Regex;
+use settings::KeymapFile;
 use std::io::{self, Read};
 use std::process;
+use std::sync::LazyLock;
+
+static KEYMAP_MACOS: LazyLock<KeymapFile> = LazyLock::new(|| {
+    load_keymap("keymaps/default-macos.json").expect("Failed to load MacOS keymap")
+});
+
+static KEYMAP_LINUX: LazyLock<KeymapFile> = LazyLock::new(|| {
+    load_keymap("keymaps/default-linux.json").expect("Failed to load Linux keymap")
+});
 
 pub fn make_app() -> Command {
     Command::new("zed-docs-preprocessor")
@@ -18,41 +30,115 @@ pub fn make_app() -> Command {
 fn main() -> Result<()> {
     let matches = make_app().get_matches();
 
-    let preprocessor =
-        ZedDocsPreprocessor::new().context("Failed to create ZedDocsPreprocessor")?;
-
     if let Some(sub_args) = matches.subcommand_matches("supports") {
-        handle_supports(&preprocessor, sub_args);
+        handle_supports(sub_args);
     } else {
-        handle_preprocessing(&preprocessor)?;
+        handle_preprocessing()?;
     }
 
     Ok(())
 }
 
-fn handle_preprocessing(pre: &dyn Preprocessor) -> Result<()> {
+fn handle_preprocessing() -> Result<()> {
     let mut stdin = io::stdin();
     let mut input = String::new();
     stdin.read_to_string(&mut input)?;
 
-    let (ctx, book) = CmdPreprocessor::parse_input(input.as_bytes())?;
+    let (_ctx, mut book) = CmdPreprocessor::parse_input(input.as_bytes())?;
 
-    let processed_book = pre.run(&ctx, book)?;
+    template_keybinding(&mut book);
+    template_action(&mut book);
 
-    serde_json::to_writer(io::stdout(), &processed_book)?;
+    serde_json::to_writer(io::stdout(), &book)?;
 
     Ok(())
 }
 
-fn handle_supports(pre: &dyn Preprocessor, sub_args: &ArgMatches) -> ! {
+fn handle_supports(sub_args: &ArgMatches) -> ! {
     let renderer = sub_args
         .get_one::<String>("renderer")
         .expect("Required argument");
-    let supported = pre.supports_renderer(renderer);
-
+    let supported = renderer != "not-supported";
     if supported {
         process::exit(0);
     } else {
         process::exit(1);
     }
+}
+
+fn template_keybinding(book: &mut Book) {
+    let regex = Regex::new(&format!(r"\{{#{}(.*?)\}}", "kb")).unwrap();
+
+    book.for_each_mut(|item| {
+        if let BookItem::Chapter(chapter) = item {
+            chapter.content = regex
+                .replace_all(&chapter.content, |caps: &regex::Captures| {
+                    let action = caps[1].trim();
+                    let macos_binding = find_binding("macos", action).unwrap_or_default();
+                    let linux_binding = find_binding("linux", action).unwrap_or_default();
+
+                    if macos_binding.is_empty() && linux_binding.is_empty() {
+                        return "<div>No default binding</div>".to_string();
+                    }
+
+                    format!("<kbd class=\"keybinding\">{macos_binding}|{linux_binding}</kbd>")
+                })
+                .into_owned()
+        }
+    });
+}
+
+fn template_action(book: &mut Book) {
+    let regex = Regex::new(&format!(r"\{{#{}(.*?)\}}", "action")).unwrap();
+
+    book.for_each_mut(|item| {
+        if let BookItem::Chapter(chapter) = item {
+            chapter.content = regex
+                .replace_all(&chapter.content, |caps: &regex::Captures| {
+                    let name = caps[1].trim();
+
+                    let formatted_name = name
+                        .chars()
+                        .enumerate()
+                        .map(|(i, c)| {
+                            if i > 0 && c.is_uppercase() {
+                                format!(" {}", c.to_lowercase())
+                            } else {
+                                c.to_string()
+                            }
+                        })
+                        .collect::<String>()
+                        .trim()
+                        .to_string()
+                        .replace("::", ":");
+
+                    format!("<code class=\"hljs\">{}</code>", formatted_name)
+                })
+                .into_owned()
+        }
+    });
+}
+
+fn find_binding(os: &str, action: &str) -> Option<String> {
+    let keymap = match os {
+        "macos" => &KEYMAP_MACOS,
+        "linux" => &KEYMAP_LINUX,
+        _ => unreachable!("Not a valid OS: {}", os),
+    };
+
+    // Find the binding in reverse order, as the last binding takes precedence.
+    keymap.sections().rev().find_map(|section| {
+        section.bindings().rev().find_map(|(keystroke, a)| {
+            if a.to_string() == action {
+                Some(keystroke.to_string())
+            } else {
+                None
+            }
+        })
+    })
+}
+
+fn load_keymap(asset_path: &str) -> Result<KeymapFile> {
+    let content = util::asset_str::<settings::SettingsAssets>(asset_path);
+    KeymapFile::parse(content.as_ref())
 }
