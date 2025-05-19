@@ -512,6 +512,8 @@
       "alt-ctrl-o": "projects::OpenRecent",
       "alt-shift-open": "projects::OpenRemote",
       "alt-ctrl-shift-o": "projects::OpenRemote",
+      // Change to open path modal for existing remote connection by setting the parameter
+      // "alt-ctrl-shift-o": "["projects::OpenRemote", { "from_existing_connection": true }]",
       "alt-ctrl-shift-b": "branches::OpenRecent",
       "alt-shift-enter": "toast::RunAction",
       "ctrl-~": "workspace::NewTerminal",
