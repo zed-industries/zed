@@ -65,6 +65,7 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotifyTaskExt},
 };
 use worktree::CreatedEntry;
+use zed_actions::OpenRecent;
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
@@ -4881,11 +4882,16 @@ impl Render for ProjectPanel {
                 .child(
                     Button::new("open_project", "Open a project")
                         .full_width()
-                        .key_binding(KeyBinding::for_action(&workspace::Open, window, cx))
+                        .key_binding(KeyBinding::for_action_in(
+                            &OpenRecent::default(),
+                            &self.focus_handle,
+                            window,
+                            cx,
+                        ))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.workspace
                                 .update(cx, |_, cx| {
-                                    window.dispatch_action(Box::new(workspace::Open), cx)
+                                    window.dispatch_action(OpenRecent::default().boxed_clone(), cx);
                                 })
                                 .log_err();
                         })),

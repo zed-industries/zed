@@ -28,8 +28,8 @@ use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
     Action, App, AppContext as _, AsyncWindowContext, Context, DismissEvent, Element, Entity,
     Focusable, KeyBinding, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString,
-    Styled, Task, TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions,
-    image_cache, point, px, retain_all,
+    Styled, TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions, image_cache,
+    point, px, retain_all,
 };
 use image_viewer::ImageInfo;
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
@@ -44,7 +44,6 @@ use project::{DirectoryLister, ProjectItem};
 use project_panel::ProjectPanel;
 use prompt_store::PromptBuilder;
 use quick_action_bar::QuickActionBar;
-use recent_projects::open_ssh_project;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
@@ -53,7 +52,6 @@ use settings::{
     SettingsStore, VIM_KEYMAP_PATH, initial_debug_tasks_content, initial_project_settings_content,
     initial_tasks_content, update_settings_file,
 };
-use std::path::PathBuf;
 use std::sync::atomic::{self, AtomicBool};
 use std::{borrow::Cow, path::Path, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
@@ -503,7 +501,7 @@ fn register_actions(
                     directories: true,
                     multiple: true,
                 },
-                DirectoryLister::Project(workspace.project().clone()),
+                DirectoryLister::Local(workspace.app_state().fs.clone()),
                 window,
                 cx,
             );
@@ -515,11 +513,7 @@ fn register_actions(
 
                 if let Some(task) = this
                     .update_in(cx, |this, window, cx| {
-                        if this.project().read(cx).is_local() {
-                            this.open_workspace_for_paths(false, paths, window, cx)
-                        } else {
-                            open_new_ssh_project_from_project(this, paths, window, cx)
-                        }
+                        this.open_workspace_for_paths(false, paths, window, cx)
                     })
                     .log_err()
                 {
@@ -1414,32 +1408,6 @@ pub fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut App) {
             dismiss_app_notification(&id, cx);
         }
     }
-}
-
-pub fn open_new_ssh_project_from_project(
-    workspace: &mut Workspace,
-    paths: Vec<PathBuf>,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) -> Task<anyhow::Result<()>> {
-    let app_state = workspace.app_state().clone();
-    let Some(ssh_client) = workspace.project().read(cx).ssh_client() else {
-        return Task::ready(Err(anyhow::anyhow!("Not an ssh project")));
-    };
-    let connection_options = ssh_client.read(cx).connection_options();
-    cx.spawn_in(window, async move |_, cx| {
-        open_ssh_project(
-            connection_options,
-            paths,
-            app_state,
-            workspace::OpenOptions {
-                open_new_workspace: Some(true),
-                ..Default::default()
-            },
-            cx,
-        )
-        .await
-    })
 }
 
 fn open_project_settings_file(
