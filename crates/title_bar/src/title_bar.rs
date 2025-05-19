@@ -432,14 +432,22 @@ impl TitleBar {
                 .tooltip(move |window, cx| {
                     Tooltip::with_meta(
                         "Remote Project",
-                        Some(&OpenRemote),
+                        Some(&OpenRemote {
+                            from_existing_connection: false,
+                        }),
                         meta.clone(),
                         window,
                         cx,
                     )
                 })
                 .on_click(|_, window, cx| {
-                    window.dispatch_action(OpenRemote.boxed_clone(), cx);
+                    window.dispatch_action(
+                        OpenRemote {
+                            from_existing_connection: false,
+                        }
+                        .boxed_clone(),
+                        cx,
+                    );
                 })
                 .into_any_element(),
         )
