@@ -10,7 +10,7 @@ mod quick_action_bar;
 pub(crate) mod windows_only_instance;
 
 use agent::AgentDiffToolbar;
-use anyhow::{Context as _, anyhow};
+use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
 use assistant_context_editor::AgentPanelDelegate;
@@ -59,7 +59,6 @@ use std::{borrow::Cow, path::Path, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{PopoverMenuHandle, prelude::*};
-use util::command::new_smol_command;
 use util::markdown::MarkdownString;
 use util::{ResultExt, asset_str};
 use uuid::Uuid;
@@ -109,56 +108,8 @@ pub fn init(cx: &mut App) {
 
     cx.on_action(|_: &RestoreBanner, cx| title_bar::restore_banner(cx));
 
-    cx.register_inspector_element(
-        |inspector_id, state: &gpui::DivInspectorState, window, cx| {
-            v_flex()
-                .bg(cx.theme().colors().elevated_surface_background)
-                .p_4()
-                .mt_4()
-                .mr_4()
-                .rounded_lg()
-                .shadow_lg()
-                .child(h_flex().child(Label::new(inspector_id.to_string()).size(LabelSize::XSmall)))
-                .child(Button::new("open", "Open").on_click({
-                    let inspector_id = inspector_id.clone();
-                    move |_event, _window, cx| {
-                        cx.background_spawn(open_zed_source_location(inspector_id.source))
-                            .detach_and_log_err(cx);
-                    }
-                }))
-        },
-    );
-
     if ReleaseChannel::global(cx) == ReleaseChannel::Dev {
         cx.on_action(test_panic);
-    }
-}
-
-async fn open_zed_source_location(
-    location: &'static std::panic::Location<'static>,
-) -> anyhow::Result<()> {
-    let mut path = Path::new(env!("ZED_REPO_DIR")).to_path_buf();
-    path.push(Path::new(location.file()));
-    let path_arg = format!(
-        "{}:{}:{}",
-        path.display(),
-        location.line(),
-        location.column()
-    );
-
-    let output = new_smol_command("zed")
-        .arg(&path_arg)
-        .output()
-        .await
-        .with_context(|| format!("running zed to open {path_arg} failed"))?;
-
-    if !output.status.success() {
-        Err(anyhow!(
-            "running zed to open {path_arg} failed with stderr: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ))
-    } else {
-        Ok(())
     }
 }
 
@@ -530,11 +481,6 @@ fn register_actions(
 ) {
     workspace
         .register_action(about)
-        .register_action(
-            |_workspace, _: &zed_actions::dev::ToggleInspector, window, cx| {
-                window.toggle_inspector(cx);
-            },
-        )
         .register_action(|_, _: &OpenDocs, _, cx| cx.open_url(DOCS_URL))
         .register_action(|_, _: &Minimize, window, _| {
             window.minimize_window();

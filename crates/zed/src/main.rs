@@ -572,6 +572,7 @@ fn main() {
         settings_ui::init(cx);
         extensions_ui::init(cx);
         zeta::init(cx);
+        inspector_ui::init(cx);
 
         cx.observe_global::<SettingsStore>({
             let fs = fs.clone();

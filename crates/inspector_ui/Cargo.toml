@@ -1,0 +1,19 @@
+[package]
+name = "inspector_ui"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/inspector_ui.rs"
+
+[dependencies]
+anyhow.workspace = true
+gpui.workspace = true
+util.workspace = true
+ui.workspace = true
+zed_actions.workspace = true

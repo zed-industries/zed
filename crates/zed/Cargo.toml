@@ -66,6 +66,7 @@ http_client.workspace = true
 image_viewer.workspace = true
 indoc.workspace = true
 inline_completion_button.workspace = true
+inspector_ui.workspace = true
 install_cli.workspace = true
 jj_ui.workspace = true
 journal.workspace = true

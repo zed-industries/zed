@@ -8116,6 +8116,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "inspector_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "ui",
+ "util",
+ "zed_actions",
+]
+
+[[package]]
 name = "install_cli"
 version = "0.1.0"
 dependencies = [
@@ -19655,6 +19666,7 @@ dependencies = [
  "image_viewer",
  "indoc",
  "inline_completion_button",
+ "inspector_ui",
  "install_cli",
  "jj_ui",
  "journal",
