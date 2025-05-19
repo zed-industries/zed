@@ -203,6 +203,9 @@ impl StripeBilling {
             quantity: Some(1),
             ..Default::default()
         }]);
+        // Should be based on location: https://docs.stripe.com/tax/checkout/tax-ids
+        params.tax_id_collection =
+            Some(stripe::CreateCheckoutSessionTaxIdCollection { enabled: true });
         params.success_url = Some(success_url);
 
         let session = stripe::CheckoutSession::create(&self.client, params).await?;
@@ -257,6 +260,9 @@ impl StripeBilling {
             quantity: Some(1),
             ..Default::default()
         }]);
+        // Should be based on location: https://docs.stripe.com/tax/checkout/tax-ids
+        params.tax_id_collection =
+            Some(stripe::CreateCheckoutSessionTaxIdCollection { enabled: true });
         params.success_url = Some(success_url);
 
         let session = stripe::CheckoutSession::create(&self.client, params).await?;
@@ -282,6 +288,9 @@ impl StripeBilling {
             quantity: Some(1),
             ..Default::default()
         }]);
+        // Should be based on location: https://docs.stripe.com/tax/checkout/tax-ids
+        params.tax_id_collection =
+            Some(stripe::CreateCheckoutSessionTaxIdCollection { enabled: true });
         params.success_url = Some(success_url);
 
         let session = stripe::CheckoutSession::create(&self.client, params).await?;
