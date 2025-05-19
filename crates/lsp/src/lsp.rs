@@ -317,6 +317,7 @@ impl LanguageServer {
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
         workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
+        mut project_env: HashMap<String, String>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let working_dir = if root_path.is_dir() {
@@ -332,10 +333,13 @@ impl LanguageServer {
             &binary.arguments
         );
 
-        let mut server = util::command::new_smol_command(&binary.path)
+        if let Some(env) = binary.env.clone() {
+            project_env.extend(env);
+        }
+
+        let mut server = util::command::new_smol_command(&binary.path, &project_env)
             .current_dir(working_dir)
             .args(&binary.arguments)
-            .envs(binary.env.clone().unwrap_or_default())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

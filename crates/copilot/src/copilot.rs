@@ -405,8 +405,11 @@ impl Copilot {
         cx.notify();
     }
 
-    fn build_env(&self, copilot_settings: &CopilotSettings) -> Option<HashMap<String, String>> {
-        let proxy_url = copilot_settings.proxy.clone()?;
+    fn build_env(&self, copilot_settings: &CopilotSettings) -> HashMap<String, String> {
+        let mut env = environment::inherited();
+        let Some(proxy_url) = copilot_settings.proxy.clone() else {
+            return env;
+        };
         let no_verify = copilot_settings.proxy_no_verify;
         let http_or_https_proxy = if proxy_url.starts_with("http:") {
             "HTTP_PROXY"
@@ -416,17 +419,16 @@ impl Copilot {
             log::error!(
                 "Unsupported protocol scheme for language server proxy (must be http or https)"
             );
-            return None;
+            return env;
         };
 
-        let mut env = HashMap::default();
         env.insert(http_or_https_proxy.to_string(), proxy_url);
 
         if let Some(true) = no_verify {
             env.insert("NODE_TLS_REJECT_UNAUTHORIZED".to_string(), "0".to_string());
         };
 
-        Some(env)
+        env
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -466,7 +468,7 @@ impl Copilot {
         new_server_id: LanguageServerId,
         fs: Arc<dyn Fs>,
         node_runtime: NodeRuntime,
-        env: Option<HashMap<String, String>>,
+        project_env: HashMap<String, String>,
         this: WeakEntity<Self>,
         awaiting_sign_in_after_start: bool,
         cx: &mut AsyncApp,
@@ -478,7 +480,7 @@ impl Copilot {
             let binary = LanguageServerBinary {
                 path: node_path,
                 arguments,
-                env,
+                env: Some(project_env.clone()),
             };
 
             let root_path = if cfg!(target_os = "windows") {
@@ -496,6 +498,7 @@ impl Copilot {
                 root_path,
                 None,
                 Default::default(),
+                project_env,
                 cx,
             )?;
 

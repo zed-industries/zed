@@ -23,10 +23,14 @@ pub struct StdioTransport {
 
 impl StdioTransport {
     pub fn new(binary: ModelContextServerBinary, cx: &AsyncApp) -> Result<Self> {
-        let mut command = util::command::new_smol_command(&binary.executable);
+        let mut env = environment::inherited();
+        if let Some(binary_env) = binary.env.clone() {
+            env.extend(binary_env);
+        }
+
+        let mut command = util::command::new_smol_command(&binary.executable, &env);
         command
             .args(&binary.args)
-            .envs(binary.env.unwrap_or_default())
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())

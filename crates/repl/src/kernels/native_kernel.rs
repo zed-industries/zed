@@ -54,7 +54,7 @@ impl LocalKernelSpecification {
             self.name
         );
 
-        let mut cmd = util::command::new_smol_command(&argv[0]);
+        let mut cmd = util::command::new_smol_command(&argv[0], &environment::inherited());
 
         for arg in &argv[1..] {
             if arg == "{connection_file}" {
@@ -428,9 +428,10 @@ pub async fn local_kernel_specifications(fs: Arc<dyn Fs>) -> Result<Vec<LocalKer
         let conda_data_dir = conda_prefix.join("share").join("jupyter");
         data_dirs.push(conda_data_dir);
     }
+    let env = environment::in_home_dir().await;
 
     // Search for kernels inside the base python environment
-    let command = util::command::new_smol_command("python")
+    let command = util::command::new_smol_command("python", &env)
         .arg("-c")
         .arg("import sys; print(sys.prefix)")
         .output()

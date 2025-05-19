@@ -278,6 +278,7 @@ impl Prettier {
             arguments: vec![prettier_server.into(), prettier_dir.as_path().into()],
             env: None,
         };
+        let env = environment::in_home_dir().await;
         let server = LanguageServer::new(
             Arc::new(parking_lot::Mutex::new(None)),
             server_id,
@@ -286,6 +287,7 @@ impl Prettier {
             &prettier_dir,
             None,
             Default::default(),
+            env,
             &mut cx,
         )
         .context("prettier server creation")?;

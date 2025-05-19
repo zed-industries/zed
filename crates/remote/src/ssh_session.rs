@@ -347,7 +347,7 @@ impl SshSocket {
     // into a machine. You must use `cd` to get back to $HOME.
     // You need to do it like this: $ ssh host "cd; sh -c 'ls -l /tmp'"
     fn ssh_command(&self, program: &str, args: &[&str]) -> process::Command {
-        let mut command = util::command::new_smol_command("ssh");
+        let mut command = util::command::new_smol_command("ssh", &environment::inherited());
         let to_run = iter::once(&program)
             .chain(args.iter())
             .map(|token| {
@@ -1339,7 +1339,7 @@ impl RemoteConnection for SshRemoteConnection {
         dest_path: PathBuf,
         cx: &App,
     ) -> Task<Result<()>> {
-        let mut command = util::command::new_smol_command("scp");
+        let mut command = util::command::new_smol_command("scp", &environment::inherited());
         let output = self
             .socket
             .ssh_options(&mut command)
@@ -1920,7 +1920,7 @@ impl SshRemoteConnection {
 
     async fn upload_file(&self, src_path: &Path, dest_path: &Path) -> Result<()> {
         log::debug!("uploading file {:?} to {:?}", src_path, dest_path);
-        let mut command = util::command::new_smol_command("scp");
+        let mut command = util::command::new_smol_command("scp", &environment::inherited());
         let output = self
             .socket
             .ssh_options(&mut command)

@@ -267,7 +267,7 @@ impl SupermavenAgent {
         client: Arc<Client>,
         cx: &mut Context<Supermaven>,
     ) -> Result<Self> {
-        let mut process = util::command::new_smol_command(&binary_path)
+        let mut process = util::command::new_smol_command(&binary_path, &environment::inherited())
             .arg("stdio")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

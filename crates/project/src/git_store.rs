@@ -1433,13 +1433,22 @@ impl GitStore {
         &self,
         path: Arc<Path>,
         fallback_branch_name: String,
-        cx: &App,
+        cx: &mut App,
     ) -> Task<Result<()>> {
         match &self.state {
-            GitStoreState::Local { fs, .. } => {
+            GitStoreState::Local {
+                fs,
+                project_environment,
+                ..
+            } => {
                 let fs = fs.clone();
-                cx.background_executor()
-                    .spawn(async move { fs.git_init(&path, fallback_branch_name) })
+                let load_env = project_environment.update(cx, |env, cx| {
+                    env.get_directory_environment(path.clone(), cx)
+                });
+                cx.background_executor().spawn(async move {
+                    let env = load_env.await;
+                    fs.git_init(&path, fallback_branch_name, &env)
+                })
             }
             GitStoreState::Ssh {
                 upstream_client,
@@ -1543,11 +1552,11 @@ impl GitStore {
     async fn handle_git_init(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitInit>,
-        cx: AsyncApp,
+        mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let path: Arc<Path> = PathBuf::from(envelope.payload.abs_path).into();
         let name = envelope.payload.fallback_branch_name;
-        cx.update(|cx| this.read(cx).git_init(path, name, cx))?
+        this.update(&mut cx, |this, cx| this.git_init(path, name, cx))?
             .await?;
 
         Ok(proto::Ack {})
@@ -4066,17 +4075,17 @@ impl Repository {
                 .upgrade()
                 .ok_or_else(|| anyhow!("missing project environment"))?
                 .update(cx, |project_environment, cx| {
-                    project_environment.get_directory_environment(work_directory_abs_path.clone(), cx)
+                    project_environment
+                        .get_directory_environment(work_directory_abs_path.clone(), cx)
                 })?
-                .await
-                .unwrap_or_else(|| {
-                    log::error!("failed to get working directory environment for repository {work_directory_abs_path:?}");
-                    HashMap::default()
-                });
+                .await;
             let backend = cx
-                .background_spawn(async move {
-                    fs.open_repo(&dot_git_abs_path)
-                        .ok_or_else(|| anyhow!("failed to build repository"))
+                .background_spawn({
+                    let environment = environment.clone();
+                    async move {
+                        fs.open_repo(&dot_git_abs_path, environment)
+                            .ok_or_else(|| anyhow!("failed to build repository"))
+                    }
                 })
                 .await?;
 

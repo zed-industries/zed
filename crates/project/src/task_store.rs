@@ -338,7 +338,7 @@ fn local_task_context_for_location(
         task_variables.sweep();
 
         Some(TaskContext {
-            project_env: project_env.unwrap_or_default(),
+            project_env,
             cwd: worktree_abs_path.map(|p| p.to_path_buf()),
             task_variables,
         })
@@ -361,7 +361,7 @@ fn remote_task_context_for_location(
                 BasicContextProvider::new(worktree_store).build_context(
                     &TaskVariables::default(),
                     &location,
-                    None,
+                    HashMap::default(),
                     toolchain_store,
                     cx,
                 )
@@ -411,7 +411,7 @@ fn remote_task_context_for_location(
 fn combine_task_variables(
     mut captured_variables: TaskVariables,
     location: Location,
-    project_env: Option<HashMap<String, String>>,
+    project_env: HashMap<String, String>,
     baseline: BasicContextProvider,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
     cx: &mut App,

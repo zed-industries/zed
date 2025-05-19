@@ -18,6 +18,7 @@ test-support = []
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
+environment.workspace = true
 fs.workspace = true
 gpui.workspace = true
 language.workspace = true

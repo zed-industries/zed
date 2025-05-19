@@ -16,6 +16,7 @@ doctest = false
 anyhow.workspace = true
 client.workspace = true
 collections.workspace = true
+environment.workspace = true
 futures.workspace = true
 gpui.workspace = true
 inline_completion.workspace = true
