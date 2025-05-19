@@ -1189,14 +1189,20 @@ async fn sync_subscription(
         if subscription.status == SubscriptionStatus::Canceled
             || subscription.status == SubscriptionStatus::Paused
         {
-            let stripe_customer_id = billing_customer
-                .stripe_customer_id
-                .parse::<stripe::CustomerId>()
-                .context("failed to parse Stripe customer ID from database")?;
-
-            stripe_billing
-                .subscribe_to_zed_free(stripe_customer_id)
+            let already_has_active_billing_subscription = app
+                .db
+                .has_active_billing_subscription(billing_customer.user_id)
                 .await?;
+            if !already_has_active_billing_subscription {
+                let stripe_customer_id = billing_customer
+                    .stripe_customer_id
+                    .parse::<stripe::CustomerId>()
+                    .context("failed to parse Stripe customer ID from database")?;
+
+                stripe_billing
+                    .subscribe_to_zed_free(stripe_customer_id)
+                    .await?;
+            }
         }
     }
 
