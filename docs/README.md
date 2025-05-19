@@ -62,7 +62,7 @@ This will render a human-readable version of the action name, e.g., "zed: open s
 
 ### Creating New Templates
 
-Templates are just functions that modify the source of the docs pages (usually with a regex match & replace). You can see how the actions and keybindings are templated in  `crates/docs_preprocessor/src/main.rs` for reference on how to create new templates.
+Templates are just functions that modify the source of the docs pages (usually with a regex match & replace). You can see how the actions and keybindings are templated in `crates/docs_preprocessor/src/main.rs` for reference on how to create new templates.
 
 ### References
 
