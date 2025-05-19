@@ -26,8 +26,8 @@ use std::{
 };
 use supermaven::{AccountStatus, Supermaven};
 use ui::{
-    Clickable, ContextMenu, ContextMenuEntry, ContextMenuItem, DocumentationSide, IconButton,
-    IconButtonShape, Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
+    Clickable, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconButtonShape,
+    Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
 };
 use workspace::{
     StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
@@ -279,13 +279,11 @@ impl Render for InlineCompletionButton {
 
                 let mut over_limit = false;
 
-                if let Some(mut usage) = self
+                if let Some(usage) = self
                     .edit_prediction_provider
                     .as_ref()
                     .and_then(|provider| provider.usage(cx))
                 {
-                    usage.limit = UsageLimit::Limited(10);
-
                     over_limit = usage.over_limit()
                 }
 
@@ -422,7 +420,7 @@ impl InlineCompletionButton {
         let fs = self.fs.clone();
         let line_height = window.line_height();
 
-        if let Some(mut usage) = self
+        if let Some(usage) = self
             .edit_prediction_provider
             .as_ref()
             .and_then(|provider| provider.usage(cx))
@@ -460,13 +458,14 @@ impl InlineCompletionButton {
                     move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
                 )
                 .when(usage.over_limit(), |menu| -> ContextMenu {
-                    menu.entry(
-                        "Subscribe to increase your limit",
-                        Some(Box::new(OpenZedUrl {
-                            url: zed_urls::account_url(cx),
-                        })),
-                        |_, _| {},
-                    )
+                    menu.entry("Subscribe to increase your limit", None, |window, cx| {
+                        window.dispatch_action(
+                            Box::new(OpenZedUrl {
+                                url: zed_urls::account_url(cx),
+                            }),
+                            cx,
+                        );
+                    })
                 })
                 .separator();
         }

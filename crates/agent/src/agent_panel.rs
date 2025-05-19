@@ -1936,17 +1936,14 @@ impl AgentPanel {
     }
 
     fn should_render_trial_end_upsell(&self, cx: &mut Context<Self>) -> bool {
-        if self.should_render_upsell(cx) {
-            return false;
-        }
-
         if TrialEndUpsell::dismissed() {
             return false;
         }
 
-        // TODO: Detect trial end state
+        let plan = self.user_store.read(cx).current_plan();
+        let has_previous_trial = self.user_store.read(cx).trial_started_at().is_some();
 
-        true
+        matches!(plan, Some(Plan::Free)) && has_previous_trial
     }
 
     fn should_render_upsell(&self, cx: &mut Context<Self>) -> bool {

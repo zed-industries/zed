@@ -86,7 +86,7 @@ impl EditPredictionUsage {
 
     pub fn over_limit(&self) -> bool {
         match self.limit {
-            UsageLimit::Limited(limit) => self.amount > limit,
+            UsageLimit::Limited(limit) => self.amount >= limit,
             UsageLimit::Unlimited => false,
         }
     }
