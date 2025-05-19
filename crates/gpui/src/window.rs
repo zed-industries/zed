@@ -16,7 +16,7 @@ use crate::{
     WindowParams, WindowTextSystem, point, prelude::*, px, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
-use collections::{FxHashMap, FxHashSet, HashMap};
+use collections::{FxHashMap, FxHashSet};
 #[cfg(target_os = "macos")]
 use core_video::pixel_buffer::CVPixelBuffer;
 use derive_more::{Deref, DerefMut};
@@ -501,8 +501,9 @@ pub(crate) struct DeferredDraw {
 #[derive(Default)]
 pub(crate) struct FrameInspectorState {
     pub(crate) next_element_instance_ids:
-        HashMap<(SmallVec<[ElementId; 32]>, &'static panic::Location<'static>), usize>,
-    pub(crate) element_states: FxHashMap<InspectorElementId, FxHashMap<TypeId, Box<dyn Any>>>,
+        FxHashMap<(SmallVec<[ElementId; 32]>, &'static panic::Location<'static>), usize>,
+    pub(crate) element_states:
+        hashbrown::HashMap<InspectorElementId, FxHashMap<TypeId, Box<dyn Any>>>,
 }
 
 impl FrameInspectorState {
@@ -1585,13 +1586,13 @@ impl Window {
                 .next_frame
                 .inspector_state
                 .element_states
-                .get_mut(&inspector_id)
+                .get_mut(inspector_id)
                 .and_then(|state| state.remove(&type_id))
                 .or_else(|| {
                     self.rendered_frame
                         .inspector_state
                         .element_states
-                        .get_mut(&inspector_id)
+                        .get_mut(inspector_id)
                         .and_then(|state| state.remove(&type_id))
                 })
                 .map(|state| *state.downcast().unwrap());
@@ -1602,8 +1603,7 @@ impl Window {
                 self.next_frame
                     .inspector_state
                     .element_states
-                    // todo!("avoid cloning debug id here")
-                    .entry(inspector_id.clone())
+                    .entry_ref(inspector_id)
                     .or_default()
                     .insert(type_id, Box::new(inspector_state));
             }
@@ -1626,7 +1626,7 @@ impl Window {
             .rendered_frame
             .inspector_state
             .element_states
-            .get_mut(&inspector_id)
+            .get_mut(inspector_id)
             .and_then(|state| state.remove(&type_id))
             .map(|state| *state.downcast().unwrap());
 
@@ -1636,8 +1636,7 @@ impl Window {
             self.rendered_frame
                 .inspector_state
                 .element_states
-                // todo!("avoid cloning debug id here")
-                .entry(inspector_id.clone())
+                .entry_ref(inspector_id)
                 .or_default()
                 .insert(type_id, Box::new(inspector_state));
         }

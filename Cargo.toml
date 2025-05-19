@@ -448,6 +448,7 @@ futures-batch = "0.6.1"
 futures-lite = "1.13"
 git2 = { version = "0.20.1", default-features = false }
 globset = "0.4"
+hashbrown = "0.15.3"
 handlebars = "4.3"
 heck = "0.5"
 heed = { version = "0.21.0", features = ["read-txn-no-tls"] }

@@ -32,6 +32,13 @@ impl Clone for InspectorElementId {
     }
 }
 
+#[cfg(debug_assertions)]
+impl Into<InspectorElementId> for &InspectorElementId {
+    fn into(self) -> InspectorElementId {
+        self.clone()
+    }
+}
+
 #[cfg(not(debug_assertions))]
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct InspectorElementId;

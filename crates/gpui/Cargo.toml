@@ -88,6 +88,7 @@ derive_more.workspace = true
 etagere = "0.2"
 futures.workspace = true
 gpui_macros.workspace = true
+hashbrown.workspace = true
 http_client = { optional = true, workspace = true }
 image.workspace = true
 inventory.workspace = true
