@@ -477,14 +477,14 @@ fn add_message_content_part(
         _ => {
             messages.push(match role {
                 Role::User => open_ai::RequestMessage::User {
-                    content: open_ai::MessageContent::empty(),
+                    content: open_ai::MessageContent::from(vec![new_part]),
                 },
                 Role::Assistant => open_ai::RequestMessage::Assistant {
-                    content: open_ai::MessageContent::empty(),
+                    content: open_ai::MessageContent::from(vec![new_part]),
                     tool_calls: Vec::new(),
                 },
                 Role::System => open_ai::RequestMessage::System {
-                    content: open_ai::MessageContent::empty(),
+                    content: open_ai::MessageContent::from(vec![new_part]),
                 },
             });
         }
