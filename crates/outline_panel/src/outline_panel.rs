@@ -4384,11 +4384,9 @@ impl OutlinePanel {
                 .bottom_0()
                 .h(px(12.))
                 .cursor_default()
-                .when(self.width.is_some(), |this| {
-                    this.children(Scrollbar::horizontal(
-                        self.horizontal_scrollbar_state.clone(),
-                    ))
-                }),
+                .children(Scrollbar::horizontal(
+                    self.horizontal_scrollbar_state.clone(),
+                )),
         )
     }
 
