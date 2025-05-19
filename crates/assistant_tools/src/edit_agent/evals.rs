@@ -3,6 +3,7 @@ use crate::{
     ReadFileToolInput,
     edit_file_tool::{EditFileMode, EditFileToolInput},
     grep_tool::GrepToolInput,
+    list_directory_tool::ListDirectoryToolInput,
 };
 use Role::*;
 use anyhow::anyhow;
@@ -905,6 +906,67 @@ fn eval_add_overwrite_test() {
             assertion: EvalAssertion::judge_diff(
                 "A new test for overwritten files was created, without changing any previous test",
             ),
+        },
+    );
+}
+
+#[test]
+#[cfg_attr(not(feature = "eval"), ignore)]
+fn eval_create_empty_file() {
+    let input_file_path = "hello-world/TODO2";
+    let input_file_content = None;
+    let output_file_content = String::new();
+    let edit_description = "Create an empty second todo file";
+    eval(
+        100,
+        0.95,
+        EvalInput {
+            conversation: vec![
+                message(User, [text("Create a second empty todo file ")]),
+                message(
+                    Assistant,
+                    [
+                        text(formatdoc! {"
+                        I'll help you create a second empty todo file.
+                        First, let me examine the project structure to see if there's already a todo file, which will help me determine the appropriate name and location for the second one.
+                        "}),
+                        tool_use(
+                            "toolu_01GAF8TtsgpjKxCr8fgQLDgR",
+                            "list_directory",
+                            ListDirectoryToolInput {
+                                path: "hello-world".to_string(),
+                            },
+                        ),
+                        tool_result(
+                            "toolu_01GAF8TtsgpjKxCr8fgQLDgR",
+                            "list_directory",
+                            "hello-world/TODO\nhello-world/new.txt\n",
+                        ),
+                    ],
+                ),
+                message(
+                    Assistant,
+                    [
+                        text(formatdoc! {"
+                        I can see there's already a `TODO` file in the `hello-world` directory. Let me create a second empty todo file called `TODO2` in the same directory:
+                    "}),
+                        tool_use(
+                            "toolu_01Tb3iQ9griqSYMmVuykQPWU",
+                            "edit_file",
+                            EditFileToolInput {
+                                display_description: "Create an empty second todo file".to_string(),
+                                mode: EditFileMode::Create,
+                                path: "hello-world/TODO2".into(),
+                            },
+                        ),
+                    ],
+                ),
+            ],
+            input_path: input_file_path.into(),
+            input_content: input_file_content,
+
+            edit_description: edit_description.into(),
+            assertion: EvalAssertion::assert_eq(output_file_content),
         },
     );
 }
