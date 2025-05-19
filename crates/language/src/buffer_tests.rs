@@ -204,7 +204,7 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
                 ("TypeScript".into(), vec!["js".into()]),
                 (
                     "JavaScript".into(),
-                    vec!["longer.ts".into(), "ecmascript".into()],
+                    vec!["*longer.ts".into(), "ecmascript".into()],
                 ),
                 ("C++".into(), vec!["c".into(), "*.dev".into()]),
                 (

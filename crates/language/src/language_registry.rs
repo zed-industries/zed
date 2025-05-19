@@ -2,8 +2,7 @@ use crate::{
     CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
     LanguageServerName, LspAdapter, PLAIN_TEXT, ToolchainLister,
     language_settings::{
-        AllLanguageSettingsContent, LanguageCustomFileTypes, LanguageSettingsContent,
-        all_language_settings,
+        AllLanguageSettingsContent, LanguageSettingsContent, all_language_settings,
     },
     task_context::ContextProvider,
     with_parser,
@@ -15,12 +14,14 @@ use futures::{
     Future,
     channel::{mpsc, oneshot},
 };
+use globset::GlobSet;
 use gpui::{App, BackgroundExecutor, SharedString};
 use lsp::LanguageServerId;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 use std::{
     borrow::{Borrow, Cow},
     cell::LazyCell,
@@ -716,9 +717,17 @@ impl LanguageRegistry {
         self: &Arc<Self>,
         path: &Path,
         content: Option<&Rope>,
-        user_file_types: Option<&FxHashMap<Arc<str>, LanguageCustomFileTypes>>,
+        user_file_types: Option<&FxHashMap<Arc<str>, GlobSet>>,
     ) -> Option<AvailableLanguage> {
         let filename = path.file_name().and_then(|name| name.to_str());
+        // `Path.extension()` returns None for files with a leading '.'
+        // and no other extension which is not the desired behavior here,
+        // as we want `.zshrc` to result in extension being `Some("zshrc")`
+        let extension = filename.and_then(|filename| filename.split('.').next_back());
+        let path_suffixes = [extension, filename, path.to_str()]
+            .iter()
+            .filter_map(|suffix| suffix.map(|suffix| (suffix, globset::Candidate::new(suffix))))
+            .collect::<SmallVec<[_; 3]>>();
         let content = LazyCell::new(|| {
             content.map(|content| {
                 let end = content.clip_point(Point::new(0, 256), Bias::Left);
@@ -727,41 +736,35 @@ impl LanguageRegistry {
             })
         });
         self.find_matching_language(move |language_name, config, current_best_match| {
-            let filename = filename?;
-
-            let matching_suffix_len = |acc: usize, suffix: &String| {
-                let ext = ".".to_string() + suffix;
-                if filename.ends_with(&ext) || filename == suffix {
-                    acc.max(suffix.len())
-                } else {
-                    acc
-                }
-            };
-
             let path_matches_default_suffix = || {
-                let len = config.path_suffixes.iter().fold(0, matching_suffix_len);
-                Some(len).filter(|len| len > &0)
+                let len =
+                    config
+                        .path_suffixes
+                        .iter()
+                        .fold(0, |acc: usize, path_suffix: &String| {
+                            let ext = ".".to_string() + path_suffix;
+
+                            let matched_suffix_len = path_suffixes
+                                .iter()
+                                .find(|(suffix, _)| suffix.ends_with(&ext) || suffix == path_suffix)
+                                .map(|(suffix, _)| suffix.len());
+
+                            match matched_suffix_len {
+                                Some(len) => acc.max(len),
+                                None => acc,
+                            }
+                        });
+                (len > 0).then_some(len)
             };
 
             let path_matches_custom_suffix = || {
                 user_file_types
                     .and_then(|types| types.get(language_name.as_ref()))
                     .map_or(None, |custom_suffixes| {
-                        let matches = custom_suffixes.glob.matches(filename);
-
-                        let len = if !matches.is_empty() {
-                            // if the glob matched, use the length of its pattern
-                            matches
-                                .iter()
-                                .filter_map(|i| custom_suffixes.patterns.get(*i))
-                                .fold(0, |acc, suffix| acc.max(suffix.len()))
-                        } else {
-                            // otherwise try to use the glob patterns as extensions, and
-                            // see if the file ends with any of them
-                            custom_suffixes.patterns.iter().fold(0, matching_suffix_len)
-                        };
-
-                        Some(len).filter(|len| len > &0)
+                        path_suffixes
+                            .iter()
+                            .find(|(_, candidate)| custom_suffixes.is_match_candidate(candidate))
+                            .map(|(suffix, _)| suffix.len())
                     })
             };
 
