@@ -4345,7 +4345,6 @@ impl ProjectPanel {
         {
             return None;
         }
-
         Scrollbar::horizontal(self.horizontal_scrollbar_state.clone()).map(|scrollbar| {
             div()
                 .occlude()
