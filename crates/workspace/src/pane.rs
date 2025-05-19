@@ -1973,7 +1973,6 @@ impl Pane {
 
     pub fn focus_active_item(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(active_item) = self.active_item() {
-            dbg!("active item handle");
             let focus_handle = active_item.item_focus_handle(cx);
             window.focus(&focus_handle);
         }

@@ -506,22 +506,15 @@ impl DebugTerminal {
 
 impl gpui::Render for DebugTerminal {
     fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        if let Some(terminal) = self.terminal.clone() {
-            terminal.into_any_element()
-        } else {
-            div().track_focus(&self.focus_handle).into_any_element()
-        }
+        div()
+            .size_full()
+            .track_focus(&self.focus_handle)
+            .children(self.terminal.clone())
     }
 }
 impl Focusable for DebugTerminal {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        dbg!("focus terminal");
-        if let Some(terminal) = self.terminal.as_ref() {
-            dbg!("real terminal");
-            return terminal.focus_handle(cx);
-        } else {
-            self.focus_handle.clone()
-        }
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -1214,7 +1207,6 @@ impl RunningState {
             .and_then(|pane| self.panes.find_pane_in_direction(pane, direction, cx))
         {
             pane.update(cx, |pane, cx| {
-                dbg!("pane focus active item");
                 pane.focus_active_item(window, cx);
             })
         } else {

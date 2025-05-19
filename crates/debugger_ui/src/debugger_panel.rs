@@ -107,7 +107,6 @@ impl DebugPanel {
             return;
         };
         active_pane.update(cx, |pane, cx| {
-            dbg!("focus in => active item");
             pane.focus_active_item(window, cx);
         });
     }
