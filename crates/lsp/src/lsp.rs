@@ -3,20 +3,20 @@ mod input_handler;
 pub use lsp_types::request::*;
 pub use lsp_types::*;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
-use futures::{AsyncRead, AsyncWrite, Future, FutureExt, channel::oneshot, io::BufWriter, select};
+use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, Future, FutureExt};
 use gpui::{App, AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
 use notification::DidChangeWorkspaceFolders;
 use parking_lot::{Mutex, RwLock};
 use postage::{barrier, prelude::Stream};
 use schemars::{
-    JsonSchema,
     r#gen::SchemaGenerator,
     schema::{InstanceType, Schema, SchemaObject},
+    JsonSchema,
 };
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use serde_json::{Value, json, value::RawValue};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::{json, value::RawValue, Value};
 use smol::{
     channel,
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -32,8 +32,8 @@ use std::{
     path::PathBuf,
     pin::Pin,
     sync::{
-        Arc, Weak,
         atomic::{AtomicI32, Ordering::SeqCst},
+        Arc, Weak,
     },
     task::Poll,
     time::{Duration, Instant},
@@ -783,7 +783,7 @@ impl LanguageServer {
                     }),
                     semantic_tokens: Some(SemanticTokensClientCapabilities {
                         augments_syntax_tokens: Some(true),
-                        overlapping_token_support: Some(true),
+                        overlapping_token_support: Some(false),
                         server_cancel_support: Some(true),
                         requests: SemanticTokensClientCapabilitiesRequests {
                             range: Some(true),

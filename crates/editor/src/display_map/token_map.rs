@@ -1,8 +1,7 @@
 use collections::BTreeSet;
 use gpui::HighlightStyle;
-use itertools::Itertools;
 use language::{Chunk, Edit, Point, TextSummary};
-use multi_buffer::{AnchorRangeExt, MultiBufferSnapshot};
+use multi_buffer::MultiBufferSnapshot;
 use multi_buffer::{MultiBufferRow, MultiBufferRows, RowInfo, ToOffset};
 use std::cmp;
 use std::ops::{Add, AddAssign, Range, Sub, SubAssign};
@@ -231,17 +230,12 @@ impl<'a> Iterator for TokenChunks<'a> {
         }
 
         let transform = self.transforms.item()?;
-        println!("{transform:?}");
-
         let chunk = self
             .buffer_chunk
             .get_or_insert_with(|| self.buffer_chunks.next().unwrap());
         if chunk.text.is_empty() {
-            *chunk = self.buffer_chunks.next()?;
+            *chunk = self.buffer_chunks.next().unwrap();
         }
-
-        println!("  ->>");
-
         let (prefix, suffix) = chunk.text.split_at(
             chunk
                 .text
@@ -259,27 +253,29 @@ impl<'a> Iterator for TokenChunks<'a> {
                 }
             }
             Transform::Highlight(token, _) => {
-                let offset_in_token = self.output_offset - self.transforms.start().0;
-                let range = token.range.to_offset(&self.snapshot.buffer);
-                let token_chunks = self.token_chunks.get_or_insert_with(|| {
-                    let start = offset_in_token;
-                    let end = cmp::min(self.max_output_offset, self.transforms.end(&()).0)
-                        - self.transforms.start().0;
-                    token.text.chunks_in_range(start.0..end.0)
-                });
-                let token_chunk = self
-                    .token_chunk
-                    .get_or_insert_with(|| token_chunks.next().unwrap());
-                let (chunk, remainder) = token_chunk.split_at(token_chunk.len());
-                *token_chunk = remainder;
-                println!("- {token_chunk}");
-                if token_chunk.is_empty() {
-                    self.token_chunk = None;
-                }
+                #[cfg(test)]
+                let prefix = {
+                    let offset_in_token = self.output_offset - self.transforms.start().0;
+                    let token_chunks = self.token_chunks.get_or_insert_with(|| {
+                        let start = offset_in_token;
+                        let end = cmp::min(self.max_output_offset, self.transforms.end(&()).0)
+                            - self.transforms.start().0;
+                        token.text.chunks_in_range(start.0..end.0)
+                    });
+                    let token_chunk = self
+                        .token_chunk
+                        .get_or_insert_with(|| token_chunks.next().unwrap());
+                    let (prefix, remainder) = token_chunk.split_at(token_chunk.len());
+                    *token_chunk = remainder;
+                    if token_chunk.is_empty() {
+                        self.token_chunk = None;
+                    }
+                    prefix
+                };
 
-                self.output_offset.0 += chunk.len();
+                self.output_offset.0 += prefix.len();
                 Chunk {
-                    text: chunk,
+                    text: prefix,
                     syntax_highlight_id: None,
                     highlight_style: Some(token.style),
                     ..Default::default()
@@ -287,11 +283,6 @@ impl<'a> Iterator for TokenChunks<'a> {
             }
         };
 
-        println!(
-            "{:?} == {:?}",
-            self.output_offset,
-            self.transforms.end(&()).0
-        );
         if self.output_offset == self.transforms.end(&()).0 {
             self.token_chunks = None;
             self.transforms.next(&());
@@ -438,40 +429,29 @@ impl TokenMap {
                     .then(std::cmp::Ordering::Greater)
                 });
 
-                let mut edit_new_end = if buffer_edit.new.start == buffer_edit.new.end
-                    && buffer_edit.old.start == buffer_edit.old.end
-                {
-                    Some(buffer_edit.new.end)
-                } else {
-                    None
-                };
-                let mut is_highlight_edit = false;
                 for token in &self.tokens[start_ix..] {
                     let buffer_offset = token.range.start.to_offset(&buffer_snapshot);
                     let buffer_end = token.range.end.to_offset(&buffer_snapshot);
                     if buffer_offset > buffer_edit.new.end {
                         break;
                     }
-
+                    let prefix_start = new_transforms.summary().input.len;
+                    if buffer_offset >= prefix_start {
+                        push_isomorphic(
+                            &mut new_transforms,
+                            buffer_snapshot.text_summary_for_range(prefix_start..buffer_offset),
+                        );
+                    }
+                    let input = buffer_snapshot.text_summary_for_range(buffer_offset..buffer_end);
                     if token.range.start.is_valid(&buffer_snapshot)
                         && token.range.end.is_valid(&buffer_snapshot)
                     {
-                        is_highlight_edit = true;
-
-                        println!("?");
-
-                        let text_summary =
-                            buffer_snapshot.text_summary_for_range(token.range.clone());
-
-                        new_transforms.push(Transform::Highlight(token.clone(), text_summary), &());
-                        if let Some(ref mut end) = edit_new_end {
-                            *end += buffer_end - buffer_offset;
-                        }
+                        new_transforms.push(Transform::Highlight(token.clone(), input), &());
                     }
                 }
 
                 let transform_start = new_transforms.summary().output.len;
-                if !is_highlight_edit {
+                if buffer_edit.new.end > transform_start {
                     push_isomorphic(
                         &mut new_transforms,
                         buffer_snapshot
@@ -488,7 +468,7 @@ impl TokenMap {
                 // we can push its remainder.
                 if buffer_edits_iter
                     .peek()
-                    .map_or(true, |edit| edit.old.start >= cursor.end(&()).0)
+                    .map_or(true, |edit| dbg!(edit.old.start) >= cursor.end(&()).0)
                 {
                     let transform_start = new_transforms.summary().input.len;
                     let transform_end =
@@ -533,7 +513,7 @@ impl TokenMap {
             retain
         });
 
-        for token_to_insert in to_insert {
+        for token_to_insert in dbg!(to_insert) {
             edits.insert(token_to_insert.range.start.to_offset(&snapshot.buffer));
             let (Ok(ix) | Err(ix)) = self.tokens.binary_search_by(|probe| {
                 probe
@@ -1021,6 +1001,45 @@ mod tests {
 
         let actual_text = token_snapshot.text();
         assert_eq!(actual_text, "|1|\n|2|\n|3|");
+        assert_eq!(
+            token_snapshot
+                .row_infos(0)
+                .map(|info| info.buffer_row)
+                .collect::<Vec<_>>(),
+            vec![Some(0), Some(1), Some(2)]
+        );
+    }
+
+    #[gpui::test]
+    fn test_token_overlapping(cx: &mut App) {
+        let buffer = MultiBuffer::build_simple("abc\ndef\nghi", cx);
+        let (mut token_map, token_snapshot) = TokenMap::new(buffer.read(cx).snapshot(cx));
+        assert_eq!(token_snapshot.text(), "abc\ndef\nghi");
+        let mut next_token_id = 0;
+
+        let (_, _) = token_map.splice(
+            &[],
+            vec![Token::new(
+                post_inc(&mut next_token_id),
+                buffer.read(cx).snapshot(cx).anchor_at(0, Bias::Left)
+                    ..buffer.read(cx).snapshot(cx).anchor_at(11, Bias::Right),
+                HighlightStyle::color(Hsla::green()),
+                "abc\ndef\nghi",
+            )],
+        );
+        let (token_snapshot, _) = token_map.splice(
+            &[],
+            vec![Token::new(
+                post_inc(&mut next_token_id),
+                buffer.read(cx).snapshot(cx).anchor_at(0, Bias::Left)
+                    ..buffer.read(cx).snapshot(cx).anchor_at(3, Bias::Right),
+                HighlightStyle::color(Hsla::green()),
+                "ABC",
+            )],
+        );
+
+        let actual_text = token_snapshot.text();
+        assert_eq!(actual_text, "ABC\ndef\nghi");
         assert_eq!(
             token_snapshot
                 .row_infos(0)
