@@ -604,16 +604,21 @@ impl From<Rgba> for Hsla {
     }
 }
 
+impl Serialize for Hsla {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        Rgba::from(*self).serialize(serializer)
+    }
+}
+
 impl<'de> Deserialize<'de> for Hsla {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        // First, deserialize it into Rgba
-        let rgba = Rgba::deserialize(deserializer)?;
-
-        // Then, use the From<Rgba> for Hsla implementation to convert it
-        Ok(Hsla::from(rgba))
+        Ok(Rgba::deserialize(deserializer)?.into())
     }
 }
 

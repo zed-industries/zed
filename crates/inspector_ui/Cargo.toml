@@ -17,3 +17,7 @@ gpui.workspace = true
 util.workspace = true
 ui.workspace = true
 zed_actions.workspace = true
+editor.workspace = true
+serde_json.workspace = true
+language.workspace = true
+serde_json_lenient.workspace = true

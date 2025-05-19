@@ -18,9 +18,9 @@
 use crate::{
     AbsoluteLength, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent,
     DispatchPhase, EdgesRefinement, Element, ElementId, Entity, FocusHandle, Global,
-    GlobalElementId, Hitbox, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext,
+    GlobalElementId, Hitbox, HitboxId, Hsla, InspectorElementId, IntoElement, IsZero, KeyContext,
     KeyDownEvent, KeyUpEvent, LayoutId, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollWheelEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, Rgba, ScrollWheelEvent,
     SharedString, Size, Style, StyleRefinement, Styled, Task, TooltipId, Visibility, Window, fill,
     point, px, size,
 };
@@ -1198,6 +1198,8 @@ pub struct DivFrameState {
 pub struct DivInspectorState {
     /// todo!("document")
     pub border_widths: EdgesRefinement<AbsoluteLength>,
+    /// todo!("document")
+    pub border_color: Option<Hsla>,
 }
 
 impl Styled for Div {
@@ -1453,10 +1455,14 @@ impl Interactivity {
                 // on demand?
                 let inspector_state = inspector_state.get_or_insert_with(|| DivInspectorState {
                     border_widths: self.base_style.border_widths.clone(),
+                    border_color: self.base_style.border_color.clone(),
                 });
                 self.base_style
                     .border_widths
                     .refine(&inspector_state.border_widths);
+                if let Some(border_color) = inspector_state.border_color {
+                    self.base_style.border_color = Some(border_color);
+                }
 
                 window.with_optional_element_state::<InteractiveElementState, _>(
                     global_id,

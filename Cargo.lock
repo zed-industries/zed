@@ -8120,7 +8120,11 @@ name = "inspector_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "editor",
  "gpui",
+ "language",
+ "serde_json",
+ "serde_json_lenient",
  "ui",
  "util",
  "zed_actions",
