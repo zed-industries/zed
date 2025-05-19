@@ -703,6 +703,7 @@ impl Session {
         dap_store: WeakEntity<DapStore>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        dbg!("booting session");
         let (message_tx, mut message_rx) = futures::channel::mpsc::unbounded();
         let (initialized_tx, initialized_rx) = futures::channel::oneshot::channel();
 
@@ -797,7 +798,7 @@ impl Session {
 
     pub fn binary(&self) -> &DebugAdapterBinary {
         let Mode::Running(local_mode) = &self.mode else {
-            panic!("Session is not local");
+            panic!("Session is not running");
         };
         &local_mode.binary
     }

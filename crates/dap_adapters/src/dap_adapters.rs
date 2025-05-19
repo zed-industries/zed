@@ -12,7 +12,7 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use codelldb::CodeLldbDebugAdapter;
 use dap::{
-    DapRegistry, FakeAdapter,
+    DapRegistry,
     adapters::{
         self, AdapterVersion, DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName,
         GithubRepo,
@@ -41,7 +41,7 @@ pub fn init(cx: &mut App) {
 
         #[cfg(any(test, feature = "test-support"))]
         {
-            registry.add_adapter(Arc::from(FakeAdapter {}));
+            registry.add_adapter(Arc::from(dap::FakeAdapter {}));
         }
 
         registry.add_inline_value_provider("Rust".to_string(), Arc::from(RustInlineValueProvider));

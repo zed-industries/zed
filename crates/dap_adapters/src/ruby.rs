@@ -36,7 +36,7 @@ impl DebugAdapter for RubyDebugAdapter {
     async fn get_binary(
         &self,
         delegate: &dyn DapDelegate,
-        definition: &DebugTaskDefinition,
+        definition: DebugTaskDefinition,
         _user_installed_path: Option<PathBuf>,
         _cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {

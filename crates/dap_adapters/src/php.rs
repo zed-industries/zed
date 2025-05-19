@@ -132,7 +132,7 @@ impl DebugAdapter for PhpDebugAdapter {
     async fn get_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugTaskDefinition,
+        config: DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {

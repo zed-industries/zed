@@ -2969,6 +2969,7 @@ dependencies = [
  "context_server",
  "ctor",
  "dap",
+ "dap_adapters",
  "dashmap 6.1.0",
  "debugger_ui",
  "derive_more",

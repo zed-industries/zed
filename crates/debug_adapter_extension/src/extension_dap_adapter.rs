@@ -35,7 +35,7 @@ impl DebugAdapter for ExtensionDapAdapter {
     async fn get_binary(
         &self,
         _: &dyn DapDelegate,
-        config: &DebugTaskDefinition,
+        config: DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         _cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {

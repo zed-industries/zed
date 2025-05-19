@@ -99,7 +99,6 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         &self,
         config: &serde_json::Value,
     ) -> Result<StartDebuggingRequestArgumentsRequest> {
-        dbg!("Getting config");
         let map = config
             .as_object()
             .ok_or_else(|| anyhow!("Config isn't an object"))?;
@@ -422,7 +421,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
     async fn get_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugTaskDefinition,
+        config: DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
@@ -466,7 +465,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                 "--settings".into(),
                 json!({"sourceLanguages": ["cpp", "rust"]}).to_string(),
             ],
-            request_args: self.request_args(config)?,
+            request_args: self.request_args(&config)?,
             envs: HashMap::default(),
             connection: None,
         })

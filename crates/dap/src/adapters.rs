@@ -359,7 +359,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
     async fn get_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugTaskDefinition,
+        config: DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary>;
@@ -371,10 +371,21 @@ pub trait DebugAdapter: 'static + Send + Sync {
 
     fn validate_config(
         &self,
-        _config: &serde_json::Value,
+        config: &serde_json::Value,
     ) -> Result<StartDebuggingRequestArgumentsRequest> {
-        dbg!("In default validate config");
-        bail!("Not yet implemented for {}", self.name())
+        let map = config
+            .as_object()
+            .ok_or_else(|| anyhow!("Config isn't an object"))?;
+
+        let request_variant = map["request"]
+            .as_str()
+            .ok_or_else(|| anyhow!("request is not valid"))?;
+
+        match request_variant {
+            "launch" => Ok(StartDebuggingRequestArgumentsRequest::Launch),
+            "attach" => Ok(StartDebuggingRequestArgumentsRequest::Attach),
+            _ => Err(anyhow!("request must be either 'launch' or 'attach'")),
+        }
     }
 
     fn dap_schema(&self) -> serde_json::Value {
@@ -465,7 +476,7 @@ impl DebugAdapter for FakeAdapter {
     async fn get_binary(
         &self,
         _: &dyn DapDelegate,
-        config: &DebugTaskDefinition,
+        config: DebugTaskDefinition,
         _: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
@@ -475,7 +486,7 @@ impl DebugAdapter for FakeAdapter {
             connection: None,
             envs: HashMap::default(),
             cwd: None,
-            request_args: self.request_args(config),
+            request_args: self.request_args(&config),
         })
     }
 }
