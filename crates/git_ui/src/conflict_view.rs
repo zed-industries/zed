@@ -485,7 +485,7 @@ pub(crate) fn resolve_conflict(
     window.spawn(cx, async move |cx| {
         let Some((workspace, project, multibuffer, buffer)) = editor
             .update(cx, |editor, cx| {
-                let workspace = editor.workspace();
+                let workspace = editor.workspace()?;
                 let project = editor.project.clone()?;
                 let multibuffer = editor.buffer().clone();
                 let buffer_id = resolved_conflict.ours.end.buffer_id?;
@@ -539,7 +539,6 @@ pub(crate) fn resolve_conflict(
         };
         if save.await.log_err().is_none() {
             let open_path = maybe!({
-                let workspace = workspace?;
                 let path = buffer
                     .read_with(cx, |buffer, cx| buffer.project_path(cx))
                     .ok()

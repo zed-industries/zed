@@ -148,6 +148,11 @@ impl ProjectDiff {
             });
             diff_display_editor
         });
+        workspace.update(cx, |workspace, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.added_to_workspace(workspace, window, cx);
+            })
+        });
         cx.subscribe_in(&editor, window, Self::handle_editor_event)
             .detach();
 
