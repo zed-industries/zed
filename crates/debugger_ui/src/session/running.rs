@@ -71,7 +71,7 @@ pub struct RunningState {
     console: Entity<Console>,
     breakpoint_list: Entity<BreakpointList>,
     panes: PaneGroup,
-    pub(crate) active_pane: Option<Entity<Pane>>,
+    active_pane: Option<Entity<Pane>>,
     pane_close_subscriptions: HashMap<EntityId, Subscription>,
     dock_axis: Axis,
     _schedule_serialize: Option<Task<()>>,
@@ -80,6 +80,10 @@ pub struct RunningState {
 impl RunningState {
     pub(crate) fn thread_id(&self) -> Option<ThreadId> {
         self.thread_id
+    }
+
+    pub(crate) fn active_pane(&self) -> Option<&Entity<Pane>> {
+        self.active_pane.as_ref()
     }
 }
 

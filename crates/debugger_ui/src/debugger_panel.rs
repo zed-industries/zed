@@ -87,8 +87,8 @@ impl DebugPanel {
                         .read(cx)
                         .running_state()
                         .read(cx)
-                        .active_pane
-                        .clone()
+                        .active_pane()
+                        .cloned()
                     else {
                         return;
                     };
