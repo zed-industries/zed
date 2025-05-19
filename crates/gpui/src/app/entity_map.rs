@@ -529,11 +529,17 @@ impl AnyWeakEntity {
         let ref_counts = ref_counts.read();
         let ref_count = ref_counts.counts.get(self.entity_id)?;
 
-        // entity_id is in dropped_entity_ids
-        if ref_count.load(SeqCst) == 0 {
-            return None;
+        let mut loaded = ref_count.load(SeqCst);
+        loop {
+            if loaded == 0 {
+                // entity_id is in dropped_entity_ids
+                return None;
+            }
+            match ref_count.compare_exchange_weak(loaded, loaded + 1, SeqCst, SeqCst) {
+                Ok(_) => break,
+                Err(actual) => loaded = actual,
+            }
         }
-        ref_count.fetch_add(1, SeqCst);
         drop(ref_counts);
 
         Some(AnyEntity {

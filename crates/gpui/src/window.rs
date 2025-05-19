@@ -261,15 +261,20 @@ impl FocusHandle {
     pub(crate) fn for_id(id: FocusId, handles: &Arc<FocusMap>) -> Option<Self> {
         let lock = handles.read();
         let ref_count = lock.get(id)?;
-        if ref_count.load(SeqCst) == 0 {
-            None
-        } else {
-            ref_count.fetch_add(1, SeqCst);
-            Some(Self {
-                id,
-                handles: handles.clone(),
-            })
+        let mut loaded = ref_count.load(SeqCst);
+        loop {
+            if loaded == 0 {
+                return None;
+            }
+            match ref_count.compare_exchange_weak(loaded, loaded + 1, SeqCst, SeqCst) {
+                Ok(_) => break,
+                Err(actual) => loaded = actual,
+            }
         }
+        Some(Self {
+            id,
+            handles: handles.clone(),
+        })
     }
 
     /// Converts this focus handle into a weak variant, which does not prevent it from being released.
