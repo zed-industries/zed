@@ -7,7 +7,7 @@ use anyhow::{Context as _, anyhow};
 use chrono::Utc;
 use collections::HashMap;
 use serde::{Deserialize, Serialize};
-use stripe::{PriceId, SubscriptionStatus};
+use stripe::{CreateCustomer, Customer, CustomerId, PriceId, SubscriptionStatus};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -120,6 +120,47 @@ impl StripeBilling {
                 None
             }
         })
+    }
+
+    /// Returns the Stripe customer associated with the provided email address, or creates a new customer, if one does
+    /// not already exist.
+    ///
+    /// Always returns a new Stripe customer if the email address is `None`.
+    pub async fn find_or_create_customer_by_email(
+        &self,
+        email_address: Option<&str>,
+    ) -> Result<CustomerId> {
+        let existing_customer = if let Some(email) = email_address {
+            let customers = Customer::list(
+                &self.client,
+                &stripe::ListCustomers {
+                    email: Some(email),
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+            customers.data.first().cloned()
+        } else {
+            None
+        };
+
+        let customer_id = if let Some(existing_customer) = existing_customer {
+            existing_customer.id
+        } else {
+            let customer = Customer::create(
+                &self.client,
+                CreateCustomer {
+                    email: email_address.as_deref(),
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+            customer.id
+        };
+
+        Ok(customer_id)
     }
 
     pub async fn subscribe_to_price(
