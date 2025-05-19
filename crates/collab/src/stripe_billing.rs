@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
 use crate::Result;
+use crate::db::billing_subscription::SubscriptionKind;
 use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
 use anyhow::{Context as _, anyhow};
 use chrono::Utc;
 use collections::HashMap;
 use serde::{Deserialize, Serialize};
-use stripe::PriceId;
+use stripe::{PriceId, SubscriptionStatus};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -95,6 +96,30 @@ impl StripeBilling {
             .get(lookup_key)
             .cloned()
             .ok_or_else(|| crate::Error::Internal(anyhow!("no price found for {lookup_key:?}")))
+    }
+
+    pub async fn determine_subscription_kind(
+        &self,
+        subscription: &stripe::Subscription,
+    ) -> Option<SubscriptionKind> {
+        let zed_pro_price_id = self.zed_pro_price_id().await.ok()?;
+        let zed_free_price_id = self.zed_free_price_id().await.ok()?;
+
+        subscription.items.data.iter().find_map(|item| {
+            let price = item.price.as_ref()?;
+
+            if price.id == zed_pro_price_id {
+                Some(if subscription.status == SubscriptionStatus::Trialing {
+                    SubscriptionKind::ZedProTrial
+                } else {
+                    SubscriptionKind::ZedPro
+                })
+            } else if price.id == zed_free_price_id {
+                Some(SubscriptionKind::ZedFree)
+            } else {
+                None
+            }
+        })
     }
 
     pub async fn subscribe_to_price(

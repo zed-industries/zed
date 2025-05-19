@@ -991,29 +991,13 @@ async fn handle_customer_subscription_event(
 
     log::info!("handling Stripe {} event: {}", event.type_, event.id);
 
-    let subscription_kind = maybe!(async {
-        let stripe_billing = app.stripe_billing.clone()?;
-
-        let zed_pro_price_id = stripe_billing.zed_pro_price_id().await.ok()?;
-        let zed_free_price_id = stripe_billing.zed_free_price_id().await.ok()?;
-
-        subscription.items.data.iter().find_map(|item| {
-            let price = item.price.as_ref()?;
-
-            if price.id == zed_pro_price_id {
-                Some(if subscription.status == SubscriptionStatus::Trialing {
-                    SubscriptionKind::ZedProTrial
-                } else {
-                    SubscriptionKind::ZedPro
-                })
-            } else if price.id == zed_free_price_id {
-                Some(SubscriptionKind::ZedFree)
-            } else {
-                None
-            }
-        })
-    })
-    .await;
+    let subscription_kind = if let Some(stripe_billing) = &app.stripe_billing {
+        stripe_billing
+            .determine_subscription_kind(&subscription)
+            .await
+    } else {
+        None
+    };
 
     let billing_customer =
         find_or_create_billing_customer(app, stripe_client, subscription.customer)
