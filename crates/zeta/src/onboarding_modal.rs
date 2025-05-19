@@ -384,47 +384,29 @@ impl Render for ZedPredictModal {
             } else {
                 (IconName::ChevronDown, IconName::ChevronUp)
             };
+            let plan = plan.unwrap_or(proto::Plan::Free);
 
             base.child(Label::new(copy).color(Color::Muted))
-                .child(h_flex().map(|parent| {
-                    if let Some(plan) = plan {
-                        parent.child(
-                            Checkbox::new("plan", ToggleState::Selected)
-                                .fill()
-                                .disabled(true)
-                                .label(format!(
-                                    "You get {} edit predictions through your {}.",
-                                    if plan == proto::Plan::Free {
-                                        "2,000"
-                                    } else {
-                                        "unlimited"
-                                    },
-                                    match plan {
-                                        proto::Plan::Free => "Zed Free plan",
-                                        proto::Plan::ZedPro => "Zed Pro plan",
-                                        proto::Plan::ZedProTrial => "Zed Pro trial",
-                                    }
-                                )),
-                        )
-                    } else {
-                        parent
-                            .child(
-                                Checkbox::new("plan-required", ToggleState::Unselected)
-                                    .fill()
-                                    .disabled(true)
-                                    .label("To get started with edit prediction"),
-                            )
-                            .child(
-                                Button::new("subscribe", "choose a plan")
-                                    .icon(IconName::ArrowUpRight)
-                                    .icon_size(IconSize::Indicator)
-                                    .icon_color(Color::Muted)
-                                    .on_click(|_event, _window, cx| {
-                                        cx.open_url(&zed_urls::account_url(cx));
-                                    }),
-                            )
-                    }
-                }))
+                .child(
+                    h_flex().child(
+                        Checkbox::new("plan", ToggleState::Selected)
+                            .fill()
+                            .disabled(true)
+                            .label(format!(
+                                "You get {} edit predictions through your {}.",
+                                if plan == proto::Plan::Free {
+                                    "2,000"
+                                } else {
+                                    "unlimited"
+                                },
+                                match plan {
+                                    proto::Plan::Free => "Zed Free plan",
+                                    proto::Plan::ZedPro => "Zed Pro plan",
+                                    proto::Plan::ZedProTrial => "Zed Pro trial",
+                                }
+                            )),
+                    ),
+                )
                 .child(
                     h_flex()
                         .child(
