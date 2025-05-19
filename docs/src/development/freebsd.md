@@ -1,4 +1,4 @@
-# Building Zed for Linux
+# Building Zed for FreeBSD
 
 ## Repository
 
@@ -15,33 +15,6 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
   ```
 
   If you prefer to install the system libraries manually, you can find the list of required packages in the `script/linux` file.
-
----
-
-# Building Zed for Linux
-
-## Repository
-
-Clone down the [Zed repository](https://github.com/zed-industries/zed).
-
-## Dependencies
-
-* Install [rustup](https://www.rust-lang.org/tools/install)
-
-* Install the necessary system libraries:
-
-  ```sh
-  script/linux
-  ```
-
-  If you prefer to install the system libraries manually, you can find the list of required packages in the `script/linux` file.
-
----
-
-**Environment:**
-
-* FreeBSD 14.2-RELEASE
-* Architecture: amd64 (x86\_64)
 
 ---
 
