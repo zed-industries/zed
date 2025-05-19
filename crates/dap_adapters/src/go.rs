@@ -1,5 +1,6 @@
 use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
-use gpui::AsyncApp;
+use gpui::{AsyncApp, SharedString};
+use language::LanguageName;
 use std::{collections::HashMap, ffi::OsStr, path::PathBuf};
 
 use crate::*;
@@ -19,7 +20,8 @@ impl GoDebugAdapter {
             dap::DebugRequest::Launch(launch_config) => json!({
                 "program": launch_config.program,
                 "cwd": launch_config.cwd,
-                "args": launch_config.args
+                "args": launch_config.args,
+                "env": launch_config.env_json()
             }),
         };
 
@@ -40,6 +42,10 @@ impl GoDebugAdapter {
 impl DebugAdapter for GoDebugAdapter {
     fn name(&self) -> DebugAdapterName {
         DebugAdapterName(Self::ADAPTER_NAME.into())
+    }
+
+    fn adapter_language_name(&self) -> Option<LanguageName> {
+        Some(SharedString::new_static("Go").into())
     }
 
     async fn get_binary(

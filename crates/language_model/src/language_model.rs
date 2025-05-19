@@ -243,6 +243,9 @@ pub trait LanguageModel: Send + Sync {
         LanguageModelAvailability::Public
     }
 
+    /// Whether this model supports images
+    fn supports_images(&self) -> bool;
+
     /// Whether this model supports tools.
     fn supports_tools(&self) -> bool;
 

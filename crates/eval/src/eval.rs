@@ -6,7 +6,7 @@ mod ids;
 mod instance;
 mod tool_metrics;
 
-use assertions::display_error_row;
+use assertions::{AssertionsReport, display_error_row};
 use instance::{ExampleInstance, JudgeOutput, RunOutput, run_git};
 pub(crate) use tool_metrics::*;
 
@@ -467,11 +467,12 @@ pub fn find_model(
     match matching_models.as_slice() {
         [model] => Ok(model.clone()),
         [] => Err(anyhow!(
-            "No language model with ID {} was available. Available models: {}",
+            "No language model with ID {}/{} was available. Available models: {}",
+            provider_id,
             model_id,
             model_registry
                 .available_models(cx)
-                .map(|model| model.id().0.clone())
+                .map(|model| format!("{}/{}", model.provider_id().0, model.id().0))
                 .collect::<Vec<_>>()
                 .join(", ")
         )),
@@ -581,12 +582,15 @@ fn print_report(
                 Err(err) => {
                     display_error_row(&mut table_rows, example.repetition, err.to_string())?;
                     error_count += 1;
+                    programmatic_scores.push(0.0);
+                    diff_scores.push(0.0);
+                    thread_scores.push(0.0);
                 }
                 Ok((run_output, judge_output)) => {
                     cumulative_tool_metrics.merge(&run_output.tool_metrics);
                     example_cumulative_tool_metrics.merge(&run_output.tool_metrics);
 
-                    if !run_output.programmatic_assertions.total_count() > 0 {
+                    if run_output.programmatic_assertions.total_count() > 0 {
                         for assertion in &run_output.programmatic_assertions.ran {
                             assertions::display_table_row(
                                 &mut table_rows,
@@ -626,6 +630,8 @@ fn print_report(
             }
         }
 
+        let mut all_asserts = Vec::new();
+
         if !table_rows.is_empty() {
             assertions::print_table_header();
             print!("{}", table_rows);
@@ -634,33 +640,29 @@ fn print_report(
 
             for (example, result) in results.iter() {
                 if let Ok((run_output, judge_output)) = result {
+                    let asserts = [
+                        run_output.programmatic_assertions.clone(),
+                        judge_output.diff.clone(),
+                        judge_output.thread.clone(),
+                    ];
+                    all_asserts.extend_from_slice(&asserts);
                     assertions::print_table_round_summary(
                         &example.repetition.to_string(),
-                        [
-                            &run_output.programmatic_assertions,
-                            &judge_output.diff,
-                            &judge_output.thread,
-                        ]
-                        .into_iter(),
+                        asserts.iter(),
+                    )
+                } else if let Err(err) = result {
+                    let assert = AssertionsReport::error(err.to_string());
+                    all_asserts.push(assert.clone());
+                    assertions::print_table_round_summary(
+                        &example.repetition.to_string(),
+                        [assert].iter(),
                     )
                 }
             }
 
             assertions::print_table_divider();
 
-            assertions::print_table_round_summary(
-                "avg",
-                results.iter().flat_map(|(_, result)| {
-                    result.iter().flat_map(|(run_output, judge_output)| {
-                        [
-                            &run_output.programmatic_assertions,
-                            &judge_output.diff,
-                            &judge_output.thread,
-                        ]
-                        .into_iter()
-                    })
-                }),
-            );
+            assertions::print_table_round_summary("avg", all_asserts.iter());
 
             assertions::print_table_footer();
         }
@@ -711,9 +713,9 @@ fn print_report(
         .values()
         .flat_map(|results| {
             results.iter().map(|(example, _)| {
-                let absolute_path = example.run_directory.join("last.messages.json");
-                pathdiff::diff_paths(&absolute_path, run_dir)
-                    .unwrap_or_else(|| absolute_path.clone())
+                let absolute_path = run_dir.join(example.run_directory.join("last.messages.json"));
+                let cwd = std::env::current_dir().expect("Can't get current dir");
+                pathdiff::diff_paths(&absolute_path, cwd).unwrap_or_else(|| absolute_path.clone())
             })
         })
         .collect::<Vec<_>>();

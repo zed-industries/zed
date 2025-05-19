@@ -2788,6 +2788,7 @@ mod tests {
         let (_editor, search_bar, cx) = init_test(cx);
         update_search_settings(
             SearchSettings {
+                button: true,
                 whole_word: false,
                 case_sensitive: false,
                 include_ignored: false,
@@ -2853,6 +2854,7 @@ mod tests {
 
         update_search_settings(
             SearchSettings {
+                button: true,
                 whole_word: false,
                 case_sensitive: true,
                 include_ignored: false,

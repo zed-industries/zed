@@ -278,7 +278,7 @@ pub(crate) fn deserialize_pane_layout(
                         cx,
                     )),
                     DebuggerPaneItem::Console => Box::new(SubView::new(
-                        pane.focus_handle(cx),
+                        console.focus_handle(cx),
                         console.clone().into(),
                         DebuggerPaneItem::Console,
                         Some(Box::new({
@@ -292,7 +292,7 @@ pub(crate) fn deserialize_pane_layout(
                         cx,
                     )),
                     DebuggerPaneItem::Terminal => Box::new(SubView::new(
-                        pane.focus_handle(cx),
+                        terminal.focus_handle(cx),
                         terminal.clone().into(),
                         DebuggerPaneItem::Terminal,
                         None,

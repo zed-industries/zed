@@ -338,12 +338,26 @@ impl InlineAssistant {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let (snapshot, initial_selections) = editor.update(cx, |editor, cx| {
-            (
-                editor.snapshot(window, cx),
-                editor.selections.all::<Point>(cx),
-            )
+        let (snapshot, initial_selections, newest_selection) = editor.update(cx, |editor, cx| {
+            let selections = editor.selections.all::<Point>(cx);
+            let newest_selection = editor.selections.newest::<Point>(cx);
+            (editor.snapshot(window, cx), selections, newest_selection)
         });
+
+        // Check if there is already an inline assistant that contains the
+        // newest selection, if there is, focus it
+        if let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) {
+            for assist_id in &editor_assists.assist_ids {
+                let assist = &self.assists[assist_id];
+                let range = assist.range.to_point(&snapshot.buffer_snapshot);
+                if range.start.row <= newest_selection.start.row
+                    && newest_selection.end.row <= range.end.row
+                {
+                    self.focus_assist(*assist_id, window, cx);
+                    return;
+                }
+            }
+        }
 
         let mut selections = Vec::<Selection<Point>>::new();
         let mut newest_selection = None;

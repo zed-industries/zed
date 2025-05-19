@@ -21,8 +21,8 @@ use project::{
 use ui::{
     App, Clickable, Color, Context, Div, Icon, IconButton, IconName, Indicator, InteractiveElement,
     IntoElement, Label, LabelCommon, LabelSize, ListItem, ParentElement, Render, RenderOnce,
-    Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement, Styled, Window, div,
-    h_flex, px, v_flex,
+    Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement, Styled, Tooltip, Window,
+    div, h_flex, px, v_flex,
 };
 use util::{ResultExt, maybe};
 use workspace::Workspace;
@@ -259,6 +259,11 @@ impl LineBreakpoint {
                 dir, name, line
             )))
             .cursor_pointer()
+            .tooltip(Tooltip::text(if breakpoint.state.is_enabled() {
+                "Disable Breakpoint"
+            } else {
+                "Enable Breakpoint"
+            }))
             .on_click({
                 let weak = weak.clone();
                 let path = path.clone();
@@ -290,6 +295,9 @@ impl LineBreakpoint {
         )))
         .start_slot(indicator)
         .rounded()
+        .on_secondary_mouse_down(|_, _, cx| {
+            cx.stop_propagation();
+        })
         .end_hover_slot(
             IconButton::new(
                 SharedString::from(format!(
@@ -423,12 +431,20 @@ impl ExceptionBreakpoint {
             self.id
         )))
         .rounded()
+        .on_secondary_mouse_down(|_, _, cx| {
+            cx.stop_propagation();
+        })
         .start_slot(
             div()
                 .id(SharedString::from(format!(
                     "exception-breakpoint-ui-item-{}-click-handler",
                     self.id
                 )))
+                .tooltip(Tooltip::text(if self.is_enabled {
+                    "Disable Exception Breakpoint"
+                } else {
+                    "Enable Exception Breakpoint"
+                }))
                 .on_click(move |_, _, cx| {
                     list.update(cx, |this, cx| {
                         this.session.update(cx, |this, cx| {

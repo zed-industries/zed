@@ -44,6 +44,7 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("Hide Others", super::HideOthers),
                 #[cfg(target_os = "macos")]
                 MenuItem::action("Show All", super::ShowAll),
+                MenuItem::separator(),
                 MenuItem::action("Quit", Quit),
             ],
         },
@@ -69,7 +70,12 @@ pub fn app_menus() -> Vec<Menu> {
                         create_new_window: true,
                     },
                 ),
-                MenuItem::action("Open Remote...", zed_actions::OpenRemote),
+                MenuItem::action(
+                    "Open Remote...",
+                    zed_actions::OpenRemote {
+                        from_existing_connection: false,
+                    },
+                ),
                 MenuItem::separator(),
                 MenuItem::action("Add Folder to Project…", workspace::AddFolderToProject),
                 MenuItem::separator(),

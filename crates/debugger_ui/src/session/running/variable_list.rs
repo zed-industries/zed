@@ -302,6 +302,7 @@ impl VariableList {
                 self.selected_stack_frame_id = Some(*stack_frame_id);
                 cx.notify();
             }
+            StackFrameListEvent::BuiltEntries => {}
         }
     }
 
