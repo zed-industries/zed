@@ -263,6 +263,24 @@ impl StripeBilling {
         Ok(session.url.context("no checkout session URL")?)
     }
 
+    pub async fn subscribe_to_zed_free(
+        &self,
+        customer_id: stripe::CustomerId,
+    ) -> Result<stripe::Subscription> {
+        let zed_free_price_id = self.zed_free_price_id().await?;
+
+        let mut params = stripe::CreateSubscription::new(customer_id);
+        params.items = Some(vec![stripe::CreateSubscriptionItems {
+            price: Some(zed_free_price_id.to_string()),
+            quantity: Some(1),
+            ..Default::default()
+        }]);
+
+        let subscription = stripe::Subscription::create(&self.client, params).await?;
+
+        Ok(subscription)
+    }
+
     pub async fn checkout_with_zed_free(
         &self,
         customer_id: stripe::CustomerId,
