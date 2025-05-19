@@ -236,7 +236,9 @@ impl Database {
                 .filter(
                     billing_customer::Column::UserId.eq(user_id).and(
                         billing_subscription::Column::StripeSubscriptionStatus
-                            .eq(StripeSubscriptionStatus::Active),
+                            .eq(StripeSubscriptionStatus::Active)
+                            .or(billing_subscription::Column::StripeSubscriptionStatus
+                                .eq(StripeSubscriptionStatus::Trialing)),
                     ),
                 )
                 .count(&*tx)

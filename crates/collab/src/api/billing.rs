@@ -280,7 +280,7 @@ async fn list_billing_subscriptions(
     }))
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, PartialEq, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum ProductCode {
     ZedPro,
@@ -325,11 +325,16 @@ async fn create_billing_subscription(
         ))?
     };
 
-    if app.db.has_active_billing_subscription(user.id).await? {
-        return Err(Error::http(
-            StatusCode::CONFLICT,
-            "user already has an active subscription".into(),
-        ));
+    if let Some(existing_subscription) = app.db.get_active_billing_subscription(user.id).await? {
+        let is_checkout_allowed = body.product == ProductCode::ZedProTrial
+            && existing_subscription.kind == Some(SubscriptionKind::ZedFree);
+
+        if !is_checkout_allowed {
+            return Err(Error::http(
+                StatusCode::CONFLICT,
+                "user already has an active subscription".into(),
+            ));
+        }
     }
 
     let existing_billing_customer = app.db.get_billing_customer_by_user_id(user.id).await?;
@@ -1136,31 +1141,51 @@ async fn sync_subscription(
             )
             .await?;
     } else {
-        // If the user already has an active billing subscription, ignore the
-        // event and return an `Ok` to signal that it was processed
-        // successfully.
-        //
-        // There is the possibility that this could cause us to not create a
-        // subscription in the following scenario:
-        //
-        //   1. User has an active subscription A
-        //   2. User cancels subscription A
-        //   3. User creates a new subscription B
-        //   4. We process the new subscription B before the cancellation of subscription A
-        //   5. User ends up with no subscriptions
-        //
-        // In theory this situation shouldn't arise as we try to process the events in the order they occur.
-        if app
+        if let Some(existing_subscription) = app
             .db
-            .has_active_billing_subscription(billing_customer.user_id)
+            .get_active_billing_subscription(billing_customer.user_id)
             .await?
         {
-            log::info!(
-                "user {user_id} already has an active subscription, skipping creation of subscription {subscription_id}",
-                user_id = billing_customer.user_id,
-                subscription_id = subscription.id
-            );
-            return Ok(billing_customer);
+            if existing_subscription.kind == Some(SubscriptionKind::ZedFree)
+                && subscription_kind == Some(SubscriptionKind::ZedProTrial)
+            {
+                let stripe_subscription_id = existing_subscription
+                    .stripe_subscription_id
+                    .parse::<stripe::SubscriptionId>()
+                    .context("failed to parse Stripe subscription ID from database")?;
+
+                Subscription::cancel(
+                    &stripe_client,
+                    &stripe_subscription_id,
+                    stripe::CancelSubscription {
+                        invoice_now: None,
+                        ..Default::default()
+                    },
+                )
+                .await?;
+            } else {
+                // If the user already has an active billing subscription, ignore the
+                // event and return an `Ok` to signal that it was processed
+                // successfully.
+                //
+                // There is the possibility that this could cause us to not create a
+                // subscription in the following scenario:
+                //
+                //   1. User has an active subscription A
+                //   2. User cancels subscription A
+                //   3. User creates a new subscription B
+                //   4. We process the new subscription B before the cancellation of subscription A
+                //   5. User ends up with no subscriptions
+                //
+                // In theory this situation shouldn't arise as we try to process the events in the order they occur.
+
+                log::info!(
+                    "user {user_id} already has an active subscription, skipping creation of subscription {subscription_id}",
+                    user_id = billing_customer.user_id,
+                    subscription_id = subscription.id
+                );
+                return Ok(billing_customer);
+            }
         }
 
         app.db
