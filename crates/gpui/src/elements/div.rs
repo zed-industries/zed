@@ -1749,7 +1749,7 @@ impl Interactivity {
         }
 
         if window.inspected_element_id(cx) == Some(&inspector_id) || hitbox.is_top_hit(window) {
-            window.paint_quad(fill(hitbox.bounds, crate::rgba(0xff00ff80)));
+            window.paint_quad(fill(hitbox.bounds, crate::rgba(0x61afef4d)));
         }
 
         window.on_mouse_event({

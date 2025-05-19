@@ -7,6 +7,7 @@ use crate::{
 };
 use std::{
     any::{Any, TypeId},
+    fmt::{self, Display},
     panic,
 };
 
@@ -33,6 +34,28 @@ impl Clone for InspectorElementId {
 #[cfg(not(debug_assertions))]
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct InspectorElementId;
+
+impl Display for InspectorElementId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        #[cfg(debug_assertions)]
+        {
+            for (i, element_id) in self.global_id.0.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ".")?;
+                }
+                write!(f, "{}", element_id)?;
+            }
+            write!(f, ":{}[{}]", self.source, self.instance_id)?;
+        }
+
+        #[cfg(not(debug_assertions))]
+        {
+            unimplemented!()
+        }
+
+        Ok(())
+    }
+}
 
 pub(crate) struct Inspector {
     active_element_id: Option<InspectorElementId>,
