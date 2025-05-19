@@ -515,7 +515,9 @@ impl gpui::Render for DebugTerminal {
 }
 impl Focusable for DebugTerminal {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
+        dbg!("focus terminal");
         if let Some(terminal) = self.terminal.as_ref() {
+            dbg!("real terminal");
             return terminal.focus_handle(cx);
         } else {
             self.focus_handle.clone()
@@ -1212,6 +1214,7 @@ impl RunningState {
             .and_then(|pane| self.panes.find_pane_in_direction(pane, direction, cx))
         {
             pane.update(cx, |pane, cx| {
+                dbg!("pane focus active item");
                 pane.focus_active_item(window, cx);
             })
         } else {
