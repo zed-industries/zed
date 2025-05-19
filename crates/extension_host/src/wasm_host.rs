@@ -22,15 +22,17 @@ use gpui::{App, AsyncApp, BackgroundExecutor, Task};
 use http_client::HttpClient;
 use language::LanguageName;
 use lsp::LanguageServerName;
+use moka::sync::Cache;
 use node_runtime::NodeRuntime;
 use release_channel::ReleaseChannel;
 use semantic_version::SemanticVersion;
+use std::borrow::Cow;
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
 use wasmtime::{
-    Engine, Store,
+    CacheStore, Engine, Store,
     component::{Component, ResourceTable},
 };
 use wasmtime_wasi::{self as wasi, WasiView};
@@ -416,6 +418,9 @@ fn wasm_engine() -> wasmtime::Engine {
             let mut config = wasmtime::Config::new();
             config.wasm_component_model(true);
             config.async_support(true);
+            config
+                .enable_incremental_compilation(Arc::new(IncrementalCompilationCache::new()))
+                .unwrap();
             wasmtime::Engine::new(&config).unwrap()
         })
         .clone()
@@ -663,5 +668,36 @@ impl wasi::WasiView for WasmState {
 
     fn ctx(&mut self) -> &mut wasi::WasiCtx {
         &mut self.ctx
+    }
+}
+
+/// Wrapper around a mini-moka bounded cache for storing incremental compilation artifacts.
+/// Since wasm modules have many similar elements, this can save us a lot of work at the
+/// cost of a small memory footprint. However, we don't want this to be unbounded, so we use
+/// a LFU/LRU cache to evict less used cache entries.
+#[derive(Debug)]
+struct IncrementalCompilationCache {
+    cache: Cache<Vec<u8>, Vec<u8>>,
+}
+
+impl IncrementalCompilationCache {
+    fn new() -> Self {
+        let cache = Cache::builder()
+            // Cap this at 32 MB for now
+            .max_capacity(32 * 1024 * 1024)
+            .weigher(|_, v: &Vec<u8>| v.len().try_into().unwrap_or(u32::MAX))
+            .build();
+        Self { cache }
+    }
+}
+
+impl CacheStore for IncrementalCompilationCache {
+    fn get(&self, key: &[u8]) -> Option<Cow<[u8]>> {
+        self.cache.get(key).map(|v| v.into())
+    }
+
+    fn insert(&self, key: &[u8], value: Vec<u8>) -> bool {
+        self.cache.insert(key.to_vec(), value);
+        true
     }
 }
