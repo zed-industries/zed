@@ -971,7 +971,7 @@ async fn poll_stripe_events(
                 .create_processed_stripe_event(&processed_event_params)
                 .await?;
 
-            return Ok(());
+            continue;
         }
 
         let process_result = match event.type_ {
