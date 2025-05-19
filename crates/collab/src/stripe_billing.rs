@@ -151,7 +151,7 @@ impl StripeBilling {
             let customer = Customer::create(
                 &self.client,
                 CreateCustomer {
-                    email: email_address.as_deref(),
+                    email: email_address,
                     ..Default::default()
                 },
             )
