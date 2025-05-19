@@ -1,16 +1,15 @@
-use dap::adapters::DebugTaskDefinition;
 use dap::{DapRegistry, DebugRequest};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{AppContext, DismissEvent, Entity, EventEmitter, Focusable, Render};
 use gpui::{Subscription, WeakEntity};
 use picker::{Picker, PickerDelegate};
 use task::ZedDebugConfig;
+use util::debug_panic;
 
 use std::sync::Arc;
 use sysinfo::System;
 use ui::{Context, Tooltip, prelude::*};
 use ui::{ListItem, ListItemSpacing};
-use util::debug_panic;
 use workspace::{ModalView, Workspace};
 
 use crate::debugger_panel::DebugPanel;
@@ -219,16 +218,15 @@ impl PickerDelegate for AttachModalDelegate {
             return cx.emit(DismissEvent);
         };
 
-        // match &mut self.definition.request {
-        //     DebugRequest::Attach(config) => {
-        //         config.process_id = Some(candidate.pid);
-        //     }
-        //     DebugRequest::Launch(_) => {
-        //         debug_panic!("Debugger attach modal used on launch debug config");
-        //         return;
-        //     }
-        // }
-        // todo!() handle this conversion
+        match &mut self.definition.request {
+            DebugRequest::Attach(config) => {
+                config.process_id = Some(candidate.pid);
+            }
+            DebugRequest::Launch(_) => {
+                debug_panic!("Debugger attach modal used on launch debug config");
+                return;
+            }
+        }
 
         let Some(scenario) = cx.read_global::<DapRegistry, _>(|registry, _| {
             registry

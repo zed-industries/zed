@@ -258,7 +258,10 @@ impl DebugPanel {
                             )
                         })
                     })?
-                    .await?;
+                    .await;
+
+                dbg!(&definition);
+                let definition = definition?;
 
                 dap_store
                     .update(cx, |dap_store, cx| {

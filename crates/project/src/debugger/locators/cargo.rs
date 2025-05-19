@@ -84,7 +84,6 @@ impl DapLocator for CargoLocator {
             }),
             config: serde_json::Value::Null,
             tcp_connection: None,
-            stop_on_entry: None,
         })
     }
 

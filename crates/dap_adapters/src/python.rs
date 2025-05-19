@@ -220,7 +220,6 @@ impl DebugAdapter for PythonDebugAdapter {
             config: args,
             build: None,
             tcp_connection: None,
-            stop_on_entry: zed_scenario.stop_on_entry,
         }
     }
 

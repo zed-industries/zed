@@ -321,7 +321,7 @@ impl LogStore {
     }
 
     fn remove_debug_client(&mut self, client_id: SessionId, cx: &mut Context<Self>) {
-        // self.debug_clients.remove(&client_id);
+        self.debug_clients.remove(&client_id);
         cx.notify();
     }
 
@@ -561,11 +561,11 @@ impl DapLogView {
 
     fn menu_items(&self, cx: &App) -> Option<Vec<DapMenuItem>> {
         let test_name = "test".to_string();
-        Some(self.log_store.read_with(cx, |store, cx| {
+        Some(self.log_store.read_with(cx, |store, _cx| {
             store
                 .debug_clients
                 .iter()
-                .map(|(session_id, state)| DapMenuItem {
+                .map(|(session_id, _state)| DapMenuItem {
                     client_id: *session_id,
                     client_name: test_name.clone(),
                     has_adapter_logs: true,

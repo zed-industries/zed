@@ -4145,6 +4145,7 @@ dependencies = [
  "dap",
  "extension",
  "gpui",
+ "task",
  "workspace-hack",
 ]
 

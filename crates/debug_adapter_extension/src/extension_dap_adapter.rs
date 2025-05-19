@@ -7,6 +7,7 @@ use dap::adapters::{
 };
 use extension::Extension;
 use gpui::AsyncApp;
+use task::{DebugScenario, ZedDebugConfig};
 
 pub(crate) struct ExtensionDapAdapter {
     extension: Arc<dyn Extension>,
@@ -45,5 +46,9 @@ impl DebugAdapter for ExtensionDapAdapter {
                 user_installed_path,
             )
             .await
+    }
+
+    fn config_from_zed_format(&self, _zed_scenario: ZedDebugConfig) -> DebugScenario {
+        todo!()
     }
 }

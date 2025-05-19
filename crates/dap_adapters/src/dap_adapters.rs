@@ -12,7 +12,7 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use codelldb::CodeLldbDebugAdapter;
 use dap::{
-    DapRegistry, DebugRequest,
+    DapRegistry, FakeAdapter,
     adapters::{
         self, AdapterVersion, DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName,
         GithubRepo,
@@ -39,6 +39,11 @@ pub fn init(cx: &mut App) {
         registry.add_adapter(Arc::from(GoDebugAdapter));
         registry.add_adapter(Arc::from(GdbDebugAdapter));
 
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            registry.add_adapter(Arc::from(FakeAdapter {}));
+        }
+
         registry.add_inline_value_provider("Rust".to_string(), Arc::from(RustInlineValueProvider));
         registry
             .add_inline_value_provider("Python".to_string(), Arc::from(PythonInlineValueProvider));
@@ -58,17 +63,4 @@ pub(crate) async fn configure_tcp_connection(
     };
 
     Ok((host, port, timeout))
-}
-
-trait ToDap {
-    fn to_dap(&self) -> dap::StartDebuggingRequestArgumentsRequest;
-}
-
-impl ToDap for DebugRequest {
-    fn to_dap(&self) -> dap::StartDebuggingRequestArgumentsRequest {
-        match self {
-            Self::Launch(_) => dap::StartDebuggingRequestArgumentsRequest::Launch,
-            Self::Attach(_) => dap::StartDebuggingRequestArgumentsRequest::Attach,
-        }
-    }
 }

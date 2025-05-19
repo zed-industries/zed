@@ -5,7 +5,7 @@ use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use menu::Confirm;
 use project::{FakeFs, Project};
 use serde_json::json;
-use task::{AttachRequest, TcpArgumentsTemplate};
+use task::AttachRequest;
 use tests::{init_test, init_test_workspace};
 use util::path;
 
@@ -32,13 +32,12 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
         cx,
         DebugTaskDefinition {
             adapter: "fake-adapter".into(),
-            request: dap::DebugRequest::Attach(AttachRequest {
-                process_id: Some(10),
-            }),
             label: "label".into(),
-            config: None,
+            config: json!({
+               "request": "attach",
+              "process_id": 10,
+            }),
             tcp_connection: None,
-            stop_on_entry: None,
         },
         |client| {
             client.on_request::<dap::requests::Attach, _>(move |_, args| {
@@ -95,6 +94,7 @@ async fn test_show_attach_modal_and_select_process(
         project::debugger::test::intercept_debug_sessions(cx, |client| {
             client.on_request::<dap::requests::Attach, _>(move |_, args| {
                 let raw = &args.raw;
+                dbg!(&raw);
                 assert_eq!(raw["request"], "attach");
                 assert_eq!(raw["process_id"], 1);
 
@@ -107,13 +107,10 @@ async fn test_show_attach_modal_and_select_process(
             workspace.toggle_modal(window, cx, |window, cx| {
                 AttachModal::with_processes(
                     workspace_handle,
-                    DebugTaskDefinition {
+                    task::ZedDebugConfig {
                         adapter: FakeAdapter::ADAPTER_NAME.into(),
-
                         request: dap::DebugRequest::Attach(AttachRequest::default()),
                         label: "attach example".into(),
-                        config: None,
-                        tcp_connection: Some(TcpArgumentsTemplate::default()),
                         stop_on_entry: None,
                     },
                     vec![

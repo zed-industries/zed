@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use dap::adapters::DebugTaskDefinition;
-use dap::{DebugRequest, client::DebugAdapterClient};
+use dap::client::DebugAdapterClient;
 use gpui::{Entity, TestAppContext, WindowHandle};
 use project::{Project, debugger::session::Session};
 use settings::SettingsStore;
@@ -136,16 +136,18 @@ pub fn start_debug_session<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
     cx: &mut gpui::TestAppContext,
     configure: T,
 ) -> Result<Entity<Session>> {
+    use serde_json::json;
+
     start_debug_session_with(
         workspace,
         cx,
         DebugTaskDefinition {
             adapter: "fake-adapter".into(),
-            request: DebugRequest::Launch(Default::default()),
             label: "test".into(),
-            config: None,
+            config: json!({
+                "request": "launch"
+            }),
             tcp_connection: None,
-            stop_on_entry: None,
         },
         configure,
     )

@@ -3,6 +3,7 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
+use client::ZED_URL_SCHEME;
 use collections::HashMap;
 pub use dap_types::{StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest};
 use futures::io::BufReader;
@@ -11,18 +12,13 @@ pub use http_client::{HttpClient, github::latest_github_release};
 use language::{LanguageName, LanguageToolchainStore};
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use settings::WorktreeId;
 use smol::{self, fs::File};
 use std::{
-    borrow::Borrow,
-    ffi::OsStr,
-    fmt::Debug,
-    net::Ipv4Addr,
-    ops::Deref,
-    path::{Path, PathBuf},
-    sync::Arc,
+    borrow::Borrow, ffi::OsStr, fmt::Debug, net::Ipv4Addr, ops::Deref, path::PathBuf, sync::Arc,
 };
-use task::{DebugRequest, DebugScenario, TcpArgumentsTemplate, ZedDebugConfig};
+use task::{DebugScenario, TcpArgumentsTemplate, ZedDebugConfig};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DapStatus {
@@ -143,21 +139,11 @@ pub struct DebugTaskDefinition {
 }
 
 impl DebugTaskDefinition {
-    pub fn cwd(&self) -> Option<&Path> {
-        // if let DebugRequest::Launch(config) = &self.request {
-        //     config.cwd.as_ref().map(Path::new)
-        // } else {
-        //     None
-        // }
-        None
-    }
-
     pub fn to_scenario(&self) -> DebugScenario {
         DebugScenario {
             label: self.label.clone(),
             adapter: self.adapter.clone().into(),
             build: None,
-            stop_on_entry: self.stop_on_entry,
             tcp_connection: self.tcp_connection.clone(),
             config: self.config.clone(),
         }
@@ -165,17 +151,17 @@ impl DebugTaskDefinition {
 
     pub fn to_proto(&self) -> proto::DebugTaskDefinition {
         proto::DebugTaskDefinition {
-            label: self.label.clone(),
-            config: self.config.clone(),
-            tcp_connection: self.tcp_connection.clone().map(|v| v.into()),
-            adapter: self.adapter.clone().into(),
+            label: self.label.clone().into(),
+            config: self.config.to_string(),
+            tcp_connection: self.tcp_connection.clone().map(|v| v.to_proto()),
+            adapter: self.adapter.clone().0.into(),
         }
     }
 
     pub fn from_proto(proto: proto::DebugTaskDefinition) -> Result<Self> {
         Ok(Self {
             label: proto.label.into(),
-            config: proto.config,
+            config: serde_json::from_str(&proto.config)?,
             tcp_connection: proto
                 .tcp_connection
                 .map(TcpArgumentsTemplate::from_proto)
@@ -366,7 +352,9 @@ pub async fn fetch_latest_adapter_version_from_github(
 pub trait DebugAdapter: 'static + Send + Sync {
     fn name(&self) -> DebugAdapterName;
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> DebugScenario;
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> DebugScenario {
+        todo!()
+    }
 
     async fn get_binary(
         &self,
@@ -405,29 +393,29 @@ impl FakeAdapter {
         Self {}
     }
 
-    fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
+    fn request_args(
+        &self,
+        task_definition: &DebugTaskDefinition,
+    ) -> StartDebuggingRequestArguments {
         use serde_json::json;
-        use task::DebugRequest;
+
+        let obj = task_definition.config.as_object().unwrap();
+
+        let request_variant = obj["request"].as_str().unwrap();
 
         let value = json!({
-            "request": match config.request {
-                DebugRequest::Launch(_) => "launch",
-                DebugRequest::Attach(_) => "attach",
-            },
-            "process_id": if let DebugRequest::Attach(attach_config) = &config.request {
-                attach_config.process_id
-            } else {
-                None
-            },
-            "raw_request": serde_json::to_value(config).unwrap()
+            "request": request_variant,
+            "process_id": obj.get("process_id"),
+            "raw_request": serde_json::to_value(task_definition).unwrap()
         });
-        let request = match config.request {
-            DebugRequest::Launch(_) => dap_types::StartDebuggingRequestArgumentsRequest::Launch,
-            DebugRequest::Attach(_) => dap_types::StartDebuggingRequestArgumentsRequest::Attach,
-        };
+
         StartDebuggingRequestArguments {
             configuration: value,
-            request,
+            request: match request_variant {
+                "launch" => dap_types::StartDebuggingRequestArgumentsRequest::Launch,
+                "attach" => dap_types::StartDebuggingRequestArgumentsRequest::Attach,
+                _ => unreachable!("Wrong fake adapter input for request field"),
+            },
         }
     }
 }
@@ -437,6 +425,41 @@ impl FakeAdapter {
 impl DebugAdapter for FakeAdapter {
     fn name(&self) -> DebugAdapterName {
         DebugAdapterName(Self::ADAPTER_NAME.into())
+    }
+
+    fn dap_schema(&self) -> serde_json::Value {
+        serde_json::Value::Null
+    }
+
+    fn validate_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<StartDebuggingRequestArgumentsRequest> {
+        let request = config.as_object().unwrap()["request"].as_str().unwrap();
+
+        let request = match request {
+            "launch" => dap_types::StartDebuggingRequestArgumentsRequest::Launch,
+            "attach" => dap_types::StartDebuggingRequestArgumentsRequest::Attach,
+            _ => unreachable!("Wrong fake adapter input for request field"),
+        };
+
+        Ok(request)
+    }
+
+    fn adapter_language_name(&self) -> Option<LanguageName> {
+        None
+    }
+
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> DebugScenario {
+        let config = serde_json::to_value(zed_scenario.request).unwrap();
+
+        DebugScenario {
+            adapter: zed_scenario.adapter,
+            label: zed_scenario.label,
+            build: None,
+            config,
+            tcp_connection: None,
+        }
     }
 
     async fn get_binary(

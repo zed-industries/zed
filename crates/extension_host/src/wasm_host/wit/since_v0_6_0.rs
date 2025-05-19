@@ -1,7 +1,7 @@
 use crate::wasm_host::wit::since_v0_6_0::{
     dap::{
-        AttachRequest, DebugRequest, LaunchRequest, StartDebuggingRequestArguments,
-        StartDebuggingRequestArgumentsRequest, TcpArguments, TcpArgumentsTemplate,
+        StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest, TcpArguments,
+        TcpArgumentsTemplate,
     },
     slash_command::SlashCommandOutputSection,
 };
@@ -79,17 +79,6 @@ impl From<Command> for extension::Command {
     }
 }
 
-impl From<extension::LaunchRequest> for LaunchRequest {
-    fn from(value: extension::LaunchRequest) -> Self {
-        Self {
-            program: value.program,
-            cwd: value.cwd.map(|path| path.to_string_lossy().into_owned()),
-            envs: value.env.into_iter().collect(),
-            args: value.args,
-        }
-    }
-}
-
 impl From<StartDebuggingRequestArgumentsRequest>
     for extension::StartDebuggingRequestArgumentsRequest
 {
@@ -129,35 +118,16 @@ impl From<extension::TcpArgumentsTemplate> for TcpArgumentsTemplate {
         }
     }
 }
-impl From<extension::AttachRequest> for AttachRequest {
-    fn from(value: extension::AttachRequest) -> Self {
-        Self {
-            process_id: value.process_id,
-        }
-    }
-}
-impl From<extension::DebugRequest> for DebugRequest {
-    fn from(value: extension::DebugRequest) -> Self {
-        match value {
-            extension::DebugRequest::Launch(launch_request) => Self::Launch(launch_request.into()),
-            extension::DebugRequest::Attach(attach_request) => Self::Attach(attach_request.into()),
-        }
-    }
-}
 
 impl TryFrom<extension::DebugTaskDefinition> for DebugTaskDefinition {
     type Error = anyhow::Error;
     fn try_from(value: extension::DebugTaskDefinition) -> Result<Self, Self::Error> {
-        let initialize_args = value.config.map(|s| s.to_string());
         Ok(Self {
             label: value.label.to_string(),
             adapter: value.adapter.to_string(),
-            request: value.request.into(),
-            initialize_args,
-            stop_on_entry: value.stop_on_entry,
+            config: value.config.to_string(),
             tcp_connection: value.tcp_connection.map(Into::into),
         })
-        todo!()
     }
 }
 

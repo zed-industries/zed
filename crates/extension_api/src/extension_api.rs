@@ -389,6 +389,10 @@ impl wit::Guest for Component {
     ) -> Result<DebugAdapterBinary, String> {
         extension().get_dap_binary(adapter_name, config, user_installed_path)
     }
+
+    fn dap_schema() -> String {
+        todo!()
+    }
 }
 
 /// The ID of a language server.

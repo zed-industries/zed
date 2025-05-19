@@ -179,7 +179,6 @@ impl DebugAdapter for CodeLldbDebugAdapter {
             config: configuration,
             build: None,
             tcp_connection: None,
-            stop_on_entry: zed_scenario.stop_on_entry,
         }
     }
 

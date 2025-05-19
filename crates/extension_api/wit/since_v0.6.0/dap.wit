@@ -1,20 +1,5 @@
 interface dap {
     use common.{env-vars};
-    record launch-request {
-        program: string,
-        cwd: option<string>,
-        args: list<string>,
-        envs: env-vars,
-    }
-
-    record attach-request {
-        process-id: option<u32>,
-    }
-
-    variant debug-request {
-        launch(launch-request),
-        attach(attach-request)
-    }
 
     record tcp-arguments {
         port: u16,
@@ -27,12 +12,11 @@ interface dap {
         host: option<u32>,
         timeout: option<u64>,
     }
+
     record debug-task-definition {
         label: string,
         adapter: string,
-        request: debug-request,
-        initialize-args: option<string>,
-        stop-on-entry: option<bool>,
+        config: string,
         tcp-connection: option<tcp-arguments-template>,
     }
 
@@ -40,11 +24,12 @@ interface dap {
         launch,
         attach,
     }
+
     record start-debugging-request-arguments {
         configuration: string,
         request: start-debugging-request-arguments-request,
-
     }
+
     record debug-adapter-binary {
         command: string,
         arguments: list<string>,

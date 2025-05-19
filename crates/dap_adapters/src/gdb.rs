@@ -4,7 +4,7 @@ use anyhow::{Result, bail};
 use async_trait::async_trait;
 use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
-use task::{DebugRequest, DebugScenario, ZedDebugConfig};
+use task::{DebugScenario, ZedDebugConfig};
 
 use crate::*;
 
@@ -14,15 +14,7 @@ pub(crate) struct GdbDebugAdapter;
 impl GdbDebugAdapter {
     const ADAPTER_NAME: &'static str = "GDB";
 
-    fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
-        let request = match config.
-        let mut args = json!({
-            "request": match config.request {
-                DebugRequest::Launch(_) => "launch",
-                DebugRequest::Attach(_) => "attach",
-            },
-        });
-
+    fn request_args(&self, definition: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
         // let map = args.as_object_mut().unwrap();
         // match &config.request {
         //     DebugRequest::Attach(attach) => {

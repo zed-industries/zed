@@ -10,10 +10,7 @@ use std::{
 };
 
 use anyhow::Result;
-use dap::{
-    DapRegistry, DebugRequest,
-    adapters::{DebugAdapterName, DebugTaskDefinition},
-};
+use dap::{DapRegistry, DebugRequest, adapters::DebugAdapterName};
 use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -1079,7 +1076,7 @@ impl PickerDelegate for DebugScenarioDelegate {
             .get(self.selected_index())
             .and_then(|match_candidate| self.candidates.get(match_candidate.candidate_id).cloned());
 
-        let Some((_, mut debug_scenario)) = debug_scenario else {
+        let Some((_, debug_scenario)) = debug_scenario else {
             return;
         };
 
@@ -1093,21 +1090,6 @@ impl PickerDelegate for DebugScenarioDelegate {
                 ))
             })
             .unwrap_or_default();
-
-        // if let Some(launch_config) =
-        //     debug_scenario
-        //         .request
-        //         .as_mut()
-        //         .and_then(|request| match request {
-        //             DebugRequest::Launch(launch) => Some(launch),
-        //             _ => None,
-        //         })
-        // {
-        //     let (program, _) = resolve_paths(launch_config.program.clone(), String::new());
-        //     launch_config.program = program;
-        // }
-        // todo!()
-        //
 
         self.debug_panel
             .update(cx, |panel, cx| {

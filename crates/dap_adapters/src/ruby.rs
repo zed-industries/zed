@@ -12,8 +12,6 @@ use std::path::PathBuf;
 use task::{DebugScenario, ZedDebugConfig};
 use util::command::new_smol_command;
 
-use crate::ToDap;
-
 #[derive(Default)]
 pub(crate) struct RubyDebugAdapter;
 

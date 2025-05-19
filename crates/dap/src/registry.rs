@@ -43,14 +43,7 @@ impl Global for DapRegistry {}
 
 impl DapRegistry {
     pub fn global(cx: &mut App) -> &mut Self {
-        let ret = cx.default_global::<Self>();
-
-        #[cfg(any(test, feature = "test-support"))]
-        if ret.adapter(crate::FakeAdapter::ADAPTER_NAME).is_none() {
-            ret.add_adapter(Arc::new(crate::FakeAdapter::new()));
-        }
-
-        ret
+        cx.default_global::<Self>()
     }
 
     pub fn add_adapter(&self, adapter: Arc<dyn DebugAdapter>) {

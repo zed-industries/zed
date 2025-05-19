@@ -1,11 +1,11 @@
 use anyhow::Result;
 use collections::FxHashMap;
-use gpui::{App, SharedString};
+use gpui::SharedString;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::net::Ipv4Addr;
 use std::path::PathBuf;
-use std::{net::Ipv4Addr, path::Path};
 
 use crate::{
     TaskTemplate,
@@ -110,7 +110,7 @@ impl LaunchRequest {
 
 /// Represents the type that will determine which request to call on the debug adapter
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
-#[serde(rename_all = "lowercase", untagged)]
+#[serde(rename_all = "lowercase", tag = "request")]
 pub enum DebugRequest {
     /// Call the `launch` request on the debug adapter
     Launch(LaunchRequest),
@@ -243,20 +243,6 @@ pub struct DebugScenario {
     /// that is already running or is started by another process.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tcp_connection: Option<TcpArgumentsTemplate>,
-    /// Whether to tell the debug adapter to stop on entry
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stop_on_entry: Option<bool>,
-}
-
-impl DebugScenario {
-    pub fn cwd(&self) -> Option<&Path> {
-        // if let Some(DebugRequest::Launch(config)) = &self.request {
-        //     config.cwd.as_ref().map(Path::new)
-        // } else {
-        //     None
-        // } todo!()
-        None
-    }
 }
 
 /// A group of Debug Tasks defined in a JSON file.
@@ -267,7 +253,7 @@ pub struct DebugTaskFile(pub Vec<DebugScenario>);
 impl DebugTaskFile {
     /// Generates JSON schema of Tasks JSON template format.
     pub fn generate_json_schema(schemas: &AdapterSchemas) -> serde_json_lenient::Value {
-        let adapter_schemas = AdapterSchemas(vec![
+        let _adapter_schemas = AdapterSchemas(vec![
             AdapterSchema {
                 adapter: "CodeLLDB".into(),
                 schema: json!({
@@ -302,6 +288,7 @@ impl DebugTaskFile {
 #[cfg(test)]
 mod tests {
     use crate::{DebugRequest, DebugScenario, LaunchRequest};
+    use serde_json::json;
 
     #[test]
     fn test_can_deserialize_non_attach_task() {
@@ -325,7 +312,10 @@ mod tests {
         }"#;
 
         let deserialized: DebugScenario = serde_json::from_str(json).unwrap();
-        assert_eq!(deserialized.request, None);
+
+        assert_eq!(json!({}), deserialized.config);
+        assert_eq!("CodeLLDB", deserialized.adapter.as_ref());
+        assert_eq!("Build & debug rust", deserialized.label.as_ref());
     }
 
     #[test]
@@ -333,18 +323,19 @@ mod tests {
         let json = r#"{
             "label": "Launch program",
             "adapter": "CodeLLDB",
+            "request": "launch",
             "program": "target/debug/myapp",
             "args": ["--test"]
         }"#;
 
         let deserialized: DebugScenario = serde_json::from_str(json).unwrap();
-        match deserialized.request {
-            Some(DebugRequest::Launch(launch)) => {
-                assert_eq!(launch.program, "target/debug/myapp");
-                assert_eq!(launch.args, vec!["--test"]);
-            }
-            _ => panic!("Expected Launch request"),
-        }
+
+        assert_eq!(
+            json!({ "request": "launch", "program": "target/debug/myapp", "args": "--test" }),
+            deserialized.config
+        );
+        assert_eq!("CodeLLDB", deserialized.adapter.as_ref());
+        assert_eq!("Launch program", deserialized.label.as_ref());
     }
 
     #[test]
@@ -352,15 +343,17 @@ mod tests {
         let json = r#"{
             "label": "Attach to process",
             "adapter": "CodeLLDB",
-            "process_id": 1234
+            "process_id": 1234,
+            "request": "attach",
         }"#;
 
         let deserialized: DebugScenario = serde_json::from_str(json).unwrap();
-        match deserialized.request {
-            Some(DebugRequest::Attach(attach)) => {
-                assert_eq!(attach.process_id, Some(1234));
-            }
-            _ => panic!("Expected Attach request"),
-        }
+
+        assert_eq!(
+            json!({ "request": "attach", "process_id": 1234 }),
+            deserialized.config
+        );
+        assert_eq!("CodeLLDB", deserialized.adapter.as_ref());
+        assert_eq!("Attach to process", deserialized.label.as_ref());
     }
 }

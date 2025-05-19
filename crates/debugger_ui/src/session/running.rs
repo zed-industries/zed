@@ -22,8 +22,8 @@ use dap::{
 };
 use futures::{SinkExt, channel::mpsc};
 use gpui::{
-    Action as _, AnyView, AppContext, Axis, Entity, EntityId, EventEmitter, Flatten, FocusHandle,
-    Focusable, NoAction, Pixels, Point, Subscription, Task, WeakEntity,
+    Action as _, AnyView, AppContext, Axis, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
+    NoAction, Pixels, Point, Subscription, Task, WeakEntity,
 };
 use language::Buffer;
 use loaded_source_list::LoadedSourceList;
@@ -38,8 +38,8 @@ use serde_json::Value;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
 use task::{
-    BuildTaskDefinition, DebugScenario, LaunchRequest, ShellBuilder, SpawnInTerminal, TaskContext,
-    ZedDebugConfig, substitute_variables_in_map, substitute_variables_in_str,
+    BuildTaskDefinition, DebugScenario, ShellBuilder, SpawnInTerminal, TaskContext, ZedDebugConfig,
+    substitute_variables_in_str,
 };
 use terminal_view::TerminalView;
 use ui::{
@@ -742,7 +742,6 @@ impl RunningState {
                 build,
                 mut config,
                 tcp_connection,
-                stop_on_entry,
             } = scenario;
             Self::substitute_variables_in_config(&mut config, &task_context);
 
@@ -875,7 +874,7 @@ impl RunningState {
                     label: label.clone(),
                     adapter: adapter.clone(),
                     request,
-                    stop_on_entry,
+                    stop_on_entry: None,
                 };
 
                 let scenario = dap_registry
@@ -891,7 +890,6 @@ impl RunningState {
                 label,
                 adapter: DebugAdapterName(adapter),
                 config,
-                stop_on_entry,
                 tcp_connection,
             })
         })

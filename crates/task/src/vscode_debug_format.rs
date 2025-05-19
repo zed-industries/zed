@@ -1,14 +1,10 @@
-use std::path::PathBuf;
-
-use anyhow::anyhow;
 use collections::HashMap;
 use gpui::SharedString;
 use serde::Deserialize;
 use util::ResultExt as _;
 
 use crate::{
-    AttachRequest, DebugRequest, DebugScenario, DebugTaskFile, EnvVariableReplacer, LaunchRequest,
-    TcpArgumentsTemplate, VariableName, debug_format,
+    DebugScenario, DebugTaskFile, EnvVariableReplacer, TcpArgumentsTemplate, VariableName,
 };
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -57,7 +53,6 @@ impl VsCodeDebugTaskDefinition {
                 host: None,
                 timeout: None,
             }),
-            stop_on_entry: self.stop_on_entry,
             // todo!(debugger)
             config: serde_json::Value::Null,
         };
@@ -108,10 +103,9 @@ fn task_type_to_adapter_name(task_type: &str) -> SharedString {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
 
-    use collections::FxHashMap;
-
-    use crate::{DebugRequest, DebugScenario, DebugTaskFile, LaunchRequest, TcpArgumentsTemplate};
+    use crate::{DebugScenario, DebugTaskFile, TcpArgumentsTemplate};
 
     use super::VsCodeDebugTaskFile;
 
@@ -146,19 +140,15 @@ mod tests {
             DebugTaskFile(vec![DebugScenario {
                 label: "Debug my JS app".into(),
                 adapter: "JavaScript".into(),
-                stop_on_entry: Some(true),
-                initialize_args: None,
+                config: json!({
+                    "request": "launch",
+                    "stop_on_entry": true
+                }),
                 tcp_connection: Some(TcpArgumentsTemplate {
                     port: Some(17),
                     host: None,
                     timeout: None,
                 }),
-                request: Some(DebugRequest::Launch(LaunchRequest {
-                    program: "${ZED_WORKTREE_ROOT}/xyz.js".into(),
-                    args: vec!["--foo".into(), "${ZED_WORKTREE_ROOT}/thing".into()],
-                    cwd: Some("${ZED_WORKTREE_ROOT}/${FOO}/sub".into()),
-                    env: FxHashMap::from_iter([("X".into(), "Y".into())])
-                })),
                 build: None
             }])
         );
