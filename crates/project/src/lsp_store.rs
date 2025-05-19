@@ -9150,7 +9150,7 @@ impl LspStore {
             if watch.pending_events.is_empty() {
                 continue;
             }
-            let server_id = server_id.clone();
+            let server_id = *server_id;
 
             watch.flush_timer_task = Some(cx.spawn(async move |this, cx| {
                 cx.background_executor()
