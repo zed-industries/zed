@@ -969,13 +969,13 @@ mod tests {
         let mode = &EditFileMode::Create;
 
         let result = test_resolve_path(mode, "root/new.txt", cx);
-        assert_eq!(result.await.unwrap().path.to_str(), Some("new.txt"));
+        assert_resolved_path_eq(result.await, "new.txt");
 
         let result = test_resolve_path(mode, "new.txt", cx);
-        assert_eq!(result.await.unwrap().path.to_str(), Some("new.txt"));
+        assert_resolved_path_eq(result.await, "new.txt");
 
         let result = test_resolve_path(mode, "dir/new.txt", cx);
-        assert_eq!(result.await.unwrap().path.to_str(), Some("dir/new.txt"));
+        assert_resolved_path_eq(result.await, "dir/new.txt");
 
         let result = test_resolve_path(mode, "root/dir/subdir/existing.txt", cx);
         assert_eq!(
@@ -989,6 +989,7 @@ mod tests {
             "Can't create file: parent directory doesn't exist"
         );
     }
+
     #[gpui::test]
     async fn test_resolve_path_for_editing_file(cx: &mut TestAppContext) {
         let mode = &EditFileMode::Edit;
@@ -996,10 +997,10 @@ mod tests {
         let path_with_root = "root/dir/subdir/existing.txt";
         let path_without_root = "dir/subdir/existing.txt";
         let result = test_resolve_path(mode, path_with_root, cx);
-        assert_eq!(result.await.unwrap().path.to_str(), Some(path_without_root));
+        assert_resolved_path_eq(result.await, path_without_root);
 
         let result = test_resolve_path(mode, path_without_root, cx);
-        assert_eq!(result.await.unwrap().path.to_str(), Some(path_without_root));
+        assert_resolved_path_eq(result.await, path_without_root);
 
         let result = test_resolve_path(mode, "root/nonexistent.txt", cx);
         assert_eq!(
@@ -1043,6 +1044,16 @@ mod tests {
 
         let result = cx.update(|cx| resolve_path(&input, project, cx));
         result
+    }
+
+    fn assert_resolved_path_eq(path: Result<ProjectPath, anyhow::Error>, expected: &str) {
+        let actual = path
+            .expect("Should return valid path")
+            .path
+            .to_str()
+            .unwrap()
+            .replace("\\", "/"); // Naive Windows paths normalization
+        assert_eq!(actual, expected);
     }
 
     #[test]
