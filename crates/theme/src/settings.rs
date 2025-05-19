@@ -553,10 +553,7 @@ pub enum BufferLineHeight {
     Comfortable,
     /// The default line height.
     Standard,
-    /// A custom line height.
-    ///
-    /// A line height of 1.0 is the height of the buffer's font size.
-    /// Must be at least 1.0
+    /// A custom line height, where 1.0 is the font's height. Must be at least 1.0.
     Custom(#[serde(deserialize_with = "deserialize_line_height")] f32),
 }
 
