@@ -3262,7 +3262,7 @@ impl OutlinePanel {
                                 outline_items_containing(
                                     &buffer_snapshot,
                                     excerpt_range.context,
-                                    false,
+                                    true,
                                     Some(&syntax_theme),
                                 )
                                 .unwrap_or_default()
