@@ -398,7 +398,7 @@ impl ExtensionBuilder {
 
     async fn install_wasi_sdk_if_needed(&self) -> Result<PathBuf> {
         let url = if let Some(asset_name) = WASI_SDK_ASSET_NAME {
-            format!("{WASI_SDK_URL}/{asset_name}")
+            format!("{WASI_SDK_URL}{asset_name}")
         } else {
             bail!("wasi-sdk is not available for platform {}", env::consts::OS);
         };
