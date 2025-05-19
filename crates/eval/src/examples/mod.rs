@@ -13,6 +13,7 @@ use util::serde::default_true;
 use crate::example::{Example, ExampleContext, ExampleMetadata, JudgeAssertion};
 
 mod add_arg_to_trait_method;
+mod ask_profile_write_permissions;
 mod code_block_citations;
 mod comment_translation;
 mod file_search;
@@ -22,6 +23,7 @@ pub fn all(examples_dir: &Path) -> Vec<Rc<dyn Example>> {
     let mut threads: Vec<Rc<dyn Example>> = vec![
         Rc::new(file_search::FileSearchExample),
         Rc::new(add_arg_to_trait_method::AddArgToTraitMethod),
+        Rc::new(ask_profile_write_permissions::AskProfileWritePermissions),
         Rc::new(code_block_citations::CodeBlockCitations),
         Rc::new(planets::Planets),
         Rc::new(comment_translation::CommentTranslation),
