@@ -529,6 +529,7 @@ fn register_actions(
                 cx.propagate();
                 return;
             }
+            // You need existing remote connection to open it this way
             if workspace.project().read(cx).is_local() {
                 return;
             }
