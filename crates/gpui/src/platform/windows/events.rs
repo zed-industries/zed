@@ -293,37 +293,35 @@ fn handle_mouse_move_msg(
     start_tracking_mouse(handle, &state_ptr, TME_LEAVE);
 
     let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.input.take() {
-        let scale_factor = lock.scale_factor;
-        drop(lock);
-        let pressed_button = match MODIFIERKEYS_FLAGS(wparam.loword() as u32) {
-            flags if flags.contains(MK_LBUTTON) => Some(MouseButton::Left),
-            flags if flags.contains(MK_RBUTTON) => Some(MouseButton::Right),
-            flags if flags.contains(MK_MBUTTON) => Some(MouseButton::Middle),
-            flags if flags.contains(MK_XBUTTON1) => {
-                Some(MouseButton::Navigate(NavigationDirection::Back))
-            }
-            flags if flags.contains(MK_XBUTTON2) => {
-                Some(MouseButton::Navigate(NavigationDirection::Forward))
-            }
-            _ => None,
-        };
-        let x = lparam.signed_loword() as f32;
-        let y = lparam.signed_hiword() as f32;
-        let event = MouseMoveEvent {
-            position: logical_point(x, y, scale_factor),
-            pressed_button,
-            modifiers: current_modifiers(),
-        };
-        let result = if callback(PlatformInput::MouseMove(event)).default_prevented {
-            Some(0)
-        } else {
-            Some(1)
-        };
-        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
-        return result;
-    }
-    Some(1)
+    let Some(mut func) = lock.callbacks.input.take() else {
+        return Some(1);
+    };
+    let scale_factor = lock.scale_factor;
+    drop(lock);
+
+    let pressed_button = match MODIFIERKEYS_FLAGS(wparam.loword() as u32) {
+        flags if flags.contains(MK_LBUTTON) => Some(MouseButton::Left),
+        flags if flags.contains(MK_RBUTTON) => Some(MouseButton::Right),
+        flags if flags.contains(MK_MBUTTON) => Some(MouseButton::Middle),
+        flags if flags.contains(MK_XBUTTON1) => {
+            Some(MouseButton::Navigate(NavigationDirection::Back))
+        }
+        flags if flags.contains(MK_XBUTTON2) => {
+            Some(MouseButton::Navigate(NavigationDirection::Forward))
+        }
+        _ => None,
+    };
+    let x = lparam.signed_loword() as f32;
+    let y = lparam.signed_hiword() as f32;
+    let input = PlatformInput::MouseMove(MouseMoveEvent {
+        position: logical_point(x, y, scale_factor),
+        pressed_button,
+        modifiers: current_modifiers(),
+    });
+    let handled = !func(input).propagate;
+    state_ptr.state.borrow_mut().callbacks.input = Some(func);
+
+    if handled { Some(0) } else { Some(1) }
 }
 
 fn handle_mouse_leave_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
@@ -439,14 +437,10 @@ fn handle_keyup_msg(
     };
     drop(lock);
 
-    let result = if func(input).default_prevented {
-        Some(0)
-    } else {
-        Some(1)
-    };
+    let handled = !func(input).propagate;
     state_ptr.state.borrow_mut().callbacks.input = Some(func);
 
-    result
+    if handled { Some(0) } else { Some(1) }
 }
 
 fn handle_char_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
@@ -479,32 +473,27 @@ fn handle_mouse_down_msg(
 ) -> Option<isize> {
     unsafe { SetCapture(handle) };
     let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.input.take() {
-        let x = lparam.signed_loword() as f32;
-        let y = lparam.signed_hiword() as f32;
-        let physical_point = point(DevicePixels(x as i32), DevicePixels(y as i32));
-        let click_count = lock.click_state.update(button, physical_point);
-        let scale_factor = lock.scale_factor;
-        drop(lock);
+    let Some(mut func) = lock.callbacks.input.take() else {
+        return Some(1);
+    };
+    let x = lparam.signed_loword();
+    let y = lparam.signed_hiword();
+    let physical_point = point(DevicePixels(x as i32), DevicePixels(y as i32));
+    let click_count = lock.click_state.update(button, physical_point);
+    let scale_factor = lock.scale_factor;
+    drop(lock);
 
-        let event = MouseDownEvent {
-            button,
-            position: logical_point(x, y, scale_factor),
-            modifiers: current_modifiers(),
-            click_count,
-            first_mouse: false,
-        };
-        let result = if callback(PlatformInput::MouseDown(event)).default_prevented {
-            Some(0)
-        } else {
-            Some(1)
-        };
-        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
+    let input = PlatformInput::MouseDown(MouseDownEvent {
+        button,
+        position: logical_point(x as f32, y as f32, scale_factor),
+        modifiers: current_modifiers(),
+        click_count,
+        first_mouse: false,
+    });
+    let handled = !func(input).propagate;
+    state_ptr.state.borrow_mut().callbacks.input = Some(func);
 
-        result
-    } else {
-        Some(1)
-    }
+    if handled { Some(0) } else { Some(1) }
 }
 
 fn handle_mouse_up_msg(
@@ -515,30 +504,25 @@ fn handle_mouse_up_msg(
 ) -> Option<isize> {
     unsafe { ReleaseCapture().log_err() };
     let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.input.take() {
-        let x = lparam.signed_loword() as f32;
-        let y = lparam.signed_hiword() as f32;
-        let click_count = lock.click_state.current_count;
-        let scale_factor = lock.scale_factor;
-        drop(lock);
+    let Some(mut func) = lock.callbacks.input.take() else {
+        return Some(1);
+    };
+    let x = lparam.signed_loword() as f32;
+    let y = lparam.signed_hiword() as f32;
+    let click_count = lock.click_state.current_count;
+    let scale_factor = lock.scale_factor;
+    drop(lock);
 
-        let event = MouseUpEvent {
-            button,
-            position: logical_point(x, y, scale_factor),
-            modifiers: current_modifiers(),
-            click_count,
-        };
-        let result = if callback(PlatformInput::MouseUp(event)).default_prevented {
-            Some(0)
-        } else {
-            Some(1)
-        };
-        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
+    let input = PlatformInput::MouseUp(MouseUpEvent {
+        button,
+        position: logical_point(x, y, scale_factor),
+        modifiers: current_modifiers(),
+        click_count,
+    });
+    let handled = !func(input).propagate;
+    state_ptr.state.borrow_mut().callbacks.input = Some(func);
 
-        result
-    } else {
-        Some(1)
-    }
+    if handled { Some(0) } else { Some(1) }
 }
 
 fn handle_xbutton_msg(
@@ -564,46 +548,42 @@ fn handle_mouse_wheel_msg(
 ) -> Option<isize> {
     let modifiers = current_modifiers();
     let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.input.take() {
-        let scale_factor = lock.scale_factor;
-        let wheel_scroll_amount = match modifiers.shift {
-            true => lock.system_settings.mouse_wheel_settings.wheel_scroll_chars,
-            false => lock.system_settings.mouse_wheel_settings.wheel_scroll_lines,
-        };
-        drop(lock);
-        let wheel_distance =
-            (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_amount as f32;
-        let mut cursor_point = POINT {
-            x: lparam.signed_loword().into(),
-            y: lparam.signed_hiword().into(),
-        };
-        unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-        let event = ScrollWheelEvent {
-            position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
-            delta: ScrollDelta::Lines(match modifiers.shift {
-                true => Point {
-                    x: wheel_distance,
-                    y: 0.0,
-                },
-                false => Point {
-                    y: wheel_distance,
-                    x: 0.0,
-                },
-            }),
-            modifiers: current_modifiers(),
-            touch_phase: TouchPhase::Moved,
-        };
-        let result = if callback(PlatformInput::ScrollWheel(event)).default_prevented {
-            Some(0)
-        } else {
-            Some(1)
-        };
-        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
+    let Some(mut func) = lock.callbacks.input.take() else {
+        return Some(1);
+    };
+    let scale_factor = lock.scale_factor;
+    let wheel_scroll_amount = match modifiers.shift {
+        true => lock.system_settings.mouse_wheel_settings.wheel_scroll_chars,
+        false => lock.system_settings.mouse_wheel_settings.wheel_scroll_lines,
+    };
+    drop(lock);
 
-        result
-    } else {
-        Some(1)
-    }
+    let wheel_distance =
+        (wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_amount as f32;
+    let mut cursor_point = POINT {
+        x: lparam.signed_loword().into(),
+        y: lparam.signed_hiword().into(),
+    };
+    unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
+    let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
+        position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
+        delta: ScrollDelta::Lines(match modifiers.shift {
+            true => Point {
+                x: wheel_distance,
+                y: 0.0,
+            },
+            false => Point {
+                y: wheel_distance,
+                x: 0.0,
+            },
+        }),
+        modifiers,
+        touch_phase: TouchPhase::Moved,
+    });
+    let handled = !func(input).propagate;
+    state_ptr.state.borrow_mut().callbacks.input = Some(func);
+
+    if handled { Some(0) } else { Some(1) }
 }
 
 fn handle_mouse_horizontal_wheel_msg(
@@ -613,37 +593,33 @@ fn handle_mouse_horizontal_wheel_msg(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.input.take() {
-        let scale_factor = lock.scale_factor;
-        let wheel_scroll_chars = lock.system_settings.mouse_wheel_settings.wheel_scroll_chars;
-        drop(lock);
-        let wheel_distance =
-            (-wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_chars as f32;
-        let mut cursor_point = POINT {
-            x: lparam.signed_loword().into(),
-            y: lparam.signed_hiword().into(),
-        };
-        unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-        let event = ScrollWheelEvent {
-            position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
-            delta: ScrollDelta::Lines(Point {
-                x: wheel_distance,
-                y: 0.0,
-            }),
-            modifiers: current_modifiers(),
-            touch_phase: TouchPhase::Moved,
-        };
-        let result = if callback(PlatformInput::ScrollWheel(event)).default_prevented {
-            Some(0)
-        } else {
-            Some(1)
-        };
-        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
+    let Some(mut func) = lock.callbacks.input.take() else {
+        return Some(1);
+    };
+    let scale_factor = lock.scale_factor;
+    let wheel_scroll_chars = lock.system_settings.mouse_wheel_settings.wheel_scroll_chars;
+    drop(lock);
 
-        result
-    } else {
-        Some(1)
-    }
+    let wheel_distance =
+        (-wparam.signed_hiword() as f32 / WHEEL_DELTA as f32) * wheel_scroll_chars as f32;
+    let mut cursor_point = POINT {
+        x: lparam.signed_loword().into(),
+        y: lparam.signed_hiword().into(),
+    };
+    unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
+    let event = PlatformInput::ScrollWheel(ScrollWheelEvent {
+        position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
+        delta: ScrollDelta::Lines(Point {
+            x: wheel_distance,
+            y: 0.0,
+        }),
+        modifiers: current_modifiers(),
+        touch_phase: TouchPhase::Moved,
+    });
+    let handled = !func(event).propagate;
+    state_ptr.state.borrow_mut().callbacks.input = Some(func);
+
+    if handled { Some(0) } else { Some(1) }
 }
 
 fn retrieve_caret_position(state_ptr: &Rc<WindowsWindowStatePtr>) -> Option<POINT> {
@@ -808,10 +784,10 @@ fn handle_activate_msg(
         .executor
         .spawn(async move {
             let mut lock = this.state.borrow_mut();
-            if let Some(mut cb) = lock.callbacks.active_status_change.take() {
+            if let Some(mut func) = lock.callbacks.active_status_change.take() {
                 drop(lock);
-                cb(activated);
-                this.state.borrow_mut().callbacks.active_status_change = Some(cb);
+                func(activated);
+                this.state.borrow_mut().callbacks.active_status_change = Some(func);
             }
         })
         .detach();
@@ -878,7 +854,7 @@ fn handle_display_change_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>)
     // Because WM_DPICHANGED, WM_MOVE, WM_SIZE will come first, window reposition and resize
     // are handled there.
     // So we only care about if monitor is disconnected.
-    let previous_monitor = state_ptr.as_ref().state.borrow().display;
+    let previous_monitor = state_ptr.state.borrow().display;
     if WindowsDisplay::is_connected(previous_monitor.handle) {
         // we are fine, other display changed
         return None;
@@ -896,7 +872,7 @@ fn handle_display_change_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>)
         return None;
     }
     let new_display = WindowsDisplay::new_with_handle(new_monitor);
-    state_ptr.as_ref().state.borrow_mut().display = new_display;
+    state_ptr.state.borrow_mut().display = new_display;
     Some(0)
 }
 
@@ -980,30 +956,24 @@ fn handle_nc_mouse_move_msg(
     start_tracking_mouse(handle, &state_ptr, TME_LEAVE | TME_NONCLIENT);
 
     let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.input.take() {
-        let scale_factor = lock.scale_factor;
-        drop(lock);
-        let mut cursor_point = POINT {
-            x: lparam.signed_loword().into(),
-            y: lparam.signed_hiword().into(),
-        };
-        unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-        let event = MouseMoveEvent {
-            position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
-            pressed_button: None,
-            modifiers: current_modifiers(),
-        };
-        let result = if callback(PlatformInput::MouseMove(event)).default_prevented {
-            Some(0)
-        } else {
-            Some(1)
-        };
-        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
+    let mut func = lock.callbacks.input.take()?;
+    let scale_factor = lock.scale_factor;
+    drop(lock);
 
-        result
-    } else {
-        None
-    }
+    let mut cursor_point = POINT {
+        x: lparam.signed_loword().into(),
+        y: lparam.signed_hiword().into(),
+    };
+    unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
+    let input = PlatformInput::MouseMove(MouseMoveEvent {
+        position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
+        pressed_button: None,
+        modifiers: current_modifiers(),
+    });
+    let handled = !func(input).propagate;
+    state_ptr.state.borrow_mut().callbacks.input = Some(func);
+
+    if handled { Some(0) } else { None }
 }
 
 fn handle_nc_mouse_down_msg(
@@ -1018,7 +988,7 @@ fn handle_nc_mouse_down_msg(
     }
 
     let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.input.take() {
+    if let Some(mut func) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
         let mut cursor_point = POINT {
             x: lparam.signed_loword().into(),
@@ -1028,22 +998,19 @@ fn handle_nc_mouse_down_msg(
         let physical_point = point(DevicePixels(cursor_point.x), DevicePixels(cursor_point.y));
         let click_count = lock.click_state.update(button, physical_point);
         drop(lock);
-        let event = MouseDownEvent {
+
+        let input = PlatformInput::MouseDown(MouseDownEvent {
             button,
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
             modifiers: current_modifiers(),
             click_count,
             first_mouse: false,
-        };
-        let result = if callback(PlatformInput::MouseDown(event)).default_prevented {
-            Some(0)
-        } else {
-            None
-        };
-        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
+        });
+        let handled = !func(input).propagate;
+        state_ptr.state.borrow_mut().callbacks.input = Some(func);
 
-        if result.is_some() {
-            return result;
+        if handled {
+            return Some(0);
         }
     } else {
         drop(lock);
@@ -1075,28 +1042,26 @@ fn handle_nc_mouse_up_msg(
     }
 
     let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.input.take() {
+    if let Some(mut func) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
         drop(lock);
+
         let mut cursor_point = POINT {
             x: lparam.signed_loword().into(),
             y: lparam.signed_hiword().into(),
         };
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-        let event = MouseUpEvent {
+        let input = PlatformInput::MouseUp(MouseUpEvent {
             button,
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
             modifiers: current_modifiers(),
             click_count: 1,
-        };
-        let result = if callback(PlatformInput::MouseUp(event)).default_prevented {
-            Some(0)
-        } else {
-            None
-        };
-        state_ptr.state.borrow_mut().callbacks.input = Some(callback);
-        if result.is_some() {
-            return result;
+        });
+        let handled = !func(input).propagate;
+        state_ptr.state.borrow_mut().callbacks.input = Some(func);
+
+        if handled {
+            return Some(0);
         }
     } else {
         drop(lock);
@@ -1104,35 +1069,27 @@ fn handle_nc_mouse_up_msg(
 
     let last_pressed = state_ptr.state.borrow_mut().nc_button_pressed.take();
     if button == MouseButton::Left && last_pressed.is_some() {
-        let last_button = last_pressed.unwrap();
-        let mut handled = false;
-        match wparam.0 as u32 {
-            HTMINBUTTON => {
-                if last_button == HTMINBUTTON {
-                    unsafe { ShowWindowAsync(handle, SW_MINIMIZE).ok().log_err() };
-                    handled = true;
-                }
+        let handled = match (wparam.0 as u32, last_pressed.unwrap()) {
+            (HTMINBUTTON, HTMINBUTTON) => {
+                unsafe { ShowWindowAsync(handle, SW_MINIMIZE).ok().log_err() };
+                true
             }
-            HTMAXBUTTON => {
-                if last_button == HTMAXBUTTON {
-                    if state_ptr.state.borrow().is_maximized() {
-                        unsafe { ShowWindowAsync(handle, SW_NORMAL).ok().log_err() };
-                    } else {
-                        unsafe { ShowWindowAsync(handle, SW_MAXIMIZE).ok().log_err() };
-                    }
-                    handled = true;
+            (HTMAXBUTTON, HTMAXBUTTON) => {
+                if state_ptr.state.borrow().is_maximized() {
+                    unsafe { ShowWindowAsync(handle, SW_NORMAL).ok().log_err() };
+                } else {
+                    unsafe { ShowWindowAsync(handle, SW_MAXIMIZE).ok().log_err() };
                 }
+                true
             }
-            HTCLOSE => {
-                if last_button == HTCLOSE {
-                    unsafe {
-                        PostMessageW(Some(handle), WM_CLOSE, WPARAM::default(), LPARAM::default())
-                            .log_err()
-                    };
-                    handled = true;
-                }
+            (HTCLOSE, HTCLOSE) => {
+                unsafe {
+                    PostMessageW(Some(handle), WM_CLOSE, WPARAM::default(), LPARAM::default())
+                        .log_err()
+                };
+                true
             }
-            _ => {}
+            _ => false,
         };
         if handled {
             return Some(0);

@@ -1,6 +1,5 @@
 mod derive_app_context;
 mod derive_into_element;
-mod derive_path_static_str;
 mod derive_render;
 mod derive_visual_context;
 mod register_action;
@@ -29,12 +28,6 @@ pub fn derive_into_element(input: TokenStream) -> TokenStream {
 #[doc(hidden)]
 pub fn derive_render(input: TokenStream) -> TokenStream {
     derive_render::derive_render(input)
-}
-
-#[proc_macro_derive(PathStaticStr)]
-#[doc(hidden)]
-pub fn derive_path_static_str(input: TokenStream) -> TokenStream {
-    derive_path_static_str::derive_path_static_str(input)
 }
 
 /// #[derive(AppContext)] is used to create a context out of anything that holds a `&mut App`

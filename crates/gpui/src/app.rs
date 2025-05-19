@@ -34,12 +34,13 @@ use crate::{
     Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Asset,
     AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
     EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, InspectorElementId,
-    InspectorElementRegistry, IntoElement, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId,
-    Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, Point, PromptBuilder, PromptHandle, PromptLevel, Render, RenderImage,
-    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
-    WindowInvalidator, current_platform, hash, init_app_menus,
+    KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu,
+    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, Point,
+    PromptBuilder, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
+    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
+    TextSystem, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
+    colors::{Colors, GlobalColors},
+    current_platform, hash, init_app_menus,
 };
 
 mod async_context;
@@ -1666,6 +1667,13 @@ impl App {
         f: impl 'static + Fn(InspectorElementId, &T, &mut Window, &mut App) -> R,
     ) {
         self.inspector_element_registry.register(f);
+    }
+
+    /// Initializes gpui's default colors for the application.
+    ///
+    /// These colors can be accessed through `cx.default_colors()`.
+    pub fn init_colors(&mut self) {
+        self.set_global(GlobalColors(Arc::new(Colors::default())));
     }
 }
 

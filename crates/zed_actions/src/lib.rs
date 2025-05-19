@@ -148,6 +148,12 @@ pub mod git {
     action_with_deprecated_aliases!(git, Branch, ["branches::OpenRecent"]);
 }
 
+pub mod jj {
+    use gpui::actions;
+
+    actions!(jj, [BookmarkList]);
+}
+
 pub mod command_palette {
     use gpui::actions;
 
