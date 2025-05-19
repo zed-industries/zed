@@ -20,10 +20,10 @@ use std::{
     thread::panicking,
 };
 
+use super::Context;
+use crate::util::atomic_incr_if_not_zero;
 #[cfg(any(test, feature = "leak-detection"))]
 use collections::HashMap;
-
-use super::Context;
 
 slotmap::new_key_type! {
     /// A unique identifier for a entity across the application.
@@ -529,16 +529,9 @@ impl AnyWeakEntity {
         let ref_counts = ref_counts.read();
         let ref_count = ref_counts.counts.get(self.entity_id)?;
 
-        let mut loaded = ref_count.load(SeqCst);
-        loop {
-            if loaded == 0 {
-                // entity_id is in dropped_entity_ids
-                return None;
-            }
-            match ref_count.compare_exchange_weak(loaded, loaded + 1, SeqCst, SeqCst) {
-                Ok(_) => break,
-                Err(actual) => loaded = actual,
-            }
+        if atomic_incr_if_not_zero(ref_count) == 0 {
+            // entity_id is in dropped_entity_ids
+            return None;
         }
         drop(ref_counts);
 

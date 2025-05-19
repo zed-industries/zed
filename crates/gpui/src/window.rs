@@ -50,6 +50,7 @@ use uuid::Uuid;
 
 mod prompts;
 
+use crate::util::atomic_incr_if_not_zero;
 pub use prompts::*;
 
 pub(crate) const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1024.), px(700.));
@@ -261,15 +262,8 @@ impl FocusHandle {
     pub(crate) fn for_id(id: FocusId, handles: &Arc<FocusMap>) -> Option<Self> {
         let lock = handles.read();
         let ref_count = lock.get(id)?;
-        let mut loaded = ref_count.load(SeqCst);
-        loop {
-            if loaded == 0 {
-                return None;
-            }
-            match ref_count.compare_exchange_weak(loaded, loaded + 1, SeqCst, SeqCst) {
-                Ok(_) => break,
-                Err(actual) => loaded = actual,
-            }
+        if atomic_incr_if_not_zero(ref_count) == 0 {
+            return None;
         }
         Some(Self {
             id,
