@@ -17,6 +17,7 @@ use dap::{
         self, AdapterVersion, DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName,
         GithubRepo,
     },
+    configure_tcp_connection,
     inline_value::{PythonInlineValueProvider, RustInlineValueProvider},
 };
 use gdb::GdbDebugAdapter;
@@ -43,21 +44,6 @@ pub fn init(cx: &mut App) {
         registry
             .add_inline_value_provider("Python".to_string(), Arc::from(PythonInlineValueProvider));
     })
-}
-
-pub(crate) async fn configure_tcp_connection(
-    tcp_connection: TcpArgumentsTemplate,
-) -> Result<(Ipv4Addr, u16, Option<u64>)> {
-    let host = tcp_connection.host();
-    let timeout = tcp_connection.timeout;
-
-    let port = if let Some(port) = tcp_connection.port {
-        port
-    } else {
-        dap::transport::TcpTransport::port(&tcp_connection).await?
-    };
-
-    Ok((host, port, timeout))
 }
 
 trait ToDap {
