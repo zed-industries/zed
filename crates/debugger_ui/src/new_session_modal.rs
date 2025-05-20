@@ -1176,11 +1176,10 @@ impl PickerDelegate for DebugScenarioDelegate {
 
 fn resolve_paths(program: String, path: String) -> (String, String) {
     let program = if let Some(program) = program.strip_prefix('~') {
-        format!(
-            "$ZED_WORKTREE_ROOT{}{}",
-            std::path::MAIN_SEPARATOR,
-            &program
-        )
+        paths::home_dir()
+            .join(program)
+            .to_string_lossy()
+            .to_string()
     } else if !program.starts_with(std::path::MAIN_SEPARATOR) {
         format!(
             "$ZED_WORKTREE_ROOT{}{}",
@@ -1191,17 +1190,39 @@ fn resolve_paths(program: String, path: String) -> (String, String) {
         program
     };
 
-    let path = if path.starts_with('~') && !path.is_empty() {
-        format!(
-            "$ZED_WORKTREE_ROOT{}{}",
-            std::path::MAIN_SEPARATOR,
-            &path[1..]
-        )
-    } else if !path.starts_with(std::path::MAIN_SEPARATOR) && !path.is_empty() {
+    let path = if let Some(path) = path.strip_prefix('~') {
+        paths::home_dir().join(path).to_string_lossy().to_string()
+    } else if !path.starts_with(std::path::MAIN_SEPARATOR) {
         format!("$ZED_WORKTREE_ROOT{}{}", std::path::MAIN_SEPARATOR, &path)
     } else {
         path
     };
 
     (program, path)
+}
+
+#[cfg(test)]
+mod tests {
+    use paths::home_dir;
+
+    use super::*;
+
+    #[test]
+    fn test_normalize_paths() {
+        let worktree_root = "$ZED_WORKTREE_ROOT";
+        let sep = std::path::MAIN_SEPARATOR;
+        let home = home_dir().to_string_lossy().to_string();
+        for ((program, path), expected) in [
+            (
+                ("bin", ""),
+                (
+                    format!("${worktree_root}${sep}bin"),
+                    format!("${worktree_root}"),
+                ),
+            ),
+            (("~", "~"), (home.clone(), home.clone())),
+        ] {
+            assert_eq!(resolve_paths(program.to_owned(), path.to_owned()), expected);
+        }
+    }
 }
