@@ -490,7 +490,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                     let attributes = item.attributes().await?;
                     let username = attributes
                         .get("username")
-                        .ok_or_else(|| anyhow!("Cannot find username in stored credentials"))?;
+                        .context("Cannot find username in stored credentials")?;
                     let secret = item.secret().await?;
 
                     // we lose the zeroizing capabilities at this boundary,

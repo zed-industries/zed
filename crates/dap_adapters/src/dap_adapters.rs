@@ -8,7 +8,7 @@ mod ruby;
 
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use async_trait::async_trait;
 use codelldb::CodeLldbDebugAdapter;
 use dap::{
