@@ -339,8 +339,8 @@ impl TextLayout {
                     None
                 };
 
-                let (truncate_width, ellipsis) =
-                    if let Some(text_overflow) = text_style.text_overflow {
+                let (truncate_width, truncation_suffix) =
+                    if let Some(text_overflow) = text_style.text_overflow.clone() {
                         let width = known_dimensions.width.or(match available_space.width {
                             crate::AvailableSpace::Definite(x) => match text_style.line_clamp {
                                 Some(max_lines) => Some(x * max_lines),
@@ -350,10 +350,10 @@ impl TextLayout {
                         });
 
                         match text_overflow {
-                            TextOverflow::Ellipsis(s) => (width, Some(s)),
+                            TextOverflow::Truncate(s) => (width, s),
                         }
                     } else {
-                        (None, None)
+                        (None, "".into())
                     };
 
                 if let Some(text_layout) = element_state.0.borrow().as_ref() {
@@ -366,7 +366,12 @@ impl TextLayout {
 
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
                 let text = if let Some(truncate_width) = truncate_width {
-                    line_wrapper.truncate_line(text.clone(), truncate_width, ellipsis, &mut runs)
+                    line_wrapper.truncate_line(
+                        text.clone(),
+                        truncate_width,
+                        &truncation_suffix,
+                        &mut runs,
+                    )
                 } else {
                     text.clone()
                 };

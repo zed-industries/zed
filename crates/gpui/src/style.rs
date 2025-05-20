@@ -13,6 +13,7 @@ use crate::{
 };
 use collections::HashSet;
 use refineable::Refineable;
+use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 pub use taffy::style::{
     AlignContent, AlignItems, AlignSelf, Display, FlexDirection, FlexWrap, JustifyContent,
@@ -312,14 +313,15 @@ pub enum WhiteSpace {
 }
 
 /// How to truncate text that overflows the width of the element
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TextOverflow {
-    /// Truncate the text with an ellipsis, same as: `text-overflow: ellipsis;` in CSS
-    Ellipsis(&'static str),
+    /// Truncate the text when it doesn't fit, and represent this truncation by displaying the
+    /// provided string.
+    Truncate(SharedString),
 }
 
 /// How to align text within the element
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TextAlign {
     /// Align the text to the left of the element
     #[default]

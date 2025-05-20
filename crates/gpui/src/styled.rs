@@ -12,7 +12,7 @@ pub use gpui_macros::{
 };
 use taffy::style::{AlignContent, Display};
 
-const ELLIPSIS: &str = "…";
+const ELLIPSIS: SharedString = SharedString::new_static("…");
 
 /// A trait for elements that can be styled.
 /// Use this to opt-in to a utility CSS-like styling API.
@@ -67,7 +67,7 @@ pub trait Styled: Sized {
     fn text_ellipsis(mut self) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
-            .text_overflow = Some(TextOverflow::Ellipsis(ELLIPSIS));
+            .text_overflow = Some(TextOverflow::Truncate(ELLIPSIS));
         self
     }
 
