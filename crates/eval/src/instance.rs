@@ -1,5 +1,5 @@
 use agent::{Message, MessageSegment, SerializedThread, ThreadStore};
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use assistant_tool::ToolWorkingSet;
 use client::proto::LspWorkProgress;
 use futures::channel::mpsc;

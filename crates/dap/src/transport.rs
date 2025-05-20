@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Context as _, Result, bail};
 use dap_types::{
     ErrorResponse,
     messages::{Message, Response},

@@ -1,5 +1,5 @@
 use crate::SharedString;
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use collections::HashMap;
 pub use no_action::{NoAction, is_no_action};
 use serde_json::json;

@@ -6,7 +6,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use ::fs::{CopyOptions, Fs, RealFs, copy_recursive};
-use anyhow::{Context, Result, bail};
+use anyhow::{Context as _, Result, bail};
 use clap::Parser;
 use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};

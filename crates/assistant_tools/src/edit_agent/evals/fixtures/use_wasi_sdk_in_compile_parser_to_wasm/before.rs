@@ -20,7 +20,7 @@ use std::{
 
 #[cfg(any(feature = "tree-sitter-highlight", feature = "tree-sitter-tags"))]
 use anyhow::Error;
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use etcetera::BaseStrategy as _;
 use fs4::fs_std::FileExt;
 use indoc::indoc;

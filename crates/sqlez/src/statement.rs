@@ -2,7 +2,7 @@ use std::ffi::{CStr, CString, c_int};
 use std::marker::PhantomData;
 use std::{ptr, slice, str};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context as _, Result, bail};
 use libsqlite3_sys::*;
 
 use crate::bindable::{Bind, Column};

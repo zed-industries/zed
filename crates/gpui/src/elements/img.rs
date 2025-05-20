@@ -5,7 +5,7 @@ use crate::{
     SMOOTH_SVG_SCALE_FACTOR, SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task,
     Window, px, swap_rgba_pa_to_bgra,
 };
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 
 use futures::{AsyncReadExt, Future};
 use image::{

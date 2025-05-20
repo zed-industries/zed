@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use windows::Win32::{
     Foundation::{HWND, LPARAM, WPARAM},
     System::Threading::CREATE_NEW_PROCESS_GROUP,

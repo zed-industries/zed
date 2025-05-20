@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
 use futures::{FutureExt, StreamExt, channel::oneshot, select};
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, Task};

@@ -1,7 +1,7 @@
 use std::str;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use collections::HashMap;
 use futures::{
     AsyncBufReadExt, AsyncRead, AsyncReadExt as _,

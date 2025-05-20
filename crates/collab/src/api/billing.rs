@@ -1,4 +1,4 @@
-use anyhow::{Context, bail};
+use anyhow::{Context as _, bail};
 use axum::{
     Extension, Json, Router,
     extract::{self, Query},

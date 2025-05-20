@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use gpui::{AssetSource, SharedString};
 use rust_embed::RustEmbed;
 

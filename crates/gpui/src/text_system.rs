@@ -16,7 +16,7 @@ use crate::{
     Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
     StrikethroughStyle, UnderlineStyle, px,
 };
-use anyhow::{Context, anyhow};
+use anyhow::{Context as _, anyhow};
 use collections::FxHashMap;
 use core::fmt;
 use derive_more::Deref;

@@ -8,7 +8,7 @@ mod telemetry;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake_provider;
 
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use client::Client;
 use futures::FutureExt;
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};

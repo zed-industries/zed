@@ -1,5 +1,5 @@
 use crate::schema::json_schema_for;
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use futures::{SinkExt, StreamExt, channel::mpsc};
 use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};

@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use clap::Parser;
 use serde_json::{Value, json};
 use std::fs;

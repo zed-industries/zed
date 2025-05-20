@@ -1,5 +1,5 @@
 //! socks proxy
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use http_client::Url;
 use tokio_socks::tcp::{Socks4Stream, Socks5Stream};
 

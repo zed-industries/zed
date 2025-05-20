@@ -3,7 +3,7 @@ mod models;
 use std::collections::HashMap;
 use std::pin::Pin;
 
-use anyhow::{Context, Error, Result, anyhow};
+use anyhow::{Context as _, Error, Result, anyhow};
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
 pub use aws_sdk_bedrockruntime::types::{
