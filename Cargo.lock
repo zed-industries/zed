@@ -2848,6 +2848,7 @@ dependencies = [
  "tiny_http",
  "tokio",
  "tokio-native-tls",
+ "tokio-rustls 0.26.2",
  "tokio-socks",
  "url",
  "util",
