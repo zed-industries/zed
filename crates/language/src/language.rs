@@ -810,7 +810,7 @@ pub struct JsxTagAutoCloseConfig {
 }
 
 /// The configuration for documentation block for this language.
-#[derive(Clone, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct DocumentationConfig {
     /// A start tag of documentation block.
     pub start: Arc<str>,

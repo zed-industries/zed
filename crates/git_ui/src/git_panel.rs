@@ -35,7 +35,6 @@ use gpui::{
     WeakEntity, actions, anchored, deferred, percentage, uniform_list,
 };
 use itertools::Itertools;
-use language::language_settings::SoftWrap;
 use language::{Buffer, File};
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelRegistry, LanguageModelRequest,
