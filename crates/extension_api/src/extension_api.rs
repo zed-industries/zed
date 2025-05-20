@@ -22,6 +22,7 @@ pub use wit::{
     zed::extension::dap::{
         DebugAdapterBinary, DebugRequest, DebugTaskDefinition, StartDebuggingRequestArguments,
         StartDebuggingRequestArgumentsRequest, TcpArguments, TcpArgumentsTemplate,
+        resolve_tcp_template,
     },
     zed::extension::github::{
         GithubRelease, GithubReleaseAsset, GithubReleaseOptions, github_release_by_tag_name,
