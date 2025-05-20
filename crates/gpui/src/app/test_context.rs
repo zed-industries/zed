@@ -442,7 +442,8 @@ impl TestAppContext {
             .unwrap()
             .as_mut()
             .unwrap()
-            .platform_window
+            .borrow_mut()
+            .platform_window_mut()
             .as_test()
             .unwrap()
             .clone()
@@ -833,7 +834,7 @@ impl VisualTestContext {
             .cx
             .update_window(self.window, |_, window, _| {
                 window
-                    .platform_window
+                    .platform_window_mut()
                     .as_test()
                     .unwrap()
                     .0

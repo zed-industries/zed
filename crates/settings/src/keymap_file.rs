@@ -69,6 +69,10 @@ pub struct KeymapSection {
     /// on macOS. See the documentation for more details.
     #[serde(default)]
     use_key_equivalents: bool,
+    /// Allows the bindings to override the default IME behavior.
+    /// This is currently only supported on macOS.
+    #[serde(default)]
+    override_ime: bool,
     /// This keymap section's bindings, as a JSON object mapping keystrokes to actions. The
     /// keystrokes key is a string representing a sequence of keystrokes to type, where the
     /// keystrokes are separated by whitespace. Each keystroke is a sequence of modifiers (`ctrl`,
@@ -221,6 +225,7 @@ impl KeymapFile {
         for KeymapSection {
             context,
             use_key_equivalents,
+            override_ime,
             bindings,
             unrecognized_fields,
         } in keymap_file.0.iter()
@@ -266,6 +271,7 @@ impl KeymapFile {
                         action,
                         context_predicate.clone(),
                         key_equivalents,
+                        *override_ime,
                         cx,
                     );
                     match result {
@@ -324,6 +330,7 @@ impl KeymapFile {
         action: &KeymapAction,
         context: Option<Rc<KeyBindingContextPredicate>>,
         key_equivalents: Option<&HashMap<char, char>>,
+        override_ime: bool,
         cx: &App,
     ) -> std::result::Result<KeyBinding, String> {
         let (build_result, action_input_string) = match &action.0 {
@@ -387,16 +394,17 @@ impl KeymapFile {
             },
         };
 
-        let key_binding = match KeyBinding::load(keystrokes, action, context, key_equivalents) {
-            Ok(key_binding) => key_binding,
-            Err(InvalidKeystrokeError { keystroke }) => {
-                return Err(format!(
-                    "invalid keystroke {}. {}",
-                    MarkdownInlineCode(&format!("\"{}\"", &keystroke)),
-                    KEYSTROKE_PARSE_EXPECTED_MESSAGE
-                ));
-            }
-        };
+        let key_binding =
+            match KeyBinding::load(keystrokes, action, context, key_equivalents, override_ime) {
+                Ok(key_binding) => key_binding,
+                Err(InvalidKeystrokeError { keystroke }) => {
+                    return Err(format!(
+                        "invalid keystroke {}. {}",
+                        MarkdownInlineCode(&format!("\"{}\"", &keystroke)),
+                        KEYSTROKE_PARSE_EXPECTED_MESSAGE
+                    ));
+                }
+            };
 
         if let Some(validator) = KEY_BINDING_VALIDATORS.get(&key_binding.action().type_id()) {
             match validator.validate(&key_binding) {

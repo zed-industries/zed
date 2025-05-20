@@ -1410,6 +1410,7 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
                                 modifiers: Modifiers::default(),
                                 key: commit_text.clone(),
                                 key_char: Some(commit_text),
+                                ..Default::default()
                             },
                             is_held: false,
                         }));

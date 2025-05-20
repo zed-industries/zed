@@ -10,6 +10,7 @@ pub struct KeyBinding {
     pub(crate) action: Box<dyn Action>,
     pub(crate) keystrokes: SmallVec<[Keystroke; 2]>,
     pub(crate) context_predicate: Option<Rc<KeyBindingContextPredicate>>,
+    pub(crate) override_ime: bool,
 }
 
 impl Clone for KeyBinding {
@@ -18,6 +19,7 @@ impl Clone for KeyBinding {
             action: self.action.boxed_clone(),
             keystrokes: self.keystrokes.clone(),
             context_predicate: self.context_predicate.clone(),
+            override_ime: self.override_ime,
         }
     }
 }
@@ -30,7 +32,7 @@ impl KeyBinding {
         } else {
             None
         };
-        Self::load(keystrokes, Box::new(action), context_predicate, None).unwrap()
+        Self::load(keystrokes, Box::new(action), context_predicate, None, false).unwrap()
     }
 
     /// Load a keybinding from the given raw data.
@@ -39,6 +41,7 @@ impl KeyBinding {
         action: Box<dyn Action>,
         context_predicate: Option<Rc<KeyBindingContextPredicate>>,
         key_equivalents: Option<&HashMap<char, char>>,
+        override_ime: bool,
     ) -> std::result::Result<Self, InvalidKeystrokeError> {
         let mut keystrokes: SmallVec<[Keystroke; 2]> = keystrokes
             .split_whitespace()
@@ -59,12 +62,17 @@ impl KeyBinding {
             keystrokes,
             action,
             context_predicate,
+            override_ime,
         })
     }
 
     /// Check if the given keystrokes match this binding.
     pub fn match_keystrokes(&self, typed: &[Keystroke]) -> Option<bool> {
         if self.keystrokes.len() < typed.len() {
+            return None;
+        }
+
+        if !self.override_ime && typed.iter().any(|key| key.is_composing == Some(true)) {
             return None;
         }
 
@@ -98,6 +106,7 @@ impl std::fmt::Debug for KeyBinding {
         f.debug_struct("KeyBinding")
             .field("keystrokes", &self.keystrokes)
             .field("context_predicate", &self.context_predicate)
+            .field("override_ime", &self.override_ime)
             .field("action", &self.action.name())
             .finish()
     }

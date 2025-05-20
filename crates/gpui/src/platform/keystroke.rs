@@ -19,6 +19,16 @@ pub struct Keystroke {
     /// this binding was pressed.
     /// e.g. for s this is "s", for option-s "ß", and cmd-s None
     pub key_char: Option<String>,
+
+    /// - `Some(true)` if the keystroke was generated during a composition session.
+    /// - `Some(false)` if the keystroke was generated during a non-composition session.
+    /// - `None` if it was unknown or not applicable.
+    #[serde(default)]
+    pub is_composing: Option<bool>,
+
+    /// platform native event that triggered this keystroke.
+    #[serde(skip)]
+    pub native_event: Option<crate::NativeEvent>,
 }
 
 /// Error type for `Keystroke::parse`. This is used instead of `anyhow::Error` so that Zed can use
@@ -192,6 +202,8 @@ impl Keystroke {
             modifiers,
             key,
             key_char,
+            is_composing: None,
+            native_event: None,
         })
     }
 

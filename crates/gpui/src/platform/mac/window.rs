@@ -1,4 +1,4 @@
-use super::{BoolExt, MacDisplay, NSRange, NSStringExt, ns_string, renderer};
+use super::{BoolExt, MacDisplay, MacNativeEvent, NSRange, NSStringExt, ns_string, renderer};
 use crate::{
     AnyWindowHandle, Bounds, DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor,
     KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
@@ -1221,6 +1221,21 @@ impl PlatformWindow for MacWindow {
             })
             .detach();
     }
+
+    fn handle_native_event(&self, native_event: MacNativeEvent) -> bool {
+        unsafe {
+            let input_context: id = msg_send![class!(NSTextInputContext), currentInputContext];
+            let handled: BOOL = msg_send![input_context, handleEvent: native_event];
+            handled
+        }
+    }
+
+    fn discard_marked_text(&self) {
+        unsafe {
+            let input_context: id = msg_send![class!(NSTextInputContext), currentInputContext];
+            let _: () = msg_send![input_context, discardMarkedText];
+        }
+    }
 }
 
 impl rwh::HasWindowHandle for MacWindow {
@@ -1389,6 +1404,15 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                     && !key_down_event.keystroke.modifiers.control
                     && !key_down_event.keystroke.modifiers.function)
             {
+                if is_composing {
+                    let mut key_down_event = key_down_event.clone();
+                    key_down_event.keystroke.is_composing = Some(true);
+                    let handled = run_callback(PlatformInput::KeyDown(key_down_event));
+                    if handled == YES {
+                        return YES;
+                    }
+                }
+
                 {
                     let mut lock = window_state.as_ref().lock();
                     lock.keystroke_for_do_command = Some(key_down_event.keystroke.clone());
