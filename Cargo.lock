@@ -8124,10 +8124,12 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "language",
+ "project",
  "serde_json",
  "serde_json_lenient",
  "ui",
  "util",
+ "workspace",
  "zed_actions",
 ]
 
