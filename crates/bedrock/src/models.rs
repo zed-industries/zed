@@ -464,7 +464,11 @@ mod tests {
         // Test Meta models
         assert_eq!(
             Model::MetaLlama3_70BInstruct.cross_region_inference_id("us-east-1")?,
-            "us.meta.llama3-70b-instruct-v1:0"
+            "meta.llama3-70b-instruct-v1:0"
+        );
+        assert_eq!(
+            Model::MetaLlama31_70BInstruct.cross_region_inference_id("us-east-1")?,
+            "us.meta.llama3-1-70b-instruct-v1:0"
         );
         assert_eq!(
             Model::MetaLlama32_1BInstruct.cross_region_inference_id("eu-west-1")?,
