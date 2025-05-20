@@ -752,7 +752,6 @@ impl GitRepository for RealGitRepository {
                         "--no-optional-locks",
                         "cat-file",
                         "--batch-check=%(objectname)",
-                        "-z",
                     ])
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
@@ -765,7 +764,7 @@ impl GitRepository for RealGitRepository {
                     .ok_or_else(|| anyhow!("no stdin for git cat-file subprocess"))?;
                 let mut stdin = BufWriter::new(stdin);
                 for rev in &revs {
-                    write!(&mut stdin, "{rev}\0")?;
+                    write!(&mut stdin, "{rev}\n")?;
                 }
                 drop(stdin);
 
