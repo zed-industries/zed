@@ -8,6 +8,10 @@ use assistant_tool::{
     ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput,
     ToolUseStatus,
 };
+use language::language_settings::{self, FormatOnSave};
+use project::lsp_store::{FormatTrigger, LspFormatTarget};
+use std::collections::HashSet;
+
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorMode, MultiBuffer, PathKey};
 use futures::StreamExt;
@@ -248,6 +252,40 @@ impl Tool for EditFileTool {
                 }
             }
             let agent_output = output.await?;
+
+            // Format buffer if format_on_save is enabled, before saving.
+            // If any part of the formatting operation fails, log an error but
+            // don't block the completion of the edit tool's work.
+            let should_format = buffer
+                .read_with(cx, |buffer, cx| {
+                    let settings = language_settings::language_settings(
+                        buffer.language().map(|l| l.name()),
+                        buffer.file(),
+                        cx,
+                    );
+                    !matches!(settings.format_on_save, FormatOnSave::Off)
+                })
+                .log_err()
+                .unwrap_or(false);
+
+            if should_format {
+                let buffers = HashSet::from_iter([buffer.clone()]);
+
+                if let Some(format_task) = project
+                    .update(cx, move |project, cx| {
+                        project.format(
+                            buffers,
+                            LspFormatTarget::Buffers,
+                            false, // Don't push to history since the tool did it.
+                            FormatTrigger::Save,
+                            cx,
+                        )
+                    })
+                    .log_err()
+                {
+                    format_task.await.log_err();
+                }
+            }
 
             project
                 .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
