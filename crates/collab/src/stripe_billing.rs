@@ -310,6 +310,32 @@ impl StripeBilling {
     ) -> Result<stripe::Subscription> {
         let zed_free_price_id = self.zed_free_price_id().await?;
 
+        let existing_subscriptions = stripe::Subscription::list(
+            &self.client,
+            &stripe::ListSubscriptions {
+                customer: Some(customer_id.clone()),
+                status: None,
+                ..Default::default()
+            },
+        )
+        .await?;
+
+        let existing_zed_free_subscription =
+            existing_subscriptions
+                .data
+                .into_iter()
+                .find(|subscription| {
+                    subscription.status == SubscriptionStatus::Active
+                        && subscription.items.data.iter().any(|item| {
+                            item.price
+                                .as_ref()
+                                .map_or(false, |price| price.id == zed_free_price_id)
+                        })
+                });
+        if let Some(subscription) = existing_zed_free_subscription {
+            return Ok(subscription);
+        }
+
         let mut params = stripe::CreateSubscription::new(customer_id);
         params.items = Some(vec![stripe::CreateSubscriptionItems {
             price: Some(zed_free_price_id.to_string()),
