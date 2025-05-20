@@ -13981,28 +13981,39 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(cx: &mut
 }
 
 #[gpui::test]
-async fn test_code_action_hides_hover_popover(cx: &mut gpui::TestAppContext) {
+async fn test_context_menus_hide_hover_popover(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
-
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {
             hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
             code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+            completion_provider: Some(lsp::CompletionOptions {
+                resolve_provider: Some(true),
+                ..Default::default()
+            }),
             ..Default::default()
         },
         cx,
     )
     .await;
     cx.set_state(indoc! {"
-        fn testˇ() {
+        struct TestStruct {
+            field: i32
+        }
+
+        fn mainˇ() {
             let unused_var = 42;
-            println!();
+            let test_struct = TestStruct { field: 42 };
         }
     "});
     let symbol_range = cx.lsp_range(indoc! {"
-        «fn test»() {
+        struct TestStruct {
+            field: i32
+        }
+
+        «fn main»() {
             let unused_var = 42;
-            println!();
+            let test_struct = TestStruct { field: 42 };
         }
     "});
     let mut hover_requests =
@@ -14015,6 +14026,8 @@ async fn test_code_action_hides_hover_popover(cx: &mut gpui::TestAppContext) {
                 range: Some(symbol_range),
             }))
         });
+
+    // Case 1: Test that code action menu hide hover popover
     cx.dispatch_action(Hover);
     hover_requests.next().await;
     cx.condition(|editor, _| editor.hover_state.visible()).await;
@@ -14030,8 +14043,8 @@ async fn test_code_action_hides_hover_popover(cx: &mut gpui::TestAppContext) {
                                 lsp::Url::from_file_path(path!("/file.rs")).unwrap(),
                                 vec![lsp::TextEdit {
                                     range: lsp::Range::new(
-                                        lsp::Position::new(1, 4),
-                                        lsp::Position::new(1, 27),
+                                        lsp::Position::new(5, 4),
+                                        lsp::Position::new(5, 27),
                                     ),
                                     new_text: "".to_string(),
                                 }],
@@ -14065,53 +14078,11 @@ async fn test_code_action_hides_hover_popover(cx: &mut gpui::TestAppContext) {
             !editor.hover_state.visible(),
             "Hover popover should be hidden when code action menu is shown"
         );
+        // Hide code actions
+        editor.context_menu.take();
     });
-}
 
-#[gpui::test]
-async fn test_completion_hides_hover_popover(cx: &mut gpui::TestAppContext) {
-    init_test(cx, |_| {});
-
-    let mut cx = EditorLspTestContext::new_rust(
-        lsp::ServerCapabilities {
-            hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
-            completion_provider: Some(lsp::CompletionOptions {
-                resolve_provider: Some(true),
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        cx,
-    )
-    .await;
-    cx.set_state(indoc! {"
-        struct TestStruct {
-            field: i32,
-        }
-
-        fn main() {
-            let varˇ = TestStruct { field: 42 };
-        }
-    "});
-    let symbol_range = cx.lsp_range(indoc! {"
-        struct TestStruct {
-            field: i32,
-        }
-
-        fn main() {
-            let «var» = TestStruct { field: 42 };
-        }
-    "});
-    let mut hover_requests =
-        cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
-            Ok(Some(lsp::Hover {
-                contents: lsp::HoverContents::Markup(lsp::MarkupContent {
-                    kind: lsp::MarkupKind::Markdown,
-                    value: "Variable of type TestStruct".to_string(),
-                }),
-                range: Some(symbol_range),
-            }))
-        });
+    // Case 2: Test that code completions hide hover popover
     cx.dispatch_action(Hover);
     hover_requests.next().await;
     cx.condition(|editor, _| editor.hover_state.visible()).await;
@@ -14123,15 +14094,15 @@ async fn test_completion_hides_hover_popover(cx: &mut gpui::TestAppContext) {
                 counter.fetch_add(1, atomic::Ordering::Release);
                 Ok(Some(lsp::CompletionResponse::Array(vec![
                     lsp::CompletionItem {
-                        label: "var".into(),
-                        kind: Some(lsp::CompletionItemKind::VARIABLE),
-                        detail: Some("TestStruct".to_string()),
+                        label: "main".into(),
+                        kind: Some(lsp::CompletionItemKind::FUNCTION),
+                        detail: Some("() -> ()".to_string()),
                         ..Default::default()
                     },
                     lsp::CompletionItem {
-                        label: "field".into(),
-                        kind: Some(lsp::CompletionItemKind::FIELD),
-                        detail: Some("i32".to_string()),
+                        label: "TestStruct".into(),
+                        kind: Some(lsp::CompletionItemKind::STRUCT),
+                        detail: Some("struct TestStruct".to_string()),
                         ..Default::default()
                     },
                 ])))
