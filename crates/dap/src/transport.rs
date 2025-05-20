@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use dap_types::{
     ErrorResponse,
     messages::{Message, Response},
@@ -785,7 +785,7 @@ impl FakeTransport {
 
                     match message {
                         Err(error) => {
-                            break anyhow!(error);
+                            break anyhow::anyhow!(error);
                         }
                         Ok(message) => {
                             match message {

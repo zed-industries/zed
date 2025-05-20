@@ -399,7 +399,7 @@ mod linux {
         time::Duration,
     };
 
-    use anyhow::anyhow;
+    use anyhow::{Context as _, anyhow};
     use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
     use fork::Fork;
 

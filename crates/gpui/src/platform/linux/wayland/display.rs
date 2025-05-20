@@ -3,6 +3,7 @@ use std::{
     hash::{Hash, Hasher},
 };
 
+use anyhow::Context as _;
 use uuid::Uuid;
 use wayland_backend::client::ObjectId;
 

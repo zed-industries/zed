@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use collections::HashMap;
 use futures::{SinkExt, channel::mpsc};
 use gpui::{App, AsyncApp, ScreenCaptureSource, ScreenCaptureStream, Task};

@@ -3,7 +3,7 @@ use crate::{
     GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams, SUBPIXEL_VARIANTS,
     ShapedGlyph, ShapedRun, SharedString, Size, point, size,
 };
-use anyhow::{Context as _, Ok, Result, anyhow};
+use anyhow::{Context as _, Ok, Result};
 use collections::HashMap;
 use cosmic_text::{
     Attrs, AttrsList, CacheKey, Family, Font as CosmicTextFont, FontFeatures as CosmicFontFeatures,

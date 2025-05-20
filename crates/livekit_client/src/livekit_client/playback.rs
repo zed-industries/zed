@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait as _};
 use futures::channel::mpsc::UnboundedSender;
@@ -492,8 +492,9 @@ fn create_buffer_pool(
         (format_key, format.into_CFType()),
     ]);
 
-    pixel_buffer_pool::CVPixelBufferPool::new(None, Some(&buffer_attributes))
-        .map_err(|cv_return| anyhow!("failed to create pixel buffer pool: CVReturn({cv_return})",))
+    pixel_buffer_pool::CVPixelBufferPool::new(None, Some(&buffer_attributes)).map_err(|cv_return| {
+        anyhow::anyhow!("failed to create pixel buffer pool: CVReturn({cv_return})",)
+    })
 }
 
 #[cfg(target_os = "macos")]

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::Context as _;
 use uuid::Uuid;
 use x11rb::{connection::Connection as _, xcb_ffi::XCBConnection};
 
@@ -41,7 +41,7 @@ impl PlatformDisplay for X11Display {
         DisplayId(self.x_screen_index as u32)
     }
 
-    fn uuid(&self) -> Result<Uuid> {
+    fn uuid(&self) -> anyhow::Result<Uuid> {
         Ok(self.uuid)
     }
 

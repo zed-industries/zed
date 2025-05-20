@@ -1,7 +1,7 @@
 use std::{borrow::Cow, sync::Arc};
 
 use ::util::ResultExt;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use collections::HashMap;
 use itertools::Itertools;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};

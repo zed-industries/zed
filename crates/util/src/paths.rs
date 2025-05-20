@@ -34,7 +34,7 @@ pub trait PathExt {
         }
         #[cfg(windows)]
         {
-            use anyhow::anyhow;
+            use anyhow::Context as _;
             use tendril::fmt::{Format, WTF8};
             WTF8::validate(bytes)
                 .then(|| {
