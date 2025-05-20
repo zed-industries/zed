@@ -5,7 +5,10 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufStream},
     net::TcpStream,
 };
+#[cfg(not(target_os = "linux"))]
 use tokio_native_tls::{TlsConnector, native_tls};
+#[cfg(target_os = "linux")]
+use tokio_rustls::{TlsConnector, client::TlsStream};
 use url::Url;
 
 use super::AsyncReadWrite;
