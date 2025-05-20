@@ -74,11 +74,7 @@ cocoa.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustls-pki-types = "1.12"
-tokio-rustls = { version = "0.26", features = [
-    "logging",
-    "tls12",
-    "ring",
-], default-features = false }
+tokio-rustls = { version = "0.26", features = ["tls12", "ring"], default-features = false }
 
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 tokio-native-tls = "0.3"
