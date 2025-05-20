@@ -470,6 +470,10 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn gpu_specs(&self) -> Option<GpuSpecs>;
 
     fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>);
+    fn handle_native_event(&self, _input: NativeEvent) -> bool {
+        false
+    }
+    fn discard_marked_text(&self) {}
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
@@ -897,6 +901,11 @@ impl PlatformInputHandler {
             .update(|window, cx| self.handler.character_index_for_point(point, window, cx))
             .ok()
             .flatten()
+    }
+
+    pub(crate) fn finish_composition(&mut self, window: &mut Window, cx: &mut App) {
+        self.handler.unmark_text(window, cx);
+        window.platform_window.discard_marked_text();
     }
 }
 
@@ -1700,3 +1709,11 @@ impl From<String> for ClipboardString {
         }
     }
 }
+
+#[cfg(target_os = "macos")]
+#[allow(missing_docs)]
+pub type NativeEvent = MacNativeEvent;
+
+#[cfg(not(target_os = "macos"))]
+#[allow(missing_docs)]
+pub type NativeEvent = ();
