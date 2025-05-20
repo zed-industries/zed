@@ -207,6 +207,9 @@ impl BreakpointStore {
         mut cx: AsyncApp,
     ) -> Result<()> {
         let breakpoints = cx.update(|cx| this.read(cx).breakpoint_store())?;
+        if message.payload.breakpoints.is_empty() {
+            return Ok(());
+        }
 
         let buffer = this
             .update(&mut cx, |this, cx| {
