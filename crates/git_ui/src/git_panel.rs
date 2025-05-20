@@ -1626,7 +1626,7 @@ impl GitPanel {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl Future<Output = Result<bool, anyhow::Error>> + use<> {
+    ) -> impl Future<Output = anyhow::Result<bool>> + use<> {
         let repo = self.active_repository.clone();
         let mut cx = window.to_async(cx);
 

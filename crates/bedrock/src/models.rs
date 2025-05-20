@@ -293,7 +293,7 @@ impl Model {
         }
     }
 
-    pub fn cross_region_inference_id(&self, region: &str) -> Result<String, anyhow::Error> {
+    pub fn cross_region_inference_id(&self, region: &str) -> anyhow::Result<String> {
         let region_group = if region.starts_with("us-gov-") {
             "us-gov"
         } else if region.starts_with("us-") {

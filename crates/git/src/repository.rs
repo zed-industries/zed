@@ -1556,7 +1556,7 @@ async fn run_git_command(
 async fn run_askpass_command(
     mut ask_pass: AskPassSession,
     git_process: smol::process::Child,
-) -> std::result::Result<RemoteCommandOutput, anyhow::Error> {
+) -> anyhow::Result<RemoteCommandOutput> {
     select_biased! {
         result = ask_pass.run().fuse() => {
             match result {

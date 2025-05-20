@@ -1018,7 +1018,7 @@ mod tests {
         mode: &EditFileMode,
         path: &str,
         cx: &mut TestAppContext,
-    ) -> Result<ProjectPath, anyhow::Error> {
+    ) -> anyhow::Result<ProjectPath> {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
@@ -1045,7 +1045,7 @@ mod tests {
         result
     }
 
-    fn assert_resolved_path_eq(path: Result<ProjectPath, anyhow::Error>, expected: &str) {
+    fn assert_resolved_path_eq(path: anyhow::Result<ProjectPath>, expected: &str) {
         let actual = path
             .expect("Should return valid path")
             .path

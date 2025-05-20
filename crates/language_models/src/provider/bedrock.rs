@@ -365,7 +365,7 @@ struct BedrockModel {
 }
 
 impl BedrockModel {
-    fn get_or_init_client(&self, cx: &AsyncApp) -> Result<&BedrockClient, anyhow::Error> {
+    fn get_or_init_client(&self, cx: &AsyncApp) -> anyhow::Result<&BedrockClient> {
         self.client
             .get_or_try_init_blocking(|| {
                 let (auth_method, credentials, endpoint, region, settings) =

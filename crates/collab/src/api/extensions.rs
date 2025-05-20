@@ -374,7 +374,7 @@ async fn fetch_extension_manifest(
     blob_store_bucket: &String,
     extension_id: &str,
     version: &str,
-) -> Result<NewExtensionVersion, anyhow::Error> {
+) -> anyhow::Result<NewExtensionVersion> {
     let object = blob_store_client
         .get_object()
         .bucket(blob_store_bucket)

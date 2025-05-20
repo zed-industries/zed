@@ -31,7 +31,7 @@ pub async fn latest_github_release(
     require_assets: bool,
     pre_release: bool,
     http: Arc<dyn HttpClient>,
-) -> Result<GithubRelease, anyhow::Error> {
+) -> anyhow::Result<GithubRelease> {
     let mut response = http
         .get(
             format!("https://api.github.com/repos/{repo_name_with_owner}/releases").as_str(),
@@ -80,7 +80,7 @@ pub async fn get_release_by_tag_name(
     repo_name_with_owner: &str,
     tag: &str,
     http: Arc<dyn HttpClient>,
-) -> Result<GithubRelease, anyhow::Error> {
+) -> anyhow::Result<GithubRelease> {
     let mut response = http
         .get(
             &format!("https://api.github.com/repos/{repo_name_with_owner}/releases/tags/{tag}"),

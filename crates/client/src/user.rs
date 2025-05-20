@@ -763,20 +763,18 @@ impl UserStore {
         };
 
         let client = self.client.clone();
-        cx.spawn(
-            async move |this, cx| -> std::result::Result<(), anyhow::Error> {
-                let client = client.upgrade().context("client not found")?;
-                let response = client
-                    .request(proto::AcceptTermsOfService {})
-                    .await
-                    .context("error accepting tos")?;
-                this.update(cx, |this, cx| {
-                    this.set_current_user_accepted_tos_at(Some(response.accepted_tos_at));
-                    cx.emit(Event::PrivateUserInfoUpdated);
-                })?;
-                Ok(())
-            },
-        )
+        cx.spawn(async move |this, cx| -> anyhow::Result<()> {
+            let client = client.upgrade().context("client not found")?;
+            let response = client
+                .request(proto::AcceptTermsOfService {})
+                .await
+                .context("error accepting tos")?;
+            this.update(cx, |this, cx| {
+                this.set_current_user_accepted_tos_at(Some(response.accepted_tos_at));
+                cx.emit(Event::PrivateUserInfoUpdated);
+            })?;
+            Ok(())
+        })
     }
 
     fn set_current_user_accepted_tos_at(&mut self, accepted_tos_at: Option<u64>) {

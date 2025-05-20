@@ -524,7 +524,7 @@ impl From<http_client::HttpMethod> for ::http_client::Method {
 
 fn convert_request(
     extension_request: &http_client::HttpRequest,
-) -> Result<::http_client::Request<AsyncBody>, anyhow::Error> {
+) -> anyhow::Result<::http_client::Request<AsyncBody>> {
     let mut request = ::http_client::Request::builder()
         .method(::http_client::Method::from(extension_request.method))
         .uri(&extension_request.url)
@@ -548,7 +548,7 @@ fn convert_request(
 
 async fn convert_response(
     response: &mut ::http_client::Response<AsyncBody>,
-) -> Result<http_client::HttpResponse, anyhow::Error> {
+) -> anyhow::Result<http_client::HttpResponse> {
     let mut extension_response = http_client::HttpResponse {
         body: Vec::new(),
         headers: Vec::new(),

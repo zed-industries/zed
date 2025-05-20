@@ -58,7 +58,7 @@ struct RemoteBufferStore {
     project_id: u64,
     loading_remote_buffers_by_id: HashMap<BufferId, Entity<Buffer>>,
     remote_buffer_listeners:
-        HashMap<BufferId, Vec<oneshot::Sender<Result<Entity<Buffer>, anyhow::Error>>>>,
+        HashMap<BufferId, Vec<oneshot::Sender<anyhow::Result<Entity<Buffer>>>>>,
     worktree_store: Entity<WorktreeStore>,
 }
 
@@ -1488,7 +1488,7 @@ impl BufferStore {
                 let buffer_id = BufferId::new(*buffer_id)?;
                 buffers.insert(this.get_existing(buffer_id)?);
             }
-            Ok::<_, anyhow::Error>(this.reload_buffers(buffers, false, cx))
+            anyhow::Ok(this.reload_buffers(buffers, false, cx))
         })??;
 
         let project_transaction = reload.await?;

@@ -134,7 +134,7 @@ impl ExtensionBuilder {
         extension_dir: &Path,
         manifest: &mut ExtensionManifest,
         options: CompileExtensionOptions,
-    ) -> Result<(), anyhow::Error> {
+    ) -> anyhow::Result<()> {
         self.install_rust_wasm_target_if_needed()?;
 
         let cargo_toml_content = fs::read_to_string(extension_dir.join("Cargo.toml"))?;

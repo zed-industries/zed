@@ -1923,14 +1923,14 @@ impl LocalWorktree {
                         format!("Failed to copy file from {source:?} to {target:?}")
                     })?;
                 }
-                Ok::<(), anyhow::Error>(())
+                anyhow::Ok(())
             })
             .await
             .log_err();
             let mut refresh = cx.read_entity(
                 &this.upgrade().with_context(|| "Dropped worktree")?,
                 |this, _| {
-                    Ok::<postage::barrier::Receiver, anyhow::Error>(
+                    anyhow::Ok::<postage::barrier::Receiver>(
                         this.as_local()
                             .with_context(|| "Worktree is not local")?
                             .refresh_entries_for_paths(paths_to_refresh.clone()),
@@ -1940,7 +1940,7 @@ impl LocalWorktree {
 
             cx.background_spawn(async move {
                 refresh.next().await;
-                Ok::<(), anyhow::Error>(())
+                anyhow::Ok(())
             })
             .await
             .log_err();
@@ -2291,7 +2291,7 @@ impl RemoteWorktree {
         paths_to_copy: Vec<Arc<Path>>,
         local_fs: Arc<dyn Fs>,
         cx: &Context<Worktree>,
-    ) -> Task<Result<Vec<ProjectEntryId>, anyhow::Error>> {
+    ) -> Task<anyhow::Result<Vec<ProjectEntryId>>> {
         let client = self.client.clone();
         let worktree_id = self.id().to_proto();
         let project_id = self.project_id;

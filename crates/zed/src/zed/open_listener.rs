@@ -193,7 +193,7 @@ fn connect_to_cli(
                 break;
             }
         }
-        Ok::<_, anyhow::Error>(())
+        anyhow::Ok(())
     });
 
     Ok((async_request_rx, response_tx))

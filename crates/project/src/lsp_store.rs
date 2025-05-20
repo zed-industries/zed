@@ -2611,7 +2611,7 @@ impl LocalLspStore {
         push_to_history: bool,
         project_transaction: &mut ProjectTransaction,
         cx: &mut AsyncApp,
-    ) -> Result<(), anyhow::Error> {
+    ) -> anyhow::Result<()> {
         for mut action in actions {
             Self::try_resolve_code_action(language_server, &mut action)
                 .await
@@ -6517,7 +6517,7 @@ impl LspStore {
         mut diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         filter: F,
         cx: &mut Context<Self>,
-    ) -> Result<(), anyhow::Error> {
+    ) -> anyhow::Result<()> {
         let Some((worktree, relative_path)) =
             self.worktree_store.read(cx).find_worktree(&abs_path, cx)
         else {
@@ -7976,7 +7976,7 @@ impl LspStore {
                 .position
                 .and_then(deserialize_anchor)
                 .context("invalid position")?;
-            Ok::<_, anyhow::Error>(this.apply_on_type_formatting(
+            anyhow::Ok(this.apply_on_type_formatting(
                 buffer,
                 position,
                 envelope.payload.trigger.clone(),

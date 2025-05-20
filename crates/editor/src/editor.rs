@@ -5551,7 +5551,7 @@ impl Editor {
                 task.await?;
             }
 
-            Ok::<_, anyhow::Error>(())
+            anyhow::Ok(())
         })
         .detach_and_log_err(cx);
     }
@@ -17329,7 +17329,7 @@ impl Editor {
             Err(err) => {
                 let message = format!("Failed to copy permalink: {err}");
 
-                Err::<(), anyhow::Error>(err).log_err();
+                anyhow::Err(err).log_err();
 
                 if let Some(workspace) = workspace {
                     workspace
@@ -17384,7 +17384,7 @@ impl Editor {
             Err(err) => {
                 let message = format!("Failed to open permalink: {err}");
 
-                Err::<(), anyhow::Error>(err).log_err();
+                anyhow::Err(err).log_err();
 
                 if let Some(workspace) = workspace {
                     workspace

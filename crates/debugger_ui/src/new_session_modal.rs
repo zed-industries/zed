@@ -253,7 +253,7 @@ impl NewSessionModal {
                 cx.emit(DismissEvent);
             })
             .ok();
-            Result::<_, anyhow::Error>::Ok(())
+            anyhow::Ok(())
         })
         .detach_and_log_err(cx);
     }

@@ -1915,7 +1915,7 @@ impl HttpClient for NullHttpClient {
         _req: http_client::Request<http_client::AsyncBody>,
     ) -> futures::future::BoxFuture<
         'static,
-        Result<http_client::Response<http_client::AsyncBody>, anyhow::Error>,
+        anyhow::Result<http_client::Response<http_client::AsyncBody>>,
     > {
         async move {
             anyhow::bail!("No HttpClient available");

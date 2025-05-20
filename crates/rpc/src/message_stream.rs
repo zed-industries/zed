@@ -39,7 +39,7 @@ impl<S> MessageStream<S>
 where
     S: futures::Sink<WebSocketMessage, Error = anyhow::Error> + Unpin,
 {
-    pub async fn write(&mut self, message: Message) -> Result<(), anyhow::Error> {
+    pub async fn write(&mut self, message: Message) -> anyhow::Result<()> {
         #[cfg(any(test, feature = "test-support"))]
         const COMPRESSION_LEVEL: i32 = -7;
 
@@ -80,9 +80,9 @@ where
 
 impl<S> MessageStream<S>
 where
-    S: futures::Stream<Item = Result<WebSocketMessage, anyhow::Error>> + Unpin,
+    S: futures::Stream<Item = anyhow::Result<WebSocketMessage>> + Unpin,
 {
-    pub async fn read(&mut self) -> Result<(Message, Instant), anyhow::Error> {
+    pub async fn read(&mut self) -> anyhow::Result<(Message, Instant)> {
         while let Some(bytes) = self.stream.next().await {
             let received_at = Instant::now();
             match bytes? {

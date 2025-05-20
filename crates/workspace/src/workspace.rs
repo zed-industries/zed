@@ -1296,7 +1296,7 @@ impl Workspace {
     ) -> Task<
         anyhow::Result<(
             WindowHandle<Workspace>,
-            Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
+            Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>,
         )>,
     > {
         let project_handle = Project::local(
@@ -2324,7 +2324,7 @@ impl Workspace {
         pane: Option<WeakEntity<Pane>>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>> {
+    ) -> Task<Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>> {
         log::info!("open paths {abs_paths:?}");
 
         let fs = self.app_state.fs.clone();
@@ -3076,7 +3076,7 @@ impl Workspace {
         focus_item: bool,
         window: &mut Window,
         cx: &mut App,
-    ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
+    ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         self.open_path_preview(path, pane, focus_item, false, true, window, cx)
     }
 
@@ -3089,7 +3089,7 @@ impl Workspace {
         activate: bool,
         window: &mut Window,
         cx: &mut App,
-    ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
+    ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         let pane = pane.unwrap_or_else(|| {
             self.last_active_center_pane.clone().unwrap_or_else(|| {
                 self.panes
@@ -3127,7 +3127,7 @@ impl Workspace {
         path: impl Into<ProjectPath>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
+    ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         self.split_path_preview(path, false, None, window, cx)
     }
 
@@ -3138,7 +3138,7 @@ impl Workspace {
         split_direction: Option<SplitDirection>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
+    ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         let pane = self.last_active_center_pane.clone().unwrap_or_else(|| {
             self.panes
                 .first()
@@ -3943,7 +3943,7 @@ impl Workspace {
                             .active_view
                             .as_ref()
                             .and_then(|view| ViewId::from_proto(view.id.clone()?).ok());
-                        Ok::<_, anyhow::Error>(())
+                        anyhow::Ok(())
                     })??;
                     if let Some(view) = response.active_view {
                         Self::add_view_from_leader(this.clone(), leader_peer_id, &view, cx).await?;
@@ -6656,7 +6656,7 @@ pub fn open_paths(
 ) -> Task<
     anyhow::Result<(
         WindowHandle<Workspace>,
-        Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
+        Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>,
     )>,
 > {
     let abs_paths = abs_paths.to_vec();

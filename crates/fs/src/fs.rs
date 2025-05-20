@@ -538,7 +538,7 @@ impl Fs for RealFs {
             }?;
             tmp_file.write_all(data.as_bytes())?;
             tmp_file.persist(path)?;
-            Ok::<(), anyhow::Error>(())
+            anyhow::Ok(())
         })
         .await?;
 
@@ -568,7 +568,7 @@ impl Fs for RealFs {
                 temp_file_path
             };
             atomic_replace(path.as_path(), temp_file.as_path())?;
-            Ok::<(), anyhow::Error>(())
+            anyhow::Ok(())
         })
         .await?;
         Ok(())
