@@ -28,17 +28,19 @@ pub fn init(cx: &mut App) {
                 .log_err();
         });
     });
+
     let inspector_settings = cx.new(|_cx| InspectorSettings {
         open_code_on_inspect: true,
     });
+
     let last_div_inspector = Rc::new(RefCell::new(None));
     cx.register_inspector_element({
         move |id, state, window, cx| {
             div_inspector(
-                id,
-                state,
                 inspector_settings.clone(),
                 &last_div_inspector,
+                id,
+                state,
                 window,
                 cx,
             )
@@ -46,18 +48,44 @@ pub fn init(cx: &mut App) {
     })
 }
 
-pub fn div_inspector(
+struct DivInspector {
+    id: Rc<InspectorElementId>,
+    style_editor: Entity<Editor>,
+}
+
+impl DivInspector {
+    fn render(&self, inspector_settings: Entity<InspectorSettings>, cx: &App) -> Div {
+        v_flex()
+            .size_full()
+            .bg(cx.theme().colors().panel_background)
+            .p_2()
+            .gap_2()
+            .child(inspector_settings)
+            .child(Label::new(self.id.to_string()).size(LabelSize::Small))
+            .child(
+                v_flex().gap_1().child(Label::new("Style")).child(
+                    div()
+                        .elevation_2(cx)
+                        .p_1()
+                        .h_128()
+                        .child(self.style_editor.clone()),
+                ),
+            )
+    }
+}
+
+fn div_inspector(
+    inspector_settings: Entity<InspectorSettings>,
+    last_div_inspector: &Rc<RefCell<Option<DivInspector>>>,
     id: InspectorElementId,
     state: &DivInspectorState,
-    inspector_settings: Entity<InspectorSettings>,
-    last_div_inspector: &Rc<RefCell<Option<(Entity<Editor>, InspectorElementId)>>>,
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement + use<> {
     let mut last_div_inspector = last_div_inspector.borrow_mut();
-    if let Some((editor, last_id)) = &*last_div_inspector {
-        if last_id == &id {
-            return render_div_inspector(&id, inspector_settings, editor.clone(), cx);
+    if let Some(last_div_inspector) = &*last_div_inspector {
+        if last_div_inspector.id.as_ref() == &id {
+            return last_div_inspector.render(inspector_settings, cx);
         }
     }
 
@@ -65,7 +93,7 @@ pub fn div_inspector(
     let Some(json_text) = serde_json::to_string_pretty(state).log_err() else {
         return div();
     };
-    let editor = cx.new(|cx| {
+    let style_editor = cx.new(|cx| {
         let mut editor = Editor::multi_line(window, cx);
         editor.set_text(json_text, window, cx);
         editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
@@ -78,8 +106,10 @@ pub fn div_inspector(
         editor
     });
 
+    let id = Rc::new(id);
+
     window
-        .subscribe(&editor, cx, {
+        .subscribe(&style_editor, cx, {
             let id = id.clone();
             move |editor, event: &EditorEvent, window, cx| {
                 match event {
@@ -108,30 +138,10 @@ pub fn div_inspector(
             .detach_and_log_err(cx);
     }
 
-    let rendered = render_div_inspector(&id, inspector_settings, editor.clone(), cx);
-    *last_div_inspector = Some((editor, id));
+    let div_inspector = DivInspector { id, style_editor };
+    let rendered = div_inspector.render(inspector_settings, cx);
+    *last_div_inspector = Some(div_inspector);
     return rendered;
-}
-
-fn render_div_inspector(
-    id: &InspectorElementId,
-    inspector_settings: Entity<InspectorSettings>,
-    editor: Entity<Editor>,
-    cx: &mut App,
-) -> Div {
-    v_flex()
-        .size_full()
-        .bg(cx.theme().colors().panel_background)
-        .p_2()
-        .gap_2()
-        .child(inspector_settings)
-        .child(Label::new(id.to_string()).size(LabelSize::Small))
-        .child(
-            v_flex()
-                .gap_1()
-                .child(Label::new("Style"))
-                .child(div().elevation_2(cx).p_1().h_128().child(editor)),
-        )
 }
 
 struct InspectorSettings {
