@@ -53,14 +53,14 @@
       "cmd-shift-j": "editor::JoinLines",
       "shift-alt-m": "markdown::OpenPreviewToTheSide",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
-      "ctrl-delete": "editor::DeleteToNextWordEnd",
-      "cmd-g": "editor::FindNextMatch",
-      "cmd-shift-g": "editor::FindPreviousMatch"
+      "ctrl-delete": "editor::DeleteToNextWordEnd"
     }
   },
   {
     "context": "Editor && mode == full",
     "bindings": {
+      "cmd-g": "editor::FindNextMatch",
+      "cmd-shift-g": "editor::FindPreviousMatch",
       "cmd-r": "outline::Toggle"
     }
   },
