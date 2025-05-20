@@ -578,7 +578,7 @@ async fn stream_completion(
     api_key: String,
     request: Request,
 ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
-    let is_vision_request = request.messages.iter().any(|message| match message {
+    let is_vision_request = request.messages.last().map_or(false, |message| match message {
         ChatMessage::User { content }
         | ChatMessage::Assistant { content, .. }
         | ChatMessage::Tool { content, .. } => {
