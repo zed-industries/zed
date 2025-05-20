@@ -13981,6 +13981,94 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(cx: &mut
 }
 
 #[gpui::test]
+async fn test_code_action_hides_hover_popover(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+            code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+    cx.set_state(indoc! {"
+        fn testˇ() {
+            let unused_var = 42;
+            println!();
+        }
+    "});
+    let symbol_range = cx.lsp_range(indoc! {"
+        «fn test»() {
+            let unused_var = 42;
+            println!();
+        }
+    "});
+    let mut hover_requests =
+        cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+            Ok(Some(lsp::Hover {
+                contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                    kind: lsp::MarkupKind::Markdown,
+                    value: "Function documentation".to_string(),
+                }),
+                range: Some(symbol_range),
+            }))
+        });
+    cx.dispatch_action(Hover);
+    hover_requests.next().await;
+    cx.condition(|editor, _| editor.hover_state.visible()).await;
+    let mut code_action_requests = cx.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
+        move |_, _, _| async move {
+            Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                lsp::CodeAction {
+                    title: "Remove unused variable".to_string(),
+                    kind: Some(CodeActionKind::QUICKFIX),
+                    edit: Some(lsp::WorkspaceEdit {
+                        changes: Some(
+                            [(
+                                lsp::Url::from_file_path(path!("/file.rs")).unwrap(),
+                                vec![lsp::TextEdit {
+                                    range: lsp::Range::new(
+                                        lsp::Position::new(1, 4),
+                                        lsp::Position::new(1, 27),
+                                    ),
+                                    new_text: "".to_string(),
+                                }],
+                            )]
+                            .into_iter()
+                            .collect(),
+                        ),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )]))
+        },
+    );
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_code_actions(
+            &ToggleCodeActions {
+                deployed_from_indicator: None,
+                quick_launch: false,
+            },
+            window,
+            cx,
+        );
+    });
+    code_action_requests.next().await;
+    cx.run_until_parked();
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, _, _| {
+        assert!(
+            !editor.hover_state.visible(),
+            "Hover popover should be hidden when code action menu is shown"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_completions_resolve_happens_once(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
