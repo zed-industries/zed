@@ -18,6 +18,7 @@ use language_model::{
     LanguageModelToolResultContent, LanguageModelToolUse, LanguageModelToolUseId, SelectedModel,
 };
 use project::Project;
+use prompt_store::{ModelContext, ProjectContext, PromptBuilder, WorktreeContext};
 use rand::prelude::*;
 use reqwest_client::ReqwestClient;
 use serde_json::json;
@@ -942,6 +943,13 @@ fn eval_create_empty_file() {
     //  gpt-4.1                        |  1.00
     //    + one extra space            |  1.00
     //
+    // --------------------------------------------
+    //  Prompt version: 2025-05-19 + system prompt
+    // --------------------------------------------
+    //  claude-3.7-sonnet              |  1.00
+    //    + one extra space in prompt  |  0.75
+    //    + extra newline              |  0.96
+    //
     //
     // TODO: gpt-4.1-mini errored 38 times:
     // "data did not match any variant of untagged enum ResponseStreamResult"
@@ -949,7 +957,7 @@ fn eval_create_empty_file() {
     let input_file_content = None;
     let expected_output_content = String::new();
     eval(
-        1,
+        100,
         1.0,
         EvalInput::from_conversation(
             vec![
@@ -1442,24 +1450,59 @@ impl EditAgentTest {
             .update(cx, |project, cx| project.open_buffer(path, cx))
             .await
             .unwrap();
-        let conversation = LanguageModelRequest {
-            messages: eval.conversation,
-            tools: cx.update(|cx| {
-                ToolRegistry::default_global(cx)
-                    .tools()
-                    .into_iter()
-                    .filter_map(|tool| {
-                        let input_schema = tool
-                            .input_schema(self.agent.model.tool_input_format())
-                            .ok()?;
-                        Some(LanguageModelRequestTool {
-                            name: tool.name(),
-                            description: tool.description(),
-                            input_schema,
-                        })
+        let tools = cx.update(|cx| {
+            ToolRegistry::default_global(cx)
+                .tools()
+                .into_iter()
+                .filter_map(|tool| {
+                    let input_schema = tool
+                        .input_schema(self.agent.model.tool_input_format())
+                        .ok()?;
+                    Some(LanguageModelRequestTool {
+                        name: tool.name(),
+                        description: tool.description(),
+                        input_schema,
                     })
-                    .collect()
-            }),
+                })
+                .collect::<Vec<_>>()
+        });
+        let tool_names = tools
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect::<Vec<_>>();
+        let worktrees = vec![WorktreeContext {
+            root_name: "root".to_string(),
+            rules_file: None,
+        }];
+        let prompt_builder = PromptBuilder::new(None)?;
+        let project_context = ProjectContext::new(worktrees, Vec::default());
+        let system_prompt = prompt_builder.generate_assistant_system_prompt(
+            &project_context,
+            &ModelContext {
+                available_tools: tool_names,
+            },
+        )?;
+
+        let has_system_prompt = eval
+            .conversation
+            .first()
+            .map_or(false, |msg| msg.role == Role::System);
+        let messages = if has_system_prompt {
+            eval.conversation
+        } else {
+            [LanguageModelRequestMessage {
+                role: Role::System,
+                content: vec![MessageContent::Text(system_prompt)],
+                cache: true,
+            }]
+            .into_iter()
+            .chain(eval.conversation)
+            .collect::<Vec<_>>()
+        };
+
+        let conversation = LanguageModelRequest {
+            messages,
+            tools,
             ..Default::default()
         };
         let edit_output = if matches!(eval.edit_file_input.mode, EditFileMode::Edit) {
