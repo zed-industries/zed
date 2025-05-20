@@ -1,17 +1,21 @@
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use anyhow::{Context as _, anyhow};
-use editor::{Editor, EditorEvent};
-use gpui::{App, DivInspectorState, Empty, Entity, InspectorElementId, IntoElement, Window};
+use editor::{Editor, EditorEvent, EditorMode, MultiBuffer};
+use futures::FutureExt as _;
+use futures::future::Shared;
+use gpui::{App, DivInspectorState, Empty, Entity, InspectorElementId, IntoElement, Task, Window};
 use language::language_settings::SoftWrap;
+use language::{Buffer, Language, LanguageRegistry};
 use ui::{Button, Label, LabelSize, h_flex, v_flex};
 use ui::{CheckboxWithLabel, prelude::*};
 use util::ResultExt as _;
 use util::command::new_smol_command;
 
-pub fn init(cx: &mut App) {
+pub fn init(language_registry: Arc<LanguageRegistry>, cx: &mut App) {
     // TODO: Instead toggle a global debug mode? Not all windows support the command pallete.
     cx.on_action(|_: &zed_actions::dev::ToggleInspector, cx| {
         let Some(active_window) = cx
@@ -29,22 +33,27 @@ pub fn init(cx: &mut App) {
         });
     });
 
+    let json_language = cx
+        .background_spawn(
+            async move { language_registry.language_for_name("JSON").await.log_err() },
+        )
+        .shared();
+
     let inspector_settings = cx.new(|_cx| InspectorSettings {
         open_code_on_inspect: true,
     });
 
     let last_div_inspector = Rc::new(RefCell::new(None));
-    cx.register_inspector_element({
-        move |id, state, window, cx| {
-            div_inspector(
-                inspector_settings.clone(),
-                &last_div_inspector,
-                id,
-                state,
-                window,
-                cx,
-            )
-        }
+    cx.register_inspector_element(move |id, state, window, cx| {
+        div_inspector(
+            inspector_settings.clone(),
+            &last_div_inspector,
+            &json_language,
+            id,
+            state,
+            window,
+            cx,
+        )
     })
 }
 
@@ -77,6 +86,7 @@ impl DivInspector {
 fn div_inspector(
     inspector_settings: Entity<InspectorSettings>,
     last_div_inspector: &Rc<RefCell<Option<DivInspector>>>,
+    json_language: &Shared<Task<Option<Arc<Language>>>>,
     id: InspectorElementId,
     state: &DivInspectorState,
     window: &mut Window,
@@ -94,8 +104,13 @@ fn div_inspector(
         return div();
     };
     let style_editor = cx.new(|cx| {
-        let mut editor = Editor::multi_line(window, cx);
-        editor.set_text(json_text, window, cx);
+        let buffer = cx.new(|cx| {
+            let mut buffer = Buffer::local(json_text, cx);
+            buffer.set_language(json_language.clone().now_or_never().flatten(), cx);
+            buffer
+        });
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
         editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
         editor.set_show_line_numbers(false, cx);
         editor.set_show_code_actions(false, cx);

@@ -21,3 +21,4 @@ editor.workspace = true
 serde_json.workspace = true
 language.workspace = true
 serde_json_lenient.workspace = true
+futures.workspace = true

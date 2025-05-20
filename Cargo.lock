@@ -8121,6 +8121,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "editor",
+ "futures 0.3.31",
  "gpui",
  "language",
  "serde_json",
