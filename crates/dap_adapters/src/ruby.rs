@@ -57,13 +57,12 @@ impl DebugAdapter for RubyDebugAdapter {
                                 },
                                 "script": {
                                     "type": "string",
-                                    "description": "Absolute path to a Ruby file.",
-                                    "default": "${workspaceFolder}/${command:AskForProgramName}"
+                                    "description": "Absolute path to a Ruby file."
                                 },
                                 "cwd": {
                                     "type": "string",
                                     "description": "Directory to execute the program in",
-                                    "default": "${workspaceFolder}"
+                                    "default": "${ZED_WORKTREE_ROOT}"
                                 },
                                 "args": {
                                     "type": "array",
@@ -158,7 +157,7 @@ impl DebugAdapter for RubyDebugAdapter {
                                 },
                                 "localfsMap": {
                                     "type": "string",
-                                    "description": "Specify pairs of remote root path and local root path like `/remote_dir:/local_dir`. `/remote_dir:$(workspaceFolder)` is useful. You can specify multiple pairs like `/rem1:/loc1,/rem2:/loc2` by concatenating with `,`."
+                                    "description": "Specify pairs of remote root path and local root path like `/remote_dir:/local_dir`. You can specify multiple pairs like `/rem1:/loc1,/rem2:/loc2` by concatenating with `,`."
                                 },
                                 "env": {
                                     "type": "object",
