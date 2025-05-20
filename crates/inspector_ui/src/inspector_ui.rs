@@ -6,8 +6,8 @@ use anyhow::{Context as _, anyhow};
 use editor::{Editor, EditorEvent};
 use gpui::{App, DivInspectorState, Empty, Entity, InspectorElementId, IntoElement, Window};
 use language::language_settings::SoftWrap;
-use ui::prelude::*;
 use ui::{Button, Label, LabelSize, h_flex, v_flex};
+use ui::{CheckboxWithLabel, prelude::*};
 use util::ResultExt as _;
 use util::command::new_smol_command;
 
@@ -28,25 +28,39 @@ pub fn init(cx: &mut App) {
                 .log_err();
         });
     });
+    let inspector_settings = cx.new(|_cx| InspectorSettings {
+        open_code_on_inspect: true,
+    });
     let last_div_inspector = Rc::new(RefCell::new(None));
-    cx.register_inspector_element(move |id, state, window, cx| {
-        div_inspector(id, state, last_div_inspector.clone(), window, cx)
+    cx.register_inspector_element({
+        move |id, state, window, cx| {
+            div_inspector(
+                id,
+                state,
+                inspector_settings.clone(),
+                &last_div_inspector,
+                window,
+                cx,
+            )
+        }
     })
 }
 
 pub fn div_inspector(
     id: InspectorElementId,
     state: &DivInspectorState,
-    last_div_inspector: Rc<RefCell<Option<(Entity<Editor>, InspectorElementId)>>>,
+    inspector_settings: Entity<InspectorSettings>,
+    last_div_inspector: &Rc<RefCell<Option<(Entity<Editor>, InspectorElementId)>>>,
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement + use<> {
     let mut last_div_inspector = last_div_inspector.borrow_mut();
     if let Some((editor, last_id)) = &*last_div_inspector {
         if last_id == &id {
-            return div().w_64().h_64().child(editor.clone());
+            return render_div_inspector(&id, inspector_settings, editor.clone(), cx);
         }
     }
+
     // todo! Better error handling
     let Some(json_text) = serde_json::to_string_pretty(state).log_err() else {
         return div();
@@ -63,6 +77,7 @@ pub fn div_inspector(
         editor.set_show_edit_predictions(Some(false), window, cx);
         editor
     });
+
     window
         .subscribe(&editor, cx, {
             let id = id.clone();
@@ -87,25 +102,53 @@ pub fn div_inspector(
             }
         })
         .detach();
-    *last_div_inspector = Some((editor.clone(), id));
-    return div().w_64().h_64().child(editor);
-    /*
+
+    if inspector_settings.read(cx).open_code_on_inspect {
+        cx.background_spawn(open_zed_source_location(id.source))
+            .detach_and_log_err(cx);
+    }
+
+    let rendered = render_div_inspector(&id, inspector_settings, editor.clone(), cx);
+    *last_div_inspector = Some((editor, id));
+    return rendered;
+}
+
+fn render_div_inspector(
+    id: &InspectorElementId,
+    inspector_settings: Entity<InspectorSettings>,
+    editor: Entity<Editor>,
+    cx: &mut App,
+) -> Div {
     v_flex()
-        .bg(cx.theme().colors().elevated_surface_background)
-        .p_4()
-        .mt_4()
-        .mr_4()
-        .rounded_lg()
-        .shadow_lg()
-        .child(h_flex().child(Label::new(id.to_string()).size(LabelSize::XSmall)))
-        .child(Button::new("open", "Open").on_click({
-            let id = id.clone();
-            move |_event, _window, cx| {
-                cx.background_spawn(open_zed_source_location(id.source))
-                    .detach_and_log_err(cx);
-            }
-        }))
-    */
+        .size_full()
+        .bg(cx.theme().colors().panel_background)
+        .p_2()
+        .gap_2()
+        .child(inspector_settings)
+        .child(Label::new(id.to_string()).size(LabelSize::Small))
+        .child(
+            v_flex()
+                .gap_1()
+                .child(Label::new("Style"))
+                .child(div().elevation_2(cx).p_1().h_128().child(editor)),
+        )
+}
+
+struct InspectorSettings {
+    open_code_on_inspect: bool,
+}
+
+impl Render for InspectorSettings {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        CheckboxWithLabel::new(
+            "open-code-on-inspect",
+            Label::new("Open code"),
+            self.open_code_on_inspect.into(),
+            cx.listener(|this, selection: &ToggleState, _, _| {
+                this.open_code_on_inspect = selection.selected();
+            }),
+        )
+    }
 }
 
 // TODO: Move to some other crate (along with build.rs) and also use this in error notifications.

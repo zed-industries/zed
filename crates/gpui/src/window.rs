@@ -13,7 +13,7 @@ use crate::{
     StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle,
     TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowOptions,
-    WindowParams, WindowTextSystem, point, prelude::*, px, size, transparent_black,
+    WindowParams, WindowTextSystem, point, prelude::*, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -1821,9 +1821,20 @@ impl Window {
         self.invalidator.set_phase(DrawPhase::Prepaint);
         self.tooltip_bounds.take();
 
+        let inspector_width: Pixels = rems(20.0).to_pixels(self.rem_size());
+
+        let root_size = match &self.mode {
+            WindowMode::Normal => self.viewport_size,
+            WindowMode::Inspector(_) => {
+                let mut size = self.viewport_size;
+                size.width = (size.width - inspector_width).max(px(0.0));
+                size
+            }
+        };
+
         // Layout all root elements.
         let mut root_element = self.root.as_ref().unwrap().clone().into_any();
-        root_element.prepaint_as_root(Point::default(), self.viewport_size.into(), self, cx);
+        root_element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
 
         let mut sorted_deferred_draws =
             (0..self.next_frame.deferred_draws.len()).collect::<SmallVec<[_; 8]>>();
@@ -1835,7 +1846,7 @@ impl Window {
         let mut tooltip_element = None;
         if let Some(prompt) = self.prompt.take() {
             let mut element = prompt.view.any_view().into_any();
-            element.prepaint_as_root(Point::default(), self.viewport_size.into(), self, cx);
+            element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
             prompt_element = Some(element);
             self.prompt = Some(prompt);
         } else if let Some(active_drag) = cx.active_drag.take() {
@@ -1854,8 +1865,8 @@ impl Window {
             WindowMode::Inspector(inspector) => {
                 let mut inspector_element = AnyView::from(inspector.clone()).into_any_element();
                 inspector_element.prepaint_as_root(
-                    Point::default(),
-                    self.viewport_size.into(),
+                    point(self.viewport_size.width - inspector_width, px(0.0)),
+                    size(inspector_width, self.viewport_size.height).into(),
                     self,
                     cx,
                 );
