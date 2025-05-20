@@ -4146,6 +4146,7 @@ dependencies = [
  "dap",
  "extension",
  "gpui",
+ "serde_json",
  "task",
  "workspace-hack",
 ]

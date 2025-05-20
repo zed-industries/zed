@@ -1,16 +1,12 @@
 use anyhow::Result;
 use collections::FxHashMap;
 use gpui::SharedString;
-use schemars::{JsonSchema, SchemaGenerator, r#gen::SchemaSettings, schema::SingleOrVec};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
 
-use crate::{
-    TaskTemplate,
-    adapter_schema::{AdapterSchema, AdapterSchemas},
-};
+use crate::{TaskTemplate, adapter_schema::AdapterSchemas};
 
 /// Represents the host information of the debug adapter
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
@@ -234,7 +230,6 @@ pub struct DebugScenario {
     pub build: Option<BuildTaskDefinition>,
     /// The main arguments to be sent to the debug adapter
     #[serde(default, flatten)]
-    #[schemars()]
     pub config: serde_json::Value,
     /// Optional TCP connection information
     ///

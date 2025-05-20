@@ -102,6 +102,10 @@ impl PhpDebugAdapter {
 
 #[async_trait(?Send)]
 impl DebugAdapter for PhpDebugAdapter {
+    fn dap_schema(&self) -> serde_json::Value {
+        todo!()
+    }
+
     fn name(&self) -> DebugAdapterName {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }

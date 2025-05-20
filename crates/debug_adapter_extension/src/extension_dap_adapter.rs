@@ -32,6 +32,10 @@ impl DebugAdapter for ExtensionDapAdapter {
         self.debug_adapter_name.as_ref().into()
     }
 
+    fn dap_schema(&self) -> serde_json::Value {
+        todo!()
+    }
+
     async fn get_binary(
         &self,
         _: &dyn DapDelegate,
