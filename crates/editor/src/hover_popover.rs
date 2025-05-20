@@ -394,9 +394,6 @@ fn show_hover(
             };
 
             this.update(cx, |this, _| {
-                if diagnostic_popover.is_some() {
-                    this.context_menu.take();
-                }
                 this.hover_state.diagnostic_popover = diagnostic_popover;
             })?;
 
@@ -527,9 +524,6 @@ fn show_hover(
                     );
                 }
 
-                if !info_popovers.is_empty() {
-                    editor.context_menu.take();
-                }
                 editor.hover_state.info_popovers = info_popovers;
                 cx.notify();
                 window.refresh();

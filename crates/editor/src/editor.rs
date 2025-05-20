@@ -5081,7 +5081,6 @@ impl Editor {
                     if editor.focus_handle.is_focused(window) && menu.is_some() {
                         let mut menu = menu.unwrap();
                         menu.resolve_visible_completions(editor.completion_provider.as_deref(), cx);
-                        crate::hover_popover::hide_hover(editor, cx);
                         *editor.context_menu.borrow_mut() =
                             Some(CodeContextMenu::Completions(menu));
 
