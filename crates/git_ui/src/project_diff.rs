@@ -344,6 +344,7 @@ impl ProjectDiff {
             self.multibuffer.update(cx, |multibuffer, cx| {
                 multibuffer.clear(cx);
             });
+            dbg!("NOPE");
             return vec![];
         };
 
@@ -352,6 +353,7 @@ impl ProjectDiff {
         let mut result = vec![];
         repo.update(cx, |repo, cx| {
             for entry in repo.cached_status() {
+                dbg!(&entry);
                 if !entry.status.has_changes() {
                     continue;
                 }
@@ -407,6 +409,7 @@ impl ProjectDiff {
         cx: &mut Context<Self>,
     ) {
         let path_key = diff_buffer.path_key;
+        dbg!("register buffer", &path_key);
         let buffer = diff_buffer.buffer;
         let diff = diff_buffer.diff;
 
@@ -479,8 +482,11 @@ impl ProjectDiff {
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
         while let Some(_) = recv.next().await {
+            dbg!(">>>>>>> refreshing");
             let buffers_to_load = this.update(cx, |this, cx| this.load_buffers(cx))?;
+            dbg!(buffers_to_load.len());
             for buffer_to_load in buffers_to_load {
+                dbg!("buffer");
                 if let Some(buffer) = buffer_to_load.await.log_err() {
                     cx.update(|window, cx| {
                         this.update(cx, |this, cx| this.register_buffer(buffer, window, cx))
@@ -488,6 +494,7 @@ impl ProjectDiff {
                     })?;
                 }
             }
+            dbg!("<<<<<<< refreshing");
             this.update(cx, |this, cx| {
                 this.pending_scroll.take();
                 cx.notify();
@@ -1324,12 +1331,15 @@ mod tests {
     use db::indoc;
     use editor::test::editor_test_context::{EditorTestContext, assert_state_with_diff};
     use gpui::TestAppContext;
-    use project::FakeFs;
+    use language::Point;
+    use project::{FakeFs, Fs, RealFs};
     use serde_json::json;
     use settings::SettingsStore;
-    use std::path::Path;
+    use std::{path::Path, sync::Arc, time::Duration};
     use unindent::Unindent as _;
-    use util::path;
+    use util::{path, test::TempTree};
+
+    use crate::project_diff;
 
     use super::*;
 
@@ -1583,7 +1593,188 @@ mod tests {
         );
     }
 
-    use crate::project_diff::{self, ProjectDiff};
+    #[gpui::test]
+    async fn test_hunk_restore(cx: &mut TestAppContext) {
+        init_test(cx);
+        // cx.executor().allow_parking();
+
+        let file1_base = "
+            one
+            two
+            three
+            four
+            five
+            six
+            seven
+            eight
+            nine
+            ten
+            "
+        .unindent();
+        let file1_modified = "
+            one
+            TWO
+            THREE
+            FOUR
+            five
+            six
+            seven
+            eight
+            nine
+            TEN
+            ELEVEN
+            TWELVE
+            "
+        .unindent();
+
+        let file2_base = "
+            eins
+            zwei
+            drei
+            vier
+            fünf
+            sechs
+            sieben
+            "
+        .unindent();
+        let file2_modified = "
+            eins
+            zwei
+            DREI
+            VIER
+            FÜNF
+            sechs
+            sieben
+            "
+        .unindent();
+
+        // let tree = TempTree::new(json!({
+        // }));
+        // let fs = Arc::new(RealFs::new(None, cx.executor()));
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file1.txt": file1_modified,
+                "file2.txt": file2_modified,
+            }),
+        )
+        .await;
+
+        // let repo = git_init(tree.path());
+        // let repo = &repo;
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, window, cx)
+        });
+        let editor = diff.update(cx, |diff, cx| diff.editor.clone());
+        cx.run_until_parked();
+
+        dbg!("<<<<<<<< git");
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[
+                ("file1.txt".into(), file1_base),
+                ("file2.txt".into(), file2_base),
+            ],
+        );
+        // git_add("file1.txt", repo);
+        // git_add("file2.txt", repo);
+        // git_commit("test", repo);
+        // fs.write(&tree.path().join("file1.txt"), file1_modified.as_bytes())
+        //     .await
+        //     .unwrap();
+        // fs.write(&tree.path().join("file2.txt"), file2_modified.as_bytes())
+        //     .await
+        //     .unwrap();
+        dbg!(">>>>>>>> git");
+
+        cx.run_until_parked();
+
+        {
+            let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+            cx.assert_excerpts_with_selections(indoc! {"
+                [EXCERPT]
+                ˇone
+                two
+                three
+                four
+                TWO
+                THREE
+                FOUR
+                five
+                six
+                seven
+                [EXCERPT]
+                eight
+                nine
+                ten
+                TEN
+                ELEVEN
+                TWELVE
+                [EXCERPT]
+                eins
+                zwei
+                drei
+                vier
+                fünf
+                DREI
+                VIER
+                FÜNF
+                sechs
+                sieben
+            "});
+        }
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.restore_hunks_in_ranges(vec![Point::new(0, 0)..Point::new(9, 5)], window, cx);
+        });
+
+        cx.run_until_parked();
+
+        let num_excerpts = editor.update(cx, |editor, cx| {
+            editor.buffer().read(cx).excerpt_ids().len()
+        });
+        if num_excerpts == 2 {
+            dbg!("OKAY");
+            return;
+        }
+        {
+            let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+            cx.assert_excerpts_with_selections(indoc! {"
+                [EXCERPT]
+                ˇone
+                two
+                three
+                four
+                five
+                six
+                seven
+                [EXCERPT]
+                eight
+                nine
+                ten
+                TEN
+                ELEVEN
+                TWELVE
+                [EXCERPT]
+                eins
+                zwei
+                drei
+                vier
+                fünf
+                DREI
+                VIER
+                FÜNF
+                sechs
+                sieben
+            "});
+        }
+    }
 
     #[gpui::test]
     async fn test_go_to_prev_hunk_multibuffer(cx: &mut TestAppContext) {
@@ -1753,5 +1944,65 @@ mod tests {
         cx.dispatch_action(editor::actions::MoveToBeginning);
 
         cx.assert_excerpts_with_selections(&format!("[EXCERPT]\nˇ{git_contents}"));
+    }
+
+    // XXX
+
+    #[track_caller]
+    fn git_init(path: &Path) -> git2::Repository {
+        let mut init_opts = git2::RepositoryInitOptions::new();
+        init_opts.initial_head("main");
+        git2::Repository::init_opts(path, &init_opts).expect("Failed to initialize git repository")
+    }
+
+    #[track_caller]
+    fn git_add<P: AsRef<Path>>(path: P, repo: &git2::Repository) {
+        let path = path.as_ref();
+        let mut index = repo.index().expect("Failed to get index");
+        index.add_path(path).expect("Failed to add file");
+        index.write().expect("Failed to write index");
+    }
+
+    #[track_caller]
+    fn git_remove_index(path: &Path, repo: &git2::Repository) {
+        let mut index = repo.index().expect("Failed to get index");
+        index.remove_path(path).expect("Failed to add file");
+        index.write().expect("Failed to write index");
+    }
+
+    #[track_caller]
+    fn git_commit(msg: &'static str, repo: &git2::Repository) {
+        use git2::Signature;
+
+        let signature = Signature::now("test", "test@zed.dev").unwrap();
+        let oid = repo.index().unwrap().write_tree().unwrap();
+        let tree = repo.find_tree(oid).unwrap();
+        if let Ok(head) = repo.head() {
+            let parent_obj = head.peel(git2::ObjectType::Commit).unwrap();
+
+            let parent_commit = parent_obj.as_commit().unwrap();
+
+            repo.commit(
+                Some("HEAD"),
+                &signature,
+                &signature,
+                msg,
+                &tree,
+                &[parent_commit],
+            )
+            .expect("Failed to commit with parent");
+        } else {
+            repo.commit(Some("HEAD"), &signature, &signature, msg, &tree, &[])
+                .expect("Failed to commit");
+        }
+    }
+
+    #[track_caller]
+    fn git_status(repo: &git2::Repository) -> collections::HashMap<String, git2::Status> {
+        repo.statuses(None)
+            .unwrap()
+            .iter()
+            .map(|status| (status.path().unwrap().to_string(), status.status()))
+            .collect()
     }
 }

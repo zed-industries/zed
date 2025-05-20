@@ -3990,6 +3990,7 @@ impl BackgroundScanner {
     }
 
     async fn process_events(&self, mut abs_paths: Vec<PathBuf>) {
+        dbg!(&abs_paths);
         let root_path = self.state.lock().snapshot.abs_path.clone();
         let root_canonical_path = match self.fs.canonicalize(root_path.as_path()).await {
             Ok(path) => SanitizedPath::from(path),
@@ -4053,7 +4054,7 @@ impl BackgroundScanner {
 
                     is_git_related = true;
                     if !dot_git_abs_paths.contains(&dot_git_abs_path) {
-                        dot_git_abs_paths.push(dot_git_abs_path);
+                        dot_git_abs_paths.push(dbg!(dot_git_abs_path));
                     }
                 }
 
@@ -4098,12 +4099,13 @@ impl BackgroundScanner {
                     return false;
                 }
 
-                relative_paths.push(relative_path);
+                relative_paths.push(dbg!(relative_path));
                 true
             }
         });
 
         if relative_paths.is_empty() && dot_git_abs_paths.is_empty() {
+            dbg!("early return");
             return;
         }
 

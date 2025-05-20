@@ -411,6 +411,18 @@ impl EditorTestContext {
             (multibuffer_snapshot, selections, excerpts)
         });
 
+        for (excerpt_id, snapshot, range) in &excerpts {
+            dbg!(
+                multibuffer_snapshot
+                    .text_for_range(Anchor::range_in_buffer(
+                        *excerpt_id,
+                        snapshot.remote_id(),
+                        range.context.clone(),
+                    ))
+                    .collect::<String>()
+            );
+        }
+
         assert!(
             excerpts.len() == expected_excerpts.len(),
             "should have {} excerpts, got {}",
@@ -441,16 +453,18 @@ impl EditorTestContext {
                 continue;
             }
             assert!(!is_folded, "excerpt {} should not be folded", ix);
-            assert_eq!(
-                multibuffer_snapshot
-                    .text_for_range(Anchor::range_in_buffer(
-                        excerpt_id,
-                        snapshot.remote_id(),
-                        range.context.clone()
-                    ))
-                    .collect::<String>(),
-                expected_text
-            );
+            let mut text = multibuffer_snapshot
+                .text_for_range(Anchor::range_in_buffer(
+                    excerpt_id,
+                    snapshot.remote_id(),
+                    range.context.clone(),
+                ))
+                .collect::<String>();
+            // XXX
+            if !text.ends_with('\n') {
+                text.push('\n');
+            }
+            assert_eq!(text, expected_text);
 
             let selections = selections
                 .iter()

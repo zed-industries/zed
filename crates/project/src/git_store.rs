@@ -1198,6 +1198,7 @@ impl GitStore {
         fs: Arc<dyn Fs>,
         cx: &mut Context<Self>,
     ) {
+        dbg!(&updated_git_repositories);
         let mut removed_ids = Vec::new();
         for update in updated_git_repositories.iter() {
             if let Some((id, existing)) = self.repositories.iter().find(|(_, repo)| {
@@ -4245,6 +4246,8 @@ impl Repository {
             Some(GitJobKey::RefreshStatuses),
             None,
             |state, mut cx| async move {
+                dbg!("paths changed scan");
+
                 let (prev_snapshot, mut changed_paths) = this.update(&mut cx, |this, _| {
                     (
                         this.snapshot.clone(),
@@ -4539,6 +4542,8 @@ async fn compute_snapshot(
     prev_snapshot: RepositorySnapshot,
     backend: Arc<dyn GitRepository>,
 ) -> Result<(RepositorySnapshot, Vec<RepositoryEvent>)> {
+    dbg!("compute snapshot");
+
     let mut events = Vec::new();
     let branches = backend.branches().await?;
     let branch = branches.into_iter().find(|branch| branch.is_head);

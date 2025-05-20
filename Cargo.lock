@@ -6074,6 +6074,7 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "git",
+ "git2",
  "gpui",
  "itertools 0.14.0",
  "language",
