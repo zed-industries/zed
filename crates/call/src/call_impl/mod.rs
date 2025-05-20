@@ -187,7 +187,7 @@ impl ActiveCall {
 
         let invite = if let Some(room) = room {
             cx.spawn(async move |_, cx| {
-                let room = room.await.map_err(|err| anyhow!("{:?}", err))?;
+                let room = room.await.map_err(|err| anyhow!("{err:?}"))?;
 
                 let initial_project_id = if let Some(initial_project) = initial_project {
                     Some(
@@ -236,7 +236,7 @@ impl ActiveCall {
                 .shared();
             self.pending_room_creation = Some(room.clone());
             cx.background_spawn(async move {
-                room.await.map_err(|err| anyhow!("{:?}", err))?;
+                room.await.map_err(|err| anyhow!("{err:?}"))?;
                 anyhow::Ok(())
             })
         };

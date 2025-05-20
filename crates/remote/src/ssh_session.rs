@@ -100,7 +100,7 @@ macro_rules! shell_script {
 fn parse_port_number(port_str: &str) -> Result<u16> {
     port_str
         .parse()
-        .map_err(|e| anyhow!("Invalid port number: {}: {}", port_str, e))
+        .with_context(|| format!("parsing port number: {port_str}"))
 }
 
 fn parse_port_forward_spec(spec: &str) -> Result<SshPortForwardOption> {

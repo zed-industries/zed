@@ -477,7 +477,7 @@ impl GitRepository for RealGitRepository {
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .output()
-                .map_err(|e| anyhow!("Failed to start git show process: {e}"))?;
+                .context("starting git show process")?;
 
             let show_stdout = String::from_utf8_lossy(&show_output.stdout);
             let mut lines = show_stdout.split('\n');
@@ -491,7 +491,7 @@ impl GitRepository for RealGitRepository {
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
-                .map_err(|e| anyhow!("Failed to start git cat-file process: {e}"))?;
+                .context("starting git cat-file process")?;
 
             use std::io::Write as _;
             let mut files = Vec::<CommitFile>::new();

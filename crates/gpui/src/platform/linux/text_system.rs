@@ -469,7 +469,7 @@ impl TryFrom<&FontFeatures> for CosmicFontFeatures {
                 .0
                 .as_bytes()
                 .try_into()
-                .map_err(|_| anyhow!("Incorrect feature flag format"))?;
+                .context("Incorrect feature flag format")?;
 
             let tag = cosmic_text::FeatureTag::new(&name_bytes);
 

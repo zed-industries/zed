@@ -976,7 +976,7 @@ impl GitStore {
             return cx.spawn(async move |cx| {
                 let provider_registry = cx.update(GitHostingProviderRegistry::default_global)?;
                 get_permalink_in_rust_registry_src(provider_registry, file_path, selection)
-                    .map_err(|_| anyhow!("no permalink available"))
+                    .context("no permalink available")
             });
 
             // TODO remote case

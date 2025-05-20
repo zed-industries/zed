@@ -603,7 +603,7 @@ impl ProjectPanel {
             Some(serialization_key) => cx
                 .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
                 .await
-                .map_err(|e| anyhow!("Failed to load project panel: {}", e))
+                .context("loading project panel")
                 .log_err()
                 .flatten()
                 .map(|panel| serde_json::from_str::<SerializedProjectPanel>(&panel))

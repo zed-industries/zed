@@ -226,12 +226,9 @@ impl TransportDelegate {
 
     pub(crate) async fn send_message(&self, message: Message) -> Result<()> {
         if let Some(server_tx) = self.server_tx.lock().await.as_ref() {
-            server_tx
-                .send(message)
-                .await
-                .map_err(|e| anyhow!("Failed to send message: {}", e))
+            server_tx.send(message).await.context("sending message")
         } else {
-            Err(anyhow!("Server tx already dropped"))
+            anyhow::bail!("Server tx already dropped")
         }
     }
 

@@ -200,9 +200,7 @@ impl DebugTaskDefinition {
     }
 
     pub fn from_proto(proto: proto::DebugTaskDefinition) -> Result<Self> {
-        let request = proto
-            .request
-            .ok_or_else(|| anyhow::anyhow!("request is required"))?;
+        let request = proto.request.context("request is required")?;
         Ok(Self {
             label: proto.label.into(),
             initialize_args: proto.initialize_args.map(|v| v.into()),

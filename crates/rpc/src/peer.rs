@@ -470,13 +470,12 @@ impl Peer {
             connection
                 .outgoing_tx
                 .unbounded_send(Message::Envelope(envelope))
-                .map_err(|_| anyhow!("connection was closed"))?;
+                .context("connection was closed")?;
             Ok(())
         });
         async move {
             send?;
-            let (response, received_at, _barrier) =
-                rx.await.map_err(|_| anyhow!("connection was closed"))?;
+            let (response, received_at, _barrier) = rx.await.context("connection was closed")?;
             if let Some(proto::envelope::Payload::Error(error)) = &response.payload {
                 return Err(RpcError::from_proto(error, type_name));
             }
@@ -503,7 +502,7 @@ impl Peer {
                 .unbounded_send(Message::Envelope(
                     request.into_envelope(message_id, None, None),
                 ))
-                .map_err(|_| anyhow!("connection was closed"))?;
+                .context("connection was closed")?;
             Ok((message_id, stream_response_channels))
         });
 

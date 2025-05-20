@@ -1869,7 +1869,7 @@ impl LocalLspStore {
         }
 
         let uri = lsp::Url::from_file_path(abs_path)
-            .map_err(|_| anyhow!("failed to convert abs path to uri"))?;
+            .map_err(|()| anyhow!("failed to convert abs path to uri"))?;
         let text_document = lsp::TextDocumentIdentifier::new(uri);
 
         let lsp_edits = {
@@ -1934,7 +1934,7 @@ impl LocalLspStore {
         zlog::info!(logger => "Formatting via LSP");
 
         let uri = lsp::Url::from_file_path(abs_path)
-            .map_err(|_| anyhow!("failed to convert abs path to uri"))?;
+            .map_err(|()| anyhow!("failed to convert abs path to uri"))?;
         let text_document = lsp::TextDocumentIdentifier::new(uri);
         let capabilities = &language_server.capabilities();
 
@@ -2843,7 +2843,7 @@ impl LocalLspStore {
                     let abs_path = op
                         .uri
                         .to_file_path()
-                        .map_err(|_| anyhow!("can't convert URI to path"))?;
+                        .map_err(|()| anyhow!("can't convert URI to path"))?;
 
                     if let Some(parent_path) = abs_path.parent() {
                         fs.create_dir(parent_path).await?;
@@ -2868,11 +2868,11 @@ impl LocalLspStore {
                     let source_abs_path = op
                         .old_uri
                         .to_file_path()
-                        .map_err(|_| anyhow!("can't convert URI to path"))?;
+                        .map_err(|()| anyhow!("can't convert URI to path"))?;
                     let target_abs_path = op
                         .new_uri
                         .to_file_path()
-                        .map_err(|_| anyhow!("can't convert URI to path"))?;
+                        .map_err(|()| anyhow!("can't convert URI to path"))?;
                     fs.rename(
                         &source_abs_path,
                         &target_abs_path,
@@ -2890,7 +2890,7 @@ impl LocalLspStore {
                     let abs_path = op
                         .uri
                         .to_file_path()
-                        .map_err(|_| anyhow!("can't convert URI to path"))?;
+                        .map_err(|()| anyhow!("can't convert URI to path"))?;
                     let options = op
                         .options
                         .map(|options| fs::RemoveOptions {
@@ -6725,7 +6725,7 @@ impl LspStore {
 
             let abs_path = abs_path
                 .to_file_path()
-                .map_err(|_| anyhow!("can't convert URI to path"))?;
+                .map_err(|()| anyhow!("can't convert URI to path"))?;
             let p = abs_path.clone();
             let yarn_worktree = lsp_store
                 .update(cx, move |lsp_store, cx| match lsp_store.as_local() {
@@ -8756,7 +8756,7 @@ impl LspStore {
         let abs_path = params
             .uri
             .to_file_path()
-            .map_err(|_| anyhow!("URI is not a file"))?;
+            .map_err(|()| anyhow!("URI is not a file"))?;
         let mut diagnostics = Vec::default();
         let mut primary_diagnostic_group_ids = HashMap::default();
         let mut sources_by_group_id = HashMap::default();

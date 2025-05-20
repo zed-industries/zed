@@ -717,7 +717,7 @@ impl ExtensionStore {
             let mut response = http_client
                 .get(url.as_ref(), Default::default(), true)
                 .await
-                .map_err(|err| anyhow!("error downloading extension: {}", err))?;
+                .context("downloading extension")?;
 
             fs.remove_dir(
                 &extension_dir,

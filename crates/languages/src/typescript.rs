@@ -491,7 +491,7 @@ impl LspAdapter for EsLintLspAdapter {
                 .http_client()
                 .get(&version.url, Default::default(), true)
                 .await
-                .map_err(|err| anyhow!("error downloading release: {}", err))?;
+                .context("downloading release")?;
             match Self::GITHUB_ASSET_KIND {
                 AssetKind::TarGz => {
                     let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));

@@ -1097,7 +1097,7 @@ mod tests {
 
                         self.tx
                             .unbounded_send(response.to_string())
-                            .map_err(|e| anyhow::anyhow!("Failed to send message: {}", e))?;
+                            .context("sending a message")?;
                     }
                 }
             }

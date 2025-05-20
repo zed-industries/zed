@@ -1169,7 +1169,7 @@ pub async fn handle_metrics(Extension(server): Extension<Arc<Server>>) -> Result
     let metric_families = prometheus::gather();
     let encoded_metrics = encoder
         .encode_to_string(&metric_families)
-        .map_err(|err| anyhow!("{}", err))?;
+        .map_err(|err| anyhow!("{err}"))?;
     Ok(encoded_metrics)
 }
 

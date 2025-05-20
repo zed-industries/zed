@@ -141,7 +141,7 @@ impl OpenListener {
     pub fn open_urls(&self, urls: Vec<String>) {
         self.0
             .unbounded_send(urls)
-            .map_err(|_| anyhow!("no listener for open requests"))
+            .context("no listener for open requests")
             .log_err();
     }
 }

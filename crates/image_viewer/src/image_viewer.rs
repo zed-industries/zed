@@ -226,7 +226,7 @@ impl SerializableItem for ImageView {
         window.spawn(cx, async move |cx| {
             let image_path = IMAGE_VIEWER
                 .get_image_path(item_id, workspace_id)?
-                .ok_or_else(|| anyhow::anyhow!("No image path found"))?;
+                .context("No image path found")?;
 
             let (worktree, relative_path) = project
                 .update(cx, |project, cx| {

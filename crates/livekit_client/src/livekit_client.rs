@@ -160,7 +160,7 @@ impl LocalParticipant {
         })?
         .await?
         .map(LocalTrackPublication)
-        .map_err(|error| anyhow::anyhow!("failed to publish track: {error}"))
+        .context("publishing a track")
     }
 
     pub async fn unpublish_track(
@@ -172,7 +172,7 @@ impl LocalParticipant {
         Tokio::spawn(cx, async move { participant.unpublish_track(&sid).await })?
             .await?
             .map(LocalTrackPublication)
-            .map_err(|error| anyhow::anyhow!("failed to unpublish track: {error}"))
+            .context("unpublishing a track")
     }
 }
 

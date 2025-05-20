@@ -368,7 +368,7 @@ impl HeadlessProject {
                 let mut parent = path
                     .parent()
                     .ok_or(e)
-                    .map_err(|_| anyhow!("{:?} does not exist", path))?;
+                    .with_context(|| format!("{path:?} does not exist"))?;
                 if parent == Path::new("") {
                     parent = util::paths::home_dir();
                 }

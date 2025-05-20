@@ -871,7 +871,7 @@ impl ExtensionImports for WasmState {
                 .http_client
                 .get(&url, Default::default(), true)
                 .await
-                .map_err(|err| anyhow!("error downloading release: {}", err))?;
+                .context("downloading release")?;
 
             if !response.status().is_success() {
                 Err(anyhow!(
@@ -931,7 +931,7 @@ impl ExtensionImports for WasmState {
             use std::os::unix::fs::PermissionsExt;
 
             return fs::set_permissions(&path, Permissions::from_mode(0o755))
-                .map_err(|error| anyhow!("failed to set permissions for path {path:?}: {error}"))
+                .with_context(|| format!("setting permissions for path {path:?}"))
                 .to_wasmtime_result();
         }
 

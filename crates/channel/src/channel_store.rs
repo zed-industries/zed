@@ -512,7 +512,7 @@ impl ChannelStore {
                 }
             }
         };
-        cx.background_spawn(async move { task.await.map_err(|error| anyhow!("{}", error)) })
+        cx.background_spawn(async move { task.await.map_err(|error| anyhow!("{error}")) })
     }
 
     pub fn is_channel_admin(&self, channel_id: ChannelId) -> bool {

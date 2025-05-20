@@ -390,8 +390,7 @@ fn init_paths() -> anyhow::Result<()> {
     ]
     .iter()
     {
-        std::fs::create_dir_all(path)
-            .map_err(|e| anyhow!("Could not create directory {:?}: {}", path, e))?;
+        std::fs::create_dir_all(path).with_context(|| format!("creating directory {path:?}"))?;
     }
     Ok(())
 }
@@ -868,7 +867,7 @@ fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Url> {
 }
 
 fn daemonize() -> Result<ControlFlow<()>> {
-    match fork::fork().map_err(|e| anyhow::anyhow!("failed to call fork with error code {}", e))? {
+    match fork::fork().map_err(|e| anyhow!("failed to call fork with error code {e}"))? {
         fork::Fork::Parent(_) => {
             return Ok(ControlFlow::Break(()));
         }

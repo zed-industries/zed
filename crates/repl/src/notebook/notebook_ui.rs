@@ -575,7 +575,7 @@ impl project::ProjectItem for NotebookItem {
             Some(cx.spawn(async move |cx| {
                 let abs_path = project
                     .read_with(cx, |project, cx| project.absolute_path(&path, cx))?
-                    .ok_or_else(|| anyhow::anyhow!("Failed to find the absolute path"))?;
+                    .with_context(|| format!("finding the absolute path of {path:?}"))?;
 
                 // todo: watch for changes to the file
                 let file_content = fs.load(&abs_path.as_path()).await?;

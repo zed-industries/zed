@@ -440,7 +440,7 @@ impl BedrockModel {
                 let config = self.handler.block_on(config_builder.load());
                 Ok(BedrockClient::new(&config))
             })
-            .map_err(|err| anyhow!("Failed to initialize Bedrock client: {err}"))?;
+            .context("initializing Bedrock client")?;
 
         self.client.get().context("Bedrock client not initialized")
     }

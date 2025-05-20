@@ -5095,7 +5095,7 @@ impl Workspace {
     ) -> Result<()> {
         self.serializable_items_tx
             .unbounded_send(item)
-            .map_err(|err| anyhow!("failed to send serializable item over channel: {}", err))
+            .map_err(|err| anyhow!("failed to send serializable item over channel: {err}"))
     }
 
     pub(crate) fn load_workspace(

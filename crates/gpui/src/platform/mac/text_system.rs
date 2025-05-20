@@ -194,7 +194,7 @@ impl MacTextSystemState {
                         core_graphics::data_provider::CGDataProvider::from_slice(embedded_font)
                     };
                     let font = core_graphics::font::CGFont::from_data_provider(data_provider)
-                        .map_err(|_| anyhow!("Could not load an embedded font."))?;
+                        .map_err(|()| anyhow!("Could not load an embedded font."))?;
                     let font = font_kit::loaders::core_text::Font::from_core_graphics_font(font);
                     Ok(Handle::from_native(&font))
                 }

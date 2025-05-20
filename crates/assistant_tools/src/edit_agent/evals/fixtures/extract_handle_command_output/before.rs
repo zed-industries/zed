@@ -80,7 +80,7 @@ async fn run_git_blame(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| anyhow!("Failed to start git blame process: {}", e))?;
+        .context("starting git blame process")?;
 
     let stdin = child
         .stdin
@@ -92,10 +92,7 @@ async fn run_git_blame(
     }
     stdin.flush().await?;
 
-    let output = child
-        .output()
-        .await
-        .map_err(|e| anyhow!("Failed to read git blame output: {}", e))?;
+    let output = child.output().await.context("reading git blame output")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

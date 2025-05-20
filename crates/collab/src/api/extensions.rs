@@ -238,7 +238,7 @@ async fn download_extension(
         ))
         .presigned(PresigningConfig::expires_in(EXTENSION_DOWNLOAD_URL_LIFETIME).unwrap())
         .await
-        .map_err(|e| anyhow!("failed to create presigned extension download url {e}"))?;
+        .context("creating presigned extension download url")?;
 
     Ok(Redirect::temporary(url.uri()))
 }

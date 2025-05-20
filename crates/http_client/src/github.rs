@@ -1,5 +1,5 @@
 use crate::HttpClient;
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use futures::AsyncReadExt;
 use serde::Deserialize;
 use std::sync::Arc;

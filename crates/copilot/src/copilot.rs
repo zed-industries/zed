@@ -648,7 +648,7 @@ impl Copilot {
                 }
             };
 
-            cx.background_spawn(task.map_err(|err| anyhow!("{:?}", err)))
+            cx.background_spawn(task.map_err(|err| anyhow!("{err:?}")))
         } else {
             // If we're downloading, wait until download is finished
             // If we're in a stuck state, display to the user

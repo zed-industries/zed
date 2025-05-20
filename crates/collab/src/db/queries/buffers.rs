@@ -840,7 +840,7 @@ fn operation_from_storage(
     _format_version: i32,
 ) -> Result<proto::operation::Variant, Error> {
     let operation =
-        storage::Operation::decode(row.value.as_slice()).map_err(|error| anyhow!("{}", error))?;
+        storage::Operation::decode(row.value.as_slice()).map_err(|error| anyhow!("{error}"))?;
     let version = version_from_storage(&operation.version);
     Ok(if operation.is_undo {
         proto::operation::Variant::Undo(proto::operation::Undo {

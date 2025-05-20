@@ -430,7 +430,7 @@ impl LspAdapter for NodeVersionAdapter {
                 .http_client()
                 .get(&version.url, Default::default(), true)
                 .await
-                .map_err(|err| anyhow!("error downloading release: {}", err))?;
+                .context("downloading release")?;
             if version.url.ends_with(".zip") {
                 node_runtime::extract_zip(
                     &destination_container_path,
