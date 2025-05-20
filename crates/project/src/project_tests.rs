@@ -1266,6 +1266,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
                         ..Default::default()
                     }],
                 },
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -1283,6 +1284,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
                         ..Default::default()
                     }],
                 },
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -1373,6 +1375,7 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
                         ..Default::default()
                     }],
                 },
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -1390,6 +1393,7 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
                         ..Default::default()
                     }],
                 },
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -4402,7 +4406,13 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
 
     lsp_store
         .update(cx, |lsp_store, cx| {
-            lsp_store.update_diagnostics(LanguageServerId(0), message, &[], cx)
+            lsp_store.update_diagnostics(
+                LanguageServerId(0),
+                message,
+                DiagnosticSourceKind::Pushed,
+                &[],
+                cx,
+            )
         })
         .unwrap();
     let buffer = buffer.update(cx, |buffer, _| buffer.snapshot());

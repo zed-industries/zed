@@ -70,9 +70,9 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{
-    Buffer, BufferEvent, Capability, CodeLabel, CursorShape, Language, LanguageName,
-    LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList, Transaction,
-    Unclipped, language_settings::InlayHintKind, proto::split_operations,
+    Buffer, BufferEvent, Capability, CodeLabel, CursorShape, DiagnosticSourceKind, Language,
+    LanguageName, LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList,
+    Transaction, Unclipped, language_settings::InlayHintKind, proto::split_operations,
 };
 use lsp::{
     CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, InsertTextMode,
@@ -315,6 +315,7 @@ pub enum Event {
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
     AgentLocationChanged,
+    RefreshDocumentsDiagnostics,
 }
 
 pub struct AgentLocationChanged;
@@ -812,6 +813,28 @@ pub const DEFAULT_COMPLETION_CONTEXT: CompletionContext = CompletionContext {
     trigger_kind: lsp::CompletionTriggerKind::INVOKED,
     trigger_character: None,
 };
+
+/// An LSP diagnostics associated with a certain language server.
+#[derive(Clone, Debug)]
+pub struct LspPullDiagnostics {
+    /// The id of the language server that produced diagnostics.
+    pub server_id: LanguageServerId,
+    /// URI of the resource,
+    pub uri: Option<lsp::Url>,
+    /// The diagnostics produced by this language server.
+    pub diagnostics: Vec<lsp::Diagnostic>,
+}
+
+impl Default for LspPullDiagnostics {
+    fn default() -> Self {
+        Self {
+            // TODO(vs) is it ok?
+            server_id: LanguageServerId(0),
+            uri: None,
+            diagnostics: Vec::new(),
+        }
+    }
+}
 
 impl Project {
     pub fn init_settings(cx: &mut App) {
@@ -2735,6 +2758,9 @@ impl Project {
             }
             LspStoreEvent::RefreshInlayHints => cx.emit(Event::RefreshInlayHints),
             LspStoreEvent::RefreshCodeLens => cx.emit(Event::RefreshCodeLens),
+            LspStoreEvent::RefreshDocumentsDiagnostics => {
+                cx.emit(Event::RefreshDocumentsDiagnostics)
+            }
             LspStoreEvent::LanguageServerPrompt(prompt) => {
                 cx.emit(Event::LanguageServerPrompt(prompt.clone()))
             }
@@ -3636,6 +3662,35 @@ impl Project {
     ) -> Task<anyhow::Result<InlayHint>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.resolve_inlay_hint(hint, buffer_handle, server_id, cx)
+        })
+    }
+
+    pub fn document_diagnostics(
+        &mut self,
+        buffer_handle: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<LspPullDiagnostics>>> {
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.document_diagnostic(buffer_handle, cx)
+        })
+    }
+
+    pub fn update_diagnostics(
+        &mut self,
+        language_server_id: LanguageServerId,
+        source_kind: DiagnosticSourceKind,
+        params: lsp::PublishDiagnosticsParams,
+        disk_based_sources: &[String],
+        cx: &mut Context<Self>,
+    ) -> Result<(), anyhow::Error> {
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.update_diagnostics(
+                language_server_id,
+                params,
+                source_kind,
+                disk_based_sources,
+                cx,
+            )
         })
     }
 
