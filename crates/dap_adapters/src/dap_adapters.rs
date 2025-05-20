@@ -6,7 +6,7 @@ mod php;
 mod python;
 mod ruby;
 
-use std::{net::Ipv4Addr, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -17,6 +17,7 @@ use dap::{
         self, AdapterVersion, DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName,
         GithubRepo,
     },
+    configure_tcp_connection,
     inline_value::{PythonInlineValueProvider, RustInlineValueProvider},
 };
 use gdb::GdbDebugAdapter;
@@ -27,7 +28,6 @@ use php::PhpDebugAdapter;
 use python::PythonDebugAdapter;
 use ruby::RubyDebugAdapter;
 use serde_json::{Value, json};
-use task::TcpArgumentsTemplate;
 
 pub fn init(cx: &mut App) {
     cx.update_default_global(|registry: &mut DapRegistry, _cx| {
@@ -43,21 +43,6 @@ pub fn init(cx: &mut App) {
         registry
             .add_inline_value_provider("Python".to_string(), Arc::from(PythonInlineValueProvider));
     })
-}
-
-pub(crate) async fn configure_tcp_connection(
-    tcp_connection: TcpArgumentsTemplate,
-) -> Result<(Ipv4Addr, u16, Option<u64>)> {
-    let host = tcp_connection.host();
-    let timeout = tcp_connection.timeout;
-
-    let port = if let Some(port) = tcp_connection.port {
-        port
-    } else {
-        dap::transport::TcpTransport::port(&tcp_connection).await?
-    };
-
-    Ok((host, port, timeout))
 }
 
 trait ToDap {
