@@ -247,7 +247,6 @@ if [[ -n $pkg ]]; then
     gcc
     git
     llvm
-    pkgconfig
     protobuf
     rustup-init
     libx11
