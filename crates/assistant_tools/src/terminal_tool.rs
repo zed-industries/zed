@@ -627,7 +627,8 @@ impl ToolCard for TerminalToolCard {
                 this.child(
                     div()
                         .pt_2()
-                        .min_h_72()
+                        .min_h_8()
+                        .h(rems_from_px(self.content_line_count as f32))
                         .border_t_1()
                         .border_color(border_color)
                         .bg(cx.theme().colors().editor_background)
