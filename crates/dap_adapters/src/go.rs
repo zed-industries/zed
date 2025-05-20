@@ -128,7 +128,7 @@ impl DebugAdapter for GoDebugAdapter {
             "console": {
                 "default": "internalConsole",
                 "description": "Where to launch the debugger.",
-                "enum": ["internalConsole", "integratedTerminal", "externalTerminal"]
+                "enum": ["internalConsole", "integratedTerminal"]
             },
             "asRoot": {
                 "default": false,

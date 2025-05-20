@@ -220,13 +220,13 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                 },
                 "terminal": {
                     "type": "string",
-                    "enum": ["integrated", "external", "console"],
+                    "enum": ["integrated", "console"],
                     "description": "Terminal type to use",
                     "default": "integrated"
                 },
                 "console": {
                     "type": "string",
-                    "enum": ["integratedTerminal", "externalTerminal", "internalConsole"],
+                    "enum": ["integratedTerminal", "internalConsole"],
                     "description": "Terminal type to use (compatibility alias of 'terminal')"
                 },
                 "stopOnEntry": {

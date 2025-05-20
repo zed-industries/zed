@@ -270,7 +270,7 @@ impl DebugAdapter for JsDebugAdapter {
                                 },
                                 "console": {
                                     "type": "string",
-                                    "enum": ["internalConsole", "integratedTerminal", "externalTerminal"],
+                                    "enum": ["internalConsole", "integratedTerminal"],
                                     "description": "Where to launch the debug target",
                                     "default": "internalConsole"
                                 },
