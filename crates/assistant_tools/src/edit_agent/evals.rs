@@ -898,6 +898,27 @@ fn eval_add_overwrite_test() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_create_empty_file() {
+    // Check that Edit Agent can create a file without writing its
+    // thoughts into it. This issue is not specific to empty files,
+    // but it's easier to reproduce with them.
+    //
+    // NOTE: For some mysterious reason, I'm able to reproduce this issue
+    // roughly 80% of the time in actual Zed. However, once I take the
+    // exact LLM request before the failure point and generate from that,
+    // the reproduction rate drops to 2-3%. Things I've tried: disabling
+    // prompt caching, capturing the LLM request via a proxy server,
+    // running the query on Claude separately from evals.
+    //
+    // Prompt vesion | Model                          | Pass rate
+    // --------------|--------------------------------|----------
+    // 2025-05-19    | claude-3.7-sonnet              | 0.98
+    // 2025-05-19    | gemini-2.5-pro-preview-03-25   | 1.00
+    // 2025-05-19    | gemini-2.5-flash-preview-04-17 | 1.00
+    // 2025-05-19    | gpt-4.1                        | 1.00
+    //
+    // TODO: gpt-4.1-mini errored 38 times:
+    // "data did not match any variant of untagged enum ResponseStreamResult"
+    //
     let input_file_content = None;
     let expected_output_content = String::new();
     eval(
@@ -927,22 +948,22 @@ fn eval_create_empty_file() {
                     [tool_result(
                         "toolu_01GAF8TtsgpjKxCr8fgQLDgR",
                         "list_directory",
-                        "root/TODO\n",
+                        "root/TODO\nroot/TODO2\nroot/new.txt\n",
                     )],
                 ),
                 message(
                     Assistant,
                     [
                         text(formatdoc! {"
-                        I can see there's already a `TODO` file in the `root` directory. Let me create a second empty todo file called `TODO2` in the same directory:
+                        I can see there's already a `TODO` file in the `root` directory. Let me create a second empty todo file called `TODO3` in the same directory:
                     "}),
                         tool_use(
                             "toolu_01Tb3iQ9griqSYMmVuykQPWU",
                             "edit_file",
                             EditFileToolInput {
-                                display_description: "Create an empty second todo file".to_string(),
+                                display_description: "Create empty TODO3 file".to_string(),
                                 mode: EditFileMode::Create,
-                                path: "root/TODO2".into(),
+                                path: "root/TODO3".into(),
                             },
                         ),
                     ],
