@@ -9,7 +9,7 @@ use handlebars::Handlebars;
 use language::{Buffer, DiagnosticSeverity, OffsetRangeExt as _};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolResultContent, MessageContent, Role, TokenUsage,
+    LanguageModelToolResultContent, MessageContent, Role, TokenUsage, WrappedTextContent,
 };
 use project::lsp_store::OpenLspBufferHandle;
 use project::{DiagnosticSummary, Project, ProjectPath};
@@ -973,8 +973,12 @@ impl RequestMarkdown {
                         }
 
                         match &tool_result.content {
-                            LanguageModelToolResultContent::Text(str) => {
-                                writeln!(messages, "{}\n", str).ok();
+                            LanguageModelToolResultContent::Text(text)
+                            | LanguageModelToolResultContent::WrappedText(WrappedTextContent {
+                                text,
+                                ..
+                            }) => {
+                                writeln!(messages, "{text}\n").ok();
                             }
                             LanguageModelToolResultContent::Image(image) => {
                                 writeln!(messages, "![Image](data:base64,{})\n", image.source).ok();

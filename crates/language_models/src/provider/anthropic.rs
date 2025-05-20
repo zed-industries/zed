@@ -19,7 +19,7 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelId, LanguageModelKnownError, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolResultContent, MessageContent, RateLimiter, Role,
+    LanguageModelToolResultContent, MessageContent, RateLimiter, Role, WrappedTextContent,
 };
 use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use schemars::JsonSchema;
@@ -350,8 +350,12 @@ pub fn count_anthropic_tokens(
                         // TODO: Estimate token usage from tool uses.
                     }
                     MessageContent::ToolResult(tool_result) => match &tool_result.content {
-                        LanguageModelToolResultContent::Text(txt) => {
-                            string_contents.push_str(txt);
+                        LanguageModelToolResultContent::Text(text)
+                        | LanguageModelToolResultContent::WrappedText(WrappedTextContent {
+                            text,
+                            ..
+                        }) => {
+                            string_contents.push_str(text);
                         }
                         LanguageModelToolResultContent::Image(image) => {
                             tokens_from_images += image.estimate_tokens();
@@ -588,9 +592,10 @@ pub fn into_anthropic(
                                 tool_use_id: tool_result.tool_use_id.to_string(),
                                 is_error: tool_result.is_error,
                                 content: match tool_result.content {
-                                    LanguageModelToolResultContent::Text(text) => {
-                                        ToolResultContent::Plain(text.to_string())
-                                    }
+                                    LanguageModelToolResultContent::Text(text)
+                                    | LanguageModelToolResultContent::WrappedText(
+                                        WrappedTextContent { text, .. },
+                                    ) => ToolResultContent::Plain(text.to_string()),
                                     LanguageModelToolResultContent::Image(image) => {
                                         ToolResultContent::Multipart(vec![ToolResultPart::Image {
                                             source: anthropic::ImageSource {
