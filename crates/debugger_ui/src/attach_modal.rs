@@ -231,7 +231,7 @@ impl PickerDelegate for AttachModalDelegate {
         let Some(scenario) = cx.read_global::<DapRegistry, _>(|registry, _| {
             registry
                 .adapter(&self.definition.adapter)
-                .map(|adapter| adapter.config_from_zed_format(self.definition.clone()))
+                .and_then(|adapter| adapter.config_from_zed_format(self.definition.clone()).ok())
         }) else {
             return;
         };

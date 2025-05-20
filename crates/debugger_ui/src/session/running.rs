@@ -880,7 +880,7 @@ impl RunningState {
                 let scenario = dap_registry
                     .adapter(&adapter)
                     .ok_or_else(|| anyhow!("{}: is not a valid adapter name", &adapter))
-                    .map(|adapter| adapter.config_from_zed_format(zed_config))?;
+                    .map(|adapter| adapter.config_from_zed_format(zed_config))??;
                 config = scenario.config;
             } else {
                 return Err(anyhow!("No request or build provided"));

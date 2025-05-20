@@ -352,7 +352,7 @@ pub async fn fetch_latest_adapter_version_from_github(
 pub trait DebugAdapter: 'static + Send + Sync {
     fn name(&self) -> DebugAdapterName;
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> DebugScenario {
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
         todo!()
     }
 
@@ -461,16 +461,16 @@ impl DebugAdapter for FakeAdapter {
         None
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> DebugScenario {
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
         let config = serde_json::to_value(zed_scenario.request).unwrap();
 
-        DebugScenario {
+        Ok(DebugScenario {
             adapter: zed_scenario.adapter,
             label: zed_scenario.label,
             build: None,
             config,
             tcp_connection: None,
-        }
+        })
     }
 
     async fn get_binary(

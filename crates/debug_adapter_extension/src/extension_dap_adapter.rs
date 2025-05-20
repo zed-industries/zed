@@ -48,7 +48,7 @@ impl DebugAdapter for ExtensionDapAdapter {
             .await
     }
 
-    fn config_from_zed_format(&self, _zed_scenario: ZedDebugConfig) -> DebugScenario {
+    fn config_from_zed_format(&self, _zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
         todo!()
     }
 }

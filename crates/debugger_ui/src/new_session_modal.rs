@@ -217,7 +217,7 @@ impl NewSessionModal {
 
         cx.global::<DapRegistry>()
             .adapter(&session_scenario.adapter)
-            .map(|adapter| adapter.config_from_zed_format(session_scenario))
+            .and_then(|adapter| adapter.config_from_zed_format(session_scenario).ok())
     }
 
     fn start_new_session(&self, window: &mut Window, cx: &mut Context<Self>) {

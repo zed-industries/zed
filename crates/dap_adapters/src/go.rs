@@ -301,7 +301,7 @@ impl DebugAdapter for GoDebugAdapter {
         }
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> DebugScenario {
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
         let mut args = match &zed_scenario.request {
             dap::DebugRequest::Attach(attach_config) => {
                 json!({
@@ -322,13 +322,13 @@ impl DebugAdapter for GoDebugAdapter {
             map.insert("stopOnEntry".into(), stop_on_entry.into());
         }
 
-        DebugScenario {
+        Ok(DebugScenario {
             adapter: zed_scenario.adapter,
             label: zed_scenario.label,
             build: None,
             config: args,
             tcp_connection: None,
-        }
+        })
     }
 
     async fn get_binary(

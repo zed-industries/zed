@@ -1,5 +1,9 @@
 use adapters::latest_github_release;
-use dap::adapters::{DebugTaskDefinition, TcpArguments};
+use anyhow::bail;
+use dap::{
+    StartDebuggingRequestArguments,
+    adapters::{DebugTaskDefinition, TcpArguments},
+};
 use gpui::{AsyncApp, SharedString};
 use language::LanguageName;
 use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
@@ -16,28 +20,6 @@ impl PhpDebugAdapter {
     const ADAPTER_NAME: &'static str = "PHP";
     const ADAPTER_PACKAGE_NAME: &'static str = "vscode-php-debug";
     const ADAPTER_PATH: &'static str = "extension/out/phpDebug.js";
-
-    fn request_args(
-        &self,
-        config: &DebugTaskDefinition,
-    ) -> Result<dap::StartDebuggingRequestArguments> {
-        // match &config.request {
-        //     dap::DebugRequest::Attach(_) => {
-        //         anyhow::bail!("php adapter does not support attaching")
-        //     }
-        //     dap::DebugRequest::Launch(launch_config) => Ok(dap::StartDebuggingRequestArguments {
-        //         configuration: json!({
-        //             "program": launch_config.program,
-        //             "cwd": launch_config.cwd,
-        //             "args": launch_config.args,
-        //             "env": launch_config.env_json(),
-        //             "stopOnEntry": config.stop_on_entry.unwrap_or_default(),
-        //         }),
-        //         request: config.request.to_dap(),
-        //     }),
-        // }
-        todo!()
-    }
 
     async fn fetch_latest_adapter_version(
         &self,
@@ -68,7 +50,7 @@ impl PhpDebugAdapter {
     async fn get_installed_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugTaskDefinition,
+        task_definition: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
@@ -86,7 +68,7 @@ impl PhpDebugAdapter {
             .ok_or_else(|| anyhow!("Couldn't find PHP dap directory"))?
         };
 
-        let tcp_connection = config.tcp_connection.clone().unwrap_or_default();
+        let tcp_connection = task_definition.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
         Ok(DebugAdapterBinary {
@@ -110,7 +92,10 @@ impl PhpDebugAdapter {
             }),
             cwd: None,
             envs: HashMap::default(),
-            request_args: self.request_args(config)?,
+            request_args: StartDebuggingRequestArguments {
+                configuration: task_definition.config.clone(),
+                request: dap::StartDebuggingRequestArgumentsRequest::Launch,
+            },
         })
     }
 }
@@ -125,8 +110,27 @@ impl DebugAdapter for PhpDebugAdapter {
         Some(SharedString::new_static("PHP").into())
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> DebugScenario {
-        todo!()
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
+        let obj = match &zed_scenario.request {
+            dap::DebugRequest::Attach(_) => {
+                bail!("Php adapter doesn't support attaching")
+            }
+            dap::DebugRequest::Launch(launch_config) => json!({
+                "program": launch_config.program,
+                "cwd": launch_config.cwd,
+                "args": launch_config.args,
+                "env": launch_config.env_json(),
+                "stopOnEntry": zed_scenario.stop_on_entry.unwrap_or_default(),
+            }),
+        };
+
+        Ok(DebugScenario {
+            adapter: zed_scenario.adapter,
+            label: zed_scenario.label,
+            build: None,
+            config: obj,
+            tcp_connection: None,
+        })
     }
 
     async fn get_binary(

@@ -29,7 +29,7 @@ impl DebugAdapter for RubyDebugAdapter {
         Some(SharedString::new_static("Ruby").into())
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> DebugScenario {
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
         todo!()
     }
 

@@ -57,7 +57,7 @@ impl DebugAdapter for GdbDebugAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> DebugScenario {
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
         todo!()
     }
 

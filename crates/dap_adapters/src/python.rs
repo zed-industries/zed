@@ -23,39 +23,6 @@ impl PythonDebugAdapter {
         &self,
         task_definition: &DebugTaskDefinition,
     ) -> Result<StartDebuggingRequestArguments> {
-        // let args = json!({
-        //     "request": match config.request {
-        //         DebugRequest::Launch(_) => "launch",
-        //         DebugRequest::Attach(_) => "attach",
-        //     },
-        //     "subProcess": true,
-        //     "redirectOutput": true,
-        // });
-
-        // let map = args.as_object_mut().unwrap();
-        // match &config.request {
-        //     DebugRequest::Attach(attach) => {
-        //         map.insert("processId".into(), attach.process_id.into());
-        //     }
-        //     DebugRequest::Launch(launch) => {
-        //         map.insert("program".into(), launch.program.clone().into());
-        //         map.insert("args".into(), launch.args.clone().into());
-        //         if !launch.env.is_empty() {
-        //             map.insert("env".into(), launch.env_json());
-        //         }
-
-        //         if let Some(stop_on_entry) = config.stop_on_entry {
-        //             map.insert("stopOnEntry".into(), stop_on_entry.into());
-        //         }
-        //         if let Some(cwd) = launch.cwd.as_ref() {
-        //             map.insert("cwd".into(), cwd.to_string_lossy().into_owned().into());
-        //         }
-        //     }
-        // }
-        //
-        // let mut adapter_config = config.config.clone();
-        // util::merge_json_value_into(args, &mut adapter_config);
-
         let request = self.validate_config(&task_definition.config)?;
 
         Ok(StartDebuggingRequestArguments {
@@ -183,7 +150,7 @@ impl DebugAdapter for PythonDebugAdapter {
         Some(SharedString::new_static("Python").into())
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> DebugScenario {
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
         let mut args = json!({
             "request": match zed_scenario.request {
                 DebugRequest::Launch(_) => "launch",
@@ -214,13 +181,13 @@ impl DebugAdapter for PythonDebugAdapter {
             }
         }
 
-        DebugScenario {
+        Ok(DebugScenario {
             adapter: zed_scenario.adapter,
             label: zed_scenario.label,
             config: args,
             build: None,
             tcp_connection: None,
-        }
+        })
     }
 
     fn validate_config(

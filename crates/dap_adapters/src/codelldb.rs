@@ -137,7 +137,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         }
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> DebugScenario {
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
         let mut configuration = json!({
             "request": match zed_scenario.request {
                 DebugRequest::Launch(_) => "launch",
@@ -172,13 +172,13 @@ impl DebugAdapter for CodeLldbDebugAdapter {
             }
         }
 
-        DebugScenario {
+        Ok(DebugScenario {
             adapter: zed_scenario.adapter,
             label: zed_scenario.label,
             config: configuration,
             build: None,
             tcp_connection: None,
-        }
+        })
     }
 
     fn dap_schema(&self) -> serde_json::Value {
