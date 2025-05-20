@@ -183,32 +183,6 @@ pub fn truncate_lines_to_byte_limit(s: &str, max_bytes: usize) -> &str {
     truncate_to_byte_limit(s, max_bytes)
 }
 
-#[test]
-fn test_truncate_lines_to_byte_limit() {
-    let text = "Line 1\nLine 2\nLine 3\nLine 4";
-
-    // Limit that includes all lines
-    assert_eq!(truncate_lines_to_byte_limit(text, 100), text);
-
-    // Exactly the first line
-    assert_eq!(truncate_lines_to_byte_limit(text, 7), "Line 1\n");
-
-    // Limit between lines
-    assert_eq!(truncate_lines_to_byte_limit(text, 13), "Line 1\n");
-    assert_eq!(truncate_lines_to_byte_limit(text, 20), "Line 1\nLine 2\n");
-
-    // Limit before first newline
-    assert_eq!(truncate_lines_to_byte_limit(text, 6), "Line ");
-
-    // Test with non-ASCII characters
-    let text_utf8 = "Line 1\nLíne 2\nLine 3";
-    assert_eq!(
-        truncate_lines_to_byte_limit(text_utf8, 15),
-        "Line 1\nLíne 2\n"
-    );
-}
-
-// HERE
 fn char_len_with_expanded_tabs(offset: usize, text: &str, tab_size: NonZeroU32) -> usize {
     let tab_size = tab_size.get() as usize;
     let mut width = offset;
@@ -222,19 +196,6 @@ fn char_len_with_expanded_tabs(offset: usize, text: &str, tab_size: NonZeroU32) 
     }
 
     width - offset
-}
-
-#[test]
-fn test_string_size_with_expanded_tabs() {
-    let nz = |val| NonZeroU32::new(val).unwrap();
-    assert_eq!(char_len_with_expanded_tabs(0, "", nz(4)), 0);
-    assert_eq!(char_len_with_expanded_tabs(0, "hello", nz(4)), 5);
-    assert_eq!(char_len_with_expanded_tabs(0, "\thello", nz(4)), 9);
-    assert_eq!(char_len_with_expanded_tabs(0, "abc\tab", nz(4)), 6);
-    assert_eq!(char_len_with_expanded_tabs(0, "hello\t", nz(4)), 8);
-    assert_eq!(char_len_with_expanded_tabs(0, "\t\t", nz(8)), 16);
-    assert_eq!(char_len_with_expanded_tabs(0, "x\t", nz(8)), 8);
-    assert_eq!(char_len_with_expanded_tabs(7, "x\t", nz(8)), 9);
 }
 
 /// Tokenizes a string into runs of text that should stick together, or that is whitespace.
@@ -342,81 +303,6 @@ impl<'a> Iterator for WordBreakingTokenizer<'a> {
     }
 }
 
-#[test]
-fn test_word_breaking_tokenizer() {
-    let tests: &[(&str, &[WordBreakToken<'static>])] = &[
-        ("", &[]),
-        ("  ", &[whitespace("  ", 2)]),
-        ("Ʒ", &[word("Ʒ", 1)]),
-        ("Ǽ", &[word("Ǽ", 1)]),
-        ("⋑", &[word("⋑", 1)]),
-        ("⋑⋑", &[word("⋑⋑", 2)]),
-        (
-            "原理，进而",
-            &[word("原", 1), word("理，", 2), word("进", 1), word("而", 1)],
-        ),
-        (
-            "hello world",
-            &[word("hello", 5), whitespace(" ", 1), word("world", 5)],
-        ),
-        (
-            "hello, world",
-            &[word("hello,", 6), whitespace(" ", 1), word("world", 5)],
-        ),
-        (
-            "  hello world",
-            &[
-                whitespace("  ", 2),
-                word("hello", 5),
-                whitespace(" ", 1),
-                word("world", 5),
-            ],
-        ),
-        (
-            "这是什么 \n 钢笔",
-            &[
-                word("这", 1),
-                word("是", 1),
-                word("什", 1),
-                word("么", 1),
-                whitespace(" ", 1),
-                newline(),
-                whitespace(" ", 1),
-                word("钢", 1),
-                word("笔", 1),
-            ],
-        ),
-        (" mutton", &[whitespace(" ", 1), word("mutton", 6)]),
-    ];
-
-    fn word(token: &'static str, grapheme_len: usize) -> WordBreakToken<'static> {
-        WordBreakToken::Word {
-            token,
-            grapheme_len,
-        }
-    }
-
-    fn whitespace(token: &'static str, grapheme_len: usize) -> WordBreakToken<'static> {
-        WordBreakToken::InlineWhitespace {
-            token,
-            grapheme_len,
-        }
-    }
-
-    fn newline() -> WordBreakToken<'static> {
-        WordBreakToken::Newline
-    }
-
-    for (input, result) in tests {
-        assert_eq!(
-            WordBreakingTokenizer::new(input)
-                .collect::<Vec<_>>()
-                .as_slice(),
-            *result,
-        );
-    }
-}
-
 pub fn wrap_with_prefix(
     line_prefix: String,
     unwrapped_text: String,
@@ -499,50 +385,6 @@ pub fn wrap_with_prefix(
         wrapped_text.push_str(&current_line);
     }
     wrapped_text
-}
-
-#[test]
-fn test_wrap_with_prefix() {
-    assert_eq!(
-        wrap_with_prefix(
-            "# ".to_string(),
-            "abcdefg".to_string(),
-            4,
-            NonZeroU32::new(4).unwrap(),
-            false,
-        ),
-        "# abcdefg"
-    );
-    assert_eq!(
-        wrap_with_prefix(
-            "".to_string(),
-            "\thello world".to_string(),
-            8,
-            NonZeroU32::new(4).unwrap(),
-            false,
-        ),
-        "hello\nworld"
-    );
-    assert_eq!(
-        wrap_with_prefix(
-            "// ".to_string(),
-            "xx \nyy zz aa bb cc".to_string(),
-            12,
-            NonZeroU32::new(4).unwrap(),
-            false,
-        ),
-        "// xx yy zz\n// aa bb cc"
-    );
-    assert_eq!(
-        wrap_with_prefix(
-            String::new(),
-            "这是什么 \n 钢笔".to_string(),
-            3,
-            NonZeroU32::new(4).unwrap(),
-            false,
-        ),
-        "这是什\n么 钢\n笔"
-    );
 }
 
 pub fn post_inc<T: From<u8> + AddAssign<T> + Copy>(value: &mut T) -> T {
@@ -1614,6 +1456,163 @@ Line 3"#
         assert_eq!(
             iterate_expanded_and_wrapped_usize_range(3..5, 4, 4, 8).collect::<Vec<usize>>(),
             (0..8).collect::<Vec<usize>>()
+        );
+    }
+
+    #[test]
+    fn test_truncate_lines_to_byte_limit() {
+        let text = "Line 1\nLine 2\nLine 3\nLine 4";
+
+        // Limit that includes all lines
+        assert_eq!(truncate_lines_to_byte_limit(text, 100), text);
+
+        // Exactly the first line
+        assert_eq!(truncate_lines_to_byte_limit(text, 7), "Line 1\n");
+
+        // Limit between lines
+        assert_eq!(truncate_lines_to_byte_limit(text, 13), "Line 1\n");
+        assert_eq!(truncate_lines_to_byte_limit(text, 20), "Line 1\nLine 2\n");
+
+        // Limit before first newline
+        assert_eq!(truncate_lines_to_byte_limit(text, 6), "Line ");
+
+        // Test with non-ASCII characters
+        let text_utf8 = "Line 1\nLíne 2\nLine 3";
+        assert_eq!(
+            truncate_lines_to_byte_limit(text_utf8, 15),
+            "Line 1\nLíne 2\n"
+        );
+    }
+
+    #[test]
+    fn test_string_size_with_expanded_tabs() {
+        let nz = |val| NonZeroU32::new(val).unwrap();
+        assert_eq!(char_len_with_expanded_tabs(0, "", nz(4)), 0);
+        assert_eq!(char_len_with_expanded_tabs(0, "hello", nz(4)), 5);
+        assert_eq!(char_len_with_expanded_tabs(0, "\thello", nz(4)), 9);
+        assert_eq!(char_len_with_expanded_tabs(0, "abc\tab", nz(4)), 6);
+        assert_eq!(char_len_with_expanded_tabs(0, "hello\t", nz(4)), 8);
+        assert_eq!(char_len_with_expanded_tabs(0, "\t\t", nz(8)), 16);
+        assert_eq!(char_len_with_expanded_tabs(0, "x\t", nz(8)), 8);
+        assert_eq!(char_len_with_expanded_tabs(7, "x\t", nz(8)), 9);
+    }
+
+    #[test]
+    fn test_word_breaking_tokenizer() {
+        let tests: &[(&str, &[WordBreakToken<'static>])] = &[
+            ("", &[]),
+            ("  ", &[whitespace("  ", 2)]),
+            ("Ʒ", &[word("Ʒ", 1)]),
+            ("Ǽ", &[word("Ǽ", 1)]),
+            ("⋑", &[word("⋑", 1)]),
+            ("⋑⋑", &[word("⋑⋑", 2)]),
+            (
+                "原理，进而",
+                &[word("原", 1), word("理，", 2), word("进", 1), word("而", 1)],
+            ),
+            (
+                "hello world",
+                &[word("hello", 5), whitespace(" ", 1), word("world", 5)],
+            ),
+            (
+                "hello, world",
+                &[word("hello,", 6), whitespace(" ", 1), word("world", 5)],
+            ),
+            (
+                "  hello world",
+                &[
+                    whitespace("  ", 2),
+                    word("hello", 5),
+                    whitespace(" ", 1),
+                    word("world", 5),
+                ],
+            ),
+            (
+                "这是什么 \n 钢笔",
+                &[
+                    word("这", 1),
+                    word("是", 1),
+                    word("什", 1),
+                    word("么", 1),
+                    whitespace(" ", 1),
+                    newline(),
+                    whitespace(" ", 1),
+                    word("钢", 1),
+                    word("笔", 1),
+                ],
+            ),
+            (" mutton", &[whitespace(" ", 1), word("mutton", 6)]),
+        ];
+
+        fn word(token: &'static str, grapheme_len: usize) -> WordBreakToken<'static> {
+            WordBreakToken::Word {
+                token,
+                grapheme_len,
+            }
+        }
+
+        fn whitespace(token: &'static str, grapheme_len: usize) -> WordBreakToken<'static> {
+            WordBreakToken::InlineWhitespace {
+                token,
+                grapheme_len,
+            }
+        }
+
+        fn newline() -> WordBreakToken<'static> {
+            WordBreakToken::Newline
+        }
+
+        for (input, result) in tests {
+            assert_eq!(
+                WordBreakingTokenizer::new(input)
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+                *result,
+            );
+        }
+    }
+
+    #[test]
+    fn test_wrap_with_prefix() {
+        assert_eq!(
+            wrap_with_prefix(
+                "# ".to_string(),
+                "abcdefg".to_string(),
+                4,
+                NonZeroU32::new(4).unwrap(),
+                false,
+            ),
+            "# abcdefg"
+        );
+        assert_eq!(
+            wrap_with_prefix(
+                "".to_string(),
+                "\thello world".to_string(),
+                8,
+                NonZeroU32::new(4).unwrap(),
+                false,
+            ),
+            "hello\nworld"
+        );
+        assert_eq!(
+            wrap_with_prefix(
+                "// ".to_string(),
+                "xx \nyy zz aa bb cc".to_string(),
+                12,
+                NonZeroU32::new(4).unwrap(),
+                false,
+            ),
+            "// xx yy zz\n// aa bb cc"
+        );
+        assert_eq!(
+            wrap_with_prefix(
+                String::new(),
+                "这是什么 \n 钢笔".to_string(),
+                3,
+                NonZeroU32::new(4).unwrap(),
+                false,
+            ),
+            "这是什\n么 钢\n笔"
         );
     }
 }
