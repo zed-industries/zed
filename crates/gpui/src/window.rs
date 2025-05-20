@@ -1821,7 +1821,7 @@ impl Window {
         self.invalidator.set_phase(DrawPhase::Prepaint);
         self.tooltip_bounds.take();
 
-        let inspector_width: Pixels = rems(20.0).to_pixels(self.rem_size());
+        let inspector_width: Pixels = rems(30.0).to_pixels(self.rem_size());
 
         let root_size = match &self.mode {
             WindowMode::Normal => self.viewport_size,
