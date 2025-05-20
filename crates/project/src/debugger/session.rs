@@ -315,7 +315,7 @@ impl LocalMode {
         // Of relevance: https://github.com/microsoft/vscode/issues/4902#issuecomment-368583522
         let launch = match raw.request {
             dap::StartDebuggingRequestArgumentsRequest::Launch => self.request(Launch {
-                raw: dbg!(raw.configuration),
+                raw: raw.configuration,
             }),
             dap::StartDebuggingRequestArgumentsRequest::Attach => self.request(Attach {
                 raw: raw.configuration,
@@ -703,7 +703,6 @@ impl Session {
         dap_store: WeakEntity<DapStore>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        dbg!("booting session");
         let (message_tx, mut message_rx) = futures::channel::mpsc::unbounded();
         let (initialized_tx, initialized_rx) = futures::channel::oneshot::channel();
 

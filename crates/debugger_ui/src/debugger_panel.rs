@@ -270,6 +270,7 @@ impl DebugPanel {
 
         cx.spawn(async move |_, cx| {
             if let Err(error) = task.await {
+                log::error!("{error}");
                 session
                     .update(cx, |session, cx| {
                         session

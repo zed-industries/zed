@@ -49,6 +49,6 @@ impl DebugAdapter for ExtensionDapAdapter {
     }
 
     fn config_from_zed_format(&self, _zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
-        todo!()
+        Err(anyhow::anyhow!("DAP extensions are not implemented yet"))
     }
 }

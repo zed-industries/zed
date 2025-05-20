@@ -1,5 +1,8 @@
 use adapters::latest_github_release;
-use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
+use dap::{
+    StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
+    adapters::DebugTaskDefinition,
+};
 use gpui::AsyncApp;
 use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 use task::DebugRequest;
@@ -16,43 +19,6 @@ impl JsDebugAdapter {
     const ADAPTER_NAME: &'static str = "JavaScript";
     const ADAPTER_NPM_NAME: &'static str = "vscode-js-debug";
     const ADAPTER_PATH: &'static str = "js-debug/src/dapDebugServer.js";
-
-    fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
-        // let mut args = json!({
-        //     "type": "pwa-node",
-        //     "request": match config.request {
-        //         DebugRequest::Launch(_) => "launch",
-        //         DebugRequest::Attach(_) => "attach",
-        //     },
-        // });
-        // let map = args.as_object_mut().unwrap();
-        // match &config.request {
-        //     DebugRequest::Attach(attach) => {
-        //         map.insert("processId".into(), attach.process_id.into());
-        //     }
-        //     DebugRequest::Launch(launch) => {
-        //         map.insert("program".into(), launch.program.clone().into());
-
-        //         if !launch.args.is_empty() {
-        //             map.insert("args".into(), launch.args.clone().into());
-        //         }
-        //         if !launch.env.is_empty() {
-        //             map.insert("env".into(), launch.env_json());
-        //         }
-
-        //         if let Some(stop_on_entry) = config.stop_on_entry {
-        //             map.insert("stopOnEntry".into(), stop_on_entry.into());
-        //         }
-        //         if let Some(cwd) = launch.cwd.as_ref() {
-        //             map.insert("cwd".into(), cwd.to_string_lossy().into_owned().into());
-        //         }
-        //     }
-        // }
-        // StartDebuggingRequestArguments {
-        //     configuration: args,
-        //     request: config.request.to_dap(),
-        // }
-    }
 
     async fn fetch_latest_adapter_version(
         &self,
@@ -140,6 +106,27 @@ impl DebugAdapter for JsDebugAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
+    fn validate_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<dap::StartDebuggingRequestArgumentsRequest> {
+        match config.get("request") {
+            Some(val) if val == "launch" => {
+                if config.get("program").is_none() {
+                    return Err(anyhow!("program is required"));
+                }
+                Ok(StartDebuggingRequestArgumentsRequest::Launch)
+            }
+            Some(val) if val == "attach" => {
+                if !config.get("processId").is_some_and(|val| val.is_u64()) {
+                    return Err(anyhow!("processId must be a number"));
+                }
+                Ok(StartDebuggingRequestArgumentsRequest::Attach)
+            }
+            _ => Err(anyhow!("missing or invalid request field in config")),
+        }
+    }
+
     fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
         let mut args = json!({
             "type": "pwa-node",
@@ -206,11 +193,6 @@ impl DebugAdapter for JsDebugAdapter {
                                     "enum": ["pwa-node", "node", "chrome", "pwa-chrome", "edge", "pwa-edge"],
                                     "description": "The type of debug session",
                                     "default": "pwa-node"
-                                },
-                                "name": {
-                                    "type": "string",
-                                    "description": "The name of the debug session",
-                                    "default": "Debug JavaScript"
                                 },
                                 "program": {
                                     "type": "string",

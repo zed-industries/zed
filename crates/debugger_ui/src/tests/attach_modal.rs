@@ -94,7 +94,6 @@ async fn test_show_attach_modal_and_select_process(
         project::debugger::test::intercept_debug_sessions(cx, |client| {
             client.on_request::<dap::requests::Attach, _>(move |_, args| {
                 let raw = &args.raw;
-                dbg!(&raw);
                 assert_eq!(raw["request"], "attach");
                 assert_eq!(raw["process_id"], 1);
 

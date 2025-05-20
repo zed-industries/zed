@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use dap::{
-    DebugRequest,
+    DebugRequest, StartDebuggingRequestArguments,
     adapters::{
         DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition,
     },
@@ -249,7 +249,7 @@ impl DebugAdapter for RubyDebugAdapter {
         let tcp_connection = definition.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
-        let mut arguments = vec![
+        let arguments = vec![
             "--open".to_string(),
             format!("--port={}", port),
             format!("--host={}", host),
@@ -263,8 +263,8 @@ impl DebugAdapter for RubyDebugAdapter {
                 port,
                 timeout,
             }),
-            cwd: launch.cwd,
-            envs: launch.env.into_iter().collect(),
+            cwd: None,
+            envs: std::collections::HashMap::default(),
             request_args: StartDebuggingRequestArguments {
                 request: self.validate_config(&definition.config)?,
                 configuration: definition.config.clone(),

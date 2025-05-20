@@ -861,6 +861,12 @@ impl RunningState {
             };
 
             if config_is_valid {
+                // Ok(DebugTaskDefinition {
+                //     label,
+                //     adapter: DebugAdapterName(adapter),
+                //     config,
+                //     tcp_connection,
+                // })
             } else if let Some((task, locator_name)) = build_output {
                 let locator_name = locator_name
                     .ok_or_else(|| anyhow!("Could not find a valid locator for a build task"))?;

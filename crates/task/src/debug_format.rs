@@ -1,7 +1,7 @@
 use anyhow::Result;
 use collections::FxHashMap;
 use gpui::SharedString;
-use schemars::JsonSchema;
+use schemars::{JsonSchema, SchemaGenerator, r#gen::SchemaSettings, schema::SingleOrVec};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::net::Ipv4Addr;
@@ -120,35 +120,34 @@ pub enum DebugRequest {
 
 impl DebugRequest {
     pub fn to_proto(&self) -> proto::DebugRequest {
-        // match self {
-        //     DebugRequest::Launch(launch_request) => proto::DebugRequest {
-        //         request: Some(proto::debug_request::Request::DebugLaunchRequest(
-        //             proto::DebugLaunchRequest {
-        //                 program: launch_request.program.clone(),
-        //                 cwd: launch_request
-        //                     .cwd
-        //                     .as_ref()
-        //                     .map(|cwd| cwd.to_string_lossy().into_owned()),
-        //                 args: launch_request.args.clone(),
-        //                 env: launch_request
-        //                     .env
-        //                     .iter()
-        //                     .map(|(k, v)| (k.clone(), v.clone()))
-        //                     .collect(),
-        //             },
-        //         )),
-        //     },
-        //     DebugRequest::Attach(attach_request) => proto::DebugRequest {
-        //         request: Some(proto::debug_request::Request::DebugAttachRequest(
-        //             proto::DebugAttachRequest {
-        //                 process_id: attach_request
-        //                     .process_id
-        //                     .expect("The process ID to be already filled out."),
-        //             },
-        //         )),
-        //     },
-        // }
-        todo!()
+        match self {
+            DebugRequest::Launch(launch_request) => proto::DebugRequest {
+                request: Some(proto::debug_request::Request::DebugLaunchRequest(
+                    proto::DebugLaunchRequest {
+                        program: launch_request.program.clone(),
+                        cwd: launch_request
+                            .cwd
+                            .as_ref()
+                            .map(|cwd| cwd.to_string_lossy().into_owned()),
+                        args: launch_request.args.clone(),
+                        env: launch_request
+                            .env
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect(),
+                    },
+                )),
+            },
+            DebugRequest::Attach(attach_request) => proto::DebugRequest {
+                request: Some(proto::debug_request::Request::DebugAttachRequest(
+                    proto::DebugAttachRequest {
+                        process_id: attach_request
+                            .process_id
+                            .expect("The process ID to be already filled out."),
+                    },
+                )),
+            },
+        }
     }
 
     pub fn from_proto(val: proto::DebugRequest) -> Result<DebugRequest> {
@@ -235,6 +234,7 @@ pub struct DebugScenario {
     pub build: Option<BuildTaskDefinition>,
     /// The main arguments to be sent to the debug adapter
     #[serde(default, flatten)]
+    #[schemars()]
     pub config: serde_json::Value,
     /// Optional TCP connection information
     ///
@@ -253,34 +253,6 @@ pub struct DebugTaskFile(pub Vec<DebugScenario>);
 impl DebugTaskFile {
     /// Generates JSON schema of Tasks JSON template format.
     pub fn generate_json_schema(schemas: &AdapterSchemas) -> serde_json_lenient::Value {
-        let _adapter_schemas = AdapterSchemas(vec![
-            AdapterSchema {
-                adapter: "CodeLLDB".into(),
-                schema: json!({
-                    "properties": {
-                        "program": { "type": "string" },
-                        "args": { "type": "array", "items": { "type": "string" } }
-                    },
-                    "required": ["program"]
-                }),
-            },
-            AdapterSchema {
-                adapter: "JavaScript".into(),
-                schema: json!({
-                    "properties": {
-                        "url": { "type": "string" },
-                        "webRoot": { "type": "string" }
-                    },
-                    "required": ["url"]
-                }),
-            },
-        ]);
-
-        // let schema = adapter_schemas.generate_json_schema();
-
-        // todo!() add error handling
-        // schema.unwrap()
-
         schemas.generate_json_schema().unwrap_or_default()
     }
 }

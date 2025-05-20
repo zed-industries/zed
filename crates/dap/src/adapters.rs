@@ -1,9 +1,8 @@
 use ::fs::Fs;
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Context as _, Result, anyhow};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
-use client::ZED_URL_SCHEME;
 use collections::HashMap;
 pub use dap_types::{StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest};
 use futures::io::BufReader;
@@ -386,9 +385,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
         }
     }
 
-    fn dap_schema(&self) -> serde_json::Value {
-        serde_json::Value::Null
-    }
+    fn dap_schema(&self) -> serde_json::Value;
 }
 
 #[cfg(any(test, feature = "test-support"))]

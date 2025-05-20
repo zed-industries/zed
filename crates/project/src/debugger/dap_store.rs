@@ -414,8 +414,6 @@ impl DapStore {
                     })?
                     .await?;
 
-                dbg!(&binary.request_args);
-
                 merge_json_value_into(definition.config, &mut binary.request_args.configuration);
 
                 session

@@ -197,45 +197,6 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                     "type": "string",
                     "description": "Path to the program to debug or attach to"
                 },
-                "cargo": {
-                    "type": "object",
-                    "description": "Cargo invocation parameters",
-                    "properties": {
-                        "args": {
-                            "type": "array",
-                            "description": "Cargo command line arguments",
-                            "items": {
-                                "type": "string"
-                            }
-                        },
-                        "env": {
-                            "type": "object",
-                            "description": "Additional environment variables passed to Cargo",
-                            "patternProperties": {
-                                ".*": {
-                                    "type": "string"
-                                }
-                            }
-                        },
-                        "cwd": {
-                            "type": "string",
-                            "description": "Cargo working directory"
-                        },
-                        "filter": {
-                            "type": "object",
-                            "description": "Filter applied to compilation artifacts",
-                            "properties": {
-                                "name": {
-                                    "type": "string"
-                                },
-                                "kind": {
-                                    "type": "string"
-                                }
-                            }
-                        }
-                    },
-                    "required": ["args"]
-                },
                 "args": {
                     "type": ["array", "string"],
                     "description": "Program arguments"

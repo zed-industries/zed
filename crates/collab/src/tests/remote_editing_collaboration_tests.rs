@@ -596,6 +596,7 @@ async fn test_remote_server_debugger(
     });
     server_cx.update(|cx| {
         release_channel::init(SemanticVersion::default(), cx);
+        dap_adapters::init(cx);
     });
     let (opts, server_ssh) = SshRemoteClient::fake_server(cx_a, server_cx);
     let remote_fs = FakeFs::new(server_cx.executor());
