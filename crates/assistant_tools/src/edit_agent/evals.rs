@@ -896,25 +896,53 @@ fn eval_add_overwrite_test() {
 }
 
 #[test]
-#[cfg_attr(not(feature = "eval"), ignore)]
+#[ignore] // until we figure out the mystery described in the comments
+// #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_create_empty_file() {
     // Check that Edit Agent can create a file without writing its
-    // thoughts into it. This issue is not specific to empty files,
-    // but it's easier to reproduce with them.
+    // thoughts into it. This issue is not specific to empty files, but
+    // it's easier to reproduce with them.
     //
-    // NOTE: For some mysterious reason, I'm able to reproduce this issue
-    // roughly 80% of the time in actual Zed. However, once I take the
-    // exact LLM request before the failure point and generate from that,
-    // the reproduction rate drops to 2-3%. Things I've tried: disabling
-    // prompt caching, capturing the LLM request via a proxy server,
-    // running the query on Claude separately from evals.
+    // NOTE: For some mysterious reason, I could easily reproduce this
+    // issue roughly 90% of the time in actual Zed. However, once I
+    // extract the exact LLM request before the failure point and
+    // generate from that, the reproduction rate drops to 2%!
     //
-    // Prompt vesion | Model                          | Pass rate
-    // --------------|--------------------------------|----------
-    // 2025-05-19    | claude-3.7-sonnet              | 0.98
-    // 2025-05-19    | gemini-2.5-pro-preview-03-25   | 1.00
-    // 2025-05-19    | gemini-2.5-flash-preview-04-17 | 1.00
-    // 2025-05-19    | gpt-4.1                        | 1.00
+    // Things I've tried to make sure it's not a fluke: disabling prompt
+    // caching, capturing the LLM request via a proxy server, running the
+    // prompt on Claude separately from evals. Every time it was mostly
+    // giving good outcomes, which doesn't match my actual experience in
+    // Zed.
+    //
+    // At some point I discovered that simply adding one insignificant
+    // space or a newline to the prompt suddenly results in an outcome I
+    // tried to reproduce almost perfectly.
+    //
+    // This weirdness happens even outside of the Zed code base and even
+    // when using a different subscription. The result is the same: an
+    // extra newline or space changes the model behavior significantly
+    // enough, so that the pass rate drops from 99% to 0-3%
+    //
+    // I have no explanation to this.
+    //
+    //
+    //  Model                          | Pass rate
+    // ============================================
+    //
+    // --------------------------------------------
+    //           Prompt version: 2025-05-19
+    // --------------------------------------------
+    //
+    //  claude-3.7-sonnet              |  0.98
+    //    + one extra space in prompt  |  0.00
+    //    + original prompt again      |  0.99
+    //    + extra newline              |  0.03
+    //  gemini-2.5-pro-preview-03-25   |  1.00
+    //  gemini-2.5-flash-preview-04-17 |  1.00
+    //    + one extra space            |  1.00
+    //  gpt-4.1                        |  1.00
+    //    + one extra space            |  1.00
+    //
     //
     // TODO: gpt-4.1-mini errored 38 times:
     // "data did not match any variant of untagged enum ResponseStreamResult"
@@ -922,7 +950,7 @@ fn eval_create_empty_file() {
     let input_file_content = None;
     let expected_output_content = String::new();
     eval(
-        100,
+        1,
         1.0,
         EvalInput::from_conversation(
             vec![
@@ -970,6 +998,8 @@ fn eval_create_empty_file() {
                 ),
             ],
             input_file_content,
+            // Bad behavior is to write something like
+            // "I'll create an empty TODO3 file as requested."
             EvalAssertion::assert_eq(expected_output_content),
         ),
     );
