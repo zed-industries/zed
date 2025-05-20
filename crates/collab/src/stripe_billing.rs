@@ -320,19 +320,15 @@ impl StripeBilling {
         )
         .await?;
 
-        let existing_zed_free_subscription =
+        let existing_active_subscription =
             existing_subscriptions
                 .data
                 .into_iter()
                 .find(|subscription| {
                     subscription.status == SubscriptionStatus::Active
-                        && subscription.items.data.iter().any(|item| {
-                            item.price
-                                .as_ref()
-                                .map_or(false, |price| price.id == zed_free_price_id)
-                        })
+                        || subscription.status == SubscriptionStatus::Trialing
                 });
-        if let Some(subscription) = existing_zed_free_subscription {
+        if let Some(subscription) = existing_active_subscription {
             return Ok(subscription);
         }
 
