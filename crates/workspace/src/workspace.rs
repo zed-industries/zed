@@ -160,6 +160,7 @@ actions!(
         ActivatePreviousWindow,
         AddFolderToProject,
         ClearAllNotifications,
+        CloseActiveDock,
         CloseAllDocks,
         CloseWindow,
         Feedback,
@@ -869,6 +870,7 @@ pub enum Event {
     },
     ZoomChanged,
     ModalOpened,
+    ClearActivityIndicator,
 }
 
 #[derive(Debug)]
@@ -1705,6 +1707,7 @@ impl Workspace {
                         pane.update_in(cx, |pane, window, cx| {
                             let item = pane.open_item(
                                 project_entry_id,
+                                project_path,
                                 true,
                                 entry.is_preview,
                                 true,
@@ -2735,6 +2738,20 @@ impl Workspace {
         self.serialize_workspace(window, cx);
     }
 
+    fn active_dock(&self, window: &Window, cx: &Context<Self>) -> Option<&Entity<Dock>> {
+        self.all_docks().into_iter().find(|&dock| {
+            dock.read(cx).is_open() && dock.focus_handle(cx).contains_focused(window, cx)
+        })
+    }
+
+    fn close_active_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(dock) = self.active_dock(window, cx) {
+            dock.update(cx, |dock, cx| {
+                dock.set_open(false, window, cx);
+            });
+        }
+    }
+
     pub fn close_all_docks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         for dock in self.all_docks() {
             dock.update(cx, |dock, cx| {
@@ -2759,10 +2776,17 @@ impl Workspace {
 
     /// Focus the panel of the given type if it isn't already focused. If it is
     /// already focused, then transfer focus back to the workspace center.
-    pub fn toggle_panel_focus<T: Panel>(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn toggle_panel_focus<T: Panel>(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let mut did_focus_panel = false;
         self.focus_or_unfocus_panel::<T>(window, cx, |panel, window, cx| {
-            !panel.panel_focus_handle(cx).contains_focused(window, cx)
+            did_focus_panel = !panel.panel_focus_handle(cx).contains_focused(window, cx);
+            did_focus_panel
         });
+        did_focus_panel
     }
 
     pub fn activate_panel_for_proto_id(
@@ -2796,7 +2820,7 @@ impl Workspace {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-        should_focus: impl Fn(&dyn PanelHandle, &mut Window, &mut Context<Dock>) -> bool,
+        mut should_focus: impl FnMut(&dyn PanelHandle, &mut Window, &mut Context<Dock>) -> bool,
     ) -> Option<Arc<dyn PanelHandle>> {
         let mut result_panel = None;
         let mut serialize = false;
@@ -3075,12 +3099,14 @@ impl Workspace {
             })
         });
 
-        let task = self.load_path(path.into(), window, cx);
+        let project_path = path.into();
+        let task = self.load_path(project_path.clone(), window, cx);
         window.spawn(cx, async move |cx| {
             let (project_entry_id, build_item) = task.await?;
             let result = pane.update_in(cx, |pane, window, cx| {
                 let result = pane.open_item(
                     project_entry_id,
+                    project_path,
                     focus_item,
                     allow_preview,
                     activate,
@@ -3126,7 +3152,8 @@ impl Workspace {
             }
         }
 
-        let task = self.load_path(path.into(), window, cx);
+        let project_path = path.into();
+        let task = self.load_path(project_path.clone(), window, cx);
         cx.spawn_in(window, async move |this, cx| {
             let (project_entry_id, build_item) = task.await?;
             this.update_in(cx, move |this, window, cx| -> Option<_> {
@@ -3140,6 +3167,7 @@ impl Workspace {
                 new_pane.update(cx, |new_pane, cx| {
                     Some(new_pane.open_item(
                         project_entry_id,
+                        project_path,
                         true,
                         allow_preview,
                         true,
@@ -5295,6 +5323,11 @@ impl Workspace {
                     workspace.toggle_dock(DockPosition::Bottom, window, cx);
                 },
             ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &CloseActiveDock, window, cx| {
+                    workspace.close_active_dock(window, cx);
+                },
+            ))
             .on_action(
                 cx.listener(|workspace: &mut Workspace, _: &CloseAllDocks, window, cx| {
                     workspace.close_all_docks(window, cx);
@@ -5358,7 +5391,7 @@ impl Workspace {
         self.workspace_actions.push(Box::new(move |div, _, cx| {
             let callback = callback.clone();
             div.on_action(cx.listener(move |workspace, event, window, cx| {
-                (callback.clone())(workspace, event, window, cx)
+                (callback)(workspace, event, window, cx)
             }))
         }));
         self
@@ -5490,13 +5523,15 @@ impl Workspace {
             .ok();
     }
 
-    pub fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some((notification_id, _)) = self.notifications.pop() {
-            dismiss_app_notification(&notification_id, cx);
+    pub fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        if cx.stop_active_drag(window) {
             return;
+        } else if let Some((notification_id, _)) = self.notifications.pop() {
+            dismiss_app_notification(&notification_id, cx);
+        } else {
+            cx.emit(Event::ClearActivityIndicator);
+            cx.propagate();
         }
-
-        cx.propagate();
     }
 }
 
@@ -5727,6 +5762,11 @@ impl Render for Workspace {
 
         let theme = cx.theme().clone();
         let colors = theme.colors();
+        let notification_entities = self
+            .notifications
+            .iter()
+            .map(|(_, notification)| notification.entity_id())
+            .collect::<Vec<_>>();
 
         client_side_decorations(
             self.actions(div(), window, cx)
@@ -5742,6 +5782,11 @@ impl Render for Workspace {
                 .text_color(colors.text)
                 .overflow_hidden()
                 .children(self.titlebar_item.clone())
+                .on_modifiers_changed(move |_, _, cx| {
+                    for &id in &notification_entities {
+                        cx.notify(id);
+                    }
+                })
                 .child(
                     div()
                         .size_full()

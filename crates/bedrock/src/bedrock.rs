@@ -7,9 +7,10 @@ use anyhow::{Error, Result, anyhow};
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
 pub use aws_sdk_bedrockruntime::types::{
-    AutoToolChoice as BedrockAutoToolChoice, ContentBlock as BedrockInnerContent,
-    Tool as BedrockTool, ToolChoice as BedrockToolChoice, ToolConfiguration as BedrockToolConfig,
-    ToolInputSchema as BedrockToolInputSchema, ToolSpecification as BedrockToolSpec,
+    AnyToolChoice as BedrockAnyToolChoice, AutoToolChoice as BedrockAutoToolChoice,
+    ContentBlock as BedrockInnerContent, Tool as BedrockTool, ToolChoice as BedrockToolChoice,
+    ToolConfiguration as BedrockToolConfig, ToolInputSchema as BedrockToolInputSchema,
+    ToolSpecification as BedrockToolSpec,
 };
 pub use aws_smithy_types::Blob as BedrockBlob;
 use aws_smithy_types::{Document, Number as AwsNumber};

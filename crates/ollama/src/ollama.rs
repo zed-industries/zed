@@ -37,7 +37,7 @@ pub struct Model {
     pub display_name: Option<String>,
     pub max_tokens: usize,
     pub keep_alive: Option<KeepAlive>,
-    pub supports_tools: bool,
+    pub supports_tools: Option<bool>,
 }
 
 fn get_max_tokens(name: &str) -> usize {
@@ -67,7 +67,7 @@ impl Model {
         name: &str,
         display_name: Option<&str>,
         max_tokens: Option<usize>,
-        supports_tools: bool,
+        supports_tools: Option<bool>,
     ) -> Self {
         Self {
             name: name.to_owned(),

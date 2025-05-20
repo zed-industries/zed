@@ -2,6 +2,7 @@ use crate::context::ContextLoadResult;
 use crate::inline_prompt_editor::CodegenStatus;
 use crate::{context::load_context, context_store::ContextStore};
 use anyhow::Result;
+use assistant_settings::AssistantSettings;
 use client::telemetry::Telemetry;
 use collections::HashSet;
 use editor::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint};
@@ -383,7 +384,7 @@ impl CodegenAlternative {
             if user_prompt.trim().to_lowercase() == "delete" {
                 async { Ok(LanguageModelTextStream::default()) }.boxed_local()
             } else {
-                let request = self.build_request(user_prompt, cx)?;
+                let request = self.build_request(&model, user_prompt, cx)?;
                 cx.spawn(async move |_, cx| model.stream_completion_text(request.await, &cx).await)
                     .boxed_local()
             };
@@ -393,6 +394,7 @@ impl CodegenAlternative {
 
     fn build_request(
         &self,
+        model: &Arc<dyn LanguageModel>,
         user_prompt: String,
         cx: &mut App,
     ) -> Result<Task<LanguageModelRequest>> {
@@ -441,6 +443,8 @@ impl CodegenAlternative {
             }
         });
 
+        let temperature = AssistantSettings::temperature_for_model(&model, cx);
+
         Ok(cx.spawn(async move |_cx| {
             let mut request_message = LanguageModelRequestMessage {
                 role: Role::User,
@@ -462,8 +466,9 @@ impl CodegenAlternative {
                 prompt_id: None,
                 mode: None,
                 tools: Vec::new(),
+                tool_choice: None,
                 stop: Vec::new(),
-                temperature: None,
+                temperature,
                 messages: vec![request_message],
             }
         }))

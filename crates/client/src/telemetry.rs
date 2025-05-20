@@ -137,18 +137,14 @@ pub fn os_version() -> String {
             log::error!("Failed to load /etc/os-release, /usr/lib/os-release");
             "".to_string()
         };
-        let mut name = "unknown".to_string();
-        let mut version = "unknown".to_string();
+        let mut name = "unknown";
+        let mut version = "unknown";
 
         for line in content.lines() {
-            if line.starts_with("ID=") {
-                name = line.trim_start_matches("ID=").trim_matches('"').to_string();
-            }
-            if line.starts_with("VERSION_ID=") {
-                version = line
-                    .trim_start_matches("VERSION_ID=")
-                    .trim_matches('"')
-                    .to_string();
+            match line.split_once('=') {
+                Some(("ID", val)) => name = val.trim_matches('"'),
+                Some(("VERSION_ID", val)) => version = val.trim_matches('"'),
+                _ => {}
             }
         }
 
@@ -222,7 +218,7 @@ impl Telemetry {
         cx.background_spawn({
             let state = state.clone();
             let os_version = os_version();
-            state.lock().os_version = Some(os_version.clone());
+            state.lock().os_version = Some(os_version);
             async move {
                 if let Some(tempfile) = File::create(Self::log_file_path()).log_err() {
                     state.lock().log_file = Some(tempfile);
@@ -369,7 +365,7 @@ impl Telemetry {
             telemetry::event!(
                 "Editor Edited",
                 duration = duration,
-                environment = environment.to_string(),
+                environment = environment,
                 is_via_ssh = is_via_ssh
             );
         }
@@ -431,9 +427,8 @@ impl Telemetry {
 
         if state.flush_events_task.is_none() {
             let this = self.clone();
-            let executor = self.executor.clone();
             state.flush_events_task = Some(self.executor.spawn(async move {
-                executor.timer(FLUSH_INTERVAL).await;
+                this.executor.timer(FLUSH_INTERVAL).await;
                 this.flush_events().detach();
             }));
         }
@@ -484,12 +479,12 @@ impl Telemetry {
         self: &Arc<Self>,
         // We take in the JSON bytes buffer so we can reuse the existing allocation.
         mut json_bytes: Vec<u8>,
-        event_request: EventRequestBody,
+        event_request: &EventRequestBody,
     ) -> Result<Request<AsyncBody>> {
         json_bytes.clear();
-        serde_json::to_writer(&mut json_bytes, &event_request)?;
+        serde_json::to_writer(&mut json_bytes, event_request)?;
 
-        let checksum = calculate_json_checksum(&json_bytes).unwrap_or("".to_string());
+        let checksum = calculate_json_checksum(&json_bytes).unwrap_or_default();
 
         Ok(Request::builder()
             .method(Method::POST)
@@ -506,7 +501,7 @@ impl Telemetry {
     pub fn flush_events(self: &Arc<Self>) -> Task<()> {
         let mut state = self.state.lock();
         state.first_event_date_time = None;
-        let mut events = mem::take(&mut state.events_queue);
+        let events = mem::take(&mut state.events_queue);
         state.flush_events_task.take();
         drop(state);
         if events.is_empty() {
@@ -519,7 +514,7 @@ impl Telemetry {
                 let mut json_bytes = Vec::new();
 
                 if let Some(file) = &mut this.state.lock().log_file {
-                    for event in &mut events {
+                    for event in &events {
                         json_bytes.clear();
                         serde_json::to_writer(&mut json_bytes, event)?;
                         file.write_all(&json_bytes)?;
@@ -546,7 +541,7 @@ impl Telemetry {
                     }
                 };
 
-                let request = this.build_request(json_bytes, request_body)?;
+                let request = this.build_request(json_bytes, &request_body)?;
                 let response = this.http_client.send(request).await?;
                 if response.status() != 200 {
                     log::error!("Failed to send events: HTTP {:?}", response.status());

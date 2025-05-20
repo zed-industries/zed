@@ -103,7 +103,7 @@ async fn test_show_attach_modal_and_select_process(
         });
     let attach_modal = workspace
         .update(cx, |workspace, window, cx| {
-            let workspace_handle = cx.entity();
+            let workspace_handle = cx.weak_entity();
             workspace.toggle_modal(window, cx, |window, cx| {
                 AttachModal::with_processes(
                     workspace_handle,

@@ -87,6 +87,8 @@ pub struct ExtensionManifest {
     pub snippets: Option<PathBuf>,
     #[serde(default)]
     pub capabilities: Vec<ExtensionCapability>,
+    #[serde(default)]
+    pub debug_adapters: Vec<Arc<str>>,
 }
 
 impl ExtensionManifest {
@@ -162,7 +164,7 @@ pub struct GrammarManifestEntry {
     pub path: Option<String>,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+#[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct LanguageServerManifestEntry {
     /// Deprecated in favor of `languages`.
     #[serde(default)]
@@ -274,6 +276,7 @@ fn manifest_from_old_manifest(
         indexed_docs_providers: BTreeMap::default(),
         snippets: None,
         capabilities: Vec::new(),
+        debug_adapters: vec![],
     }
 }
 
@@ -301,6 +304,7 @@ mod tests {
             indexed_docs_providers: BTreeMap::default(),
             snippets: None,
             capabilities: vec![],
+            debug_adapters: Default::default(),
         }
     }
 

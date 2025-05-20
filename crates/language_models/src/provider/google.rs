@@ -12,8 +12,8 @@ use gpui::{
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelToolSchemaFormat, LanguageModelToolUse, LanguageModelToolUseId, MessageContent,
-    StopReason,
+    LanguageModelToolChoice, LanguageModelToolSchemaFormat, LanguageModelToolUse,
+    LanguageModelToolUseId, MessageContent, StopReason,
 };
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -313,6 +313,18 @@ impl LanguageModel for GoogleLanguageModel {
         true
     }
 
+    fn supports_images(&self) -> bool {
+        true
+    }
+
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        match choice {
+            LanguageModelToolChoice::Auto
+            | LanguageModelToolChoice::Any
+            | LanguageModelToolChoice::None => true,
+        }
+    }
+
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         LanguageModelToolSchemaFormat::JsonSchemaSubset
     }
@@ -386,43 +398,68 @@ pub fn into_google(
     fn map_content(content: Vec<MessageContent>) -> Vec<Part> {
         content
             .into_iter()
-            .filter_map(|content| match content {
+            .flat_map(|content| match content {
                 language_model::MessageContent::Text(text)
                 | language_model::MessageContent::Thinking { text, .. } => {
                     if !text.is_empty() {
-                        Some(Part::TextPart(google_ai::TextPart { text }))
+                        vec![Part::TextPart(google_ai::TextPart { text })]
                     } else {
-                        None
+                        vec![]
                     }
                 }
-                language_model::MessageContent::RedactedThinking(_) => None,
+                language_model::MessageContent::RedactedThinking(_) => vec![],
                 language_model::MessageContent::Image(image) => {
-                    Some(Part::InlineDataPart(google_ai::InlineDataPart {
+                    vec![Part::InlineDataPart(google_ai::InlineDataPart {
                         inline_data: google_ai::GenerativeContentBlob {
                             mime_type: "image/png".to_string(),
                             data: image.source.to_string(),
                         },
-                    }))
+                    })]
                 }
                 language_model::MessageContent::ToolUse(tool_use) => {
-                    Some(Part::FunctionCallPart(google_ai::FunctionCallPart {
+                    vec![Part::FunctionCallPart(google_ai::FunctionCallPart {
                         function_call: google_ai::FunctionCall {
                             name: tool_use.name.to_string(),
                             args: tool_use.input,
                         },
-                    }))
+                    })]
                 }
-                language_model::MessageContent::ToolResult(tool_result) => Some(
-                    Part::FunctionResponsePart(google_ai::FunctionResponsePart {
-                        function_response: google_ai::FunctionResponse {
-                            name: tool_result.tool_name.to_string(),
-                            // The API expects a valid JSON object
-                            response: serde_json::json!({
-                                "output": tool_result.content
-                            }),
-                        },
-                    }),
-                ),
+                language_model::MessageContent::ToolResult(tool_result) => {
+                    match tool_result.content {
+                        language_model::LanguageModelToolResultContent::Text(txt) => {
+                            vec![Part::FunctionResponsePart(
+                                google_ai::FunctionResponsePart {
+                                    function_response: google_ai::FunctionResponse {
+                                        name: tool_result.tool_name.to_string(),
+                                        // The API expects a valid JSON object
+                                        response: serde_json::json!({
+                                            "output": txt
+                                        }),
+                                    },
+                                },
+                            )]
+                        }
+                        language_model::LanguageModelToolResultContent::Image(image) => {
+                            vec![
+                                Part::FunctionResponsePart(google_ai::FunctionResponsePart {
+                                    function_response: google_ai::FunctionResponse {
+                                        name: tool_result.tool_name.to_string(),
+                                        // The API expects a valid JSON object
+                                        response: serde_json::json!({
+                                            "output": "Tool responded with an image"
+                                        }),
+                                    },
+                                }),
+                                Part::InlineDataPart(google_ai::InlineDataPart {
+                                    inline_data: google_ai::GenerativeContentBlob {
+                                        mime_type: "image/png".to_string(),
+                                        data: image.source.to_string(),
+                                    },
+                                }),
+                            ]
+                        }
+                    }
+                }
             })
             .collect()
     }
@@ -484,7 +521,16 @@ pub fn into_google(
                     .collect(),
             }]
         }),
-        tool_config: None,
+        tool_config: request.tool_choice.map(|choice| google_ai::ToolConfig {
+            function_calling_config: google_ai::FunctionCallingConfig {
+                mode: match choice {
+                    LanguageModelToolChoice::Auto => google_ai::FunctionCallingMode::Auto,
+                    LanguageModelToolChoice::Any => google_ai::FunctionCallingMode::Any,
+                    LanguageModelToolChoice::None => google_ai::FunctionCallingMode::None,
+                },
+                allowed_function_names: None,
+            },
+        }),
     }
 }
 
@@ -582,6 +628,7 @@ impl GoogleEventMapper {
         // responds with `finish_reason: STOP`
         if wants_to_use_tool {
             self.stop_reason = StopReason::ToolUse;
+            events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
         }
         events
     }

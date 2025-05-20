@@ -7,7 +7,8 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason,
+    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
+    RateLimiter, Role, StopReason,
 };
 use lmstudio::{ChatCompletionRequest, ModelType, get_models, preload_model};
 use schemars::JsonSchema;
@@ -274,10 +275,18 @@ impl LmStudioLanguageModel {
                         }
                     }
                     MessageContent::ToolResult(tool_result) => {
-                        messages.push(lmstudio::ChatMessage::Tool {
-                            content: tool_result.content.to_string(),
-                            tool_call_id: tool_result.tool_use_id.to_string(),
-                        });
+                        // Skip if content is an image
+                        match tool_result.content {
+                            LanguageModelToolResultContent::Text(text) => {
+                                messages.push(lmstudio::ChatMessage::Tool {
+                                    content: text.to_string(),
+                                    tool_call_id: tool_result.tool_use_id.to_string(),
+                                });
+                            }
+                            LanguageModelToolResultContent::Image(_) => {
+                                // Skip images as they're not supported yet
+                            }
+                        }
                     }
                 }
             }
@@ -350,6 +359,14 @@ impl LanguageModel for LmStudioLanguageModel {
 
     fn supports_tools(&self) -> bool {
         true
+    }
+
+    fn supports_images(&self) -> bool {
+        false
+    }
+
+    fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
+        false
     }
 
     fn telemetry_id(&self) -> String {

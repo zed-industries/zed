@@ -438,15 +438,15 @@ impl ContextPickerCompletionProvider {
                 new_text_len,
                 editor.clone(),
                 context_store.clone(),
-                move |cx| match &thread_entry {
+                move |window, cx| match &thread_entry {
                     ThreadContextEntry::Thread { id, .. } => {
                         let thread_id = id.clone();
                         let context_store = context_store.clone();
                         let thread_store = thread_store.clone();
-                        cx.spawn::<_, Option<_>>(async move |cx| {
+                        window.spawn::<_, Option<_>>(cx, async move |cx| {
                             let thread: Entity<Thread> = thread_store
-                                .update(cx, |thread_store, cx| {
-                                    thread_store.open_thread(&thread_id, cx)
+                                .update_in(cx, |thread_store, window, cx| {
+                                    thread_store.open_thread(&thread_id, window, cx)
                                 })
                                 .ok()?
                                 .await
@@ -507,7 +507,7 @@ impl ContextPickerCompletionProvider {
                 new_text_len,
                 editor.clone(),
                 context_store.clone(),
-                move |cx| {
+                move |_, cx| {
                     let user_prompt_id = rules.prompt_id;
                     let context = context_store.update(cx, |context_store, cx| {
                         context_store.add_rules(user_prompt_id, false, cx)
@@ -544,7 +544,7 @@ impl ContextPickerCompletionProvider {
                 new_text_len,
                 editor.clone(),
                 context_store.clone(),
-                move |cx| {
+                move |_, cx| {
                     let context_store = context_store.clone();
                     let http_client = http_client.clone();
                     let url_to_fetch = url_to_fetch.clone();
@@ -629,7 +629,7 @@ impl ContextPickerCompletionProvider {
                 new_text_len,
                 editor,
                 context_store.clone(),
-                move |cx| {
+                move |_, cx| {
                     if is_directory {
                         Task::ready(
                             context_store
@@ -700,7 +700,7 @@ impl ContextPickerCompletionProvider {
                 new_text_len,
                 editor.clone(),
                 context_store.clone(),
-                move |cx| {
+                move |_, cx| {
                     let symbol = symbol.clone();
                     let context_store = context_store.clone();
                     let workspace = workspace.clone();
@@ -954,10 +954,13 @@ fn confirm_completion_callback(
     content_len: usize,
     editor: Entity<Editor>,
     context_store: Entity<ContextStore>,
-    add_context_fn: impl Fn(&mut App) -> Task<Option<AgentContextHandle>> + Send + Sync + 'static,
+    add_context_fn: impl Fn(&mut Window, &mut App) -> Task<Option<AgentContextHandle>>
+    + Send
+    + Sync
+    + 'static,
 ) -> Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync> {
     Arc::new(move |_, window, cx| {
-        let context = add_context_fn(cx);
+        let context = add_context_fn(window, cx);
 
         let crease_text = crease_text.clone();
         let crease_icon_path = crease_icon_path.clone();

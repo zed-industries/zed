@@ -243,8 +243,14 @@ pub trait LanguageModel: Send + Sync {
         LanguageModelAvailability::Public
     }
 
+    /// Whether this model supports images
+    fn supports_images(&self) -> bool;
+
     /// Whether this model supports tools.
     fn supports_tools(&self) -> bool;
+
+    /// Whether this model supports choosing which tool to use.
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool;
 
     /// Returns whether this model supports "max mode";
     fn supports_max_mode(&self) -> bool {

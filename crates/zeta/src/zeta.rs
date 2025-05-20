@@ -48,14 +48,14 @@ use std::{
 };
 use telemetry_events::InlineCompletionRating;
 use thiserror::Error;
-use util::ResultExt;
+use util::{ResultExt, maybe};
 use uuid::Uuid;
 use workspace::Workspace;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId};
 use worktree::Worktree;
 use zed_llm_client::{
     EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME, PredictEditsBody,
-    PredictEditsResponse,
+    PredictEditsResponse, ZED_VERSION_HEADER_NAME,
 };
 
 const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
@@ -193,6 +193,7 @@ pub struct Zeta {
     tos_accepted: bool,
     /// Whether an update to a newer version of Zed is required to continue using Zeta.
     update_required: bool,
+    user_store: Entity<UserStore>,
     _user_store_subscription: Subscription,
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
 }
@@ -230,6 +231,28 @@ impl Zeta {
 
     pub fn clear_history(&mut self) {
         self.events.clear();
+    }
+
+    pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
+        self.last_usage.or_else(|| {
+            let user_store = self.user_store.read(cx);
+            maybe!({
+                let amount = user_store.edit_predictions_usage_amount()?;
+                let limit = user_store.edit_predictions_usage_limit()?.variant?;
+
+                Some(EditPredictionUsage {
+                    amount: amount as i32,
+                    limit: match limit {
+                        proto::usage_limit::Variant::Limited(limited) => {
+                            zed_llm_client::UsageLimit::Limited(limited.limit as i32)
+                        }
+                        proto::usage_limit::Variant::Unlimited(_) => {
+                            zed_llm_client::UsageLimit::Unlimited
+                        }
+                    },
+                })
+            })
+        })
     }
 
     fn new(
@@ -282,6 +305,7 @@ impl Zeta {
                 }
             }),
             license_detection_watchers: HashMap::default(),
+            user_store,
         }
     }
 
@@ -754,6 +778,7 @@ and then another
                 let request = request_builder
                     .header("Content-Type", "application/json")
                     .header("Authorization", format!("Bearer {}", token))
+                    .header(ZED_VERSION_HEADER_NAME, app_version.to_string())
                     .body(serde_json::to_string(&body)?.into())?;
 
                 let mut response = http_client.send(request).await?;
@@ -1416,7 +1441,7 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
     }
 
     fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
-        self.zeta.read(cx).last_usage
+        self.zeta.read(cx).usage(cx)
     }
 
     fn is_enabled(
@@ -1890,6 +1915,7 @@ mod tests {
             zeta.request_completion(None, &buffer, cursor, false, cx)
         });
 
+        server.receive::<proto::GetUsers>().await.unwrap();
         let token_request = server.receive::<proto::GetLlmToken>().await.unwrap();
         server.respond(
             token_request.receipt(),
@@ -1944,6 +1970,7 @@ mod tests {
             zeta.request_completion(None, &buffer, cursor, false, cx)
         });
 
+        server.receive::<proto::GetUsers>().await.unwrap();
         let token_request = server.receive::<proto::GetLlmToken>().await.unwrap();
         server.respond(
             token_request.receipt(),

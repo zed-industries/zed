@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 
 use anyhow::Result;
 use async_trait::async_trait;
-use dap::adapters::{DebugTaskDefinition, InlineValueProvider, latest_github_release};
+use dap::adapters::{DebugTaskDefinition, latest_github_release};
 use futures::StreamExt;
 use gpui::AsyncApp;
 use task::DebugRequest;
@@ -42,7 +42,9 @@ impl CodeLldbDebugAdapter {
                 if !launch.args.is_empty() {
                     map.insert("args".into(), launch.args.clone().into());
                 }
-
+                if !launch.env.is_empty() {
+                    map.insert("env".into(), launch.env_json());
+                }
                 if let Some(stop_on_entry) = config.stop_on_entry {
                     map.insert("stopOnEntry".into(), stop_on_entry.into());
                 }
@@ -59,7 +61,7 @@ impl CodeLldbDebugAdapter {
 
     async fn fetch_latest_adapter_version(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
     ) -> Result<AdapterVersion> {
         let release =
             latest_github_release("vadimcn/codelldb", true, false, delegate.http_client()).await?;
@@ -109,7 +111,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
 
     async fn get_binary(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         _: &mut AsyncApp,
@@ -127,7 +129,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                         self.name(),
                         version.clone(),
                         adapters::DownloadedFileType::Vsix,
-                        delegate,
+                        delegate.as_ref(),
                     )
                     .await?;
                     let version_path =
@@ -158,26 +160,5 @@ impl DebugAdapter for CodeLldbDebugAdapter {
             envs: HashMap::default(),
             connection: None,
         })
-    }
-
-    fn inline_value_provider(&self) -> Option<Box<dyn InlineValueProvider>> {
-        Some(Box::new(CodeLldbInlineValueProvider))
-    }
-}
-
-struct CodeLldbInlineValueProvider;
-
-impl InlineValueProvider for CodeLldbInlineValueProvider {
-    fn provide(&self, variables: Vec<(String, lsp_types::Range)>) -> Vec<lsp_types::InlineValue> {
-        variables
-            .into_iter()
-            .map(|(variable, range)| {
-                lsp_types::InlineValue::VariableLookup(lsp_types::InlineValueVariableLookup {
-                    range,
-                    variable_name: Some(variable),
-                    case_sensitive_lookup: true,
-                })
-            })
-            .collect()
     }
 }

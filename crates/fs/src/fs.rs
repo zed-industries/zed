@@ -33,7 +33,7 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tempfile::{NamedTempFile, TempDir};
+use tempfile::TempDir;
 use text::LineEnding;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -525,25 +525,16 @@ impl Fs for RealFs {
         Ok(bytes)
     }
 
+    #[cfg(not(target_os = "windows"))]
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
         smol::unblock(move || {
             let mut tmp_file = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
                 // Use the directory of the destination as temp dir to avoid
                 // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
                 // See https://github.com/zed-industries/zed/pull/8437 for more details.
-                NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
-            } else if cfg!(target_os = "windows") {
-                // If temp dir is set to a different drive than the destination,
-                // we receive error:
-                //
-                // failed to persist temporary file:
-                // The system cannot move the file to a different disk drive. (os error 17)
-                //
-                // So we use the directory of the destination as a temp dir to avoid it.
-                // https://github.com/zed-industries/zed/issues/16571
-                NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
+                tempfile::NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
             } else {
-                NamedTempFile::new()
+                tempfile::NamedTempFile::new()
             }?;
             tmp_file.write_all(data.as_bytes())?;
             tmp_file.persist(path)?;
@@ -551,6 +542,35 @@ impl Fs for RealFs {
         })
         .await?;
 
+        Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
+        smol::unblock(move || {
+            // If temp dir is set to a different drive than the destination,
+            // we receive error:
+            //
+            // failed to persist temporary file:
+            // The system cannot move the file to a different disk drive. (os error 17)
+            //
+            // This is because `ReplaceFileW` does not support cross volume moves.
+            // See the remark section: "The backup file, replaced file, and replacement file must all reside on the same volume."
+            // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew#remarks
+            //
+            // So we use the directory of the destination as a temp dir to avoid it.
+            // https://github.com/zed-industries/zed/issues/16571
+            let temp_dir = TempDir::new_in(path.parent().unwrap_or(paths::temp_dir()))?;
+            let temp_file = {
+                let temp_file_path = temp_dir.path().join("temp_file");
+                let mut file = std::fs::File::create_new(&temp_file_path)?;
+                file.write_all(data.as_bytes())?;
+                temp_file_path
+            };
+            atomic_replace(path.as_path(), temp_file.as_path())?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await?;
         Ok(())
     }
 
@@ -2320,15 +2340,19 @@ impl Fs for FakeFs {
 fn chunks(rope: &Rope, line_ending: LineEnding) -> impl Iterator<Item = &str> {
     rope.chunks().flat_map(move |chunk| {
         let mut newline = false;
-        chunk.split('\n').flat_map(move |line| {
-            let ending = if newline {
-                Some(line_ending.as_str())
-            } else {
-                None
-            };
-            newline = true;
-            ending.into_iter().chain([line])
-        })
+        let end_with_newline = chunk.ends_with('\n').then_some(line_ending.as_str());
+        chunk
+            .lines()
+            .flat_map(move |line| {
+                let ending = if newline {
+                    Some(line_ending.as_str())
+                } else {
+                    None
+                };
+                newline = true;
+                ending.into_iter().chain([line])
+            })
+            .chain(end_with_newline)
     })
 }
 
@@ -2467,6 +2491,31 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
         Ok(((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64))
     })
     .await
+}
+
+#[cfg(target_os = "windows")]
+fn atomic_replace<P: AsRef<Path>>(
+    replaced_file: P,
+    replacement_file: P,
+) -> windows::core::Result<()> {
+    use windows::{
+        Win32::Storage::FileSystem::{REPLACE_FILE_FLAGS, ReplaceFileW},
+        core::HSTRING,
+    };
+
+    // If the file does not exist, create it.
+    let _ = std::fs::File::create_new(replaced_file.as_ref());
+
+    unsafe {
+        ReplaceFileW(
+            &HSTRING::from(replaced_file.as_ref().to_string_lossy().to_string()),
+            &HSTRING::from(replacement_file.as_ref().to_string_lossy().to_string()),
+            None,
+            REPLACE_FILE_FLAGS::default(),
+            None,
+            None,
+        )
+    }
 }
 
 #[cfg(test)]
@@ -2887,5 +2936,38 @@ mod tests {
                 .unwrap(),
             "B"
         );
+    }
+
+    #[gpui::test]
+    async fn test_realfs_atomic_write(executor: BackgroundExecutor) {
+        // With the file handle still open, the file should be replaced
+        // https://github.com/zed-industries/zed/issues/30054
+        let fs = RealFs {
+            git_binary_path: None,
+            executor,
+        };
+        let temp_dir = TempDir::new().unwrap();
+        let file_to_be_replaced = temp_dir.path().join("file.txt");
+        let mut file = std::fs::File::create_new(&file_to_be_replaced).unwrap();
+        file.write_all(b"Hello").unwrap();
+        // drop(file);  // We still hold the file handle here
+        let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
+        assert_eq!(content, "Hello");
+        smol::block_on(fs.atomic_write(file_to_be_replaced.clone(), "World".into())).unwrap();
+        let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
+        assert_eq!(content, "World");
+    }
+
+    #[gpui::test]
+    async fn test_realfs_atomic_write_non_existing_file(executor: BackgroundExecutor) {
+        let fs = RealFs {
+            git_binary_path: None,
+            executor,
+        };
+        let temp_dir = TempDir::new().unwrap();
+        let file_to_be_replaced = temp_dir.path().join("file.txt");
+        smol::block_on(fs.atomic_write(file_to_be_replaced.clone(), "Hello".into())).unwrap();
+        let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
+        assert_eq!(content, "Hello");
     }
 }

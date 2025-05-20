@@ -35,23 +35,15 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
             }
         }
 
-        const KEYS_TO_REMOVE: [&str; 4] = [
+        const KEYS_TO_REMOVE: [&str; 5] = [
             "format",
             "additionalProperties",
             "exclusiveMinimum",
             "exclusiveMaximum",
+            "optional",
         ];
         for key in KEYS_TO_REMOVE {
             obj.remove(key);
-        }
-
-        if let Some(default) = obj.get("default") {
-            let is_null = default.is_null();
-            // Default is not supported, so we need to remove it
-            obj.remove("default");
-            if is_null {
-                obj.insert("nullable".to_string(), Value::Bool(true));
-            }
         }
 
         // If a type is not specified for an input parameter, add a default type
@@ -91,26 +83,6 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn test_transform_default_null_to_nullable() {
-        let mut json = json!({
-            "description": "A test field",
-            "type": "string",
-            "default": null
-        });
-
-        adapt_to_json_schema_subset(&mut json).unwrap();
-
-        assert_eq!(
-            json,
-            json!({
-                "description": "A test field",
-                "type": "string",
-                "nullable": true
-            })
-        );
-    }
 
     #[test]
     fn test_transform_adds_type_when_missing() {
@@ -157,7 +129,8 @@ mod tests {
             "format": "uint32",
             "exclusiveMinimum": 0,
             "exclusiveMaximum": 100,
-            "additionalProperties": false
+            "additionalProperties": false,
+            "optional": true
         });
 
         adapt_to_json_schema_subset(&mut json).unwrap();

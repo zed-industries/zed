@@ -8,16 +8,16 @@ use anyhow::{Context as _, Result};
 use assistant_settings::AssistantSettings;
 use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet, VecDeque, hash_map};
+use editor::display_map::EditorMargins;
 use editor::{
     Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorEvent, ExcerptId, ExcerptRange,
-    GutterDimensions, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint,
+    MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint,
     actions::SelectAll,
     display_map::{
         BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
         ToDisplayPoint,
     },
 };
-use feature_flags::{Assistant2FeatureFlag, FeatureFlagViewExt as _};
 use fs::Fs;
 use gpui::{
     App, Context, Entity, Focusable, Global, HighlightStyle, Subscription, Task, UpdateGlobal,
@@ -43,7 +43,7 @@ use util::ResultExt;
 use workspace::{ItemHandle, Toast, Workspace, dock::Panel, notifications::NotificationId};
 use zed_actions::agent::OpenConfiguration;
 
-use crate::AssistantPanel;
+use crate::AgentPanel;
 use crate::buffer_codegen::{BufferCodegen, CodegenAlternative, CodegenEvent};
 use crate::context_store::ContextStore;
 use crate::inline_prompt_editor::{CodegenStatus, InlineAssistId, PromptEditor, PromptEditorEvent};
@@ -66,15 +66,6 @@ pub fn init(
         InlineAssistant::update_global(cx, |inline_assistant, cx| {
             inline_assistant.register_workspace(&workspace, window, cx)
         });
-
-        cx.observe_flag::<Assistant2FeatureFlag, _>(window, {
-            |is_assistant2_enabled, _workspace, _window, cx| {
-                InlineAssistant::update_global(cx, |inline_assistant, _cx| {
-                    inline_assistant.is_assistant2_enabled = is_assistant2_enabled;
-                });
-            }
-        })
-        .detach();
     })
     .detach();
 }
@@ -97,7 +88,6 @@ pub struct InlineAssistant {
     prompt_builder: Arc<PromptBuilder>,
     telemetry: Arc<Telemetry>,
     fs: Arc<dyn Fs>,
-    is_assistant2_enabled: bool,
 }
 
 impl Global for InlineAssistant {}
@@ -119,7 +109,6 @@ impl InlineAssistant {
             prompt_builder,
             telemetry,
             fs,
-            is_assistant2_enabled: false,
         }
     }
 
@@ -188,18 +177,17 @@ impl InlineAssistant {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let is_assistant2_enabled = self.is_assistant2_enabled;
+        let is_assistant2_enabled = true;
 
         if let Some(editor) = item.act_as::<Editor>(cx) {
             editor.update(cx, |editor, cx| {
                 if is_assistant2_enabled {
-                    let panel = workspace.read(cx).panel::<AssistantPanel>(cx);
+                    let panel = workspace.read(cx).panel::<AgentPanel>(cx);
                     let thread_store = panel
                         .as_ref()
-                        .map(|assistant_panel| assistant_panel.read(cx).thread_store().downgrade());
-                    let text_thread_store = panel.map(|assistant_panel| {
-                        assistant_panel.read(cx).text_thread_store().downgrade()
-                    });
+                        .map(|agent_panel| agent_panel.read(cx).thread_store().downgrade());
+                    let text_thread_store = panel
+                        .map(|agent_panel| agent_panel.read(cx).text_thread_store().downgrade());
 
                     editor.add_code_action_provider(
                         Rc::new(AssistantCodeActionProvider {
@@ -238,7 +226,7 @@ impl InlineAssistant {
 
         let Some(inline_assist_target) = Self::resolve_inline_assist_target(
             workspace,
-            workspace.panel::<AssistantPanel>(cx),
+            workspace.panel::<AgentPanel>(cx),
             window,
             cx,
         ) else {
@@ -251,15 +239,15 @@ impl InlineAssistant {
                 .map_or(false, |model| model.provider.is_authenticated(cx))
         };
 
-        let Some(assistant_panel) = workspace.panel::<AssistantPanel>(cx) else {
+        let Some(agent_panel) = workspace.panel::<AgentPanel>(cx) else {
             return;
         };
-        let assistant_panel = assistant_panel.read(cx);
+        let agent_panel = agent_panel.read(cx);
 
-        let prompt_store = assistant_panel.prompt_store().as_ref().cloned();
-        let thread_store = Some(assistant_panel.thread_store().downgrade());
-        let text_thread_store = Some(assistant_panel.text_thread_store().downgrade());
-        let context_store = assistant_panel.inline_assist_context_store().clone();
+        let prompt_store = agent_panel.prompt_store().as_ref().cloned();
+        let thread_store = Some(agent_panel.thread_store().downgrade());
+        let text_thread_store = Some(agent_panel.text_thread_store().downgrade());
+        let context_store = agent_panel.inline_assist_context_store().clone();
 
         let handle_assist =
             |window: &mut Window, cx: &mut Context<Workspace>| match inline_assist_target {
@@ -350,12 +338,26 @@ impl InlineAssistant {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let (snapshot, initial_selections) = editor.update(cx, |editor, cx| {
-            (
-                editor.snapshot(window, cx),
-                editor.selections.all::<Point>(cx),
-            )
+        let (snapshot, initial_selections, newest_selection) = editor.update(cx, |editor, cx| {
+            let selections = editor.selections.all::<Point>(cx);
+            let newest_selection = editor.selections.newest::<Point>(cx);
+            (editor.snapshot(window, cx), selections, newest_selection)
         });
+
+        // Check if there is already an inline assistant that contains the
+        // newest selection, if there is, focus it
+        if let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) {
+            for assist_id in &editor_assists.assist_ids {
+                let assist = &self.assists[assist_id];
+                let range = assist.range.to_point(&snapshot.buffer_snapshot);
+                if range.start.row <= newest_selection.start.row
+                    && newest_selection.end.row <= range.end.row
+                {
+                    self.focus_assist(*assist_id, window, cx);
+                    return;
+                }
+            }
+        }
 
         let mut selections = Vec::<Selection<Point>>::new();
         let mut newest_selection = None;
@@ -470,11 +472,11 @@ impl InlineAssistant {
                 )
             });
 
-            let gutter_dimensions = Arc::new(Mutex::new(GutterDimensions::default()));
+            let editor_margins = Arc::new(Mutex::new(EditorMargins::default()));
             let prompt_editor = cx.new(|cx| {
                 PromptEditor::new_buffer(
                     assist_id,
-                    gutter_dimensions.clone(),
+                    editor_margins,
                     self.prompt_history.clone(),
                     prompt_buffer.clone(),
                     codegen.clone(),
@@ -589,11 +591,11 @@ impl InlineAssistant {
             )
         });
 
-        let gutter_dimensions = Arc::new(Mutex::new(GutterDimensions::default()));
+        let editor_margins = Arc::new(Mutex::new(EditorMargins::default()));
         let prompt_editor = cx.new(|cx| {
             PromptEditor::new_buffer(
                 assist_id,
-                gutter_dimensions.clone(),
+                editor_margins,
                 self.prompt_history.clone(),
                 prompt_buffer.clone(),
                 codegen.clone(),
@@ -662,6 +664,7 @@ impl InlineAssistant {
                 height: Some(prompt_editor_height),
                 render: build_assist_editor_renderer(prompt_editor),
                 priority: 0,
+                render_in_minimap: false,
             },
             BlockProperties {
                 style: BlockStyle::Sticky,
@@ -676,6 +679,7 @@ impl InlineAssistant {
                         .into_any_element()
                 }),
                 priority: 0,
+                render_in_minimap: false,
             },
         ];
 
@@ -1417,11 +1421,11 @@ impl InlineAssistant {
 
                     enum DeletedLines {}
                     let mut editor = Editor::for_multibuffer(multi_buffer, None, window, cx);
+                    editor.disable_scrollbars_and_minimap(window, cx);
                     editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
                     editor.set_show_wrap_guides(false, cx);
                     editor.set_show_gutter(false, cx);
                     editor.scroll_manager.set_forbid_vertical_scroll(true);
-                    editor.set_show_scrollbars(false, cx);
                     editor.set_read_only(true);
                     editor.set_show_edit_predictions(Some(false), window, cx);
                     editor.highlight_rows::<DeletedLines>(
@@ -1445,11 +1449,12 @@ impl InlineAssistant {
                             .bg(cx.theme().status().deleted_background)
                             .size_full()
                             .h(height as f32 * cx.window.line_height())
-                            .pl(cx.gutter_dimensions.full_width())
+                            .pl(cx.margins.gutter.full_width())
                             .child(deleted_lines_editor.clone())
                             .into_any_element()
                     }),
                     priority: 0,
+                    render_in_minimap: false,
                 });
             }
 
@@ -1462,7 +1467,7 @@ impl InlineAssistant {
 
     fn resolve_inline_assist_target(
         workspace: &mut Workspace,
-        assistant_panel: Option<Entity<AssistantPanel>>,
+        agent_panel: Option<Entity<AgentPanel>>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<InlineAssistTarget> {
@@ -1482,7 +1487,7 @@ impl InlineAssistant {
             }
         }
 
-        let context_editor = assistant_panel
+        let context_editor = agent_panel
             .and_then(|panel| panel.read(cx).active_context_editor())
             .and_then(|editor| {
                 let editor = &editor.read(cx).editor().clone();
@@ -1607,9 +1612,9 @@ fn build_assist_editor_renderer(editor: &Entity<PromptEditor<BufferCodegen>>) ->
     let editor = editor.clone();
 
     Arc::new(move |cx: &mut BlockContext| {
-        let gutter_dimensions = editor.read(cx).gutter_dimensions();
+        let editor_margins = editor.read(cx).editor_margins();
 
-        *gutter_dimensions.lock() = *cx.gutter_dimensions;
+        *editor_margins.lock() = *cx.margins;
         editor.clone().into_any_element()
     })
 }

@@ -153,6 +153,8 @@ pub struct LanguageSettings {
     pub show_completion_documentation: bool,
     /// Completion settings for this language.
     pub completions: CompletionSettings,
+    /// Preferred debuggers for this language.
+    pub debuggers: Vec<String>,
 }
 
 impl LanguageSettings {
@@ -379,6 +381,7 @@ fn default_lsp_fetch_timeout_ms() -> u64 {
 
 /// The settings for a particular language.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 pub struct LanguageSettingsContent {
     /// How many columns a tab should occupy.
     ///
@@ -551,6 +554,10 @@ pub struct LanguageSettingsContent {
     pub show_completion_documentation: Option<bool>,
     /// Controls how completions are processed for this language.
     pub completions: Option<CompletionSettings>,
+    /// Preferred debuggers for this language.
+    ///
+    /// Default: []
+    pub debuggers: Option<Vec<String>>,
 }
 
 /// The behavior of `editor::Rewrap`.
@@ -973,8 +980,8 @@ pub struct InlayHintSettings {
     pub enabled: bool,
     /// Global switch to toggle inline values on and off.
     ///
-    /// Default: false
-    #[serde(default)]
+    /// Default: true
+    #[serde(default = "default_true")]
     pub show_value_hints: bool,
     /// Whether type hints should be shown.
     ///

@@ -231,7 +231,7 @@ impl HttpClientWithUrl {
         let base_api_url = match base_url.as_ref() {
             "https://zed.dev" => "https://llm.zed.dev",
             "https://staging.zed.dev" => "https://llm-staging.zed.dev",
-            "http://localhost:3000" => "http://localhost:8080",
+            "http://localhost:3000" => "http://localhost:8787",
             other => other,
         };
 

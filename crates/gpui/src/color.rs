@@ -706,7 +706,7 @@ pub fn solid_background(color: impl Into<Hsla>) -> Background {
 
 /// Creates a LinearGradient background color.
 ///
-/// The gradient line's angle of direction. A value of `0.` is equivalent to to top; increasing values rotate clockwise from there.
+/// The gradient line's angle of direction. A value of `0.` is equivalent to top; increasing values rotate clockwise from there.
 ///
 /// The `angle` is in degrees value in the range 0.0 to 360.0.
 ///

@@ -36,8 +36,8 @@ fn room_participants(room: &Entity<Room>, cx: &mut TestAppContext) -> RoomPartic
     room.read_with(cx, |room, _| {
         let mut remote = room
             .remote_participants()
-            .iter()
-            .map(|(_, participant)| participant.user.github_login.clone())
+            .values()
+            .map(|participant| participant.user.github_login.clone())
             .collect::<Vec<_>>();
         let mut pending = room
             .pending_participants()

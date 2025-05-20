@@ -8,9 +8,7 @@ use axum::{
 };
 
 use collab::api::CloudflareIpCountryHeader;
-use collab::api::billing::{
-    sync_llm_request_usage_with_stripe_periodically, sync_llm_token_usage_with_stripe_periodically,
-};
+use collab::api::billing::sync_llm_request_usage_with_stripe_periodically;
 use collab::llm::db::LlmDatabase;
 use collab::migrations::run_database_migrations;
 use collab::user_backfiller::spawn_user_backfiller;
@@ -38,6 +36,7 @@ use util::{ResultExt as _, maybe};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const REVISION: Option<&'static str> = option_env!("GITHUB_SHA");
 
+#[expect(clippy::result_large_err)]
 #[tokio::main]
 async fn main() -> Result<()> {
     if let Err(error) = env::load_dotenv() {
@@ -155,7 +154,6 @@ async fn main() -> Result<()> {
                     if let Some(mut llm_db) = llm_db {
                         llm_db.initialize().await?;
                         sync_llm_request_usage_with_stripe_periodically(state.clone());
-                        sync_llm_token_usage_with_stripe_periodically(state.clone());
                     }
 
                     app = app

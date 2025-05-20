@@ -107,6 +107,15 @@ pub struct LoadedBinaryFile {
     pub content: Vec<u8>,
 }
 
+impl fmt::Debug for LoadedBinaryFile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LoadedBinaryFile")
+            .field("file", &self.file)
+            .field("content_bytes", &self.content.len())
+            .finish()
+    }
+}
+
 pub struct LocalWorktree {
     snapshot: LocalSnapshot,
     scan_requests_tx: channel::Sender<ScanRequest>,
@@ -803,23 +812,6 @@ impl Worktree {
         match self {
             Worktree::Local(this) => this.update_observer.is_some(),
             Worktree::Remote(this) => this.update_observer.is_some(),
-        }
-    }
-
-    pub fn file_exists(&self, path: &Path, cx: &Context<Worktree>) -> Task<Result<bool>> {
-        match self {
-            Worktree::Local(this) => {
-                let fs = this.fs.clone();
-                let path = this.absolutize(path);
-                cx.background_spawn(async move {
-                    let path = path?;
-                    let metadata = fs.metadata(&path).await?;
-                    Ok(metadata.map_or(false, |metadata| !metadata.is_dir))
-                })
-            }
-            Worktree::Remote(_) => Task::ready(Err(anyhow!(
-                "remote worktrees can't yet check file existence"
-            ))),
         }
     }
 
@@ -2665,7 +2657,7 @@ impl Snapshot {
     }
 
     pub fn root_entry(&self) -> Option<&Entry> {
-        self.entry_for_path("")
+        self.entries_by_path.first()
     }
 
     /// TODO: what's the difference between `root_dir` and `abs_path`?
@@ -3310,7 +3302,7 @@ impl fmt::Debug for Snapshot {
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct File {
     pub worktree: Entity<Worktree>,
     pub path: Arc<Path>,
@@ -3871,7 +3863,7 @@ impl BackgroundScanner {
             Some(ancestor_dot_git)
         });
 
-        log::info!("containing git repository: {containing_git_repository:?}");
+        log::trace!("containing git repository: {containing_git_repository:?}");
 
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
         {
@@ -4375,11 +4367,7 @@ impl BackgroundScanner {
                 let canonical_path = match self.fs.canonicalize(&child_abs_path).await {
                     Ok(path) => path,
                     Err(err) => {
-                        log::error!(
-                            "error reading target of symlink {:?}: {:?}",
-                            child_abs_path,
-                            err
-                        );
+                        log::error!("error reading target of symlink {child_abs_path:?}: {err:#}",);
                         continue;
                     }
                 };

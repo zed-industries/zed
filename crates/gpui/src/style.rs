@@ -467,7 +467,7 @@ impl TextStyle {
             len,
             font: Font {
                 family: self.font_family.clone(),
-                features: Default::default(),
+                features: self.font_features.clone(),
                 fallbacks: self.font_fallbacks.clone(),
                 weight: self.font_weight,
                 style: self.font_style,
