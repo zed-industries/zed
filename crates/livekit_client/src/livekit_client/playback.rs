@@ -704,7 +704,7 @@ mod macos {
     }
 
     impl super::DeviceChangeListenerApi for CoreAudioDefaultDeviceChangeListener {
-        fn new(input: bool) -> gpui::Result<Self> {
+        fn new(input: bool) -> anyhow::Result<Self> {
             let (tx, rx) = futures::channel::mpsc::unbounded();
 
             let callback = Box::new(PropertyListenerCallbackWrapper(Box::new(move || {

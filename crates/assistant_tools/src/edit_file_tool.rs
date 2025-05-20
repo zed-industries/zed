@@ -916,8 +916,6 @@ async fn build_buffer_diff(
 
 #[cfg(test)]
 mod tests {
-    use std::result::Result;
-
     use super::*;
     use client::TelemetrySettings;
     use fs::FakeFs;

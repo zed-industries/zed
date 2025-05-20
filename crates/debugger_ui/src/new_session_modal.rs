@@ -9,7 +9,6 @@ use std::{
     usize,
 };
 
-use anyhow::Result;
 use dap::{
     DapRegistry, DebugRequest,
     adapters::{DebugAdapterName, DebugTaskDefinition},

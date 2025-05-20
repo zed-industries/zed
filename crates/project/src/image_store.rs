@@ -223,7 +223,7 @@ impl ProjectItem for ImageItem {
         project: &Entity<Project>,
         path: &ProjectPath,
         cx: &mut App,
-    ) -> Option<Task<gpui::Result<Entity<Self>>>> {
+    ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
         if is_image_file(&project, &path, cx) {
             Some(cx.spawn({
                 let path = path.clone();

@@ -39,7 +39,7 @@ impl AssetSource for Assets {
 
 impl Assets {
     /// Populate the [`TextSystem`] of the given [`AppContext`] with all `.ttf` fonts in the `fonts` directory.
-    pub fn load_fonts(&self, cx: &App) -> gpui::Result<()> {
+    pub fn load_fonts(&self, cx: &App) -> anyhow::Result<()> {
         let font_paths = self.list("fonts")?;
         let mut embedded_fonts = Vec::new();
         for font_path in font_paths {

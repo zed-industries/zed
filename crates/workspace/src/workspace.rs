@@ -9343,7 +9343,7 @@ mod tests {
                 _project: &Entity<Project>,
                 path: &ProjectPath,
                 cx: &mut App,
-            ) -> Option<Task<gpui::Result<Entity<Self>>>> {
+            ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
                 if path.path.extension().unwrap() == "png" {
                     Some(cx.spawn(async move |cx| cx.new(|_| TestPngItem {})))
                 } else {
@@ -9418,7 +9418,7 @@ mod tests {
                 _project: &Entity<Project>,
                 path: &ProjectPath,
                 cx: &mut App,
-            ) -> Option<Task<gpui::Result<Entity<Self>>>> {
+            ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
                 if path.path.extension().unwrap() == "ipynb" {
                     Some(cx.spawn(async move |cx| cx.new(|_| TestIpynbItem {})))
                 } else {

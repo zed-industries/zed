@@ -222,7 +222,7 @@ impl SerializableItem for ImageView {
         item_id: ItemId,
         window: &mut Window,
         cx: &mut App,
-    ) -> Task<gpui::Result<Entity<Self>>> {
+    ) -> Task<anyhow::Result<Entity<Self>>> {
         window.spawn(cx, async move |cx| {
             let image_path = IMAGE_VIEWER
                 .get_image_path(item_id, workspace_id)?
@@ -256,7 +256,7 @@ impl SerializableItem for ImageView {
         alive_items: Vec<ItemId>,
         _window: &mut Window,
         cx: &mut App,
-    ) -> Task<gpui::Result<()>> {
+    ) -> Task<anyhow::Result<()>> {
         delete_unloaded_items(
             alive_items,
             workspace_id,
@@ -273,7 +273,7 @@ impl SerializableItem for ImageView {
         _closing: bool,
         _window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Task<gpui::Result<()>>> {
+    ) -> Option<Task<anyhow::Result<()>>> {
         let workspace_id = workspace.database_id()?;
         let image_path = self.image_item.read(cx).abs_path(cx)?;
 
