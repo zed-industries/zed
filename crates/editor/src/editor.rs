@@ -1230,6 +1230,7 @@ impl SelectionHistory {
 
 #[derive(Clone, Copy)]
 pub struct RowHighlightOptions {
+    pub border: Option<Hsla>,
     pub autoscroll: bool,
     pub include_gutter: bool,
 }
@@ -1239,6 +1240,7 @@ impl Default for RowHighlightOptions {
         Self {
             autoscroll: Default::default(),
             include_gutter: true,
+            border: None,
         }
     }
 }
@@ -17638,7 +17640,7 @@ impl Editor {
                                 DisplayRow(row),
                                 LineHighlight {
                                     include_gutter: highlight.options.include_gutter,
-                                    border: None,
+                                    border: highlight.options.border,
                                     background: highlight.color.into(),
                                     type_id: Some(highlight.type_id),
                                 },
@@ -21625,7 +21627,7 @@ impl Render for MissingEditPredictionKeybindingTooltip {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LineHighlight {
     pub background: Background,
-    pub border: Option<gpui::Hsla>,
+    pub border: Option<Hsla>,
     pub include_gutter: bool,
     pub type_id: Option<TypeId>,
 }

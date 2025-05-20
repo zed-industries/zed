@@ -325,16 +325,12 @@ fn update_conflict_highlighting(
     cx: &mut Context<Editor>,
 ) {
     log::debug!("update conflict highlighting for {conflict:?}");
-    let theme = cx.theme().clone();
-    let colors = theme.colors();
+
     let outer_start = buffer
         .anchor_in_excerpt(excerpt_id, conflict.range.start)
         .unwrap();
     let outer_end = buffer
         .anchor_in_excerpt(excerpt_id, conflict.range.end)
-        .unwrap();
-    let our_start = buffer
-        .anchor_in_excerpt(excerpt_id, conflict.ours.start)
         .unwrap();
     let our_end = buffer
         .anchor_in_excerpt(excerpt_id, conflict.ours.end)
@@ -342,15 +338,10 @@ fn update_conflict_highlighting(
     let their_start = buffer
         .anchor_in_excerpt(excerpt_id, conflict.theirs.start)
         .unwrap();
-    let their_end = buffer
-        .anchor_in_excerpt(excerpt_id, conflict.theirs.end)
-        .unwrap();
 
-    let ours_background = colors.version_control_conflict_ours_background;
-    let ours_marker = colors.version_control_conflict_ours_marker_background;
-    let theirs_background = colors.version_control_conflict_theirs_background;
-    let theirs_marker = colors.version_control_conflict_theirs_marker_background;
-    let divider_background = colors.version_control_conflict_divider_background;
+    let ours_background = cx.theme().colors().version_control_conflict_marker_ours;
+    let theirs_background = cx.theme().colors().version_control_conflict_marker_theirs;
+    let divider_background = cx.theme().colors().version_control_conflict_marker_border;
 
     let options = RowHighlightOptions {
         include_gutter: false,
@@ -358,24 +349,23 @@ fn update_conflict_highlighting(
     };
 
     // Prevent diff hunk highlighting within the entire conflict region.
-    editor.highlight_rows::<ConflictsOuter>(
-        outer_start..outer_end,
-        divider_background,
-        options,
+    editor.highlight_rows::<ConflictsOuter>(outer_start..outer_end, theirs_background, options, cx);
+    editor.highlight_rows::<ConflictsOurs>(
+        outer_start..our_end,
+        ours_background,
+        RowHighlightOptions {
+            border: Some(gpui::red()),
+            ..options
+        },
         cx,
     );
-    editor.highlight_rows::<ConflictsOurs>(our_start..our_end, ours_background, options, cx);
-    editor.highlight_rows::<ConflictsOursMarker>(outer_start..our_start, ours_marker, options, cx);
     editor.highlight_rows::<ConflictsTheirs>(
-        their_start..their_end,
+        their_start..outer_end,
         theirs_background,
-        options,
-        cx,
-    );
-    editor.highlight_rows::<ConflictsTheirsMarker>(
-        their_end..outer_end,
-        theirs_marker,
-        options,
+        RowHighlightOptions {
+            border: Some(gpui::blue()),
+            ..options
+        },
         cx,
     );
 }
