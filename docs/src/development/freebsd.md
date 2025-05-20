@@ -25,6 +25,6 @@ This is actively being worked on.
 
 More progress and discussion can be found in [Zed’s GitHub Discussions](https://github.com/zed-industries/zed/discussions/29550).
 
-*Environment:
+_Environment:
 FreeBSD 14.2-RELEASE
-Architecture: amd64 (x86_64)*
+Architecture: amd64 (x86_64)_
