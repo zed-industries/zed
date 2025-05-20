@@ -5,9 +5,9 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufStream},
     net::TcpStream,
 };
-#[cfg(not(target_os = "linux"))]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 use tokio_native_tls::{TlsConnector, native_tls};
-#[cfg(target_os = "linux")]
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 use tokio_rustls::TlsConnector;
 use url::Url;
 
@@ -64,7 +64,7 @@ where
     Ok(Box::new(stream))
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 async fn https_connect<T>(
     stream: T,
     target: (&str, u16),
@@ -79,7 +79,7 @@ where
     http_connect(stream, target, auth).await
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 async fn https_connect<T>(
     stream: T,
     target: (&str, u16),
