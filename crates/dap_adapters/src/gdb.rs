@@ -89,7 +89,7 @@ impl DebugAdapter for GdbDebugAdapter {
             command: gdb_path,
             arguments: vec!["-i=dap".into()],
             envs: HashMap::default(),
-            cwd: None,
+            cwd: Some(delegate.cwd().to_path_buf()),
             connection: None,
             request_args: self.request_args(config),
         })

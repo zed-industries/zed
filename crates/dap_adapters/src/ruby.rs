@@ -90,7 +90,7 @@ impl DebugAdapter for RubyDebugAdapter {
                 port,
                 timeout,
             }),
-            cwd: launch.cwd,
+            cwd: launch.cwd.map(|cwd| cwd.into()),
             envs: launch.env.into_iter().collect(),
             request_args: StartDebuggingRequestArguments {
                 configuration: serde_json::Value::Object(Default::default()),

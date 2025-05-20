@@ -151,7 +151,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
 
         Ok(DebugAdapterBinary {
             command: command.unwrap(),
-            cwd: None,
+            cwd: Some(delegate.cwd().to_path_buf()),
             arguments: vec![
                 "--settings".into(),
                 json!({"sourceLanguages": ["cpp", "rust"]}).to_string(),

@@ -258,7 +258,7 @@ impl DapStore {
                     let (program, args) = wrap_for_ssh(
                         &ssh_command,
                         Some((&binary.command, &binary.arguments)),
-                        binary.cwd.as_deref(),
+                        binary.cwd.as_ref().map(|cwd| cwd.as_path()),
                         binary.envs,
                         None,
                     );
@@ -495,6 +495,7 @@ impl DapStore {
 
         DapAdapterDelegate::new(
             local_store.fs.clone(),
+            worktree.read(cx).abs_path(),
             worktree.read(cx).id(),
             console,
             local_store.node_runtime.clone(),
@@ -810,6 +811,7 @@ impl DapStore {
 #[derive(Clone)]
 pub struct DapAdapterDelegate {
     fs: Arc<dyn Fs>,
+    cwd: Arc<Path>,
     console: mpsc::UnboundedSender<String>,
     worktree_id: WorktreeId,
     node_runtime: NodeRuntime,
@@ -821,6 +823,7 @@ pub struct DapAdapterDelegate {
 impl DapAdapterDelegate {
     pub fn new(
         fs: Arc<dyn Fs>,
+        cwd: Arc<Path>,
         worktree_id: WorktreeId,
         status: mpsc::UnboundedSender<String>,
         node_runtime: NodeRuntime,
@@ -830,6 +833,7 @@ impl DapAdapterDelegate {
     ) -> Self {
         Self {
             fs,
+            cwd,
             console: status,
             worktree_id,
             http_client,
@@ -856,6 +860,10 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
 
     fn fs(&self) -> Arc<dyn Fs> {
         self.fs.clone()
+    }
+
+    fn cwd(&self) -> Arc<Path> {
+        self.cwd.clone()
     }
 
     fn output_to_console(&self, msg: String) {

@@ -107,7 +107,7 @@ impl PhpDebugAdapter {
                 host,
                 timeout,
             }),
-            cwd: None,
+            cwd: Some(delegate.cwd().to_path_buf()),
             envs: HashMap::default(),
             request_args: self.request_args(config)?,
         })

@@ -39,6 +39,7 @@ pub trait DapDelegate {
     fn node_runtime(&self) -> NodeRuntime;
     fn toolchain_store(&self) -> Arc<dyn LanguageToolchainStore>;
     fn fs(&self) -> Arc<dyn Fs>;
+    fn cwd(&self) -> Arc<Path>;
     fn output_to_console(&self, msg: String);
     fn which(&self, command: &OsStr) -> Option<PathBuf>;
     async fn shell_env(&self) -> collections::HashMap<String, String>;

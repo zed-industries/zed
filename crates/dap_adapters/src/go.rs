@@ -70,7 +70,7 @@ impl DebugAdapter for GoDebugAdapter {
                 "--listen".into(),
                 format!("{}:{}", host, port),
             ],
-            cwd: None,
+            cwd: Some(delegate.cwd().to_path_buf()),
             envs: HashMap::default(),
             connection: Some(adapters::TcpArguments {
                 host,
