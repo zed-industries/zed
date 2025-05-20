@@ -48,7 +48,7 @@ wasmtime::component::bindgen!({
 pub use self::zed::extension::*;
 
 mod settings {
-    include!(concat!(env!("OUT_DIR"), "/since_v0.5.0/settings.rs"));
+    include!(concat!(env!("OUT_DIR"), "/since_v0.6.0/settings.rs"));
 }
 
 pub type ExtensionWorktree = Arc<dyn WorktreeDelegate>;
@@ -729,8 +729,29 @@ impl slash_command::Host for WasmState {}
 #[async_trait]
 impl context_server::Host for WasmState {}
 
-#[async_trait]
-impl dap::Host for WasmState {}
+impl dap::Host for WasmState {
+    async fn resolve_tcp_template(
+        &mut self,
+        template: TcpArgumentsTemplate,
+    ) -> wasmtime::Result<Result<TcpArguments, String>> {
+        maybe!(async {
+            let (host, port, timeout) =
+                ::dap::configure_tcp_connection(task::TcpArgumentsTemplate {
+                    port: template.port,
+                    host: template.host.map(Ipv4Addr::from_bits),
+                    timeout: template.timeout,
+                })
+                .await?;
+            Ok(TcpArguments {
+                port,
+                host: host.to_bits(),
+                timeout,
+            })
+        })
+        .await
+        .to_wasmtime_result()
+    }
+}
 
 impl ExtensionImports for WasmState {
     async fn get_settings(
