@@ -747,55 +747,6 @@ impl DebugPanel {
                                     )
                                     .child(Divider::vertical())
                                     .child(
-                                        IconButton::new(
-                                            "debug-enable-breakpoint",
-                                            IconName::DebugDisabledBreakpoint,
-                                        )
-                                        .icon_size(IconSize::XSmall)
-                                        .shape(ui::IconButtonShape::Square)
-                                        .disabled(thread_status != ThreadStatus::Stopped),
-                                    )
-                                    .child(
-                                        IconButton::new(
-                                            "debug-disable-breakpoint",
-                                            IconName::CircleOff,
-                                        )
-                                        .icon_size(IconSize::XSmall)
-                                        .shape(ui::IconButtonShape::Square)
-                                        .disabled(thread_status != ThreadStatus::Stopped),
-                                    )
-                                    .child(
-                                        IconButton::new(
-                                            "debug-disable-all-breakpoints",
-                                            IconName::BugOff,
-                                        )
-                                        .icon_size(IconSize::XSmall)
-                                        .shape(ui::IconButtonShape::Square)
-                                        .disabled(
-                                            thread_status == ThreadStatus::Exited
-                                                || thread_status == ThreadStatus::Ended,
-                                        )
-                                        .on_click(window.listener_for(
-                                            &running_state,
-                                            |this, _, _window, cx| {
-                                                this.toggle_ignore_breakpoints(cx);
-                                            },
-                                        ))
-                                        .tooltip({
-                                            let focus_handle = focus_handle.clone();
-                                            move |window, cx| {
-                                                Tooltip::for_action_in(
-                                                    "Disable all breakpoints",
-                                                    &ToggleIgnoreBreakpoints,
-                                                    &focus_handle,
-                                                    window,
-                                                    cx,
-                                                )
-                                            }
-                                        }),
-                                    )
-                                    .child(Divider::vertical())
-                                    .child(
                                         IconButton::new("debug-restart", IconName::DebugRestart)
                                             .icon_size(IconSize::XSmall)
                                             .on_click(window.listener_for(
