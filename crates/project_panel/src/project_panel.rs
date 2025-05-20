@@ -1,7 +1,7 @@
 mod project_panel_settings;
 mod utils;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use client::{ErrorCode, ErrorExt};
 use collections::{BTreeSet, HashMap, hash_map};
 use command_palette_hooks::CommandPaletteFilter;
@@ -4465,34 +4465,30 @@ impl ProjectPanel {
         skip_ignored: bool,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
-            let worktree = worktree.read(cx);
-            if skip_ignored
-                && worktree
-                    .entry_for_id(entry_id)
-                    .map_or(true, |entry| entry.is_ignored && !entry.is_always_included)
-            {
-                return Err(anyhow!(
-                    "can't reveal an ignored entry in the project panel"
-                ));
-            }
-
-            let worktree_id = worktree.id();
-            self.expand_entry(worktree_id, entry_id, cx);
-            self.update_visible_entries(Some((worktree_id, entry_id)), cx);
-            self.marked_entries.clear();
-            self.marked_entries.insert(SelectedEntry {
-                worktree_id,
-                entry_id,
-            });
-            self.autoscroll(cx);
-            cx.notify();
-            Ok(())
-        } else {
-            Err(anyhow!(
-                "can't reveal a non-existent entry in the project panel"
-            ))
+        let worktree = project
+            .read(cx)
+            .worktree_for_entry(entry_id, cx)
+            .context("can't reveal a non-existent entry in the project panel")?;
+        let worktree = worktree.read(cx);
+        if skip_ignored
+            && worktree
+                .entry_for_id(entry_id)
+                .map_or(true, |entry| entry.is_ignored && !entry.is_always_included)
+        {
+            anyhow::bail!("can't reveal an ignored entry in the project panel");
         }
+
+        let worktree_id = worktree.id();
+        self.expand_entry(worktree_id, entry_id, cx);
+        self.update_visible_entries(Some((worktree_id, entry_id)), cx);
+        self.marked_entries.clear();
+        self.marked_entries.insert(SelectedEntry {
+            worktree_id,
+            entry_id,
+        });
+        self.autoscroll(cx);
+        cx.notify();
+        Ok(())
     }
 
     fn find_active_indent_guide(

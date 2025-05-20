@@ -124,9 +124,7 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Result<()> 
     for job in JOBS.iter() {
         let start = Instant::now();
         loop {
-            if start.elapsed().as_secs() > 2 {
-                return Err(anyhow::anyhow!("Timed out"));
-            }
+            anyhow::ensure!(start.elapsed().as_secs() <= 2, "Timed out");
             match (*job)(app_dir) {
                 Ok(_) => {
                     unsafe { PostMessageW(hwnd, WM_JOB_UPDATED, WPARAM(0), LPARAM(0))? };

@@ -197,7 +197,7 @@ impl Peer {
                                     }
                                     _ = create_timer(WRITE_TIMEOUT).fuse() => {
                                         tracing::trace!(%connection_id, "outgoing rpc message: writing timed out");
-                                        Err(anyhow!("timed out writing message"))?;
+                                        anyhow::bail!("timed out writing message");
                                     }
                                 }
                             }
@@ -217,7 +217,7 @@ impl Peer {
                                 }
                                 _ = create_timer(WRITE_TIMEOUT).fuse() => {
                                     tracing::trace!(%connection_id, "keepalive interval: pinging timed out");
-                                    Err(anyhow!("timed out sending keepalive"))?;
+                                    anyhow::bail!("timed out sending keepalive");
                                 }
                             }
                         }
@@ -240,7 +240,7 @@ impl Peer {
                                     },
                                     _ = create_timer(WRITE_TIMEOUT).fuse() => {
                                         tracing::trace!(%connection_id, "incoming rpc message: processing timed out");
-                                        Err(anyhow!("timed out processing incoming message"))?
+                                        anyhow::bail!("timed out processing incoming message");
                                     }
                                 }
                             }
@@ -248,7 +248,7 @@ impl Peer {
                         },
                         _ = receive_timeout => {
                             tracing::trace!(%connection_id, "receive timeout: delay between messages too long");
-                            Err(anyhow!("delay between messages too long"))?
+                            anyhow::bail!("delay between messages too long");
                         }
                     }
                 }

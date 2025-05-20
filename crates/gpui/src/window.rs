@@ -4103,7 +4103,7 @@ impl TryInto<SharedString> for ElementId {
         if let ElementId::Name(name) = self {
             Ok(name)
         } else {
-            Err(anyhow!("element id is not string"))
+            anyhow::bail!("element id is not string")
         }
     }
 }

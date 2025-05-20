@@ -6,7 +6,6 @@ use crate::{
     list_directory_tool::ListDirectoryToolInput,
 };
 use Role::*;
-use anyhow::anyhow;
 use assistant_tool::ToolRegistry;
 use client::{Client, UserStore};
 use collections::HashMap;
@@ -1207,10 +1206,7 @@ impl EvalAssertion {
                 }
             }
 
-            Err(anyhow!(
-                "No score found in response. Raw output: {}",
-                output
-            ))
+            anyhow::bail!("No score found in response. Raw output: {output}");
         })
     }
 

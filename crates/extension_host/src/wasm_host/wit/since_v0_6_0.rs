@@ -9,7 +9,7 @@ use crate::wasm_host::wit::{CompletionKind, CompletionLabelDetails, InsertTextFo
 use crate::wasm_host::{WasmState, wit::ToWasmtimeResult};
 use ::http_client::{AsyncBody, HttpRequestExt};
 use ::settings::{Settings, WorktreeId};
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
@@ -873,12 +873,11 @@ impl ExtensionImports for WasmState {
                 .await
                 .context("downloading release")?;
 
-            if !response.status().is_success() {
-                Err(anyhow!(
-                    "download failed with status {}",
-                    response.status().to_string()
-                ))?;
-            }
+            anyhow::ensure!(
+                response.status().is_success(),
+                "download failed with status {}",
+                response.status().to_string()
+            );
             let body = BufReader::new(response.body_mut());
 
             match file_type {

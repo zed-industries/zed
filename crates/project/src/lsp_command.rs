@@ -7,7 +7,7 @@ use crate::{
     PrepareRenameResponse, ProjectTransaction, ResolveState,
     lsp_store::{LocalLspStore, LspStore},
 };
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use client::proto::{self, PeerId};
 use clock::Global;
@@ -48,9 +48,7 @@ pub fn lsp_formatting_options(settings: &LanguageSettings) -> lsp::FormattingOpt
 pub(crate) fn file_path_to_lsp_url(path: &Path) -> Result<lsp::Url> {
     match lsp::Url::from_file_path(path) {
         Ok(url) => Ok(url),
-        Err(()) => Err(anyhow!(
-            "Invalid file path provided to LSP request: {path:?}"
-        )),
+        Err(()) => anyhow::bail!("Invalid file path provided to LSP request: {path:?}"),
     }
 }
 
@@ -293,7 +291,7 @@ impl LspCommand for PrepareRename {
             Some(lsp::OneOf::Left(true)) => Ok(LspParamsOrResponse::Response(
                 PrepareRenameResponse::OnlyUnpreparedRenameSupported,
             )),
-            _ => Err(anyhow!("Rename not supported")),
+            _ => anyhow::bail!("Rename not supported"),
         }
     }
 
@@ -422,9 +420,9 @@ impl LspCommand for PrepareRename {
             ) {
                 Ok(PrepareRenameResponse::Success(start..end))
             } else {
-                Err(anyhow!(
+                anyhow::bail!(
                     "Missing start or end position in remote project PrepareRenameResponse"
-                ))
+                );
             }
         } else if message.only_unprepared_rename_supported {
             Ok(PrepareRenameResponse::OnlyUnpreparedRenameSupported)

@@ -360,7 +360,7 @@ impl Fs for RealFs {
             if options.ignore_if_exists {
                 return Ok(());
             } else {
-                return Err(anyhow!("{target:?} already exists"));
+                anyhow::bail!("{target:?} already exists");
             }
         }
 
@@ -373,7 +373,7 @@ impl Fs for RealFs {
             if options.ignore_if_exists {
                 return Ok(());
             } else {
-                return Err(anyhow!("{target:?} already exists"));
+                anyhow::bail!("{target:?} already exists");
             }
         }
 
@@ -672,7 +672,7 @@ impl Fs for RealFs {
     ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>> {
         let result = smol::fs::read_dir(path).await?.map(|entry| match entry {
             Ok(entry) => Ok(entry.path()),
-            Err(error) => Err(anyhow!("failed to read dir entry {:?}", error)),
+            Err(error) => Err(anyhow!("failed to read dir entry {error:?}")),
         });
         Ok(Box::pin(result))
     }
@@ -942,7 +942,7 @@ impl FakeFsState {
             .ok_or_else(|| {
                 anyhow!(io::Error::new(
                     io::ErrorKind::NotFound,
-                    format!("not found: {}", target.display())
+                    format!("not found: {target:?}")
                 ))
             })?
             .0)
@@ -1392,7 +1392,7 @@ impl FakeFs {
 
             Ok(result)
         } else {
-            Err(anyhow!("not a valid git repository"))
+            anyhow::bail!("not a valid git repository");
         }
     }
 
@@ -1742,7 +1742,7 @@ impl FakeFsEntry {
         if let Self::File { content, .. } = self {
             Ok(content)
         } else {
-            Err(anyhow!("not a file: {}", path.display()))
+            anyhow::bail!("not a file: {path:?}");
         }
     }
 
@@ -1753,7 +1753,7 @@ impl FakeFsEntry {
         if let Self::Dir { entries, .. } = self {
             Ok(entries)
         } else {
-            Err(anyhow!("not a directory: {}", path.display()))
+            anyhow::bail!("not a directory: {path:?}");
         }
     }
 }
@@ -1865,7 +1865,7 @@ impl Fs for FakeFs {
                         kind = Some(PathEventKind::Changed);
                         *e.get_mut() = file;
                     } else if !options.ignore_if_exists {
-                        return Err(anyhow!("path already exists: {}", path.display()));
+                        anyhow::bail!("path already exists: {path:?}");
                     }
                 }
                 btree_map::Entry::Vacant(e) => {
@@ -1939,7 +1939,7 @@ impl Fs for FakeFs {
             if let btree_map::Entry::Occupied(e) = e {
                 Ok(e.get().clone())
             } else {
-                Err(anyhow!("path does not exist: {}", &old_path.display()))
+                anyhow::bail!("path does not exist: {old_path:?}")
             }
         })?;
 
@@ -1957,7 +1957,7 @@ impl Fs for FakeFs {
                     if options.overwrite {
                         *e.get_mut() = moved_entry;
                     } else if !options.ignore_if_exists {
-                        return Err(anyhow!("path already exists: {}", new_path.display()));
+                        anyhow::bail!("path already exists: {new_path:?}");
                     }
                 }
                 btree_map::Entry::Vacant(e) => {
@@ -2001,7 +2001,7 @@ impl Fs for FakeFs {
                     kind = Some(PathEventKind::Changed);
                     Ok(Some(e.get().clone()))
                 } else if !options.ignore_if_exists {
-                    return Err(anyhow!("{target:?} already exists"));
+                    anyhow::bail!("{target:?} already exists");
                 } else {
                     Ok(None)
                 }
@@ -2038,7 +2038,7 @@ impl Fs for FakeFs {
         match entry {
             btree_map::Entry::Vacant(_) => {
                 if !options.ignore_if_not_exists {
-                    return Err(anyhow!("{path:?} does not exist"));
+                    anyhow::bail!("{path:?} does not exist");
                 }
             }
             btree_map::Entry::Occupied(e) => {
@@ -2046,7 +2046,7 @@ impl Fs for FakeFs {
                     let mut entry = e.get().lock();
                     let children = entry.dir_entries(&path)?;
                     if !options.recursive && !children.is_empty() {
-                        return Err(anyhow!("{path:?} is not empty"));
+                        anyhow::bail!("{path:?} is not empty");
                     }
                 }
                 e.remove();
@@ -2071,7 +2071,7 @@ impl Fs for FakeFs {
         match entry {
             btree_map::Entry::Vacant(_) => {
                 if !options.ignore_if_not_exists {
-                    return Err(anyhow!("{path:?} does not exist"));
+                    anyhow::bail!("{path:?} does not exist");
                 }
             }
             btree_map::Entry::Occupied(e) => {
@@ -2142,11 +2142,10 @@ impl Fs for FakeFs {
         let path = normalize_path(path);
         self.simulate_random_delay().await;
         let state = self.state.lock();
-        if let Some((_, canonical_path)) = state.try_read_path(&path, true) {
-            Ok(canonical_path)
-        } else {
-            Err(anyhow!("path does not exist: {}", path.display()))
-        }
+        let (_, canonical_path) = state
+            .try_read_path(&path, true)
+            .with_context(|| format!("path does not exist: {path:?}"))?;
+        Ok(canonical_path)
     }
 
     async fn is_file(&self, path: &Path) -> bool {
@@ -2214,15 +2213,14 @@ impl Fs for FakeFs {
         self.simulate_random_delay().await;
         let path = normalize_path(path);
         let state = self.state.lock();
-        if let Some((entry, _)) = state.try_read_path(&path, false) {
-            let entry = entry.lock();
-            if let FakeFsEntry::Symlink { target } = &*entry {
-                Ok(target.clone())
-            } else {
-                Err(anyhow!("not a symlink: {}", path.display()))
-            }
+        let (entry, _) = state
+            .try_read_path(&path, false)
+            .with_context(|| format!("path does not exist: {path:?}"))?;
+        let entry = entry.lock();
+        if let FakeFsEntry::Symlink { target } = &*entry {
+            Ok(target.clone())
         } else {
-            Err(anyhow!("path does not exist: {}", path.display()))
+            anyhow::bail!("not a symlink: {path:?}")
         }
     }
 
@@ -2397,7 +2395,7 @@ pub async fn copy_recursive<'a>(
                 if options.ignore_if_exists {
                     continue;
                 } else {
-                    return Err(anyhow!("{target_item:?} already exists"));
+                    anyhow::bail!("{target_item:?} already exists");
                 }
             }
             let _ = fs

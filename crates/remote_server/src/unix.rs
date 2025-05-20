@@ -333,7 +333,7 @@ fn start_server(
                             break;
                         };
                         if let Err(error) = incoming_tx.unbounded_send(message) {
-                            log::error!("failed to send message to application: {:?}. exiting.", error);
+                            log::error!("failed to send message to application: {error:?}. exiting.");
                             return Err(anyhow!(error));
                         }
                     }
@@ -541,7 +541,7 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
     if is_reconnecting {
         if !server_running {
             log::error!("attempted to reconnect, but no server running");
-            return Err(anyhow!(ProxyLaunchError::ServerNotRunning));
+            anyhow::bail!(ProxyLaunchError::ServerNotRunning);
         }
     } else {
         if let Some(pid) = server_pid {
@@ -572,18 +572,19 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
         let mut stream = smol::net::unix::UnixStream::connect(&server_paths.stderr_socket).await?;
         let mut stderr_buffer = vec![0; 2048];
         loop {
-            match stream.read(&mut stderr_buffer).await {
-                Ok(0) => {
+            match stream
+                .read(&mut stderr_buffer)
+                .await
+                .context("reading stderr")?
+            {
+                0 => {
                     let error =
                         std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "stderr closed");
                     Err(anyhow!(error))?;
                 }
-                Ok(n) => {
+                n => {
                     stderr.write_all(&mut stderr_buffer[..n]).await?;
                     stderr.flush().await?;
-                }
-                Err(error) => {
-                    Err(anyhow!("error reading stderr: {error:?}"))?;
                 }
             }
         }

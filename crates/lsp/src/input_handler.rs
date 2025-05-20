@@ -1,7 +1,7 @@
 use std::str;
 use std::sync::Arc;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use collections::HashMap;
 use futures::{
     AsyncBufReadExt, AsyncRead, AsyncReadExt as _,
@@ -35,7 +35,7 @@ where
         }
 
         if reader.read_until(b'\n', buffer).await? == 0 {
-            return Err(anyhow!("cannot read LSP message headers"));
+            anyhow::bail!("cannot read LSP message headers");
         }
     }
 }

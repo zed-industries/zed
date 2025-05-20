@@ -664,7 +664,7 @@ impl Server {
                     Err(error) => {
                         let proto_err = match &error {
                             Error::Internal(err) => err.to_proto(),
-                            _ => ErrorCode::Internal.message(format!("{}", error)).to_proto(),
+                            _ => ErrorCode::Internal.message(format!("{error}")).to_proto(),
                         };
                         peer.respond_with_error(receipt, proto_err)?;
                         Err(error)
@@ -4008,13 +4008,17 @@ async fn get_llm_api_token(
         Err(anyhow!("terms of service not accepted"))?
     }
 
-    let Some(stripe_client) = session.app_state.stripe_client.as_ref() else {
-        Err(anyhow!("failed to retrieve Stripe client"))?
-    };
+    let stripe_client = session
+        .app_state
+        .stripe_client
+        .as_ref()
+        .context("failed to retrieve Stripe client")?;
 
-    let Some(stripe_billing) = session.app_state.stripe_billing.as_ref() else {
-        Err(anyhow!("failed to retrieve Stripe billing object"))?
-    };
+    let stripe_billing = session
+        .app_state
+        .stripe_billing
+        .as_ref()
+        .context("failed to retrieve Stripe billing object")?;
 
     let billing_customer =
         if let Some(billing_customer) = db.get_billing_customer_by_user_id(user.id).await? {

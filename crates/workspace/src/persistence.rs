@@ -181,7 +181,7 @@ impl Column for BreakpointStateWrapper<'_> {
         match state {
             0 => Ok((BreakpointState::Enabled.into(), start_index + 1)),
             1 => Ok((BreakpointState::Disabled.into(), start_index + 1)),
-            _ => Err(anyhow::anyhow!("Invalid BreakpointState discriminant")),
+            _ => anyhow::bail!("Invalid BreakpointState discriminant {state}"),
         }
     }
 }

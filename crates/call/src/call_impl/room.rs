@@ -428,9 +428,7 @@ impl Room {
             log::info!("reconnection failed, leaving room");
             this.update(cx, |this, cx| this.leave(cx))?.await?;
         }
-        Err(anyhow!(
-            "can't reconnect to room: client failed to re-establish connection"
-        ))
+        anyhow::bail!("can't reconnect to room: client failed to re-establish connection");
     }
 
     fn rejoin(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -934,12 +932,15 @@ impl Room {
             } => {
                 let user_id = participant.identity().0.parse()?;
                 let track_id = track.sid();
-                let participant = self.remote_participants.get_mut(&user_id).ok_or_else(|| {
-                    anyhow!(
-                        "{:?} subscribed to track by unknown participant {user_id}",
-                        self.client.user_id()
-                    )
-                })?;
+                let participant =
+                    self.remote_participants
+                        .get_mut(&user_id)
+                        .with_context(|| {
+                            format!(
+                                "{:?} subscribed to track by unknown participant {user_id}",
+                                self.client.user_id()
+                            )
+                        })?;
                 if self.live_kit.as_ref().map_or(true, |kit| kit.deafened) {
                     if publication.is_audio() {
                         publication.set_enabled(false, cx);
@@ -969,12 +970,15 @@ impl Room {
                 track, participant, ..
             } => {
                 let user_id = participant.identity().0.parse()?;
-                let participant = self.remote_participants.get_mut(&user_id).ok_or_else(|| {
-                    anyhow!(
-                        "{:?}, unsubscribed from track by unknown participant {user_id}",
-                        self.client.user_id()
-                    )
-                })?;
+                let participant =
+                    self.remote_participants
+                        .get_mut(&user_id)
+                        .with_context(|| {
+                            format!(
+                                "{:?}, unsubscribed from track by unknown participant {user_id}",
+                                self.client.user_id()
+                            )
+                        })?;
                 match track {
                     livekit_client::RemoteTrack::Audio(track) => {
                         participant.audio_tracks.remove(&track.sid());
@@ -1482,16 +1486,14 @@ impl Room {
     }
 
     pub fn unshare_screen(&mut self, cx: &mut Context<Self>) -> Result<()> {
-        if self.status.is_offline() {
-            return Err(anyhow!("room is offline"));
-        }
+        anyhow::ensure!(!self.status.is_offline(), "room is offline");
 
         let live_kit = self
             .live_kit
             .as_mut()
             .context("live-kit was not initialized")?;
         match mem::take(&mut live_kit.screen_track) {
-            LocalTrack::None => Err(anyhow!("screen was not shared")),
+            LocalTrack::None => anyhow::bail!("screen was not shared"),
             LocalTrack::Pending { .. } => {
                 cx.notify();
                 Ok(())

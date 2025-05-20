@@ -6,7 +6,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use ::fs::{CopyOptions, Fs, RealFs, copy_recursive};
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
 use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
@@ -304,12 +304,12 @@ fn test_languages(
             let entry = entry?;
             let query_path = entry.path();
             if query_path.extension() == Some("scm".as_ref()) {
-                let grammar = grammar.ok_or_else(|| {
-                    anyhow!(
+                let grammar = grammar.with_context(|| {
+                    format! {
                         "language {} provides query {} but no grammar",
                         config.name,
                         query_path.display()
-                    )
+                    }
                 })?;
 
                 let query_source = fs::read_to_string(&query_path)?;

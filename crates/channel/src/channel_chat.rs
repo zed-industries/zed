@@ -1,5 +1,5 @@
 use crate::{Channel, ChannelStore};
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use client::{
     ChannelId, Client, Subscription, TypedEnvelope, UserId, proto,
     user::{User, UserStore},
@@ -170,9 +170,10 @@ impl ChannelChat {
         message: MessageParams,
         cx: &mut Context<Self>,
     ) -> Result<Task<Result<u64>>> {
-        if message.text.trim().is_empty() {
-            Err(anyhow!("message body can't be empty"))?;
-        }
+        anyhow::ensure!(
+            !message.text.trim().is_empty(),
+            "message body can't be empty"
+        );
 
         let current_user = self
             .user_store

@@ -638,7 +638,7 @@ impl Platform for MacPlatform {
                     Ok(())
                 } else {
                     let msg: id = msg_send![error, localizedDescription];
-                    Err(anyhow!("Failed to register: {:?}", msg))
+                    Err(anyhow!("Failed to register: {msg:?}"))
                 };
 
                 if let Some(done_tx) = done_tx.take() {
@@ -832,11 +832,8 @@ impl Platform for MacPlatform {
     fn app_path(&self) -> Result<PathBuf> {
         unsafe {
             let bundle: id = NSBundle::mainBundle();
-            if bundle.is_null() {
-                Err(anyhow!("app is not running inside a bundle"))
-            } else {
-                Ok(path_from_objc(msg_send![bundle, bundlePath]))
-            }
+            anyhow::ensure!(!bundle.is_null(), "app is not running inside a bundle");
+            Ok(path_from_objc(msg_send![bundle, bundlePath]))
         }
     }
 
@@ -877,17 +874,11 @@ impl Platform for MacPlatform {
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         unsafe {
             let bundle: id = NSBundle::mainBundle();
-            if bundle.is_null() {
-                Err(anyhow!("app is not running inside a bundle"))
-            } else {
-                let name = ns_string(name);
-                let url: id = msg_send![bundle, URLForAuxiliaryExecutable: name];
-                if url.is_null() {
-                    Err(anyhow!("resource not found"))
-                } else {
-                    ns_url_to_path(url)
-                }
-            }
+            anyhow::ensure!(!bundle.is_null(), "app is not running inside a bundle");
+            let name = ns_string(name);
+            let url: id = msg_send![bundle, URLForAuxiliaryExecutable: name];
+            anyhow::ensure!(!url.is_null(), "resource not found");
+            ns_url_to_path(url)
         }
     }
 
@@ -1101,10 +1092,7 @@ impl Platform for MacPlatform {
                     verb = "creating";
                     status = SecItemAdd(attrs.as_concrete_TypeRef(), ptr::null_mut());
                 }
-
-                if status != errSecSuccess {
-                    return Err(anyhow!("{} password failed: {}", verb, status));
-                }
+                anyhow::ensure!(status == errSecSuccess, "{verb} password failed: {status}");
             }
             Ok(())
         })
@@ -1131,7 +1119,7 @@ impl Platform for MacPlatform {
                 match status {
                     security::errSecSuccess => {}
                     security::errSecItemNotFound | security::errSecUserCanceled => return Ok(None),
-                    _ => return Err(anyhow!("reading password failed: {}", status)),
+                    _ => anyhow::bail!("reading password failed: {status}"),
                 }
 
                 let result = CFType::wrap_under_create_rule(result)
@@ -1168,10 +1156,7 @@ impl Platform for MacPlatform {
                 query_attrs.set(kSecAttrServer as *const _, url.as_CFTypeRef());
 
                 let status = SecItemDelete(query_attrs.as_concrete_TypeRef());
-
-                if status != errSecSuccess {
-                    return Err(anyhow!("delete password failed: {}", status));
-                }
+                anyhow::ensure!(status == errSecSuccess, "delete password failed: {status}");
             }
             Ok(())
         })
@@ -1455,15 +1440,12 @@ unsafe fn ns_string(string: &str) -> id {
 
 unsafe fn ns_url_to_path(url: id) -> Result<PathBuf> {
     let path: *mut c_char = msg_send![url, fileSystemRepresentation];
-    if path.is_null() {
-        Err(anyhow!("url is not a file path: {}", unsafe {
-            CStr::from_ptr(url.absoluteString().UTF8String()).to_string_lossy()
-        }))
-    } else {
-        Ok(PathBuf::from(OsStr::from_bytes(unsafe {
-            CStr::from_ptr(path).to_bytes()
-        })))
-    }
+    anyhow::ensure!(!path.is_null(), "url is not a file path: {}", unsafe {
+        CStr::from_ptr(url.absoluteString().UTF8String()).to_string_lossy()
+    });
+    Ok(PathBuf::from(OsStr::from_bytes(unsafe {
+        CStr::from_ptr(path).to_bytes()
+    })))
 }
 
 #[link(name = "Carbon", kind = "framework")]

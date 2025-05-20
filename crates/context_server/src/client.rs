@@ -341,7 +341,7 @@ impl Client {
                         } else if let Some(result) = parsed.result {
                             Ok(serde_json::from_str(result.get())?)
                         } else {
-                            Err(anyhow!("Invalid response: no result or error"))
+                            anyhow::bail!("Invalid response: no result or error");
                         }
                     }
                     Err(_) => anyhow::bail!("cancelled")

@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod context_tests;
 
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Context as _, Result, bail};
 use assistant_settings::AssistantSettings;
 use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandLine, SlashCommandOutputSection,
@@ -3032,9 +3032,9 @@ impl SavedContext {
                         serde_json::from_value::<SavedContextV0_1_0>(saved_context_json)?;
                     Ok(saved_context.upgrade())
                 }
-                _ => Err(anyhow!("unrecognized saved context version: {}", version)),
+                _ => anyhow::bail!("unrecognized saved context version: {version:?}"),
             },
-            _ => Err(anyhow!("version not found on saved context")),
+            _ => anyhow::bail!("version not found on saved context"),
         }
     }
 

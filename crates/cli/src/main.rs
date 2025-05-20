@@ -169,7 +169,7 @@ fn main() -> Result<()> {
             "To retrieve the system specs on the command line, run the following command:",
             &format!("{} --system-specs", path.display()),
         ];
-        return Err(anyhow::anyhow!(msg.join("\n")));
+        anyhow::bail!(msg.join("\n"));
     }
 
     #[cfg(all(
@@ -255,11 +255,10 @@ fn main() -> Result<()> {
         }
     }
 
-    if let Some(_) = args.dev_server_token {
-        return Err(anyhow::anyhow!(
-            "Dev servers were removed in v0.157.x please upgrade to SSH remoting: https://zed.dev/docs/remote-development"
-        ))?;
-    }
+    anyhow::ensure!(
+        args.dev_server_token.is_none(),
+        "Dev servers were removed in v0.157.x please upgrade to SSH remoting: https://zed.dev/docs/remote-development"
+    );
 
     let sender: JoinHandle<anyhow::Result<()>> = thread::spawn({
         let exit_status = exit_status.clone();
@@ -426,8 +425,8 @@ mod linux {
                 possible_locations
                     .iter()
                     .find_map(|p| dir.join(p).canonicalize().ok().filter(|path| path != &cli))
-                    .ok_or_else(|| {
-                        anyhow!("could not find any of: {}", possible_locations.join(", "))
+                    .with_context(|| {
+                        format!("could not find any of: {}", possible_locations.join(", "))
                     })?
             };
 
@@ -757,7 +756,7 @@ mod windows {
 
 #[cfg(target_os = "macos")]
 mod mac_os {
-    use anyhow::{Context as _, Result, anyhow};
+    use anyhow::{Context as _, Result};
     use core_foundation::{
         array::{CFArray, CFIndex},
         base::TCFType as _,
@@ -798,9 +797,10 @@ mod mac_os {
         let cli_path = std::env::current_exe()?.canonicalize()?;
         let mut app_path = cli_path.clone();
         while app_path.extension() != Some(OsStr::new("app")) {
-            if !app_path.pop() {
-                return Err(anyhow!("cannot find app bundle containing {:?}", cli_path));
-            }
+            anyhow::ensure!(
+                app_path.pop(),
+                "cannot find app bundle containing {cli_path:?}"
+            );
         }
         Ok(app_path)
     }

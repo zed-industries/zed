@@ -1862,10 +1862,10 @@ impl LocalLspStore {
         let capabilities = &language_server.capabilities();
         let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
         if range_formatting_provider.map_or(false, |provider| provider == &OneOf::Left(false)) {
-            return Err(anyhow!(
+            anyhow::bail!(
                 "{} language server does not support range formatting",
                 language_server.name()
-            ));
+            );
         }
 
         let uri = lsp::Url::from_file_path(abs_path)
@@ -2036,14 +2036,13 @@ impl LocalLspStore {
         stdin.flush().await?;
 
         let output = child.output().await?;
-        if !output.status.success() {
-            return Err(anyhow!(
-                "command failed with exit code {:?}:\nstdout: {}\nstderr: {}",
-                output.status.code(),
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr),
-            ));
-        }
+        anyhow::ensure!(
+            output.status.success(),
+            "command failed with exit code {:?}:\nstdout: {}\nstderr: {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
 
         let stdout = String::from_utf8(output.stdout)?;
         Ok(Some(
@@ -2567,9 +2566,7 @@ impl LocalLspStore {
                 // We detect this case and treat it as if the version was `None`.
                 return Ok(buffer.read(cx).text_snapshot());
             } else {
-                return Err(anyhow!(
-                    "no snapshots found for buffer {buffer_id} and server {server_id}"
-                ));
+                anyhow::bail!("no snapshots found for buffer {buffer_id} and server {server_id}");
             };
 
             let found_snapshot = snapshots
@@ -4367,7 +4364,7 @@ impl LspStore {
                     err
                 );
                 log::warn!("{message}");
-                anyhow!(message)
+                anyhow::anyhow!(message)
             })?;
 
             let response = request
@@ -7887,11 +7884,11 @@ impl LspStore {
         let completion = this
             .read_with(&cx, |this, cx| {
                 let id = LanguageServerId(envelope.payload.language_server_id as usize);
-                let Some(server) = this.language_server_for_id(id) else {
-                    return Err(anyhow!("No language server {id}"));
-                };
+                let server = this
+                    .language_server_for_id(id)
+                    .with_context(|| format!("No language server {id}"))?;
 
-                Ok(cx.background_spawn(async move {
+                anyhow::Ok(cx.background_spawn(async move {
                     let can_resolve = server
                         .capabilities()
                         .completion_provider
@@ -8102,11 +8099,8 @@ impl LspStore {
         let symbol = Self::deserialize_symbol(symbol)?;
         let symbol = this.update(&mut cx, |this, _| {
             let signature = this.symbol_signature(&symbol.path);
-            if signature == symbol.signature {
-                Ok(symbol)
-            } else {
-                Err(anyhow!("invalid symbol signature"))
-            }
+            anyhow::ensure!(signature == symbol.signature, "invalid symbol signature");
+            Ok(symbol)
         })??;
         let buffer = this
             .update(&mut cx, |this, cx| {
@@ -8343,10 +8337,7 @@ impl LspStore {
                     let ranges = match &target {
                         LspFormatTarget::Buffers => None,
                         LspFormatTarget::Ranges(ranges) => {
-                            let Some(ranges) = ranges.get(&id) else {
-                                return Err(anyhow!("No format ranges provided for buffer"));
-                            };
-                            Some(ranges.clone())
+                            Some(ranges.get(&id).context("No format ranges provided for buffer")?.clone())
                         }
                     };
 
@@ -8476,17 +8467,20 @@ impl LspStore {
                 buffers.insert(this.buffer_store.read(cx).get_existing(buffer_id)?);
             }
             let kind = match envelope.payload.kind.as_str() {
-                "" => Ok(CodeActionKind::EMPTY),
-                "quickfix" => Ok(CodeActionKind::QUICKFIX),
-                "refactor" => Ok(CodeActionKind::REFACTOR),
-                "refactor.extract" => Ok(CodeActionKind::REFACTOR_EXTRACT),
-                "refactor.inline" => Ok(CodeActionKind::REFACTOR_INLINE),
-                "refactor.rewrite" => Ok(CodeActionKind::REFACTOR_REWRITE),
-                "source" => Ok(CodeActionKind::SOURCE),
-                "source.organizeImports" => Ok(CodeActionKind::SOURCE_ORGANIZE_IMPORTS),
-                "source.fixAll" => Ok(CodeActionKind::SOURCE_FIX_ALL),
-                _ => Err(anyhow!("Invalid code action kind")),
-            }?;
+                "" => CodeActionKind::EMPTY,
+                "quickfix" => CodeActionKind::QUICKFIX,
+                "refactor" => CodeActionKind::REFACTOR,
+                "refactor.extract" => CodeActionKind::REFACTOR_EXTRACT,
+                "refactor.inline" => CodeActionKind::REFACTOR_INLINE,
+                "refactor.rewrite" => CodeActionKind::REFACTOR_REWRITE,
+                "source" => CodeActionKind::SOURCE,
+                "source.organizeImports" => CodeActionKind::SOURCE_ORGANIZE_IMPORTS,
+                "source.fixAll" => CodeActionKind::SOURCE_FIX_ALL,
+                _ => anyhow::bail!(
+                    "Invalid code action kind {}",
+                    envelope.payload.kind.as_str()
+                ),
+            };
             anyhow::Ok(this.apply_code_action_kind(buffers, kind, false, cx))
         })??;
 
@@ -10281,15 +10275,14 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
             .output()
             .await?;
 
-        if output.status.success() {
-            return Ok(());
-        }
-        Err(anyhow!(
+        anyhow::ensure!(
+            output.status.success(),
             "{}, stdout: {:?}, stderr: {:?}",
             output.status,
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
-        ))
+        );
+        Ok(())
     }
 
     fn update_status(&self, server_name: LanguageServerName, status: language::BinaryStatus) {

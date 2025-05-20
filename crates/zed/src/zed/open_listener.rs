@@ -1,6 +1,6 @@
 use crate::handle_open_request;
 use crate::restorable_workspace_locations;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use cli::{CliRequest, CliResponse, ipc::IpcSender};
 use cli::{IpcHandshake, ipc};
 use client::parse_zed_link;
@@ -78,9 +78,10 @@ impl OpenRequest {
             .to_string();
         let username = Some(url.username().to_string()).filter(|s| !s.is_empty());
         let port = url.port();
-        if !self.open_paths.is_empty() {
-            return Err(anyhow!("cannot open both local and ssh paths"));
-        }
+        anyhow::ensure!(
+            self.open_paths.is_empty(),
+            "cannot open both local and ssh paths"
+        );
         let mut connection_options = SshSettings::get_global(cx).connection_options_for(
             host.clone(),
             port,
@@ -90,9 +91,10 @@ impl OpenRequest {
             connection_options.password = Some(password.to_string());
         }
         if let Some(ssh_connection) = &self.ssh_connection {
-            if *ssh_connection != connection_options {
-                return Err(anyhow!("cannot open multiple ssh connections"));
-            }
+            anyhow::ensure!(
+                *ssh_connection == connection_options,
+                "cannot open multiple ssh connections"
+            );
         }
         self.ssh_connection = Some(connection_options);
         self.parse_file_path(url.path());
@@ -123,7 +125,7 @@ impl OpenRequest {
                 }
             }
         }
-        Err(anyhow!("invalid zed url: {}", request_path))
+        anyhow::bail!("invalid zed url: {request_path}")
     }
 }
 
@@ -401,9 +403,7 @@ async fn open_workspaces(
             }
         }
 
-        if errored {
-            return Err(anyhow!("failed to open a workspace"));
-        }
+        anyhow::ensure!(!errored, "failed to open a workspace");
     }
 
     Ok(())

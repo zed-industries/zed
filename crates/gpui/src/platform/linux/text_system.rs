@@ -309,7 +309,7 @@ impl CosmicTextSystemState {
         glyph_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
         if glyph_bounds.size.width.0 == 0 || glyph_bounds.size.height.0 == 0 {
-            Err(anyhow!("glyph bounds are empty"))
+            anyhow::bail!("glyph bounds are empty");
         } else {
             let bitmap_size = glyph_bounds.size;
             let font = &self.loaded_fonts[params.font_id.0].font;

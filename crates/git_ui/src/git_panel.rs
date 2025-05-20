@@ -9,7 +9,7 @@ use crate::{branch_picker, picker_prompt, render_remote_button};
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use askpass::AskPassDelegate;
 use assistant_settings::AssistantSettings;
 use db::kvp::KEY_VALUE_STORE;
@@ -1631,9 +1631,7 @@ impl GitPanel {
         let mut cx = window.to_async(cx);
 
         async move {
-            let Some(repo) = repo else {
-                return Err(anyhow::anyhow!("No active repository"));
-            };
+            let repo = repo.context("No active repository")?;
 
             let pushed_to: Vec<SharedString> = repo
                 .update(&mut cx, |repo, _| repo.check_for_pushed_commits())?
@@ -2090,22 +2088,16 @@ impl GitPanel {
         let mut cx = window.to_async(cx);
 
         async move {
-            let Some(repo) = repo else {
-                return Err(anyhow::anyhow!("No active repository"));
-            };
-
+            let repo = repo.context("No active repository")?;
             let mut current_remotes: Vec<Remote> = repo
                 .update(&mut cx, |repo, _| {
-                    let Some(current_branch) = repo.branch.as_ref() else {
-                        return Err(anyhow::anyhow!("No active branch"));
-                    };
-
-                    Ok(repo.get_remotes(Some(current_branch.name().to_string())))
+                    let current_branch = repo.branch.as_ref().context("No active branch")?;
+                    anyhow::Ok(repo.get_remotes(Some(current_branch.name().to_string())))
                 })??
                 .await??;
 
             if current_remotes.len() == 0 {
-                return Err(anyhow::anyhow!("No active remote"));
+                anyhow::bail!("No active remote");
             } else if current_remotes.len() == 1 {
                 return Ok(Some(current_remotes.pop().unwrap()));
             } else {

@@ -1,5 +1,5 @@
 use crate::FakeFs;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use futures::future::{self, BoxFuture};
 use git::{
@@ -119,8 +119,8 @@ impl GitRepository for FakeGitRepository {
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<anyhow::Result<()>> {
         self.with_state_async(true, move |state| {
-            if let Some(message) = state.simulated_index_write_error_message.clone() {
-                return Err(anyhow!("{}", message));
+            if let Some(message) = &state.simulated_index_write_error_message {
+                anyhow::bail!("{message}");
             } else if let Some(content) = content {
                 state.index_contents.insert(path, content);
             } else {

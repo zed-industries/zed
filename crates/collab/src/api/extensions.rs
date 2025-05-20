@@ -1,6 +1,6 @@
 use crate::db::ExtensionVersionConstraints;
 use crate::{AppState, Error, Result, db::NewExtensionVersion};
-use anyhow::{Context as _, anyhow};
+use anyhow::Context as _;
 use aws_sdk_s3::presigning::PresigningConfig;
 use axum::{
     Extension, Json, Router,
@@ -397,8 +397,8 @@ async fn fetch_extension_manifest(
                 String::from_utf8_lossy(&manifest_bytes)
             )
         })?;
-    let published_at = object.last_modified.ok_or_else(|| {
-        anyhow!("missing last modified timestamp for extension {extension_id} version {version}")
+    let published_at = object.last_modified.with_context(|| {
+        format!("missing last modified timestamp for extension {extension_id} version {version}")
     })?;
     let published_at = time::OffsetDateTime::from_unix_timestamp_nanos(published_at.as_nanos())?;
     let published_at = PrimitiveDateTime::new(published_at.date(), published_at.time());

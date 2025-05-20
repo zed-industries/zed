@@ -69,22 +69,16 @@ impl CodeLldbDebugAdapter {
         let arch = match std::env::consts::ARCH {
             "aarch64" => "arm64",
             "x86_64" => "x64",
-            _ => {
-                return Err(anyhow!(
-                    "unsupported architecture {}",
-                    std::env::consts::ARCH
-                ));
+            unsupported => {
+                anyhow::bail!("unsupported architecture {unsupported}");
             }
         };
         let platform = match std::env::consts::OS {
             "macos" => "darwin",
             "linux" => "linux",
             "windows" => "win32",
-            _ => {
-                return Err(anyhow!(
-                    "unsupported operating system {}",
-                    std::env::consts::OS
-                ));
+            unsupported => {
+                anyhow::bail!("unsupported operating system {unsupported}");
             }
         };
         let asset_name = format!("codelldb-{platform}-{arch}.vsix");

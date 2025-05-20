@@ -480,7 +480,7 @@ impl ChannelStore {
                         .spawn(async move |this, cx| {
                             let channel = this.update(cx, |this, _| {
                                 this.channel_for_id(channel_id).cloned().ok_or_else(|| {
-                                    Arc::new(anyhow!("no channel for id: {}", channel_id))
+                                    Arc::new(anyhow!("no channel for id: {channel_id}"))
                                 })
                             })??;
 

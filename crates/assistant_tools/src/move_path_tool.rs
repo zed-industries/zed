@@ -1,5 +1,5 @@
 use crate::schema::json_schema_for;
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
@@ -117,17 +117,10 @@ impl Tool for MovePathTool {
         });
 
         cx.background_spawn(async move {
-            match rename_task.await {
-                Ok(_) => {
-                    Ok(format!("Moved {} to {}", input.source_path, input.destination_path).into())
-                }
-                Err(err) => Err(anyhow!(
-                    "Failed to move {} to {}: {}",
-                    input.source_path,
-                    input.destination_path,
-                    err
-                )),
-            }
+            let _ = rename_task.await.with_context(|| {
+                format!("Moving {} to {}", input.source_path, input.destination_path)
+            })?;
+            Ok(format!("Moved {} to {}", input.source_path, input.destination_path).into())
         })
         .into()
     }

@@ -443,9 +443,11 @@ impl CopilotChat {
         request: Request,
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
-        let Some(this) = cx.update(|cx| Self::global(cx)).ok().flatten() else {
-            return Err(anyhow!("Copilot chat is not enabled"));
-        };
+        let this = cx
+            .update(|cx| Self::global(cx))
+            .ok()
+            .flatten()
+            .context("Copilot chat is not enabled")?;
 
         let (oauth_token, api_token, client) = this.read_with(&cx, |this, _| {
             (
@@ -514,18 +516,19 @@ async fn request_models(api_token: String, client: Arc<dyn HttpClient>) -> Resul
 
     let mut response = client.send(request).await?;
 
-    if response.status().is_success() {
-        let mut body = Vec::new();
-        response.body_mut().read_to_end(&mut body).await?;
+    anyhow::ensure!(
+        response.status().is_success(),
+        "Failed to request models: {}",
+        response.status()
+    );
+    let mut body = Vec::new();
+    response.body_mut().read_to_end(&mut body).await?;
 
-        let body_str = std::str::from_utf8(&body)?;
+    let body_str = std::str::from_utf8(&body)?;
 
-        let models = serde_json::from_str::<ModelSchema>(body_str)?.data;
+    let models = serde_json::from_str::<ModelSchema>(body_str)?.data;
 
-        Ok(models)
-    } else {
-        Err(anyhow!("Failed to request models: {}", response.status()))
-    }
+    Ok(models)
 }
 
 async fn request_api_token(oauth_token: &str, client: Arc<dyn HttpClient>) -> Result<ApiToken> {
@@ -552,8 +555,7 @@ async fn request_api_token(oauth_token: &str, client: Arc<dyn HttpClient>) -> Re
         response.body_mut().read_to_end(&mut body).await?;
 
         let body_str = std::str::from_utf8(&body)?;
-
-        Err(anyhow!("Failed to request API token: {}", body_str))
+        anyhow::bail!("Failed to request API token: {body_str}");
     }
 }
 
@@ -604,11 +606,11 @@ async fn stream_completion(
         let mut body = Vec::new();
         response.body_mut().read_to_end(&mut body).await?;
         let body_str = std::str::from_utf8(&body)?;
-        return Err(anyhow!(
+        anyhow::bail!(
             "Failed to connect to API: {} {}",
             response.status(),
             body_str
-        ));
+        );
     }
 
     if is_streaming {

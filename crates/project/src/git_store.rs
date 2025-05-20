@@ -1963,7 +1963,7 @@ impl GitStore {
         let delegates = cx.update(|cx| repository.read(cx).askpass_delegates.clone())?;
         let Some(mut askpass) = delegates.lock().remove(&envelope.payload.askpass_id) else {
             debug_panic!("no askpass found");
-            return Err(anyhow::anyhow!("no askpass found"));
+            anyhow::bail!("no askpass found");
         };
 
         let response = askpass.ask_password(envelope.payload.prompt).await?;
@@ -3912,7 +3912,7 @@ impl Repository {
         self.send_job(None, |repo, _cx| async move {
             match repo {
                 RepositoryState::Local { backend, .. } => backend.checkpoint().await,
-                RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
+                RepositoryState::Remote { .. } => anyhow::bail!("not implemented yet"),
             }
         })
     }
@@ -3926,7 +3926,7 @@ impl Repository {
                 RepositoryState::Local { backend, .. } => {
                     backend.restore_checkpoint(checkpoint).await
                 }
-                RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
+                RepositoryState::Remote { .. } => anyhow::bail!("not implemented yet"),
             }
         })
     }
@@ -3981,7 +3981,7 @@ impl Repository {
                 RepositoryState::Local { backend, .. } => {
                     backend.compare_checkpoints(left, right).await
                 }
-                RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
+                RepositoryState::Remote { .. } => anyhow::bail!("not implemented yet"),
             }
         })
     }
@@ -3998,7 +3998,7 @@ impl Repository {
                         .diff_checkpoints(base_checkpoint, target_checkpoint)
                         .await
                 }
-                RepositoryState::Remote { .. } => Err(anyhow!("not implemented yet")),
+                RepositoryState::Remote { .. } => anyhow::bail!("not implemented yet"),
             }
         })
     }
@@ -4615,7 +4615,7 @@ fn status_from_proto(
                 index_status: StatusCode::Unmodified,
             }
             .into(),
-            _ => return Err(anyhow!("Invalid code for simple status: {simple_status}")),
+            _ => anyhow::bail!("Invalid code for simple status: {simple_status}"),
         };
         return Ok(result);
     };
@@ -4632,7 +4632,7 @@ fn status_from_proto(
                         proto::GitStatus::Added => UnmergedStatusCode::Added,
                         proto::GitStatus::Updated => UnmergedStatusCode::Updated,
                         proto::GitStatus::Deleted => UnmergedStatusCode::Deleted,
-                        _ => return Err(anyhow!("Invalid code for unmerged status: {code:?}")),
+                        _ => anyhow::bail!("Invalid code for unmerged status: {code:?}"),
                     };
                     Ok(result)
                 });
@@ -4656,7 +4656,7 @@ fn status_from_proto(
                         proto::GitStatus::Renamed => StatusCode::Renamed,
                         proto::GitStatus::Copied => StatusCode::Copied,
                         proto::GitStatus::Unmodified => StatusCode::Unmodified,
-                        _ => return Err(anyhow!("Invalid code for tracked status: {code:?}")),
+                        _ => anyhow::bail!("Invalid code for tracked status: {code:?}"),
                     };
                     Ok(result)
                 });

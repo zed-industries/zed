@@ -19,7 +19,7 @@ use usage_measure::UsageMeasure;
 use std::future::Future;
 use std::sync::Arc;
 
-use anyhow::{Context, anyhow};
+use anyhow::Context;
 pub use sea_orm::ConnectOptions;
 use sea_orm::prelude::*;
 use sea_orm::{
@@ -142,11 +142,9 @@ impl LlmDatabase {
 
         let mut tx = Arc::new(Some(tx));
         let result = f(TransactionHandle(tx.clone())).await;
-        let Some(tx) = Arc::get_mut(&mut tx).and_then(|tx| tx.take()) else {
-            return Err(anyhow!(
-                "couldn't complete transaction because it's still in use"
-            ))?;
-        };
+        let tx = Arc::get_mut(&mut tx)
+            .and_then(|tx| tx.take())
+            .context("couldn't complete transaction because it's still in use")?;
 
         Ok((tx, result))
     }

@@ -1,5 +1,5 @@
 use ::fs::Fs;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
@@ -344,12 +344,11 @@ pub async fn download_adapter_from_github(
         .get(&github_version.url, Default::default(), true)
         .await
         .context("Error downloading release")?;
-    if !response.status().is_success() {
-        Err(anyhow!(
-            "download failed with status {}",
-            response.status().to_string()
-        ))?;
-    }
+    anyhow::ensure!(
+        response.status().is_success(),
+        "download failed with status {}",
+        response.status().to_string()
+    );
 
     match file_type {
         DownloadedFileType::GzipTar => {

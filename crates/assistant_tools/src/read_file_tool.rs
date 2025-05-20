@@ -152,7 +152,7 @@ impl Tool for ReadFileTool {
                     .as_ref()
                     .map_or(true, |file| !file.disk_state().exists())
             })? {
-                return Err(anyhow!("{} not found", file_path));
+                anyhow::bail!("{file_path} not found");
             }
 
             project.update(cx, |project, cx| {

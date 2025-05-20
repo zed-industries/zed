@@ -837,7 +837,7 @@ impl RunningState {
                     })?
                     .await?
             } else {
-                return Err(anyhow!("No request or build provided"));
+                anyhow::bail!("No request or build provided");
             };
             let request = match request {
                 dap::DebugRequest::Launch(launch_request) => {

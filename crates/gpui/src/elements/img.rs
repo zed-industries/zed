@@ -5,7 +5,7 @@ use crate::{
     SMOOTH_SVG_SCALE_FACTOR, SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task,
     Window, px, swap_rgba_pa_to_bgra,
 };
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result};
 
 use futures::{AsyncReadExt, Future};
 use image::{
@@ -595,7 +595,7 @@ impl Asset for ImageAssetLoader {
                     let mut response = client
                         .get(uri.as_ref(), ().into(), true)
                         .await
-                        .map_err(|e| anyhow!(e))?;
+                        .with_context(|| format!("loading image asset from {uri:?}"))?;
                     let mut body = Vec::new();
                     response.body_mut().read_to_end(&mut body).await?;
                     if !response.status().is_success() {

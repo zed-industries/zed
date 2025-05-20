@@ -578,12 +578,11 @@ impl GitRepository for RealGitRepository {
                 .args(["reset", mode_flag, &commit])
                 .output()
                 .await?;
-            if !output.status.success() {
-                return Err(anyhow!(
-                    "Failed to reset:\n{}",
-                    String::from_utf8_lossy(&output.stderr)
-                ));
-            }
+            anyhow::ensure!(
+                output.status.success(),
+                "Failed to reset:\n{}",
+                String::from_utf8_lossy(&output.stderr),
+            );
             Ok(())
         }
         .boxed()
@@ -609,12 +608,11 @@ impl GitRepository for RealGitRepository {
                 .args(paths.iter().map(|path| path.as_ref()))
                 .output()
                 .await?;
-            if !output.status.success() {
-                return Err(anyhow!(
-                    "Failed to checkout files:\n{}",
-                    String::from_utf8_lossy(&output.stderr)
-                ));
-            }
+            anyhow::ensure!(
+                output.status.success(),
+                "Failed to checkout files:\n{}",
+                String::from_utf8_lossy(&output.stderr),
+            );
             Ok(())
         }
         .boxed()
@@ -707,12 +705,11 @@ impl GitRepository for RealGitRepository {
                         .output()
                         .await?;
 
-                    if !output.status.success() {
-                        return Err(anyhow!(
-                            "Failed to stage:\n{}",
-                            String::from_utf8_lossy(&output.stderr)
-                        ));
-                    }
+                    anyhow::ensure!(
+                        output.status.success(),
+                        "Failed to stage:\n{}",
+                        String::from_utf8_lossy(&output.stderr)
+                    );
                 } else {
                     let output = new_smol_command(&git_binary_path)
                         .current_dir(&working_directory)
@@ -721,13 +718,11 @@ impl GitRepository for RealGitRepository {
                         .arg(path.to_unix_style())
                         .output()
                         .await?;
-
-                    if !output.status.success() {
-                        return Err(anyhow!(
-                            "Failed to unstage:\n{}",
-                            String::from_utf8_lossy(&output.stderr)
-                        ));
-                    }
+                    anyhow::ensure!(
+                        output.status.success(),
+                        "Failed to unstage:\n{}",
+                        String::from_utf8_lossy(&output.stderr)
+                    );
                 }
 
                 Ok(())
@@ -814,7 +809,7 @@ impl GitRepository for RealGitRepository {
                     stdout.parse()
                 } else {
                     let stderr = String::from_utf8_lossy(&output.stderr);
-                    Err(anyhow!("git status failed: {}", stderr))
+                    anyhow::bail!("git status failed: {stderr}");
                 }
             })
             .boxed()
@@ -850,12 +845,11 @@ impl GitRepository for RealGitRepository {
                     .output()
                     .await?;
 
-                if !output.status.success() {
-                    return Err(anyhow!(
-                        "Failed to git git branches:\n{}",
-                        String::from_utf8_lossy(&output.stderr)
-                    ));
-                }
+                anyhow::ensure!(
+                    output.status.success(),
+                    "Failed to git git branches:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
 
                 let input = String::from_utf8_lossy(&output.stdout);
 
@@ -904,7 +898,7 @@ impl GitRepository for RealGitRepository {
                     branch.set_upstream(Some(&name))?;
                     branch
                 } else {
-                    return Err(anyhow!("Branch not found"));
+                    anyhow::bail!("Branch not found");
                 };
 
                 let revision = branch.get();
@@ -971,12 +965,11 @@ impl GitRepository for RealGitRepository {
                     .output()
                     .await?;
 
-                if !output.status.success() {
-                    return Err(anyhow!(
-                        "Failed to run git diff:\n{}",
-                        String::from_utf8_lossy(&output.stderr)
-                    ));
-                }
+                anyhow::ensure!(
+                    output.status.success(),
+                    "Failed to run git diff:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
                 Ok(String::from_utf8_lossy(&output.stdout).to_string())
             })
             .boxed()
@@ -999,13 +992,11 @@ impl GitRepository for RealGitRepository {
                         .args(paths.iter().map(|p| p.to_unix_style()))
                         .output()
                         .await?;
-
-                    if !output.status.success() {
-                        return Err(anyhow!(
-                            "Failed to stage paths:\n{}",
-                            String::from_utf8_lossy(&output.stderr)
-                        ));
-                    }
+                    anyhow::ensure!(
+                        output.status.success(),
+                        "Failed to stage paths:\n{}",
+                        String::from_utf8_lossy(&output.stderr),
+                    );
                 }
                 Ok(())
             })
@@ -1031,12 +1022,11 @@ impl GitRepository for RealGitRepository {
                         .output()
                         .await?;
 
-                    if !output.status.success() {
-                        return Err(anyhow!(
-                            "Failed to unstage:\n{}",
-                            String::from_utf8_lossy(&output.stderr)
-                        ));
-                    }
+                    anyhow::ensure!(
+                        output.status.success(),
+                        "Failed to unstage:\n{}",
+                        String::from_utf8_lossy(&output.stderr),
+                    );
                 }
                 Ok(())
             })
@@ -1070,12 +1060,11 @@ impl GitRepository for RealGitRepository {
 
                 let output = cmd.output().await?;
 
-                if !output.status.success() {
-                    return Err(anyhow!(
-                        "Failed to commit:\n{}",
-                        String::from_utf8_lossy(&output.stderr)
-                    ));
-                }
+                anyhow::ensure!(
+                    output.status.success(),
+                    "Failed to commit:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
                 Ok(())
             })
             .boxed()
@@ -1191,22 +1180,19 @@ impl GitRepository for RealGitRepository {
                     .output()
                     .await?;
 
-                if output.status.success() {
-                    let remote_names = String::from_utf8_lossy(&output.stdout)
-                        .split('\n')
-                        .filter(|name| !name.is_empty())
-                        .map(|name| Remote {
-                            name: name.trim().to_string().into(),
-                        })
-                        .collect();
-
-                    return Ok(remote_names);
-                } else {
-                    return Err(anyhow!(
-                        "Failed to get remotes:\n{}",
-                        String::from_utf8_lossy(&output.stderr)
-                    ));
-                }
+                anyhow::ensure!(
+                    output.status.success(),
+                    "Failed to get remotes:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                let remote_names = String::from_utf8_lossy(&output.stdout)
+                    .split('\n')
+                    .filter(|name| !name.is_empty())
+                    .map(|name| Remote {
+                        name: name.trim().to_string().into(),
+                    })
+                    .collect();
+                Ok(remote_names)
             })
             .boxed()
     }
@@ -1223,11 +1209,11 @@ impl GitRepository for RealGitRepository {
                         .args(args)
                         .output()
                         .await?;
-                    if output.status.success() {
-                        Ok(String::from_utf8(output.stdout)?)
-                    } else {
-                        Err(anyhow!(String::from_utf8_lossy(&output.stderr).to_string()))
-                    }
+                    anyhow::ensure!(
+                        output.status.success(),
+                        String::from_utf8_lossy(&output.stderr).to_string()
+                    );
+                    Ok(String::from_utf8(output.stdout)?)
                 };
 
                 let head = git_cmd(&["rev-parse", "HEAD"])
@@ -1505,14 +1491,14 @@ impl GitBinary {
     {
         let mut command = self.build_command(args);
         let output = command.output().await?;
-        if output.status.success() {
-            Ok(String::from_utf8(output.stdout)?)
-        } else {
-            Err(anyhow!(GitBinaryCommandError {
+        anyhow::ensure!(
+            output.status.success(),
+            GitBinaryCommandError {
                 stdout: String::from_utf8_lossy(&output.stdout).to_string(),
                 status: output.status,
-            }))
-        }
+            }
+        );
+        Ok(String::from_utf8(output.stdout)?)
     }
 
     fn build_command<S>(&self, args: impl IntoIterator<Item = S>) -> smol::process::Command
@@ -1546,14 +1532,15 @@ async fn run_git_command(
     if env.contains_key("GIT_ASKPASS") {
         let git_process = command.spawn()?;
         let output = git_process.output().await?;
-        if !output.status.success() {
-            Err(anyhow!("{}", String::from_utf8_lossy(&output.stderr)))
-        } else {
-            Ok(RemoteCommandOutput {
-                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-            })
-        }
+        anyhow::ensure!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(RemoteCommandOutput {
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        })
     } else {
         let ask_pass = AskPassSession::new(executor, ask_pass).await?;
         command
@@ -1583,17 +1570,15 @@ async fn run_askpass_command(
         }
         output = git_process.output().fuse() => {
             let output = output?;
-            if !output.status.success() {
-                Err(anyhow!(
-                    "{}",
-                    String::from_utf8_lossy(&output.stderr)
-                ))
-            } else {
-                Ok(RemoteCommandOutput {
-                    stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                    stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-                })
-            }
+            anyhow::ensure!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            Ok(RemoteCommandOutput {
+                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            })
         }
     }
 }

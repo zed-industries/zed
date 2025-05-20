@@ -130,6 +130,6 @@ pub fn global<T>(f: impl FnOnce(&GlobalWatcher) -> T) -> anyhow::Result<T> {
     });
     match result {
         Ok(g) => Ok(f(g)),
-        Err(e) => Err(anyhow::anyhow!("{}", e)),
+        Err(e) => Err(anyhow::anyhow!("{e}")),
     }
 }

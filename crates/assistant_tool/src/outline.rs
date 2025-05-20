@@ -1,5 +1,5 @@
 use crate::ActionLog;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use gpui::{AsyncApp, Entity};
 use language::{OutlineItem, ParseStatus};
 use project::Project;
@@ -41,9 +41,9 @@ pub async fn file_outline(
     }
 
     let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-    let Some(outline) = snapshot.outline(None) else {
-        return Err(anyhow!("No outline information available for this file."));
-    };
+    let outline = snapshot
+        .outline(None)
+        .context("No outline information available for this file at path {path}")?;
 
     render_outline(
         outline

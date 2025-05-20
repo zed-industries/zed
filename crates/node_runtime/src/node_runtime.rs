@@ -411,13 +411,14 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
             let npm_file = self.installation_path.join(Self::NPM_PATH);
             let env_path = path_with_node_binary_prepended(&node_binary).unwrap_or_default();
 
-            if smol::fs::metadata(&node_binary).await.is_err() {
-                return Err(anyhow!("missing node binary file"));
-            }
-
-            if smol::fs::metadata(&npm_file).await.is_err() {
-                return Err(anyhow!("missing npm file"));
-            }
+            anyhow::ensure!(
+                smol::fs::metadata(&node_binary).await.is_ok(),
+                "missing node binary file"
+            );
+            anyhow::ensure!(
+                smol::fs::metadata(&npm_file).await.is_ok(),
+                "missing npm file"
+            );
 
             let node_ca_certs = env::var(NODE_CA_CERTS_ENV_VAR).unwrap_or_else(|_| String::new());
 
@@ -443,22 +444,20 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
         let mut output = attempt().await;
         if output.is_err() {
             output = attempt().await;
-            if output.is_err() {
-                return Err(anyhow!(
-                    "failed to launch npm subcommand {subcommand} subcommand\nerr: {:?}",
-                    output.err()
-                ));
-            }
+            anyhow::ensure!(
+                output.is_ok(),
+                "failed to launch npm subcommand {subcommand} subcommand\nerr: {:?}",
+                output.err()
+            );
         }
 
         if let Ok(output) = &output {
-            if !output.status.success() {
-                return Err(anyhow!(
-                    "failed to execute npm {subcommand} subcommand:\nstdout: {:?}\nstderr: {:?}",
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
-                ));
-            }
+            anyhow::ensure!(
+                output.status.success(),
+                "failed to execute npm {subcommand} subcommand:\nstdout: {:?}\nstderr: {:?}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         output.map_err(|e| anyhow!("{e}"))
@@ -559,14 +558,12 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
             .args(args);
         configure_npm_command(&mut command, directory, proxy);
         let output = command.output().await?;
-        if !output.status.success() {
-            return Err(anyhow!(
-                "failed to execute npm {subcommand} subcommand:\nstdout: {:?}\nstderr: {:?}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-
+        anyhow::ensure!(
+            output.status.success(),
+            "failed to execute npm {subcommand} subcommand:\nstdout: {:?}\nstderr: {:?}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
         Ok(output)
     }
 

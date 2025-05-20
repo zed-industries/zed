@@ -1,6 +1,6 @@
 use crate::commit::get_messages;
 use crate::{GitRemote, Oid};
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use futures::AsyncWriteExt;
 use gpui::SharedString;
@@ -100,7 +100,7 @@ async fn run_git_blame(
         if trimmed == GIT_BLAME_NO_COMMIT_ERROR || trimmed.contains(GIT_BLAME_NO_PATH) {
             return Ok(String::new());
         }
-        return Err(anyhow!("git blame process failed: {}", stderr));
+        anyhow::bail!("git blame process failed: {stderr}");
     }
 
     Ok(String::from_utf8(output.stdout)?)

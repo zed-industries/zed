@@ -252,13 +252,7 @@ impl WorkDirectory {
         match self {
             WorkDirectory::InProject { relative_path } => Ok(path
                 .strip_prefix(relative_path)
-                .map_err(|_| {
-                    anyhow!(
-                        "could not relativize {:?} against {:?}",
-                        path,
-                        relative_path
-                    )
-                })?
+                .map_err(|_| anyhow!("could not relativize {path:?} against {relative_path:?}"))?
                 .into()),
             WorkDirectory::AboveProject {
                 location_in_repo, ..
@@ -1926,7 +1920,7 @@ impl LocalWorktree {
                     )
                     .await
                     .with_context(|| {
-                        anyhow!("Failed to copy file from {source:?} to {target:?}")
+                        format!("Failed to copy file from {source:?} to {target:?}")
                     })?;
                 }
                 Ok::<(), anyhow::Error>(())
@@ -2420,7 +2414,7 @@ impl Snapshot {
             .components()
             .any(|component| !matches!(component, std::path::Component::Normal(_)))
         {
-            return Err(anyhow!("invalid path"));
+            anyhow::bail!("invalid path");
         }
         if path.file_name().is_some() {
             Ok(self.abs_path.as_path().join(path))
@@ -3400,9 +3394,10 @@ impl File {
     ) -> Result<Self> {
         let worktree_id = worktree.read(cx).as_remote().context("not remote")?.id();
 
-        if worktree_id.to_proto() != proto.worktree_id {
-            return Err(anyhow!("worktree id does not match file"));
-        }
+        anyhow::ensure!(
+            worktree_id.to_proto() == proto.worktree_id,
+            "worktree id does not match file"
+        );
 
         let disk_state = if proto.is_deleted {
             DiskState::Deleted

@@ -279,15 +279,15 @@ impl Tool for EditFileTool {
 
             let input_path = input.path.display();
             if diff.is_empty() {
-                if hallucinated_old_text {
-                    Err(anyhow!(formatdoc! {"
-                        Some edits were produced but none of them could be applied.
-                        Read the relevant sections of {input_path} again so that
-                        I can perform the requested edits.
-                    "}))
-                } else {
-                    Ok("No edits were made.".to_string().into())
-                }
+                anyhow::ensure!(
+                    !hallucinated_old_text,
+                    formatdoc! {"
+                    Some edits were produced but none of them could be applied.
+                    Read the relevant sections of {input_path} again so that
+                    I can perform the requested edits.
+                "}
+                );
+                Ok("No edits were made.".to_string().into())
             } else {
                 Ok(ToolResultOutput {
                     content: ToolResultContent::Text(format!(
@@ -353,10 +353,7 @@ fn resolve_path(
                 .entry_for_path(&path, cx)
                 .context("Can't edit file: path not found")?;
 
-            if !entry.is_file() {
-                return Err(anyhow!("Can't edit file: path is a directory"));
-            }
-
+            anyhow::ensure!(entry.is_file(), "Can't edit file: path is a directory");
             Ok(path)
         }
 

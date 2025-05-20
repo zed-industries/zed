@@ -24,7 +24,7 @@ pub mod buffer_tests;
 
 pub use crate::language_settings::EditPredictionsMode;
 use crate::language_settings::SoftWrap;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet, IndexSet};
 use fs::Fs;
@@ -368,9 +368,7 @@ pub trait LspAdapter: 'static + Send + Sync {
                 }
             }
 
-            if !binary_options.allow_binary_download {
-                return Err(anyhow!("downloading language servers disabled"));
-            }
+            anyhow::ensure!(binary_options.allow_binary_download, "downloading language servers disabled");
 
             if let Some(cached_binary) = cached_binary.as_ref() {
                 return Ok(cached_binary.clone());
@@ -1492,18 +1490,14 @@ impl Language {
         language_capture_ix = match (language_capture_ix, injection_language_capture_ix) {
             (None, Some(ix)) => Some(ix),
             (Some(_), Some(_)) => {
-                return Err(anyhow!(
-                    "both language and injection.language captures are present"
-                ));
+                anyhow::bail!("both language and injection.language captures are present");
             }
             _ => language_capture_ix,
         };
         content_capture_ix = match (content_capture_ix, injection_content_capture_ix) {
             (None, Some(ix)) => Some(ix),
             (Some(_), Some(_)) => {
-                return Err(anyhow!(
-                    "both content and injection.content captures are present"
-                ));
+                anyhow::bail!("both content and injection.content captures are present")
             }
             _ => content_capture_ix,
         };
@@ -1588,10 +1582,10 @@ impl Language {
                 .values()
                 .any(|entry| entry.name == *referenced_name)
             {
-                Err(anyhow!(
+                anyhow::bail!(
                     "language {:?} has overrides in config not in query: {referenced_name:?}",
                     self.config.name
-                ))?;
+                );
             }
         }
 
@@ -2167,18 +2161,16 @@ pub fn point_from_lsp(point: lsp::Position) -> Unclipped<PointUtf16> {
 }
 
 pub fn range_to_lsp(range: Range<PointUtf16>) -> Result<lsp::Range> {
-    if range.start > range.end {
-        Err(anyhow!(
-            "Inverted range provided to an LSP request: {:?}-{:?}",
-            range.start,
-            range.end
-        ))
-    } else {
-        Ok(lsp::Range {
-            start: point_to_lsp(range.start),
-            end: point_to_lsp(range.end),
-        })
-    }
+    anyhow::ensure!(
+        range.start <= range.end,
+        "Inverted range provided to an LSP request: {:?}-{:?}",
+        range.start,
+        range.end
+    );
+    Ok(lsp::Range {
+        start: point_to_lsp(range.start),
+        end: point_to_lsp(range.end),
+    })
 }
 
 pub fn range_from_lsp(range: lsp::Range) -> Range<Unclipped<PointUtf16>> {

@@ -90,7 +90,7 @@ impl Model {
         } else if id.starts_with("claude-3-haiku") {
             Ok(Self::Claude3Haiku)
         } else {
-            Err(anyhow!("invalid model id"))
+            anyhow::bail!("invalid model id {id}");
         }
     }
 

@@ -100,7 +100,7 @@ impl TextSystem {
         fn clone_font_id_result(font_id: &Result<FontId>) -> Result<FontId> {
             match font_id {
                 Ok(font_id) => Ok(*font_id),
-                Err(err) => Err(anyhow!("{}", err)),
+                Err(err) => Err(anyhow!("{err}")),
             }
         }
 

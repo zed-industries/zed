@@ -487,8 +487,7 @@ impl Mode {
         match self {
             Mode::Running(debug_adapter_client) => debug_adapter_client.request(request),
             Mode::Building => Task::ready(Err(anyhow!(
-                "no adapter running to send request: {:?}",
-                request
+                "no adapter running to send request: {request:?}"
             ))),
         }
     }

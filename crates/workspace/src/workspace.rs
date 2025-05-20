@@ -2187,7 +2187,7 @@ impl Workspace {
                 }
 
                 *keystrokes.borrow_mut() = Default::default();
-                Err(anyhow!("over 100 keystrokes passed to send_keystrokes"))
+                anyhow::bail!("over 100 keystrokes passed to send_keystrokes");
             })
             .detach_and_log_err(cx);
     }
@@ -4364,7 +4364,7 @@ impl Workspace {
         let this = this.upgrade().context("workspace dropped")?;
 
         let Some(id) = view.id.clone() else {
-            return Err(anyhow!("no id for view"));
+            anyhow::bail!("no id for view");
         };
         let id = ViewId::from_proto(id)?;
         let panel_id = view.panel_id.and_then(proto::PanelId::from_i32);
@@ -4391,18 +4391,16 @@ impl Workspace {
             existing_item
         } else {
             let variant = view.variant.clone();
-            if variant.is_none() {
-                Err(anyhow!("missing view variant"))?;
-            }
+            anyhow::ensure!(variant.is_some(), "missing view variant");
 
             let task = cx.update(|window, cx| {
                 FollowableViewRegistry::from_state_proto(this.clone(), id, variant, window, cx)
             })?;
 
             let Some(task) = task else {
-                return Err(anyhow!(
+                anyhow::bail!(
                     "failed to construct view from leader (maybe from a different version of zed?)"
-                ));
+                );
             };
 
             let mut new_item = task.await?;
@@ -6436,7 +6434,7 @@ async fn join_channel_internal(
     // this loop will terminate within client::CONNECTION_TIMEOUT seconds.
     'outer: loop {
         let Some(status) = client_status.recv().await else {
-            return Err(anyhow!("error connecting"));
+            anyhow::bail!("error connecting");
         };
 
         match status {

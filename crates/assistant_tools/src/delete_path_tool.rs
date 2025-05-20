@@ -1,5 +1,5 @@
 use crate::schema::json_schema_for;
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use futures::{SinkExt, StreamExt, channel::mpsc};
 use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
@@ -122,19 +122,17 @@ impl Tool for DeletePathTool {
                 }
             }
 
-            let delete = project.update(cx, |project, cx| {
-                project.delete_file(project_path, false, cx)
-            })?;
-
-            match delete {
-                Some(deletion_task) => match deletion_task.await {
-                    Ok(()) => Ok(format!("Deleted {path_str}").into()),
-                    Err(err) => Err(anyhow!("Failed to delete {path_str}: {err}")),
-                },
-                None => Err(anyhow!(
-                    "Couldn't delete {path_str} because that path isn't in this project."
-                )),
-            }
+            let deletion_task = project
+                .update(cx, |project, cx| {
+                    project.delete_file(project_path, false, cx)
+                })?
+                .with_context(|| {
+                    format!("Couldn't delete {path_str} because that path isn't in this project.")
+                })?;
+            deletion_task
+                .await
+                .with_context(|| format!("Deleting {path_str}"))?;
+            Ok(format!("Deleted {path_str}").into())
         })
         .into()
     }

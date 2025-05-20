@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
@@ -323,18 +323,15 @@ async fn get_cached_server_binary(
 
         let last_version_dir = last_version_dir.context("no cached binary")?;
         let server_path = last_version_dir.join(SERVER_PATH);
-        if server_path.exists() {
-            Ok(LanguageServerBinary {
-                path: node.binary_path().await?,
-                env: None,
-                arguments: server_binary_arguments(&server_path),
-            })
-        } else {
-            Err(anyhow!(
-                "missing executable in directory {:?}",
-                last_version_dir
-            ))
-        }
+        anyhow::ensure!(
+            server_path.exists(),
+            "missing executable in directory {last_version_dir:?}"
+        );
+        Ok(LanguageServerBinary {
+            path: node.binary_path().await?,
+            env: None,
+            arguments: server_binary_arguments(&server_path),
+        })
     })
     .await
     .log_err()

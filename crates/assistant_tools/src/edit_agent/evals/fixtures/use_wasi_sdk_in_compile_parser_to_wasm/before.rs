@@ -875,16 +875,13 @@ impl Loader {
 
         FileExt::unlock(lock_file)?;
         fs::remove_file(lock_path)?;
-
-        if output.status.success() {
-            Ok(())
-        } else {
-            Err(anyhow!(
-                "Parser compilation failed.\nStdout: {}\nStderr: {}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            ))
-        }
+        anyhow::ensure!(
+            output.status.success(),
+            "Parser compilation failed.\nStdout: {}\nStderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
     }
 
     #[cfg(unix)]
@@ -941,17 +938,13 @@ impl Loader {
                         .map(|f| format!("  `{f}`"))
                         .collect::<Vec<_>>()
                         .join("\n");
+                    anyhow::bail!(format!(indoc! {"
+                        Missing required functions in the external scanner, parsing won't work without these!
 
-                    return Err(anyhow!(format!(
-                        indoc! {"
-                            Missing required functions in the external scanner, parsing won't work without these!
+                        {missing}
 
-                            {}
-
-                            You can read more about this at https://tree-sitter.github.io/tree-sitter/creating-parsers/4-external-scanners
-                        "},
-                        missing,
-                    )));
+                        You can read more about this at https://tree-sitter.github.io/tree-sitter/creating-parsers/4-external-scanners
+                    "}));
                 }
             }
         }
@@ -1008,9 +1001,9 @@ impl Loader {
         {
             EmccSource::Podman
         } else {
-            return Err(anyhow!(
+            anyhow::bail!(
                 "You must have either emcc, docker, or podman on your PATH to run this command"
-            ));
+            );
         };
 
         let mut command = match source {
@@ -1103,12 +1096,11 @@ impl Loader {
             .spawn()
             .with_context(|| "Failed to run emcc command")?
             .wait()?;
-        if !status.success() {
-            return Err(anyhow!("emcc command failed"));
-        }
-
-        fs::rename(src_path.join(output_name), output_path)
-            .context("failed to rename wasm output file")?;
+        anyhow::ensure!(status.success(), "emcc command failed");
+        let source_path = src_path.join(output_name);
+        fs::rename(&source_path, &output_path).with_context(|| {
+            format!("failed to rename wasm output file from {source_path:?} to {output_path:?}")
+        })?;
 
         Ok(())
     }
@@ -1185,11 +1177,8 @@ impl Loader {
                                     .map(|path| {
                                        let path = parser_path.join(path);
                                         // prevent p being above/outside of parser_path
-                                        if path.starts_with(parser_path) {
-                                            Ok(path)
-                                        } else {
-                                            Err(anyhow!("External file path {path:?} is outside of parser directory {parser_path:?}"))
-                                        }
+                                        anyhow::ensure!(path.starts_with(parser_path), "External file path {path:?} is outside of parser directory {parser_path:?}");
+                                        Ok(path)
                                     })
                                     .collect::<Result<Vec<_>>>()
                             }).transpose()?,
@@ -1324,11 +1313,8 @@ impl Loader {
         let name = GRAMMAR_NAME_REGEX
             .captures(&first_three_lines)
             .and_then(|c| c.get(1))
-            .ok_or_else(|| {
-                anyhow!(
-                    "Failed to parse the language name from grammar.json at {}",
-                    grammar_path.display()
-                )
+            .with_context(|| {
+                format!("Failed to parse the language name from grammar.json at {grammar_path:?}")
             })?;
 
         Ok(name.as_str().to_string())
@@ -1347,7 +1333,7 @@ impl Loader {
             {
                 Ok(config.0)
             } else {
-                Err(anyhow!("Unknown scope '{scope}'"))
+                anyhow::bail!("Unknown scope '{scope}'")
             }
         } else if let Some((lang, _)) = self
             .language_configuration_for_file_name(path)
@@ -1371,7 +1357,7 @@ impl Loader {
         } else if let Some(lang) = self.language_configuration_for_first_line_regex(path)? {
             Ok(lang.0)
         } else {
-            Err(anyhow!("No language found"))
+            anyhow::bail!("No language found");
         }
     }
 

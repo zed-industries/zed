@@ -17,12 +17,11 @@ impl X11Display {
         scale_factor: f32,
         x_screen_index: usize,
     ) -> anyhow::Result<Self> {
-        let Some(screen) = xcb.setup().roots.get(x_screen_index) else {
-            return Err(anyhow::anyhow!(
-                "No screen found with index {}",
-                x_screen_index
-            ));
-        };
+        let screen = xcb
+            .setup()
+            .roots
+            .get(x_screen_index)
+            .with_context(|| format!("No screen found with index {x_screen_index}"))?;
         Ok(Self {
             x_screen_index,
             bounds: Bounds {

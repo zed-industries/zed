@@ -314,10 +314,10 @@ impl DapStore {
                             return Ok(result);
                         }
 
-                        Err(anyhow!(
+                        anyhow::bail!(
                             "None of the locators for task `{}` completed successfully",
                             build_command.label
-                        ))
+                        )
                     })
                 } else {
                     Task::ready(Err(anyhow!(

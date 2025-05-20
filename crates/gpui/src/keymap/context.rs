@@ -1,5 +1,5 @@
 use crate::SharedString;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use std::fmt;
 
 /// A datastructure for resolving whether an action should be dispatched
@@ -243,7 +243,7 @@ impl KeyBindingContextPredicate {
         let source = skip_whitespace(source);
         let (predicate, rest) = Self::parse_expr(source, 0)?;
         if let Some(next) = rest.chars().next() {
-            Err(anyhow!("unexpected character '{next:?}'"))
+            anyhow::bail!("unexpected character '{next:?}'");
         } else {
             Ok(predicate)
         }
@@ -334,12 +334,9 @@ impl KeyBindingContextPredicate {
             '(' => {
                 source = skip_whitespace(&source[1..]);
                 let (predicate, rest) = Self::parse_expr(source, 0)?;
-                if let Some(stripped) = rest.strip_prefix(')') {
-                    source = skip_whitespace(stripped);
-                    Ok((predicate, source))
-                } else {
-                    Err(anyhow!("expected a ')'"))
-                }
+                let stripped = rest.strip_prefix(')').context("expected a ')'")?;
+                source = skip_whitespace(stripped);
+                Ok((predicate, source))
             }
             '!' => {
                 let source = skip_whitespace(&source[1..]);
@@ -365,7 +362,7 @@ impl KeyBindingContextPredicate {
                     source,
                 ))
             }
-            _ => Err(anyhow!("unexpected character '{next:?}'")),
+            _ => anyhow::bail!("unexpected character '{next:?}'"),
         }
     }
 
@@ -385,7 +382,7 @@ impl KeyBindingContextPredicate {
         if let (Self::Identifier(left), Self::Identifier(right)) = (self, other) {
             Ok(Self::Equal(left, right))
         } else {
-            Err(anyhow!("operands of == must be identifiers"))
+            anyhow::bail!("operands of == must be identifiers");
         }
     }
 
@@ -393,7 +390,7 @@ impl KeyBindingContextPredicate {
         if let (Self::Identifier(left), Self::Identifier(right)) = (self, other) {
             Ok(Self::NotEqual(left, right))
         } else {
-            Err(anyhow!("operands of != must be identifiers"))
+            anyhow::bail!("operands of != must be identifiers");
         }
     }
 }

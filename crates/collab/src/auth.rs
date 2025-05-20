@@ -3,7 +3,7 @@ use crate::{
     db::{self, AccessTokenId, Database, UserId},
     rpc::Principal,
 };
-use anyhow::{Context as _, anyhow};
+use anyhow::Context as _;
 use axum::{
     http::{self, Request, StatusCode},
     middleware::Next,
@@ -192,7 +192,7 @@ pub async fn verify_access_token(
     let db_token = db.get_access_token(token.id).await?;
     let token_user_id = db_token.impersonated_user_id.unwrap_or(db_token.user_id);
     if token_user_id != user_id {
-        return Err(anyhow!("no such access token"))?;
+        return Err(anyhow::anyhow!("no such access token"))?;
     }
     let t0 = Instant::now();
 

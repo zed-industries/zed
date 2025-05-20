@@ -729,7 +729,7 @@ impl DirectWriteState {
         glyph_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
         if glyph_bounds.size.width.0 == 0 || glyph_bounds.size.height.0 == 0 {
-            return Err(anyhow!("glyph bounds are empty"));
+            anyhow::bail!("glyph bounds are empty");
         }
 
         let font_info = &self.fonts[params.font_id.0];
@@ -1301,7 +1301,7 @@ fn get_postscript_name(font_face: &IDWriteFontFace3, locale: &str) -> Result<Str
         )?
     };
     if !exists.as_bool() || info.is_none() {
-        return Err(anyhow!("No postscript name found for font face"));
+        anyhow::bail!("No postscript name found for font face");
     }
 
     get_name(info.unwrap(), locale)
@@ -1393,9 +1393,7 @@ fn get_name(string: IDWriteLocalizedStrings, locale: &str) -> Result<String> {
                 &mut exists as _,
             )?
         };
-        if !exists.as_bool() {
-            return Err(anyhow!("No localised string for {}", locale));
-        }
+        anyhow::ensure!(exists.as_bool(), "No localised string for {locale}");
     }
 
     let name_length = unsafe { string.GetStringLength(locale_name_index) }? as usize;

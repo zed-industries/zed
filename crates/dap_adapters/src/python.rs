@@ -144,7 +144,7 @@ impl PythonDebugAdapter {
         };
 
         Ok(DebugAdapterBinary {
-            command: python_path.ok_or(anyhow!("failed to find binary path for python"))?,
+            command: python_path.context("failed to find binary path for Python")?,
             arguments: vec![
                 debugpy_dir
                     .join(Self::ADAPTER_PATH)

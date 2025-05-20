@@ -1,7 +1,7 @@
 use crate::{AudioStream, Participant, RemoteTrack, RoomEvent, TrackPublication};
 
 use crate::mock_client::{participant::*, publication::*, track::*};
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{BTreeMap, HashMap, HashSet, btree_map::Entry as BTreeEntry, hash_map::Entry};
 use gpui::{App, AsyncApp, BackgroundExecutor};
@@ -69,7 +69,7 @@ impl TestServer {
             e.insert(server.clone());
             Ok(server)
         } else {
-            Err(anyhow!("a server with url {:?} already exists", url))
+            anyhow::bail!("a server with url {url:?} already exists");
         }
     }
 
@@ -103,7 +103,7 @@ impl TestServer {
             e.insert(Default::default());
             Ok(())
         } else {
-            Err(anyhow!("room {:?} already exists", room))
+            anyhow::bail!("{room:?} already exists");
         }
     }
 
@@ -176,11 +176,7 @@ impl TestServer {
             e.insert(client_room);
             Ok(identity)
         } else {
-            Err(anyhow!(
-                "{:?} attempted to join room {:?} twice",
-                identity,
-                room_name
-            ))
+            anyhow::bail!("{identity:?} attempted to join room {room_name:?} twice");
         }
     }
 
@@ -194,12 +190,8 @@ impl TestServer {
         let room = server_rooms
             .get_mut(&*room_name)
             .with_context(|| format!("room {room_name:?} does not exist"))?;
-        room.client_rooms.remove(&identity).ok_or_else(|| {
-            anyhow!(
-                "{:?} attempted to leave room {:?} before joining it",
-                identity,
-                room_name
-            )
+        room.client_rooms.remove(&identity).with_context(|| {
+            format!("{identity:?} attempted to leave room {room_name:?} before joining it")
         })?;
         Ok(())
     }
@@ -248,13 +240,9 @@ impl TestServer {
         let room = server_rooms
             .get_mut(&room_name)
             .with_context(|| format!("room {room_name} does not exist"))?;
-        room.client_rooms.remove(&identity).ok_or_else(|| {
-            anyhow!(
-                "participant {:?} did not join room {:?}",
-                identity,
-                room_name
-            )
-        })?;
+        room.client_rooms
+            .remove(&identity)
+            .with_context(|| format!("participant {identity:?} did not join room {room_name:?}"))?;
         Ok(())
     }
 
@@ -317,9 +305,7 @@ impl TestServer {
             .or(claims.video.can_publish)
             .unwrap_or(true);
 
-        if !can_publish {
-            return Err(anyhow!("user is not allowed to publish"));
-        }
+        anyhow::ensure!(can_publish, "user is not allowed to publish");
 
         let sid: TrackSid = format!("TR_{}", nanoid::nanoid!(17)).try_into().unwrap();
         let server_track = Arc::new(TestServerVideoTrack {
@@ -383,9 +369,7 @@ impl TestServer {
             .or(claims.video.can_publish)
             .unwrap_or(true);
 
-        if !can_publish {
-            return Err(anyhow!("user is not allowed to publish"));
-        }
+        anyhow::ensure!(can_publish, "user is not allowed to publish");
 
         let sid: TrackSid = format!("TR_{}", nanoid::nanoid!(17)).try_into().unwrap();
         let server_track = Arc::new(TestServerAudioTrack {

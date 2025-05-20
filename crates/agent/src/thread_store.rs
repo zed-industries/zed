@@ -699,20 +699,14 @@ impl SerializedThread {
                 SerializedThread::VERSION => Ok(serde_json::from_value::<SerializedThread>(
                     saved_thread_json,
                 )?),
-                _ => Err(anyhow!(
-                    "unrecognized serialized thread version: {}",
-                    version
-                )),
+                _ => anyhow::bail!("unrecognized serialized thread version: {version:?}"),
             },
             None => {
                 let saved_thread =
                     serde_json::from_value::<LegacySerializedThread>(saved_thread_json)?;
                 Ok(saved_thread.upgrade())
             }
-            version => Err(anyhow!(
-                "unrecognized serialized thread version: {:?}",
-                version
-            )),
+            version => anyhow::bail!("unrecognized serialized thread version: {version:?}"),
         }
     }
 }

@@ -2031,9 +2031,10 @@ impl Project {
     }
 
     pub fn shared(&mut self, project_id: u64, cx: &mut Context<Self>) -> Result<()> {
-        if !matches!(self.client_state, ProjectClientState::Local) {
-            return Err(anyhow!("project was already shared"));
-        }
+        anyhow::ensure!(
+            matches!(self.client_state, ProjectClientState::Local),
+            "project was already shared"
+        );
 
         self.client_subscriptions.extend([
             self.client
@@ -2151,9 +2152,10 @@ impl Project {
     }
 
     fn unshare_internal(&mut self, cx: &mut App) -> Result<()> {
-        if self.is_via_collab() {
-            return Err(anyhow!("attempted to unshare a remote project"));
-        }
+        anyhow::ensure!(
+            !self.is_via_collab(),
+            "attempted to unshare a remote project"
+        );
 
         if let ProjectClientState::Shared { remote_id, .. } = self.client_state {
             self.client_state = ProjectClientState::Local;
@@ -2189,7 +2191,7 @@ impl Project {
                 .ok();
             Ok(())
         } else {
-            Err(anyhow!("attempted to unshare an unshared project"))
+            anyhow::bail!("attempted to unshare an unshared project");
         }
     }
 
@@ -2431,7 +2433,7 @@ impl Project {
         if let Some(buffer) = self.buffer_for_id(id, cx) {
             Task::ready(Ok(buffer))
         } else if self.is_local() || self.is_via_ssh() {
-            Task::ready(Err(anyhow!("buffer {} does not exist", id)))
+            Task::ready(Err(anyhow!("buffer {id} does not exist")))
         } else if let Some(project_id) = self.remote_id() {
             let request = self.client.request(proto::OpenBufferById {
                 project_id,
@@ -4630,13 +4632,10 @@ impl Project {
                 .file()
                 .map(|f| f.is_private())
                 .unwrap_or_default();
-            if is_private {
-                Err(anyhow!(ErrorCode::UnsharedItem))
-            } else {
-                Ok(proto::OpenBufferResponse {
-                    buffer_id: this.create_buffer_for_peer(&buffer, peer_id, cx).into(),
-                })
-            }
+            anyhow::ensure!(!is_private, ErrorCode::UnsharedItem);
+            Ok(proto::OpenBufferResponse {
+                buffer_id: this.create_buffer_for_peer(&buffer, peer_id, cx).into(),
+            })
         })?
     }
 

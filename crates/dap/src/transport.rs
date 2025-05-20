@@ -251,7 +251,7 @@ impl TransportDelegate {
             };
 
             if bytes_read == 0 {
-                break Err(anyhow!("Debugger log stream closed"));
+                anyhow::bail!("Debugger log stream closed");
             }
 
             if let Some(log_handlers) = log_handlers.as_ref() {
@@ -376,7 +376,7 @@ impl TransportDelegate {
 
         let result = loop {
             match reader.read_line(&mut buffer).await {
-                Ok(0) => break Err(anyhow!("debugger error stream closed")),
+                Ok(0) => anyhow::bail!("debugger error stream closed"),
                 Ok(_) => {
                     for (kind, log_handler) in log_handlers.lock().iter_mut() {
                         if matches!(kind, LogKind::Adapter) {
@@ -406,13 +406,13 @@ impl TransportDelegate {
                 .and_then(|response| response.error.map(|msg| msg.format))
                 .or_else(|| response.message.clone())
             {
-                return Err(anyhow!(error_message));
+                anyhow::bail!(error_message);
             };
 
-            Err(anyhow!(
+            anyhow::bail!(
                 "Received error response from adapter. Response: {:?}",
-                response.clone()
-            ))
+                response
+            );
         }
     }
 
@@ -434,7 +434,7 @@ impl TransportDelegate {
                 .with_context(|| "reading a message from server")?
                 == 0
             {
-                return Err(anyhow!("debugger reader stream closed"));
+                anyhow::bail!("debugger reader stream closed");
             };
 
             if buffer == "\r\n" {
@@ -537,9 +537,10 @@ impl TcpTransport {
     }
 
     async fn start(binary: &DebugAdapterBinary, cx: AsyncApp) -> Result<(TransportPipe, Self)> {
-        let Some(connection_args) = binary.connection.as_ref() else {
-            return Err(anyhow!("No connection arguments provided"));
-        };
+        let connection_args = binary
+            .connection
+            .as_ref()
+            .context("No connection arguments provided")?;
 
         let host = connection_args.host;
         let port = connection_args.port;
@@ -574,7 +575,7 @@ impl TcpTransport {
 
         let (mut process, (rx, tx)) = select! {
             _ = cx.background_executor().timer(Duration::from_millis(timeout)).fuse() => {
-                return Err(anyhow!(format!("Connection to TCP DAP timeout {}:{}", host, port)))
+                anyhow::bail!("Connection to TCP DAP timeout {host}:{port}");
             },
             result = cx.spawn(async move |cx| {
                 loop {
@@ -588,7 +589,7 @@ impl TcpTransport {
                                 } else {
                                     String::from_utf8_lossy(&output.stderr).to_string()
                                 };
-                                return Err(anyhow!("{}\nerror: process exited before debugger attached.", output));
+                                anyhow::bail!("{output}\nerror: process exited before debugger attached.");
                             }
                             cx.background_executor().timer(Duration::from_millis(100)).await;
                         }

@@ -1917,7 +1917,10 @@ impl HttpClient for NullHttpClient {
         'static,
         Result<http_client::Response<http_client::AsyncBody>, anyhow::Error>,
     > {
-        async move { Err(anyhow!("No HttpClient available")) }.boxed()
+        async move {
+            anyhow::bail!("No HttpClient available");
+        }
+        .boxed()
     }
 
     fn proxy(&self) -> Option<&Url> {

@@ -873,15 +873,13 @@ impl LanguageRegistry {
                                 }
                             }
                             Err(e) => {
-                                log::error!("failed to load language {name}:\n{:?}", e);
+                                log::error!("failed to load language {name}:\n{e:?}");
                                 let mut state = this.state.write();
                                 state.mark_language_loaded(id);
                                 if let Some(mut txs) = state.loading_languages.remove(&id) {
                                     for tx in txs.drain(..) {
                                         let _ = tx.send(Err(anyhow!(
-                                            "failed to load language {}: {}",
-                                            name,
-                                            e
+                                            "failed to load language {name}: {e}",
                                         )));
                                     }
                                 }
@@ -970,7 +968,7 @@ impl LanguageRegistry {
                 }
             }
         } else {
-            tx.send(Err(Arc::new(anyhow!("no such grammar {}", name))))
+            tx.send(Err(Arc::new(anyhow!("no such grammar {name}"))))
                 .ok();
         }
 

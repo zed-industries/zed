@@ -2,7 +2,6 @@
 
 pub use ::proto::*;
 
-use anyhow::anyhow;
 use async_tungstenite::tungstenite::Message as WebSocketMessage;
 use futures::{SinkExt as _, StreamExt as _};
 use proto::Message as _;
@@ -102,7 +101,7 @@ where
                 _ => {}
             }
         }
-        Err(anyhow!("connection closed"))
+        anyhow::bail!("connection closed");
     }
 }
 
@@ -113,7 +112,7 @@ mod tests {
     #[gpui::test]
     async fn test_buffer_size() {
         let (tx, rx) = futures::channel::mpsc::unbounded();
-        let mut sink = MessageStream::new(tx.sink_map_err(|_| anyhow!("")));
+        let mut sink = MessageStream::new(tx.sink_map_err(|_| anyhow::anyhow!("")));
         sink.write(Message::Envelope(Envelope {
             payload: Some(envelope::Payload::UpdateWorktree(UpdateWorktree {
                 root_name: "abcdefg".repeat(10),

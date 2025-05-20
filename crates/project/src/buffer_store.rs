@@ -164,8 +164,8 @@ impl RemoteBufferStore {
                             .worktree_store
                             .read(cx)
                             .worktree_for_id(worktree_id, cx)
-                            .ok_or_else(|| {
-                                anyhow!("no worktree found for id {}", file.worktree_id)
+                            .with_context(|| {
+                                format!("no worktree found for id {}", file.worktree_id)
                             })?;
                         buffer_file = Some(Arc::new(File::from_proto(file, worktree.clone(), cx)?)
                             as Arc<dyn language::File>);
@@ -193,8 +193,8 @@ impl RemoteBufferStore {
                     .loading_remote_buffers_by_id
                     .get(&buffer_id)
                     .cloned()
-                    .ok_or_else(|| {
-                        anyhow!(
+                    .with_context(|| {
+                        format!(
                             "received chunk for buffer {} without initial state",
                             chunk.buffer_id
                         )
@@ -906,8 +906,8 @@ impl BufferStore {
                     if is_remote {
                         return Ok(());
                     } else {
-                        debug_panic!("buffer {} was already registered", remote_id);
-                        Err(anyhow!("buffer {} was already registered", remote_id))?;
+                        debug_panic!("buffer {remote_id} was already registered");
+                        anyhow::bail!("buffer {remote_id} was already registered");
                     }
                 }
                 entry.insert(open_buffer);
@@ -1272,9 +1272,9 @@ impl BufferStore {
         capability: Capability,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        let Some(remote) = self.as_remote_mut() else {
-            return Err(anyhow!("buffer store is not a remote"));
-        };
+        let remote = self
+            .as_remote_mut()
+            .context("buffer store is not a remote")?;
 
         if let Some(buffer) =
             remote.handle_create_buffer_for_peer(envelope, replica_id, capability, cx)?

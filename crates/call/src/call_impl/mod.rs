@@ -399,12 +399,9 @@ impl ActiveCall {
         project: Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        if let Some((room, _)) = self.room.as_ref() {
-            self.report_call_event("Project Unshared", cx);
-            room.update(cx, |room, cx| room.unshare_project(project, cx))
-        } else {
-            Err(anyhow!("no active call"))
-        }
+        let (room, _) = self.room.as_ref().context("no active call")?;
+        self.report_call_event("Project Unshared", cx);
+        room.update(cx, |room, cx| room.unshare_project(project, cx))
     }
 
     pub fn location(&self) -> Option<&WeakEntity<Project>> {

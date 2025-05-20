@@ -1,5 +1,5 @@
 //! socks proxy
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use http_client::Url;
 use tokio_socks::tcp::{Socks4Stream, Socks5Stream};
 
@@ -31,7 +31,7 @@ pub(crate) async fn connect_socks_proxy_stream(
         // If parsing the proxy URL fails, we must avoid falling back to an insecure connection.
         // SOCKS proxies are often used in contexts where security and privacy are critical,
         // so any fallback could expose users to significant risks.
-        return Err(anyhow!("Parsing proxy url failed"));
+        anyhow::bail!("Parsing proxy url failed");
     };
 
     // Connect to proxy and wrap protocol later

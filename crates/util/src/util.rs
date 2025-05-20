@@ -27,7 +27,7 @@ use std::{
 use unicase::UniCase;
 
 #[cfg(unix)]
-use anyhow::{Context as _, anyhow};
+use anyhow::Context as _;
 
 pub use take_until::*;
 #[cfg(any(test, feature = "test-support"))]
@@ -335,9 +335,7 @@ pub fn load_login_shell_environment() -> Result<()> {
     )
     .output()
     .context("failed to spawn login shell to source login environment variables")?;
-    if !output.status.success() {
-        Err(anyhow!("login shell exited with error"))?;
-    }
+    anyhow::ensure!(output.status.success(), "login shell exited with error");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 

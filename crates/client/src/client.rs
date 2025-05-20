@@ -711,9 +711,10 @@ impl Client {
         let id = (TypeId::of::<T>(), remote_id);
 
         let mut state = self.handler_set.lock();
-        if state.entities_by_type_and_remote_id.contains_key(&id) {
-            return Err(anyhow!("already subscribed to entity"));
-        }
+        anyhow::ensure!(
+            !state.entities_by_type_and_remote_id.contains_key(&id),
+            "already subscribed to entity"
+        );
 
         state
             .entities_by_type_and_remote_id
@@ -1072,22 +1073,19 @@ impl Client {
             }
 
             let response = http.get(&url, Default::default(), false).await?;
-            let collab_url = if response.status().is_redirection() {
-                response
-                    .headers()
-                    .get("Location")
-                    .context("missing location header in /rpc response")?
-                    .to_str()
-                    .map_err(EstablishConnectionError::other)?
-                    .to_string()
-            } else {
-                Err(anyhow!(
-                    "unexpected /rpc response status {}",
-                    response.status()
-                ))?
-            };
-
-            Url::parse(&collab_url).context("invalid rpc url")
+            anyhow::ensure!(
+                response.status().is_redirection(),
+                "unexpected /rpc response status {}",
+                response.status()
+            );
+            let collab_url = response
+                .headers()
+                .get("Location")
+                .context("missing location header in /rpc response")?
+                .to_str()
+                .map_err(EstablishConnectionError::other)?
+                .to_string();
+            Url::parse(&collab_url).with_context(|| format!("parsing colab rpc url {collab_url}"))
         }
     }
 
@@ -1290,7 +1288,7 @@ impl Client {
                                 }
                             }
 
-                            Err(anyhow!("didn't receive login redirect"))
+                            anyhow::bail!("didn't receive login redirect");
                         })
                         .await?;
 
@@ -1408,13 +1406,12 @@ impl Client {
         let mut response = http.send(request).await?;
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
-        if !response.status().is_success() {
-            Err(anyhow!(
-                "admin user request failed {} - {}",
-                response.status().as_u16(),
-                body,
-            ))?;
-        }
+        anyhow::ensure!(
+            response.status().is_success(),
+            "admin user request failed {} - {}",
+            response.status().as_u16(),
+            body,
+        );
         let response: AuthenticatedUserResponse = serde_json::from_str(&body)?;
 
         // Use the admin API token to authenticate as the impersonated user.
@@ -1451,7 +1448,7 @@ impl Client {
         if let Status::Connected { connection_id, .. } = *self.status().borrow() {
             Ok(connection_id)
         } else {
-            Err(anyhow!("not connected"))
+            anyhow::bail!("not connected");
         }
     }
 
