@@ -7946,6 +7946,7 @@ dependencies = [
  "editor",
  "file_icons",
  "gpui",
+ "language",
  "log",
  "project",
  "schemars",

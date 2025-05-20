@@ -104,7 +104,6 @@ pub use worktree::{
 
 const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 pub const SERVER_PROGRESS_THROTTLE_TIMEOUT: Duration = Duration::from_millis(100);
-pub const FS_WATCH_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FormatTrigger {
@@ -9221,9 +9220,7 @@ impl LspStore {
             return;
         }
 
-        let Some(local) = self.as_local_mut() else {
-            return;
-        };
+        let Some(local) = self.as_local() else { return };
 
         local.prettier_store.update(cx, |prettier_store, cx| {
             prettier_store.update_prettier_settings(&worktree_handle, changes, cx)
@@ -9243,53 +9240,22 @@ impl LspStore {
         language_server_ids.dedup();
 
         let abs_path = worktree_handle.read(cx).abs_path();
-
         for server_id in &language_server_ids {
-            let Some(watch) = local.language_server_watched_paths.get_mut(&server_id) else {
-                continue;
-            };
-            let Some(watched_paths) = watch.worktree_paths.get(&worktree_id) else {
-                continue;
-            };
-
-            for (path, _, change) in changes {
-                if !watched_paths.is_match(path) {
-                    continue;
-                }
-
-                let file_abs_path = abs_path.join(path);
-
-                watch.pending_events.insert(file_abs_path, *change);
-            }
-
-            if watch.pending_events.is_empty() {
-                continue;
-            }
-            let server_id = *server_id;
-
-            watch.flush_timer_task = Some(cx.spawn(async move |this, cx| {
-                cx.background_executor()
-                    .timer(FS_WATCH_DEBOUNCE_TIMEOUT)
-                    .await;
-                this.update(cx, |this, _cx| {
-                    let Some(this) = this.as_local_mut() else {
-                        return;
-                    };
-                    let Some(LanguageServerState::Running { server, .. }) =
-                        this.language_servers.get(&server_id)
-                    else {
-                        return;
-                    };
-
-                    let Some(watch) = this.language_server_watched_paths.get_mut(&server_id) else {
-                        return;
-                    };
-
+            if let Some(LanguageServerState::Running { server, .. }) =
+                local.language_servers.get(server_id)
+            {
+                if let Some(watched_paths) = local
+                    .language_server_watched_paths
+                    .get(server_id)
+                    .and_then(|paths| paths.worktree_paths.get(&worktree_id))
+                {
                     let params = lsp::DidChangeWatchedFilesParams {
-                        changes: watch
-                            .pending_events
-                            .drain()
-                            .filter_map(|(path, change)| {
+                        changes: changes
+                            .iter()
+                            .filter_map(|(path, _, change)| {
+                                if !watched_paths.is_match(path) {
+                                    return None;
+                                }
                                 let typ = match change {
                                     PathChange::Loaded => return None,
                                     PathChange::Added => lsp::FileChangeType::CREATED,
@@ -9298,21 +9264,19 @@ impl LspStore {
                                     PathChange::AddedOrUpdated => lsp::FileChangeType::CHANGED,
                                 };
                                 Some(lsp::FileEvent {
-                                    uri: lsp::Url::from_file_path(&path).unwrap(),
+                                    uri: lsp::Url::from_file_path(abs_path.join(path)).unwrap(),
                                     typ,
                                 })
                             })
                             .collect(),
                     };
-
                     if !params.changes.is_empty() {
                         server
                             .notify::<lsp::notification::DidChangeWatchedFiles>(&params)
                             .ok();
                     }
-                })
-                .log_err();
-            }));
+                }
+            }
         }
     }
 
@@ -9757,8 +9721,6 @@ impl RenameActionPredicate {
 #[derive(Default)]
 struct LanguageServerWatchedPaths {
     worktree_paths: HashMap<WorktreeId, GlobSet>,
-    pending_events: HashMap<PathBuf, PathChange>,
-    flush_timer_task: Option<Task<()>>,
     abs_paths: HashMap<Arc<Path>, (GlobSet, Task<()>)>,
 }
 
@@ -9837,8 +9799,6 @@ impl LanguageServerWatchedPathsBuilder {
             .collect();
         LanguageServerWatchedPaths {
             worktree_paths: self.worktree_paths,
-            pending_events: HashMap::default(),
-            flush_timer_task: None,
             abs_paths,
         }
     }

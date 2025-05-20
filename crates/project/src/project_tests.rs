@@ -1,8 +1,8 @@
 #![allow(clippy::format_collect)]
 
 use crate::{
-    Event, git_store::StatusEntry, lsp_store::FS_WATCH_DEBOUNCE_TIMEOUT,
-    task_inventory::TaskContexts, task_store::TaskSettingsLocation, *,
+    Event, git_store::StatusEntry, task_inventory::TaskContexts, task_store::TaskSettingsLocation,
+    *,
 };
 use buffer_diff::{
     BufferDiffEvent, CALCULATE_DIFF_TASK, DiffHunkSecondaryStatus, DiffHunkStatus,
@@ -1190,9 +1190,6 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
 
     // The language server receives events for the FS mutations that match its watch patterns.
     cx.executor().run_until_parked();
-    cx.executor().advance_clock(FS_WATCH_DEBOUNCE_TIMEOUT);
-    cx.executor().run_until_parked();
-
     assert_eq!(
         &*file_changes.lock(),
         &[
