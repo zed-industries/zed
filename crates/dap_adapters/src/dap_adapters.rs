@@ -6,7 +6,7 @@ mod php;
 mod python;
 mod ruby;
 
-use std::{net::Ipv4Addr, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -28,7 +28,6 @@ use php::PhpDebugAdapter;
 use python::PythonDebugAdapter;
 use ruby::RubyDebugAdapter;
 use serde_json::{Value, json};
-use task::TcpArgumentsTemplate;
 
 pub fn init(cx: &mut App) {
     cx.update_default_global(|registry: &mut DapRegistry, _cx| {
