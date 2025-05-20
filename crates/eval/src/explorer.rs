@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use clap::Parser;
 use serde_json::{Value, json};
 use std::fs;
@@ -57,7 +57,7 @@ fn inject_thread_data(template: String, threads_data: Value) -> Result<String> {
     let injection_marker = "let threadsData = window.threadsData || { threads: [dummyThread] };";
     template
         .find(injection_marker)
-        .ok_or_else(|| anyhow!("Could not find the thread injection point in the template"))?;
+        .context("Could not find the thread injection point in the template")?;
 
     let threads_json = serde_json::to_string_pretty(&threads_data)
         .context("Failed to serialize threads data to JSON")?;

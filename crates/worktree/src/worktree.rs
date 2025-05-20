@@ -1093,7 +1093,7 @@ impl Worktree {
                 ),
             )
         })?;
-        task.ok_or_else(|| anyhow!("invalid entry"))?.await?;
+        task.context("invalid entry")?.await?;
         Ok(proto::ProjectEntryResponse {
             entry: None,
             worktree_scan_id: scan_id as u64,
@@ -1108,7 +1108,7 @@ impl Worktree {
         let task = this.update(&mut cx, |this, cx| {
             this.expand_entry(ProjectEntryId::from_proto(request.entry_id), cx)
         })?;
-        task.ok_or_else(|| anyhow!("no such entry"))?.await?;
+        task.context("no such entry")?.await?;
         let scan_id = this.read_with(&cx, |this, _| this.scan_id())?;
         Ok(proto::ExpandProjectEntryResponse {
             worktree_scan_id: scan_id as u64,
@@ -1123,7 +1123,7 @@ impl Worktree {
         let task = this.update(&mut cx, |this, cx| {
             this.expand_all_for_entry(ProjectEntryId::from_proto(request.entry_id), cx)
         })?;
-        task.ok_or_else(|| anyhow!("no such entry"))?.await?;
+        task.context("no such entry")?.await?;
         let scan_id = this.read_with(&cx, |this, _| this.scan_id())?;
         Ok(proto::ExpandAllForProjectEntryResponse {
             worktree_scan_id: scan_id as u64,
@@ -1487,9 +1487,7 @@ impl LocalWorktree {
             let abs_path = abs_path?;
             let content = fs.load_bytes(&abs_path).await?;
 
-            let worktree = worktree
-                .upgrade()
-                .ok_or_else(|| anyhow!("worktree was dropped"))?;
+            let worktree = worktree.upgrade().context("worktree was dropped")?;
             let file = match entry.await? {
                 Some(entry) => File::for_entry(entry, worktree),
                 None => {
@@ -1544,9 +1542,7 @@ impl LocalWorktree {
             }
             let text = fs.load(&abs_path).await?;
 
-            let worktree = this
-                .upgrade()
-                .ok_or_else(|| anyhow!("worktree was dropped"))?;
+            let worktree = this.upgrade().context("worktree was dropped")?;
             let file = match entry.await? {
                 Some(entry) => File::for_entry(entry, worktree),
                 None => {
@@ -1683,7 +1679,7 @@ impl LocalWorktree {
                         .refresh_entry(path.clone(), None, cx)
                 })?
                 .await?;
-            let worktree = this.upgrade().ok_or_else(|| anyhow!("worktree dropped"))?;
+            let worktree = this.upgrade().context("worktree dropped")?;
             if let Some(entry) = entry {
                 Ok(File::for_entry(entry, worktree))
             } else {
@@ -2040,7 +2036,7 @@ impl LocalWorktree {
             let new_entry = this.update(cx, |this, _| {
                 this.entry_for_path(path)
                     .cloned()
-                    .ok_or_else(|| anyhow!("failed to read path after update"))
+                    .context("reading path after update")
             })??;
             Ok(Some(new_entry))
         })
@@ -3402,11 +3398,7 @@ impl File {
         worktree: Entity<Worktree>,
         cx: &App,
     ) -> Result<Self> {
-        let worktree_id = worktree
-            .read(cx)
-            .as_remote()
-            .ok_or_else(|| anyhow!("not remote"))?
-            .id();
+        let worktree_id = worktree.read(cx).as_remote().context("not remote")?.id();
 
         if worktree_id.to_proto() != proto.worktree_id {
             return Err(anyhow!("worktree id does not match file"));
@@ -5559,7 +5551,7 @@ impl CreatedEntry {
 fn parse_gitfile(content: &str) -> anyhow::Result<&Path> {
     let path = content
         .strip_prefix("gitdir:")
-        .ok_or_else(|| anyhow!("failed to parse gitfile content {content:?}"))?;
+        .with_context(|| format!("parsing gitfile content {content:?}"))?;
     Ok(Path::new(path.trim()))
 }
 

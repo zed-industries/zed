@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use derive_more::{Deref, DerefMut};
 use futures::{
     Future, FutureExt,
@@ -1021,9 +1021,9 @@ impl App {
             let mut window = cx
                 .windows
                 .get_mut(id)
-                .ok_or_else(|| anyhow!("window not found"))?
+                .context("window not found")?
                 .take()
-                .ok_or_else(|| anyhow!("window not found"))?;
+                .context("window not found")?;
 
             let root_view = window.root.clone().unwrap();
 
@@ -1042,7 +1042,7 @@ impl App {
             } else {
                 cx.windows
                     .get_mut(id)
-                    .ok_or_else(|| anyhow!("window not found"))?
+                    .context("window not found")?
                     .replace(window);
             }
 
@@ -1119,7 +1119,7 @@ impl App {
         self.globals_by_type
             .get(&TypeId::of::<G>())
             .map(|any_state| any_state.downcast_ref::<G>().unwrap())
-            .ok_or_else(|| anyhow!("no state of type {} exists", type_name::<G>()))
+            .with_context(|| format!("no state of type {} exists", type_name::<G>()))
             .unwrap()
     }
 
@@ -1138,7 +1138,7 @@ impl App {
         self.globals_by_type
             .get_mut(&global_type)
             .and_then(|any_state| any_state.downcast_mut::<G>())
-            .ok_or_else(|| anyhow!("no state of type {} exists", type_name::<G>()))
+            .with_context(|| format!("no state of type {} exists", type_name::<G>()))
             .unwrap()
     }
 
@@ -1201,7 +1201,7 @@ impl App {
         GlobalLease::new(
             self.globals_by_type
                 .remove(&TypeId::of::<G>())
-                .ok_or_else(|| anyhow!("no global registered of type {}", type_name::<G>()))
+                .with_context(|| format!("no global registered of type {}", type_name::<G>()))
                 .unwrap(),
         )
     }
@@ -1765,7 +1765,7 @@ impl AppContext for App {
         let window = self
             .windows
             .get(window.id)
-            .ok_or_else(|| anyhow!("window not found"))?
+            .context("window not found")?
             .as_ref()
             .expect("attempted to read a window that is already on the stack");
 

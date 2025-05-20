@@ -3178,7 +3178,7 @@ impl Workspace {
                     ))
                 })
             })
-            .map(|option| option.ok_or_else(|| anyhow!("pane was dropped")))?
+            .map(|option| option.context("pane was dropped"))?
         })
     }
 
@@ -3938,7 +3938,7 @@ impl Workspace {
                         let state = this
                             .follower_states
                             .get_mut(&leader_id)
-                            .ok_or_else(|| anyhow!("following interrupted"))?;
+                            .context("following interrupted")?;
                         state.active_view_id = response
                             .active_view
                             .as_ref()
@@ -4286,7 +4286,7 @@ impl Workspace {
         update: proto::UpdateFollowers,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
-        match update.variant.ok_or_else(|| anyhow!("invalid update"))? {
+        match update.variant.context("invalid update")? {
             proto::update_followers::Variant::CreateView(view) => {
                 let view_id = ViewId::from_proto(view.id.clone().context("invalid view id")?)?;
                 let should_add_view = this.update(cx, |this, _| {
@@ -4328,12 +4328,8 @@ impl Workspace {
                 }
             }
             proto::update_followers::Variant::UpdateView(update_view) => {
-                let variant = update_view
-                    .variant
-                    .ok_or_else(|| anyhow!("missing update view variant"))?;
-                let id = update_view
-                    .id
-                    .ok_or_else(|| anyhow!("missing update view id"))?;
+                let variant = update_view.variant.context("missing update view variant")?;
+                let id = update_view.id.context("missing update view id")?;
                 let mut tasks = Vec::new();
                 this.update_in(cx, |this, window, cx| {
                     let project = this.project.clone();
@@ -6298,7 +6294,7 @@ impl ViewId {
             creator: message
                 .creator
                 .map(CollaboratorId::PeerId)
-                .ok_or_else(|| anyhow!("creator is missing"))?,
+                .context("creator is missing")?,
             id: message.id,
         })
     }
@@ -6824,7 +6820,7 @@ pub fn create_and_open_local_file(
             .await;
 
         let item = items.pop().flatten();
-        item.ok_or_else(|| anyhow!("path {path:?} is not a file"))?
+        item.with_context(|| format!("path {path:?} is not a file"))?
     })
 }
 
@@ -6945,9 +6941,7 @@ async fn open_ssh_project_inner(
     }
 
     if project_paths_to_open.is_empty() {
-        return Err(project_path_errors
-            .pop()
-            .unwrap_or_else(|| anyhow!("no paths given")));
+        return Err(project_path_errors.pop().context("no paths given")?);
     }
 
     cx.update_window(window.into(), |_, window, cx| {
@@ -7053,7 +7047,7 @@ pub fn join_in_room_project(
             let active_call = cx.update(|cx| ActiveCall::global(cx))?;
             let room = active_call
                 .read_with(cx, |call, _| call.room().cloned())?
-                .ok_or_else(|| anyhow!("not in a call"))?;
+                .context("not in a call")?;
             let project = room
                 .update(cx, |room, cx| {
                     room.join_project(

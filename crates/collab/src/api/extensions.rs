@@ -181,7 +181,7 @@ async fn download_latest_extension(
         .db
         .get_extension(&params.extension_id, constraints.as_ref())
         .await?
-        .ok_or_else(|| anyhow!("unknown extension"))?;
+        .context("unknown extension")?;
     download_extension(
         Extension(app),
         Path(DownloadExtensionParams {

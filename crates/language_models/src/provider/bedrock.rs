@@ -442,9 +442,7 @@ impl BedrockModel {
             })
             .map_err(|err| anyhow!("Failed to initialize Bedrock client: {err}"))?;
 
-        self.client
-            .get()
-            .ok_or_else(|| anyhow!("Bedrock client not initialized"))
+        self.client.get().context("Bedrock client not initialized")
     }
 
     fn stream_completion(

@@ -1,5 +1,5 @@
 use crate::SharedString;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use std::fmt;
 
 /// A datastructure for resolving whether an action should be dispatched
@@ -329,10 +329,7 @@ impl KeyBindingContextPredicate {
     }
 
     fn parse_primary(mut source: &str) -> anyhow::Result<(Self, &str)> {
-        let next = source
-            .chars()
-            .next()
-            .ok_or_else(|| anyhow!("unexpected end"))?;
+        let next = source.chars().next().context("unexpected end")?;
         match next {
             '(' => {
                 source = skip_whitespace(&source[1..]);

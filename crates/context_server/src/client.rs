@@ -308,7 +308,7 @@ impl Client {
             .response_handlers
             .lock()
             .as_mut()
-            .ok_or_else(|| anyhow!("server shut down"))
+            .context("server shut down")
             .map(|handlers| {
                 handlers.insert(
                     RequestId::Int(id),

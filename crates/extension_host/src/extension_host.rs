@@ -1415,7 +1415,7 @@ impl ExtensionStore {
         let is_dev = fs
             .metadata(&extension_dir)
             .await?
-            .ok_or_else(|| anyhow!("directory does not exist"))?
+            .context("directory does not exist")?
             .is_symlink;
 
         if let Ok(mut language_paths) = fs.read_dir(&extension_dir.join("languages")).await {

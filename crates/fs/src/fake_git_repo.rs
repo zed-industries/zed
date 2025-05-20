@@ -80,7 +80,7 @@ impl GitRepository for FakeGitRepository {
                 state
                     .index_contents
                     .get(path.as_ref())
-                    .ok_or_else(|| anyhow!("not present in index"))
+                    .context("not present in index")
                     .cloned()
             })
             .await
@@ -95,7 +95,7 @@ impl GitRepository for FakeGitRepository {
                 state
                     .head_contents
                     .get(path.as_ref())
-                    .ok_or_else(|| anyhow!("not present in HEAD"))
+                    .context("not present in HEAD")
                     .cloned()
             })
             .await

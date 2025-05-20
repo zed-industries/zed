@@ -85,14 +85,14 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
                 .db
                 .get_user_by_id(user_id)
                 .await?
-                .ok_or_else(|| anyhow!("user {} not found", user_id))?;
+                .with_context(|| format!("user {user_id} not found"))?;
 
             if let Some(impersonator_id) = validate_result.impersonator_id {
                 let admin = state
                     .db
                     .get_user_by_id(impersonator_id)
                     .await?
-                    .ok_or_else(|| anyhow!("user {} not found", impersonator_id))?;
+                    .with_context(|| format!("user {impersonator_id} not found"))?;
                 req.extensions_mut()
                     .insert(Principal::Impersonated { user, admin });
             } else {

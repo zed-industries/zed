@@ -16,7 +16,7 @@ use crate::{
     Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
     StrikethroughStyle, UnderlineStyle, px,
 };
-use anyhow::anyhow;
+use anyhow::{Context, anyhow};
 use collections::FxHashMap;
 use core::fmt;
 use derive_more::Deref;
@@ -174,7 +174,7 @@ impl TextSystem {
         let glyph_id = self
             .platform_text_system
             .glyph_for_char(font_id, character)
-            .ok_or_else(|| anyhow!("glyph not found for character '{}'", character))?;
+            .with_context(|| format!("glyph not found for character '{character}'"))?;
         let bounds = self
             .platform_text_system
             .typographic_bounds(font_id, glyph_id)?;
@@ -188,7 +188,7 @@ impl TextSystem {
         let glyph_id = self
             .platform_text_system
             .glyph_for_char(font_id, ch)
-            .ok_or_else(|| anyhow!("glyph not found for character '{}'", ch))?;
+            .with_context(|| format!("glyph not found for character '{ch}'"))?;
         let result = self.platform_text_system.advance(font_id, glyph_id)?
             / self.units_per_em(font_id) as f32;
 

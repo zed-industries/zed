@@ -1,7 +1,7 @@
 use std::str;
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use collections::HashMap;
 use futures::{
     AsyncBufReadExt, AsyncRead, AsyncReadExt as _,
@@ -82,7 +82,7 @@ impl LspStdoutHandler {
                 .split('\n')
                 .find(|line| line.starts_with(CONTENT_LEN_HEADER))
                 .and_then(|line| line.strip_prefix(CONTENT_LEN_HEADER))
-                .ok_or_else(|| anyhow!("invalid LSP message header {headers:?}"))?
+                .with_context(|| format!("invalid LSP message header {headers:?}"))?
                 .trim_end()
                 .parse()?;
 

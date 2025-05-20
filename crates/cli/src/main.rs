@@ -417,9 +417,7 @@ mod linux {
                 path.to_path_buf().canonicalize()?
             } else {
                 let cli = env::current_exe()?;
-                let dir = cli
-                    .parent()
-                    .ok_or_else(|| anyhow!("no parent path for cli"))?;
+                let dir = cli.parent().context("no parent path for cli")?;
 
                 // libexec is the standard, lib/zed is for Arch (and other non-libexec distros),
                 // ./zed is for the target directory in development builds.

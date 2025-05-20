@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
+use anyhow::Context as _;
 use anyhow::{Result, anyhow};
 use chrono::DateTime;
 use collections::HashSet;
@@ -322,8 +323,8 @@ impl TryFrom<ApiTokenResponse> for ApiToken {
     type Error = anyhow::Error;
 
     fn try_from(response: ApiTokenResponse) -> Result<Self, Self::Error> {
-        let expires_at = DateTime::from_timestamp(response.expires_at, 0)
-            .ok_or_else(|| anyhow!("invalid expires_at"))?;
+        let expires_at =
+            DateTime::from_timestamp(response.expires_at, 0).context("invalid expires_at")?;
 
         Ok(Self {
             api_key: response.token,
@@ -454,7 +455,7 @@ impl CopilotChat {
             )
         })?;
 
-        let oauth_token = oauth_token.ok_or_else(|| anyhow!("No OAuth token available"))?;
+        let oauth_token = oauth_token.context("No OAuth token available")?;
 
         let token = match api_token {
             Some(api_token) if api_token.remaining_seconds() > 5 * 60 => api_token.clone(),

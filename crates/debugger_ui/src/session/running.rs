@@ -10,7 +10,7 @@ use std::{any::Any, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 use crate::persistence::{self, DebuggerPaneItem, SerializedLayout};
 
 use super::DebugPanelItemEvent;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use breakpoint_list::BreakpointList;
 use collections::{HashMap, IndexMap};
 use console::Console;
@@ -817,7 +817,7 @@ impl RunningState {
                 let exit_status = terminal
                     .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
                     .await
-                    .ok_or_else(|| anyhow!("Failed to wait for completed task"))?;
+                    .context("Failed to wait for completed task")?;
 
                 if !exit_status.success() {
                     anyhow::bail!("Build failed");
@@ -829,8 +829,8 @@ impl RunningState {
             let request = if let Some(request) = request {
                 request
             } else if let Some((task, locator_name)) = build_output {
-                let locator_name = locator_name
-                    .ok_or_else(|| anyhow!("Could not find a valid locator for a build task"))?;
+                let locator_name =
+                    locator_name.context("Could not find a valid locator for a build task")?;
                 dap_store
                     .update(cx, |this, cx| {
                         this.run_debug_locator(&locator_name, task, cx)
@@ -844,7 +844,7 @@ impl RunningState {
                     let cwd = match launch_request.cwd.as_deref().and_then(|path| path.to_str()) {
                         Some(cwd) => {
                             let substituted_cwd = substitute_variables_in_str(&cwd, &task_context)
-                                .ok_or_else(|| anyhow!("Failed to substitute variables in cwd"))?;
+                                .context("substituting variables in cwd")?;
                             Some(PathBuf::from(substituted_cwd))
                         }
                         None => None,
@@ -854,7 +854,7 @@ impl RunningState {
                         &launch_request.env.into_iter().collect(),
                         &task_context,
                     )
-                    .ok_or_else(|| anyhow!("Failed to substitute variables in env"))?
+                    .context("substituting variables in env")?
                     .into_iter()
                     .collect();
                     let new_launch_request = LaunchRequest {
@@ -862,13 +862,13 @@ impl RunningState {
                             &launch_request.program,
                             &task_context,
                         )
-                        .ok_or_else(|| anyhow!("Failed to substitute variables in program"))?,
+                        .context("substituting variables in program")?,
                         args: launch_request
                             .args
                             .into_iter()
                             .map(|arg| substitute_variables_in_str(&arg, &task_context))
                             .collect::<Option<Vec<_>>>()
-                            .ok_or_else(|| anyhow!("Failed to substitute variables in args"))?,
+                            .context("substituting variables in args")?,
                         cwd,
                         env,
                     };
@@ -994,7 +994,7 @@ impl RunningState {
                     .pty_info
                     .pid()
                     .map(|pid| pid.as_u32())
-                    .ok_or_else(|| anyhow!("Terminal was spawned but PID was not available"))
+                    .context("Terminal was spawned but PID was not available")
             })?
         });
 

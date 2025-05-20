@@ -762,7 +762,7 @@ impl GitRepository for RealGitRepository {
                 let stdin = process
                     .stdin
                     .take()
-                    .ok_or_else(|| anyhow!("no stdin for git cat-file subprocess"))?;
+                    .context("no stdin for git cat-file subprocess")?;
                 let mut stdin = BufWriter::new(stdin);
                 for rev in &revs {
                     write!(&mut stdin, "{rev}\0")?;
@@ -913,7 +913,7 @@ impl GitRepository for RealGitRepository {
                 repo.set_head(
                     revision
                         .name()
-                        .ok_or_else(|| anyhow!("Branch name could not be retrieved"))?,
+                        .context("Branch name could not be retrieved")?,
                 )?;
                 Ok(())
             })
@@ -1753,12 +1753,8 @@ fn parse_upstream_track(upstream_track: &str) -> Result<UpstreamTracking> {
         }));
     }
 
-    let upstream_track = upstream_track
-        .strip_prefix("[")
-        .ok_or_else(|| anyhow!("missing ["))?;
-    let upstream_track = upstream_track
-        .strip_suffix("]")
-        .ok_or_else(|| anyhow!("missing ["))?;
+    let upstream_track = upstream_track.strip_prefix("[").context("missing [")?;
+    let upstream_track = upstream_track.strip_suffix("]").context("missing [")?;
     let mut ahead: u32 = 0;
     let mut behind: u32 = 0;
     for component in upstream_track.split(", ") {

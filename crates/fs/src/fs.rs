@@ -1012,9 +1012,7 @@ impl FakeFsState {
         Fn: FnOnce(btree_map::Entry<String, Arc<Mutex<FakeFsEntry>>>) -> Result<T>,
     {
         let path = normalize_path(path);
-        let filename = path
-            .file_name()
-            .ok_or_else(|| anyhow!("cannot overwrite the root"))?;
+        let filename = path.file_name().context("cannot overwrite the root")?;
         let parent_path = path.parent().unwrap();
 
         let parent = self.read_path(parent_path)?;
@@ -1352,7 +1350,7 @@ impl FakeFs {
                     let path = std::str::from_utf8(content)
                         .ok()
                         .and_then(|content| content.strip_prefix("gitdir:"))
-                        .ok_or_else(|| anyhow!("not a valid gitfile"))?
+                        .context("not a valid gitfile")?
                         .trim();
                     git_dir_path.insert(normalize_path(&dot_git.parent().unwrap().join(path)))
                 }
@@ -2027,10 +2025,8 @@ impl Fs for FakeFs {
         self.simulate_random_delay().await;
 
         let path = normalize_path(path);
-        let parent_path = path
-            .parent()
-            .ok_or_else(|| anyhow!("cannot remove the root"))?;
-        let base_name = path.file_name().unwrap();
+        let parent_path = path.parent().context("cannot remove the root")?;
+        let base_name = path.file_name().context("cannot remove the root")?;
 
         let mut state = self.state.lock();
         let parent_entry = state.read_path(parent_path)?;
@@ -2064,9 +2060,7 @@ impl Fs for FakeFs {
         self.simulate_random_delay().await;
 
         let path = normalize_path(path);
-        let parent_path = path
-            .parent()
-            .ok_or_else(|| anyhow!("cannot remove the root"))?;
+        let parent_path = path.parent().context("cannot remove the root")?;
         let base_name = path.file_name().unwrap();
         let mut state = self.state.lock();
         let parent_entry = state.read_path(parent_path)?;
@@ -2443,7 +2437,7 @@ fn read_recursive<'a>(
         let metadata = fs
             .metadata(source)
             .await?
-            .ok_or_else(|| anyhow!("path does not exist: {}", source.display()))?;
+            .with_context(|| format!("path does not exist: {source:?}"))?;
 
         if metadata.is_dir {
             output.push((source.to_path_buf(), true));

@@ -419,7 +419,7 @@ impl ThreadStore {
             let thread = database
                 .try_find_thread(id.clone())
                 .await?
-                .ok_or_else(|| anyhow!("no thread found with ID: {id:?}"))?;
+                .with_context(|| format!("no thread found with ID: {id:?}"))?;
 
             let thread = this.update_in(cx, |this, window, cx| {
                 cx.new(|cx| {

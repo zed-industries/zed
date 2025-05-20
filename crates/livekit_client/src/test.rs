@@ -77,7 +77,7 @@ impl TestServer {
         Ok(SERVERS
             .lock()
             .get(url)
-            .ok_or_else(|| anyhow!("no server found for url"))?
+            .context("no server found for url")?
             .clone())
     }
 
@@ -85,7 +85,7 @@ impl TestServer {
         SERVERS
             .lock()
             .remove(&self.url)
-            .ok_or_else(|| anyhow!("server with url {:?} does not exist", self.url))?;
+            .with_context(|| format!("server with url {:?} does not exist", self.url))?;
         Ok(())
     }
 
@@ -113,7 +113,7 @@ impl TestServer {
         let mut server_rooms = self.rooms.lock();
         server_rooms
             .remove(&room)
-            .ok_or_else(|| anyhow!("room {:?} does not exist", room))?;
+            .with_context(|| format!("room {room:?} does not exist"))?;
         Ok(())
     }
 
@@ -193,7 +193,7 @@ impl TestServer {
         let mut server_rooms = self.rooms.lock();
         let room = server_rooms
             .get_mut(&*room_name)
-            .ok_or_else(|| anyhow!("room {} does not exist", room_name))?;
+            .with_context(|| format!("room {room_name:?} does not exist"))?;
         room.client_rooms.remove(&identity).ok_or_else(|| {
             anyhow!(
                 "{:?} attempted to leave room {:?} before joining it",
@@ -247,7 +247,7 @@ impl TestServer {
         let mut server_rooms = self.rooms.lock();
         let room = server_rooms
             .get_mut(&room_name)
-            .ok_or_else(|| anyhow!("room {} does not exist", room_name))?;
+            .with_context(|| format!("room {room_name} does not exist"))?;
         room.client_rooms.remove(&identity).ok_or_else(|| {
             anyhow!(
                 "participant {:?} did not join room {:?}",
@@ -269,7 +269,7 @@ impl TestServer {
         let mut server_rooms = self.rooms.lock();
         let room = server_rooms
             .get_mut(&room_name)
-            .ok_or_else(|| anyhow!("room {} does not exist", room_name))?;
+            .with_context(|| format!("room {room_name} does not exist"))?;
         room.participant_permissions
             .insert(ParticipantIdentity(identity), permission);
         Ok(())
@@ -308,7 +308,7 @@ impl TestServer {
         let mut server_rooms = self.rooms.lock();
         let room = server_rooms
             .get_mut(&*room_name)
-            .ok_or_else(|| anyhow!("room {} does not exist", room_name))?;
+            .with_context(|| format!("room {room_name} does not exist"))?;
 
         let can_publish = room
             .participant_permissions
@@ -374,7 +374,7 @@ impl TestServer {
         let mut server_rooms = self.rooms.lock();
         let room = server_rooms
             .get_mut(&*room_name)
-            .ok_or_else(|| anyhow!("room {} does not exist", room_name))?;
+            .with_context(|| format!("room {room_name} does not exist"))?;
 
         let can_publish = room
             .participant_permissions
@@ -443,7 +443,7 @@ impl TestServer {
         let mut server_rooms = self.rooms.lock();
         let room = server_rooms
             .get_mut(&*room_name)
-            .ok_or_else(|| anyhow!("room {} does not exist", room_name))?;
+            .with_context(|| format!("room {room_name} does not exist"))?;
         if let Some(track) = room
             .audio_tracks
             .iter_mut()
@@ -513,11 +513,11 @@ impl TestServer {
         let mut server_rooms = self.rooms.lock();
         let room = server_rooms
             .get_mut(&*room_name)
-            .ok_or_else(|| anyhow!("room {} does not exist", room_name))?;
+            .with_context(|| format!("room {room_name} does not exist"))?;
         let client_room = room
             .client_rooms
             .get(&identity)
-            .ok_or_else(|| anyhow!("not a participant in room"))?;
+            .context("not a participant in room")?;
         Ok(room
             .video_tracks
             .iter()
@@ -536,11 +536,11 @@ impl TestServer {
         let mut server_rooms = self.rooms.lock();
         let room = server_rooms
             .get_mut(&*room_name)
-            .ok_or_else(|| anyhow!("room {} does not exist", room_name))?;
+            .with_context(|| format!("room {room_name} does not exist"))?;
         let client_room = room
             .client_rooms
             .get(&identity)
-            .ok_or_else(|| anyhow!("not a participant in room"))?;
+            .context("not a participant in room")?;
         Ok(room
             .audio_tracks
             .iter()

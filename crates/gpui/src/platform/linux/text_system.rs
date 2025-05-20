@@ -232,7 +232,7 @@ impl CosmicTextSystemState {
             let font = self
                 .font_system
                 .get_font(font_id)
-                .ok_or_else(|| anyhow!("Could not load font"))?;
+                .context("Could not load font")?;
 
             // HACK: To let the storybook run and render Windows caption icons. We should actually do better font fallback.
             let allowed_bad_font_names = [

@@ -1,5 +1,5 @@
 use crate::SharedString;
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result};
 use collections::HashMap;
 pub use no_action::{NoAction, is_no_action};
 use serde_json::json;
@@ -235,7 +235,7 @@ impl ActionRegistry {
         let name = self
             .names_by_type_id
             .get(type_id)
-            .ok_or_else(|| anyhow!("no action type registered for {:?}", type_id))?
+            .with_context(|| format!("no action type registered for {type_id:?}"))?
             .clone();
 
         Ok(self.build_action(&name, None)?)

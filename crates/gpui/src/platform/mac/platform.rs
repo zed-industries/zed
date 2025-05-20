@@ -1136,19 +1136,19 @@ impl Platform for MacPlatform {
 
                 let result = CFType::wrap_under_create_rule(result)
                     .downcast::<CFDictionary>()
-                    .ok_or_else(|| anyhow!("keychain item was not a dictionary"))?;
+                    .context("keychain item was not a dictionary")?;
                 let username = result
                     .find(kSecAttrAccount as *const _)
-                    .ok_or_else(|| anyhow!("account was missing from keychain item"))?;
+                    .context("account was missing from keychain item")?;
                 let username = CFType::wrap_under_get_rule(*username)
                     .downcast::<CFString>()
-                    .ok_or_else(|| anyhow!("account was not a string"))?;
+                    .context("account was not a string")?;
                 let password = result
                     .find(kSecValueData as *const _)
-                    .ok_or_else(|| anyhow!("password was missing from keychain item"))?;
+                    .context("password was missing from keychain item")?;
                 let password = CFType::wrap_under_get_rule(*password)
                     .downcast::<CFData>()
-                    .ok_or_else(|| anyhow!("password was not a string"))?;
+                    .context("password was not a string")?;
 
                 Ok(Some((username.to_string(), password.bytes().to_vec())))
             }

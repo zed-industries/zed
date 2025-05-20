@@ -2022,7 +2022,7 @@ impl Project {
             worktree.expand_all_for_entry(entry_id, cx)
         });
         Some(cx.spawn(async move |this, cx| {
-            task.ok_or_else(|| anyhow!("no task"))?.await?;
+            task.context("no task")?.await?;
             this.update(cx, |_, cx| {
                 cx.emit(Event::ExpandedAllForEntry(worktree_id, entry_id));
             })?;
@@ -2521,9 +2521,7 @@ impl Project {
         let weak_project = cx.entity().downgrade();
         cx.spawn(async move |_, cx| {
             let image_item = open_image_task.await?;
-            let project = weak_project
-                .upgrade()
-                .ok_or_else(|| anyhow!("Project dropped"))?;
+            let project = weak_project.upgrade().context("Project dropped")?;
 
             let metadata = ImageItem::load_image_metadata(image_item.clone(), project, cx).await?;
             image_item.update(cx, |image_item, cx| {
@@ -4272,7 +4270,7 @@ impl Project {
             .payload
             .collaborator
             .take()
-            .ok_or_else(|| anyhow!("empty collaborator"))?;
+            .context("empty collaborator")?;
 
         let collaborator = Collaborator::from_proto(collaborator)?;
         this.update(&mut cx, |this, cx| {
@@ -4296,16 +4294,16 @@ impl Project {
         let old_peer_id = envelope
             .payload
             .old_peer_id
-            .ok_or_else(|| anyhow!("missing old peer id"))?;
+            .context("missing old peer id")?;
         let new_peer_id = envelope
             .payload
             .new_peer_id
-            .ok_or_else(|| anyhow!("missing new peer id"))?;
+            .context("missing new peer id")?;
         this.update(&mut cx, |this, cx| {
             let collaborator = this
                 .collaborators
                 .remove(&old_peer_id)
-                .ok_or_else(|| anyhow!("received UpdateProjectCollaborator for unknown peer"))?;
+                .context("received UpdateProjectCollaborator for unknown peer")?;
             let is_host = collaborator.is_host;
             this.collaborators.insert(new_peer_id, collaborator);
 
@@ -4336,14 +4334,11 @@ impl Project {
         mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
-            let peer_id = envelope
-                .payload
-                .peer_id
-                .ok_or_else(|| anyhow!("invalid peer id"))?;
+            let peer_id = envelope.payload.peer_id.context("invalid peer id")?;
             let replica_id = this
                 .collaborators
                 .remove(&peer_id)
-                .ok_or_else(|| anyhow!("unknown peer {:?}", peer_id))?
+                .with_context(|| format!("unknown peer {peer_id:?}"))?
                 .replica_id;
             this.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.forget_shared_buffers_for(&peer_id);
@@ -4557,11 +4552,7 @@ impl Project {
     ) -> Result<proto::FindSearchCandidatesResponse> {
         let peer_id = envelope.original_sender_id()?;
         let message = envelope.payload;
-        let query = SearchQuery::from_proto(
-            message
-                .query
-                .ok_or_else(|| anyhow!("missing query field"))?,
-        )?;
+        let query = SearchQuery::from_proto(message.query.context("missing query field")?)?;
         let results = this.update(&mut cx, |this, cx| {
             this.find_search_candidate_buffers(&query, message.limit as _, cx)
         })?;

@@ -1204,7 +1204,7 @@ impl LocalLspStore {
                 buffer.finalize_last_transaction();
                 let transaction_id = buffer
                     .start_transaction()
-                    .ok_or_else(|| anyhow!("transaction already open"))?;
+                    .context("transaction already open")?;
                 let transaction = buffer
                     .get_transaction(transaction_id)
                     .expect("transaction started")
@@ -2026,10 +2026,7 @@ impl LocalLspStore {
             .stderr(smol::process::Stdio::piped())
             .spawn()?;
 
-        let stdin = child
-            .stdin
-            .as_mut()
-            .ok_or_else(|| anyhow!("failed to acquire stdin"))?;
+        let stdin = child.stdin.as_mut().context("failed to acquire stdin")?;
         let text = buffer
             .handle
             .update(cx, |buffer, _| buffer.as_rope().clone())?;
@@ -3042,12 +3039,10 @@ impl LocalLspStore {
         adapter: Arc<CachedLspAdapter>,
         cx: &mut AsyncApp,
     ) -> Result<lsp::ApplyWorkspaceEditResponse> {
-        let this = this
-            .upgrade()
-            .ok_or_else(|| anyhow!("project project closed"))?;
+        let this = this.upgrade().context("project project closed")?;
         let language_server = this
             .update(cx, |this, _| this.language_server_for_id(server_id))?
-            .ok_or_else(|| anyhow!("language server not found"))?;
+            .context("language server not found")?;
         let transaction = Self::deserialize_workspace_edit(
             this.clone(),
             params.edit,
@@ -4378,7 +4373,7 @@ impl LspStore {
             let response = request
                 .response_from_lsp(
                     response,
-                    this.upgrade().ok_or_else(|| anyhow!("no app context"))?,
+                    this.upgrade().context("no app context")?,
                     buffer_handle,
                     language_server.server_id(),
                     cx.clone(),
@@ -4591,7 +4586,7 @@ impl LspStore {
                     .request(request)
                     .await?
                     .transaction
-                    .ok_or_else(|| anyhow!("missing transaction"))?;
+                    .context("missing transaction")?;
 
                 buffer_store
                     .update(cx, |buffer_store, cx| {
@@ -4613,7 +4608,7 @@ impl LspStore {
                 if let Some(edit) = action.lsp_action.edit() {
                     if edit.changes.is_some() || edit.document_changes.is_some() {
                         return LocalLspStore::deserialize_workspace_edit(
-                            this.upgrade().ok_or_else(|| anyhow!("no app present"))?,
+                            this.upgrade().context("no app present")?,
                             edit.clone(),
                             push_to_history,
                             lsp_adapter.clone(),
@@ -5715,7 +5710,7 @@ impl LspStore {
                 LspCommand::response_from_proto(
                     lsp_request,
                     response,
-                    project.upgrade().ok_or_else(|| anyhow!("No project"))?,
+                    project.upgrade().context("No project")?,
                     buffer_handle.clone(),
                     cx.clone(),
                 )
@@ -7094,12 +7089,8 @@ impl LspStore {
         mut cx: AsyncApp,
     ) -> Result<proto::ApplyCodeActionResponse> {
         let sender_id = envelope.original_sender_id().unwrap_or_default();
-        let action = Self::deserialize_code_action(
-            envelope
-                .payload
-                .action
-                .ok_or_else(|| anyhow!("invalid action"))?,
-        )?;
+        let action =
+            Self::deserialize_code_action(envelope.payload.action.context("invalid action")?)?;
         let apply_code_action = this.update(&mut cx, |this, cx| {
             let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
             let buffer = this.buffer_store.read(cx).get_existing(buffer_id)?;
@@ -7198,7 +7189,7 @@ impl LspStore {
                         )
                     })
             })?
-            .ok_or_else(|| anyhow!("worktree not found"))?;
+            .context("worktree not found")?;
         let (old_abs_path, new_abs_path) = {
             let root_path = worktree.update(&mut cx, |this, _| this.abs_path())?;
             let new_path = PathBuf::from_proto(envelope.payload.new_path.clone());
@@ -7288,10 +7279,7 @@ impl LspStore {
         envelope: TypedEnvelope<proto::StartLanguageServer>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        let server = envelope
-            .payload
-            .server
-            .ok_or_else(|| anyhow!("invalid server"))?;
+        let server = envelope.payload.server.context("invalid server")?;
 
         this.update(&mut cx, |this, cx| {
             let server_id = LanguageServerId(server.id as usize);
@@ -7322,11 +7310,7 @@ impl LspStore {
         this.update(&mut cx, |this, cx| {
             let language_server_id = LanguageServerId(envelope.payload.language_server_id as usize);
 
-            match envelope
-                .payload
-                .variant
-                .ok_or_else(|| anyhow!("invalid variant"))?
-            {
+            match envelope.payload.variant.context("invalid variant")? {
                 proto::update_language_server::Variant::WorkStart(payload) => {
                     this.on_lsp_work_start(
                         language_server_id,
@@ -7994,7 +7978,7 @@ impl LspStore {
                 .payload
                 .position
                 .and_then(deserialize_anchor)
-                .ok_or_else(|| anyhow!("invalid position"))?;
+                .context("invalid position")?;
             Ok::<_, anyhow::Error>(this.apply_on_type_formatting(
                 buffer,
                 position,
@@ -8114,10 +8098,7 @@ impl LspStore {
         mut cx: AsyncApp,
     ) -> Result<proto::OpenBufferForSymbolResponse> {
         let peer_id = envelope.original_sender_id().unwrap_or_default();
-        let symbol = envelope
-            .payload
-            .symbol
-            .ok_or_else(|| anyhow!("invalid symbol"))?;
+        let symbol = envelope.payload.symbol.context("invalid symbol")?;
         let symbol = Self::deserialize_symbol(symbol)?;
         let symbol = this.update(&mut cx, |this, _| {
             let signature = this.symbol_signature(&symbol.path);
@@ -8268,10 +8249,7 @@ impl LspStore {
             let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
             let buffer = this.buffer_store.read(cx).get_existing(buffer_id)?;
             let completion = Self::deserialize_completion(
-                envelope
-                    .payload
-                    .completion
-                    .ok_or_else(|| anyhow!("invalid completion"))?,
+                envelope.payload.completion.context("invalid completion")?,
             )?;
             anyhow::Ok((buffer, completion))
         })??;
@@ -9320,12 +9298,8 @@ impl LspStore {
             path: Arc::<Path>::from_proto(serialized_symbol.path),
         };
 
-        let start = serialized_symbol
-            .start
-            .ok_or_else(|| anyhow!("invalid start"))?;
-        let end = serialized_symbol
-            .end
-            .ok_or_else(|| anyhow!("invalid end"))?;
+        let start = serialized_symbol.start.context("invalid start")?;
+        let end = serialized_symbol.end.context("invalid end")?;
         Ok(CoreSymbol {
             language_server_name: LanguageServerName(serialized_symbol.language_server_name.into()),
             source_worktree_id,

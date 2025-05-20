@@ -388,7 +388,7 @@ impl RateLimitInfo {
 fn get_header<'a>(key: &str, headers: &'a HeaderMap) -> Result<&'a str, anyhow::Error> {
     Ok(headers
         .get(key)
-        .ok_or_else(|| anyhow!("missing header `{key}`"))?
+        .with_context(|| format!("missing header `{key}`"))?
         .to_str()?)
 }
 

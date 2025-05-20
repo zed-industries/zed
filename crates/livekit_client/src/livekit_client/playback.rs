@@ -365,14 +365,14 @@ fn default_device(input: bool) -> Result<(cpal::Device, cpal::SupportedStreamCon
     if input {
         device = cpal::default_host()
             .default_input_device()
-            .ok_or_else(|| anyhow!("no audio input device available"))?;
+            .context("no audio input device available")?;
         config = device
             .default_input_config()
             .context("failed to get default input config")?;
     } else {
         device = cpal::default_host()
             .default_output_device()
-            .ok_or_else(|| anyhow!("no audio output device available"))?;
+            .context("no audio output device available")?;
         config = device
             .default_output_config()
             .context("failed to get default output config")?;

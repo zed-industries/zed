@@ -944,7 +944,7 @@ impl LanguageRegistry {
                                 let grammar_name = wasm_path
                                     .file_stem()
                                     .and_then(OsStr::to_str)
-                                    .ok_or_else(|| anyhow!("invalid grammar filename"))?;
+                                    .context("invalid grammar filename")?;
                                 anyhow::Ok(with_parser(|parser| {
                                     let mut store = parser.take_wasm_store().unwrap();
                                     let grammar = store.load_language(grammar_name, &wasm_bytes);

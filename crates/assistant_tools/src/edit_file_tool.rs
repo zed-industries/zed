@@ -3,7 +3,7 @@ use crate::{
     edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent},
     schema::json_schema_for,
 };
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{
     ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput,
     ToolUseStatus,
@@ -347,11 +347,11 @@ fn resolve_path(
         EditFileMode::Edit | EditFileMode::Overwrite => {
             let path = project
                 .find_project_path(&input.path, cx)
-                .ok_or_else(|| anyhow!("Can't edit file: path not found"))?;
+                .context("Can't edit file: path not found")?;
 
             let entry = project
                 .entry_for_path(&path, cx)
-                .ok_or_else(|| anyhow!("Can't edit file: path not found"))?;
+                .context("Can't edit file: path not found")?;
 
             if !entry.is_file() {
                 return Err(anyhow!("Can't edit file: path is a directory"));
@@ -362,38 +362,40 @@ fn resolve_path(
 
         EditFileMode::Create => {
             if let Some(path) = project.find_project_path(&input.path, cx) {
-                if project.entry_for_path(&path, cx).is_some() {
-                    return Err(anyhow!("Can't create file: file already exists"));
-                }
+                anyhow::ensure!(
+                    project.entry_for_path(&path, cx).is_none(),
+                    "Can't create file: file already exists"
+                );
             }
 
             let parent_path = input
                 .path
                 .parent()
-                .ok_or_else(|| anyhow!("Can't create file: incorrect path"))?;
+                .context("Can't create file: incorrect path")?;
 
             let parent_project_path = project.find_project_path(&parent_path, cx);
 
             let parent_entry = parent_project_path
                 .as_ref()
                 .and_then(|path| project.entry_for_path(&path, cx))
-                .ok_or_else(|| anyhow!("Can't create file: parent directory doesn't exist"))?;
+                .context("Can't create file: parent directory doesn't exist")?;
 
-            if !parent_entry.is_dir() {
-                return Err(anyhow!("Can't create file: parent is not a directory"));
-            }
+            anyhow::ensure!(
+                parent_entry.is_dir(),
+                "Can't create file: parent is not a directory"
+            );
 
             let file_name = input
                 .path
                 .file_name()
-                .ok_or_else(|| anyhow!("Can't create file: invalid filename"))?;
+                .context("Can't create file: invalid filename")?;
 
             let new_file_path = parent_project_path.map(|parent| ProjectPath {
                 path: Arc::from(parent.path.join(file_name)),
                 ..parent
             });
 
-            new_file_path.ok_or_else(|| anyhow!("Can't create file"))
+            new_file_path.context("Can't create file")
         }
     }
 }

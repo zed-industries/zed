@@ -157,7 +157,7 @@ impl NodeRuntime {
         info.dist_tags
             .latest
             .or_else(|| info.versions.pop())
-            .ok_or_else(|| anyhow!("no version found for npm package {}", name))
+            .with_context(|| format!("no version found for npm package {name}"))
     }
 
     pub async fn npm_install_packages(

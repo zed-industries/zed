@@ -43,7 +43,7 @@ pub trait PathExt {
                         OsStr::from_encoded_bytes_unchecked(bytes)
                     }))
                 })
-                .ok_or_else(|| anyhow!("Invalid WTF-8 sequence: {bytes:?}"))
+                .with_context(|| format!("Invalid WTF-8 sequence: {bytes:?}"))
         }
     }
 }

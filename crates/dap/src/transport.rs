@@ -664,14 +664,8 @@ impl StdioTransport {
             .spawn()
             .with_context(|| "failed to spawn command.")?;
 
-        let stdin = process
-            .stdin
-            .take()
-            .ok_or_else(|| anyhow!("Failed to open stdin"))?;
-        let stdout = process
-            .stdout
-            .take()
-            .ok_or_else(|| anyhow!("Failed to open stdout"))?;
+        let stdin = process.stdin.take().context("Failed to open stdin")?;
+        let stdout = process.stdout.take().context("Failed to open stdout")?;
         let stderr = process
             .stderr
             .take()

@@ -3922,7 +3922,7 @@ impl<V: 'static + Render> WindowHandle<V> {
                     .and_then(|window| window.root.clone())
                     .map(|root_view| root_view.downcast::<V>())
             })
-            .ok_or_else(|| anyhow!("window not found"))?
+            .context("window not found")?
             .map_err(|_| anyhow!("the type of the window's root view has changed"))?;
 
         Ok(x.read(cx))

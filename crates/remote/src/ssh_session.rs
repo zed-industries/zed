@@ -151,9 +151,7 @@ impl SshConnectionOptions {
             "-w",
         ];
 
-        let mut tokens = shlex::split(input)
-            .ok_or_else(|| anyhow!("invalid input"))?
-            .into_iter();
+        let mut tokens = shlex::split(input).context("invalid input")?.into_iter();
 
         'outer: while let Some(arg) = tokens.next() {
             if ALLOWED_OPTS.contains(&(&arg as &str)) {
@@ -2242,8 +2240,7 @@ impl ChannelClient {
         async move {
             let response = response.await?;
             log::debug!("ssh request finish. name:{}", T::NAME);
-            T::Response::from_envelope(response)
-                .ok_or_else(|| anyhow!("received a response of the wrong type"))
+            T::Response::from_envelope(response).context("received a response of the wrong type")
         }
     }
 

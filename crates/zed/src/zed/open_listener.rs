@@ -74,7 +74,7 @@ impl OpenRequest {
         let url = url::Url::parse(file)?;
         let host = url
             .host()
-            .ok_or_else(|| anyhow!("missing host in ssh url: {}", file))?
+            .with_context(|| format!("missing host in ssh url: {file}"))?
             .to_string();
         let username = Some(url.username().to_string()).filter(|s| !s.is_empty());
         let port = url.port();

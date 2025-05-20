@@ -2,7 +2,7 @@ use crate::{
     Project, ProjectEntryId, ProjectItem, ProjectPath,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet, hash_map};
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
@@ -128,7 +128,7 @@ impl ImageItem {
         let file_metadata = fs
             .metadata(image_path.as_path())
             .await?
-            .ok_or_else(|| anyhow!("failed to load image metadata"))?;
+            .context("failed to load image metadata")?;
 
         Ok(ImageMetadata {
             width,

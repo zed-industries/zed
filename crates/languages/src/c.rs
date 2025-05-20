@@ -54,7 +54,7 @@ impl super::LspAdapter for CLspAdapter {
             .assets
             .iter()
             .find(|asset| asset.name == asset_name)
-            .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
+            .with_context(|| format!("no asset found matching {asset_name:?}"))?;
         let version = GitHubLspBinaryVersion {
             name: release.tag_name,
             url: asset.browser_download_url.clone(),
@@ -339,7 +339,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
                 last_clangd_dir = Some(entry.path());
             }
         }
-        let clangd_dir = last_clangd_dir.ok_or_else(|| anyhow!("no cached binary"))?;
+        let clangd_dir = last_clangd_dir.context("no cached binary")?;
         let clangd_bin = clangd_dir.join("bin/clangd");
         if clangd_bin.exists() {
             Ok(LanguageServerBinary {

@@ -962,10 +962,7 @@ impl Client {
                         hello_message_type_name
                     )
                 })?;
-            let peer_id = hello
-                .payload
-                .peer_id
-                .ok_or_else(|| anyhow!("invalid peer id"))?;
+            let peer_id = hello.payload.peer_id.context("invalid peer id")?;
             Ok(peer_id)
         };
 
@@ -1079,7 +1076,7 @@ impl Client {
                 response
                     .headers()
                     .get("Location")
-                    .ok_or_else(|| anyhow!("missing location header in /rpc response"))?
+                    .context("missing location header in /rpc response")?
                     .to_str()
                     .map_err(EstablishConnectionError::other)?
                     .to_string()
@@ -1132,7 +1129,7 @@ impl Client {
             let rpc_host = rpc_url
                 .host_str()
                 .zip(rpc_url.port_or_known_default())
-                .ok_or_else(|| anyhow!("missing host in rpc url"))?;
+                .context("missing host in rpc url")?;
 
             let stream = {
                 let handle = cx.update(|cx| gpui_tokio::Tokio::handle(cx)).ok().unwrap();
@@ -1287,11 +1284,8 @@ impl Client {
                                     )
                                     .context("failed to respond to login http request")?;
                                     return Ok((
-                                        user_id
-                                            .ok_or_else(|| anyhow!("missing user_id parameter"))?,
-                                        access_token.ok_or_else(|| {
-                                            anyhow!("missing access_token parameter")
-                                        })?,
+                                        user_id.context("missing user_id parameter")?,
+                                        access_token.context("missing access_token parameter")?,
                                     ));
                                 }
                             }

@@ -2,7 +2,7 @@ pub mod participant;
 pub mod room;
 
 use crate::call_settings::CallSettings;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use audio::Audio;
 use client::{ChannelId, Client, TypedEnvelope, User, UserStore, ZED_ALWAYS_ACTIVE, proto};
 use collections::HashSet;
@@ -326,7 +326,7 @@ impl ActiveCall {
             .0
             .borrow_mut()
             .take()
-            .ok_or_else(|| anyhow!("no incoming call"))?;
+            .context("no incoming call")?;
         telemetry::event!("Incoming Call Declined", room_id = call.room_id);
         self.client.send(proto::DeclineCall {
             room_id: call.room_id,

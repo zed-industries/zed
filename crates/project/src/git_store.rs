@@ -997,23 +997,20 @@ impl GitStore {
                     RepositoryState::Local { backend, .. } => {
                         let origin_url = backend
                             .remote_url(&remote)
-                            .ok_or_else(|| anyhow!("remote \"{remote}\" not found"))?;
+                            .with_context(|| format!("remote \"{remote}\" not found"))?;
 
-                        let sha = backend
-                            .head_sha()
-                            .await
-                            .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
+                        let sha = backend.head_sha().await.context("reading HEAD SHA")?;
 
                         let provider_registry =
                             cx.update(GitHostingProviderRegistry::default_global)?;
 
                         let (provider, remote) =
                             parse_git_remote_url(provider_registry, &origin_url)
-                                .ok_or_else(|| anyhow!("failed to parse Git remote URL"))?;
+                                .context("parsing Git remote URL")?;
 
-                        let path = repo_path
-                            .to_str()
-                            .ok_or_else(|| anyhow!("failed to convert path to string"))?;
+                        let path = repo_path.to_str().with_context(|| {
+                            format!("converting repo path {repo_path:?} to string")
+                        })?;
 
                         Ok(provider.build_permalink(
                             remote,
@@ -2035,7 +2032,7 @@ impl GitStore {
                 let buffer = this.buffer_store.read(cx).get(buffer_id)?;
                 Some(this.open_unstaged_diff(buffer, cx))
             })?
-            .ok_or_else(|| anyhow!("no such buffer"))?
+            .context("missing buffer")?
             .await?;
         this.update(&mut cx, |this, _| {
             let shared_diffs = this
@@ -2059,7 +2056,7 @@ impl GitStore {
                 let buffer = this.buffer_store.read(cx).get(buffer_id)?;
                 Some(this.open_uncommitted_diff(buffer, cx))
             })?
-            .ok_or_else(|| anyhow!("no such buffer"))?
+            .context("missing buffer")?
             .await?;
         this.update(&mut cx, |this, _| {
             let shared_diffs = this
@@ -4064,7 +4061,7 @@ impl Repository {
         cx.spawn(async move |_, cx| {
             let environment = project_environment
                 .upgrade()
-                .ok_or_else(|| anyhow!("missing project environment"))?
+                .context("missing project environment")?
                 .update(cx, |project_environment, cx| {
                     project_environment.get_directory_environment(work_directory_abs_path.clone(), cx)
                 })?
@@ -4076,7 +4073,7 @@ impl Repository {
             let backend = cx
                 .background_spawn(async move {
                     fs.open_repo(&dot_git_abs_path)
-                        .ok_or_else(|| anyhow!("failed to build repository"))
+                        .with_context(|| format!("opening repository at {dot_git_abs_path:?}"))
                 })
                 .await?;
 
@@ -4215,8 +4212,7 @@ impl Repository {
                             buffer_id: buffer_id.to_proto(),
                         })
                         .await?;
-                    let mode =
-                        Mode::from_i32(response.mode).ok_or_else(|| anyhow!("Invalid mode"))?;
+                    let mode = Mode::from_i32(response.mode).context("Invalid mode")?;
                     let bases = match mode {
                         Mode::IndexMatchesHead => DiffBasesChange::SetBoth(response.committed_text),
                         Mode::IndexAndHead => DiffBasesChange::SetEach {
@@ -4353,7 +4349,7 @@ fn get_permalink_in_rust_registry_src(
     let cargo_toml = std::fs::read_to_string(dir.join("Cargo.toml"))?;
     let manifest = toml::from_str::<CargoToml>(&cargo_toml)?;
     let (provider, remote) = parse_git_remote_url(provider_registry, &manifest.package.repository)
-        .ok_or_else(|| anyhow!("Failed to parse package.repository field of manifest"))?;
+        .context("parsing package.repository field of manifest")?;
     let path = PathBuf::from(cargo_vcs_info.path_in_vcs).join(path.strip_prefix(dir).unwrap());
     let permalink = provider.build_permalink(
         remote,
@@ -4597,7 +4593,7 @@ fn status_from_proto(
 
     let Some(variant) = status.and_then(|status| status.variant) else {
         let code = proto::GitStatus::from_i32(simple_status)
-            .ok_or_else(|| anyhow!("Invalid git status code: {simple_status}"))?;
+            .with_context(|| format!("Invalid git status code: {simple_status}"))?;
         let result = match code {
             proto::GitStatus::Added => TrackedStatus {
                 worktree_status: StatusCode::Added,
@@ -4631,7 +4627,7 @@ fn status_from_proto(
             let [first_head, second_head] =
                 [unmerged.first_head, unmerged.second_head].map(|head| {
                     let code = proto::GitStatus::from_i32(head)
-                        .ok_or_else(|| anyhow!("Invalid git status code: {head}"))?;
+                        .with_context(|| format!("Invalid git status code: {head}"))?;
                     let result = match code {
                         proto::GitStatus::Added => UnmergedStatusCode::Added,
                         proto::GitStatus::Updated => UnmergedStatusCode::Updated,
@@ -4651,7 +4647,7 @@ fn status_from_proto(
             let [index_status, worktree_status] = [tracked.index_status, tracked.worktree_status]
                 .map(|status| {
                     let code = proto::GitStatus::from_i32(status)
-                        .ok_or_else(|| anyhow!("Invalid git status code: {status}"))?;
+                        .with_context(|| format!("Invalid git status code: {status}"))?;
                     let result = match code {
                         proto::GitStatus::Modified => StatusCode::Modified,
                         proto::GitStatus::TypeChanged => StatusCode::TypeChanged,

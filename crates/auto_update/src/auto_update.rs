@@ -367,7 +367,7 @@ impl AutoUpdater {
             cx.default_global::<GlobalAutoUpdate>()
                 .0
                 .clone()
-                .ok_or_else(|| anyhow!("auto-update not initialized"))
+                .context("auto-update not initialized")
         })??;
 
         let release = Self::get_release(
@@ -411,7 +411,7 @@ impl AutoUpdater {
             cx.default_global::<GlobalAutoUpdate>()
                 .0
                 .clone()
-                .ok_or_else(|| anyhow!("auto-update not initialized"))
+                .context("auto-update not initialized")
         })??;
 
         let release = Self::get_release(
@@ -792,7 +792,7 @@ async fn install_release_macos(
     let running_app_path = cx.update(|cx| cx.app_path())??;
     let running_app_filename = running_app_path
         .file_name()
-        .ok_or_else(|| anyhow!("invalid running app path"))?;
+        .with_context(|| format!("invalid running app path {running_app_path:?}"))?;
 
     let mount_path = temp_dir.path().join("Zed");
     let mut mounted_app_path: OsString = mount_path.join(running_app_filename).into();

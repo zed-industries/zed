@@ -152,11 +152,7 @@ impl RemoteBufferStore {
         capability: Capability,
         cx: &mut Context<BufferStore>,
     ) -> Result<Option<Entity<Buffer>>> {
-        match envelope
-            .payload
-            .variant
-            .ok_or_else(|| anyhow!("missing variant"))?
-        {
+        match envelope.payload.variant.context("missing variant")? {
             proto::create_buffer_for_peer::Variant::State(mut state) => {
                 let buffer_id = BufferId::new(state.id)?;
 
@@ -341,10 +337,7 @@ impl RemoteBufferStore {
         });
 
         cx.spawn(async move |this, cx| {
-            let response = request
-                .await?
-                .transaction
-                .ok_or_else(|| anyhow!("missing transaction"))?;
+            let response = request.await?.transaction.context("missing transaction")?;
             this.update(cx, |this, cx| {
                 this.deserialize_project_transaction(response, push_to_history, cx)
             })?
@@ -963,7 +956,7 @@ impl BufferStore {
 
     pub fn get_existing(&self, buffer_id: BufferId) -> Result<Entity<Buffer>> {
         self.get(buffer_id)
-            .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))
+            .with_context(|| format!("unknown buffer id {buffer_id}"))
     }
 
     pub fn get_possibly_incomplete(&self, buffer_id: BufferId) -> Option<Entity<Buffer>> {
@@ -1303,12 +1296,12 @@ impl BufferStore {
         this.update(&mut cx, |this, cx| {
             let payload = envelope.payload.clone();
             if let Some(buffer) = this.get_possibly_incomplete(buffer_id) {
-                let file = payload.file.ok_or_else(|| anyhow!("invalid file"))?;
+                let file = payload.file.context("invalid file")?;
                 let worktree = this
                     .worktree_store
                     .read(cx)
                     .worktree_for_id(WorktreeId::from_proto(file.worktree_id), cx)
-                    .ok_or_else(|| anyhow!("no such worktree"))?;
+                    .context("no such worktree")?;
                 let file = File::from_proto(file, worktree, cx)?;
                 let old_file = buffer.update(cx, |buffer, cx| {
                     let old_file = buffer.file().cloned();
@@ -1445,7 +1438,7 @@ impl BufferStore {
         let mtime = envelope.payload.mtime.clone().map(|time| time.into());
         let line_ending = deserialize_line_ending(
             proto::LineEnding::from_i32(envelope.payload.line_ending)
-                .ok_or_else(|| anyhow!("missing line ending"))?,
+                .context("missing line ending")?,
         );
         this.update(&mut cx, |this, cx| {
             if let Some(buffer) = this.get_possibly_incomplete(buffer_id) {

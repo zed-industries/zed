@@ -103,8 +103,8 @@ impl TcpArguments {
     pub fn from_proto(proto: proto::TcpHost) -> anyhow::Result<Self> {
         let host = TcpArgumentsTemplate::from_proto(proto)?;
         Ok(TcpArguments {
-            host: host.host.ok_or_else(|| anyhow!("missing host"))?,
-            port: host.port.ok_or_else(|| anyhow!("missing port"))?,
+            host: host.host.context("missing host")?,
+            port: host.port.context("missing port")?,
             timeout: host.timeout,
         })
     }

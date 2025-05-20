@@ -1,5 +1,5 @@
 use crate::ActionLog;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use gpui::{AsyncApp, Entity};
 use language::{OutlineItem, ParseStatus};
 use project::Project;
@@ -22,7 +22,7 @@ pub async fn file_outline(
         let project_path = project.read_with(cx, |project, cx| {
             project
                 .find_project_path(&path, cx)
-                .ok_or_else(|| anyhow!("Path {path} not found in project"))
+                .with_context(|| format!("Path {path} not found in project"))
         })??;
 
         project

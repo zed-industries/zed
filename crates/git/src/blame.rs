@@ -144,21 +144,21 @@ impl BlameEntry {
         let sha = parts
             .next()
             .and_then(|line| line.parse::<Oid>().ok())
-            .ok_or_else(|| anyhow!("failed to parse sha"))?;
+            .context("parsing sha")?;
 
         let original_line_number = parts
             .next()
             .and_then(|line| line.parse::<u32>().ok())
-            .ok_or_else(|| anyhow!("Failed to parse original line number"))?;
+            .context("parsing original line number")?;
         let final_line_number = parts
             .next()
             .and_then(|line| line.parse::<u32>().ok())
-            .ok_or_else(|| anyhow!("Failed to parse final line number"))?;
+            .context("parsing final line number")?;
 
         let line_count = parts
             .next()
             .and_then(|line| line.parse::<u32>().ok())
-            .ok_or_else(|| anyhow!("Failed to parse final line number"))?;
+            .context("parsing line count")?;
 
         let start_line = final_line_number.saturating_sub(1);
         let end_line = start_line + line_count;

@@ -3011,7 +3011,7 @@ impl SavedContext {
         let saved_context_json = serde_json::from_str::<serde_json::Value>(json)?;
         match saved_context_json
             .get("version")
-            .ok_or_else(|| anyhow!("version not found"))?
+            .context("version not found")?
         {
             serde_json::Value::String(version) => match version.as_str() {
                 SavedContext::VERSION => {

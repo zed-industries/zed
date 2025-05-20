@@ -8,7 +8,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use client::DevServerProjectId;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::{Axis, Bounds, Task, WindowBounds, WindowId, point, size};
@@ -914,7 +914,7 @@ impl WorkspaceDb {
             log::debug!("Inserting SSH project at host {host}");
             self.insert_ssh_project(host, port, paths, user)
                 .await?
-                .ok_or_else(|| anyhow!("failed to insert ssh project"))
+                .context("failed to insert ssh project")
         }
     }
 
@@ -1244,7 +1244,7 @@ impl WorkspaceDb {
                     *axis,
                     flex_string,
                 ))?
-                .ok_or_else(|| anyhow!("Couldn't retrieve group_id from inserted pane_group"))?;
+                .context("Couldn't retrieve group_id from inserted pane_group")?;
 
                 for (position, group) in children.iter().enumerate() {
                     Self::save_pane_group(conn, workspace_id, group, Some((group_id, position)))?
@@ -1270,7 +1270,7 @@ impl WorkspaceDb {
             VALUES (?, ?, ?)
             RETURNING pane_id
         ))?((workspace_id, pane.active, pane.pinned_count))?
-        .ok_or_else(|| anyhow!("Could not retrieve inserted pane_id"))?;
+        .context("Could not retrieve inserted pane_id")?;
 
         let (parent_id, order) = parent.unzip();
         conn.exec_bound(sql!(

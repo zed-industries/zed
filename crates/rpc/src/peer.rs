@@ -441,7 +441,7 @@ impl Peer {
                 sender_id: receiver_id.into(),
                 original_sender_id: response.original_sender_id,
                 payload: T::Response::from_envelope(response)
-                    .ok_or_else(|| anyhow!("received response of the wrong type"))?,
+                    .context("received response of the wrong type")?,
                 received_at,
             })
         }
@@ -465,7 +465,7 @@ impl Peer {
                 .response_channels
                 .lock()
                 .as_mut()
-                .ok_or_else(|| anyhow!("connection was closed"))?
+                .context("connection was closed")?
                 .insert(envelope.id, tx);
             connection
                 .outgoing_tx
@@ -496,7 +496,7 @@ impl Peer {
             stream_response_channels
                 .lock()
                 .as_mut()
-                .ok_or_else(|| anyhow!("connection was closed"))?
+                .context("connection was closed")?
                 .insert(message_id, tx);
             connection
                 .outgoing_tx
@@ -530,7 +530,7 @@ impl Peer {
                         } else {
                             Some(
                                 T::Response::from_envelope(response)
-                                    .ok_or_else(|| anyhow!("received response of the wrong type")),
+                                    .context("received response of the wrong type"),
                             )
                         }
                     }
@@ -662,7 +662,7 @@ impl Peer {
         let connections = self.connections.read();
         let connection = connections
             .get(&connection_id)
-            .ok_or_else(|| anyhow!("no such connection: {}", connection_id))?;
+            .with_context(|| format!("no such connection: {connection_id}"))?;
         Ok(connection.clone())
     }
 }
