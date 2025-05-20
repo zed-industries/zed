@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
 use crate::Result;
+use crate::db::billing_subscription::SubscriptionKind;
 use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
 use anyhow::{Context as _, anyhow};
 use chrono::Utc;
 use collections::HashMap;
 use serde::{Deserialize, Serialize};
-use stripe::PriceId;
+use stripe::{CreateCustomer, Customer, CustomerId, PriceId, SubscriptionStatus};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -95,6 +96,71 @@ impl StripeBilling {
             .get(lookup_key)
             .cloned()
             .ok_or_else(|| crate::Error::Internal(anyhow!("no price found for {lookup_key:?}")))
+    }
+
+    pub async fn determine_subscription_kind(
+        &self,
+        subscription: &stripe::Subscription,
+    ) -> Option<SubscriptionKind> {
+        let zed_pro_price_id = self.zed_pro_price_id().await.ok()?;
+        let zed_free_price_id = self.zed_free_price_id().await.ok()?;
+
+        subscription.items.data.iter().find_map(|item| {
+            let price = item.price.as_ref()?;
+
+            if price.id == zed_pro_price_id {
+                Some(if subscription.status == SubscriptionStatus::Trialing {
+                    SubscriptionKind::ZedProTrial
+                } else {
+                    SubscriptionKind::ZedPro
+                })
+            } else if price.id == zed_free_price_id {
+                Some(SubscriptionKind::ZedFree)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Returns the Stripe customer associated with the provided email address, or creates a new customer, if one does
+    /// not already exist.
+    ///
+    /// Always returns a new Stripe customer if the email address is `None`.
+    pub async fn find_or_create_customer_by_email(
+        &self,
+        email_address: Option<&str>,
+    ) -> Result<CustomerId> {
+        let existing_customer = if let Some(email) = email_address {
+            let customers = Customer::list(
+                &self.client,
+                &stripe::ListCustomers {
+                    email: Some(email),
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+            customers.data.first().cloned()
+        } else {
+            None
+        };
+
+        let customer_id = if let Some(existing_customer) = existing_customer {
+            existing_customer.id
+        } else {
+            let customer = Customer::create(
+                &self.client,
+                CreateCustomer {
+                    email: email_address,
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+            customer.id
+        };
+
+        Ok(customer_id)
     }
 
     pub async fn subscribe_to_price(
@@ -236,6 +302,50 @@ impl StripeBilling {
 
         let session = stripe::CheckoutSession::create(&self.client, params).await?;
         Ok(session.url.context("no checkout session URL")?)
+    }
+
+    pub async fn subscribe_to_zed_free(
+        &self,
+        customer_id: stripe::CustomerId,
+    ) -> Result<stripe::Subscription> {
+        let zed_free_price_id = self.zed_free_price_id().await?;
+
+        let existing_subscriptions = stripe::Subscription::list(
+            &self.client,
+            &stripe::ListSubscriptions {
+                customer: Some(customer_id.clone()),
+                status: None,
+                ..Default::default()
+            },
+        )
+        .await?;
+
+        let existing_zed_free_subscription =
+            existing_subscriptions
+                .data
+                .into_iter()
+                .find(|subscription| {
+                    subscription.status == SubscriptionStatus::Active
+                        && subscription.items.data.iter().any(|item| {
+                            item.price
+                                .as_ref()
+                                .map_or(false, |price| price.id == zed_free_price_id)
+                        })
+                });
+        if let Some(subscription) = existing_zed_free_subscription {
+            return Ok(subscription);
+        }
+
+        let mut params = stripe::CreateSubscription::new(customer_id);
+        params.items = Some(vec![stripe::CreateSubscriptionItems {
+            price: Some(zed_free_price_id.to_string()),
+            quantity: Some(1),
+            ..Default::default()
+        }]);
+
+        let subscription = stripe::Subscription::create(&self.client, params).await?;
+
+        Ok(subscription)
     }
 
     pub async fn checkout_with_zed_free(

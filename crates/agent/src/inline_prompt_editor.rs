@@ -11,6 +11,7 @@ use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist};
 use crate::{RemoveAllContext, ToggleContextPicker};
 use client::ErrorExt;
 use collections::VecDeque;
+use db::kvp::Dismissable;
 use editor::display_map::EditorMargins;
 use editor::{
     ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
@@ -33,7 +34,6 @@ use ui::utils::WithRemSize;
 use ui::{
     CheckboxWithLabel, IconButtonShape, KeyBinding, Popover, PopoverMenuHandle, Tooltip, prelude::*,
 };
-use util::ResultExt;
 use workspace::Workspace;
 
 pub struct PromptEditor<T> {
@@ -451,7 +451,7 @@ impl<T: 'static> PromptEditor<T> {
                     editor.move_to_end(&Default::default(), window, cx)
                 });
             }
-        } else {
+        } else if self.context_strip.read(cx).has_context_items(cx) {
             self.context_strip.focus_handle(cx).focus(window);
         }
     }
@@ -722,7 +722,7 @@ impl<T: 'static> PromptEditor<T> {
                         .child(CheckboxWithLabel::new(
                             "dont-show-again",
                             Label::new("Don't show again"),
-                            if dismissed_rate_limit_notice() {
+                            if RateLimitNotice::dismissed() {
                                 ui::ToggleState::Selected
                             } else {
                                 ui::ToggleState::Unselected
@@ -734,7 +734,7 @@ impl<T: 'static> PromptEditor<T> {
                                     ui::ToggleState::Selected => true,
                                 };
 
-                                set_rate_limit_notice_dismissed(is_dismissed, cx)
+                                RateLimitNotice::set_dismissed(is_dismissed, cx);
                             },
                         ))
                         .child(
@@ -974,7 +974,7 @@ impl PromptEditor<BufferCodegen> {
             CodegenStatus::Error(error) => {
                 if cx.has_flag::<ZedProFeatureFlag>()
                     && error.error_code() == proto::ErrorCode::RateLimitExceeded
-                    && !dismissed_rate_limit_notice()
+                    && !RateLimitNotice::dismissed()
                 {
                     self.show_rate_limit_notice = true;
                     cx.notify();
@@ -1180,27 +1180,10 @@ impl PromptEditor<TerminalCodegen> {
     }
 }
 
-const DISMISSED_RATE_LIMIT_NOTICE_KEY: &str = "dismissed-rate-limit-notice";
+struct RateLimitNotice;
 
-fn dismissed_rate_limit_notice() -> bool {
-    db::kvp::KEY_VALUE_STORE
-        .read_kvp(DISMISSED_RATE_LIMIT_NOTICE_KEY)
-        .log_err()
-        .map_or(false, |s| s.is_some())
-}
-
-fn set_rate_limit_notice_dismissed(is_dismissed: bool, cx: &mut App) {
-    db::write_and_log(cx, move || async move {
-        if is_dismissed {
-            db::kvp::KEY_VALUE_STORE
-                .write_kvp(DISMISSED_RATE_LIMIT_NOTICE_KEY.into(), "1".into())
-                .await
-        } else {
-            db::kvp::KEY_VALUE_STORE
-                .delete_kvp(DISMISSED_RATE_LIMIT_NOTICE_KEY.into())
-                .await
-        }
-    })
+impl Dismissable for RateLimitNotice {
+    const KEY: &'static str = "dismissed-rate-limit-notice";
 }
 
 pub enum CodegenStatus {
