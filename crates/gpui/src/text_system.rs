@@ -474,7 +474,7 @@ impl WindowTextSystem {
             font_runs.clear();
         };
 
-        let mut split_lines = text.lines();
+        let mut split_lines = text.split('\n');
         let mut processed = false;
 
         if let Some(first_line) = split_lines.next() {
