@@ -1244,7 +1244,7 @@ pub enum PromptLevel {
 }
 
 /// The style of the cursor (pointer)
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CursorStyle {
     /// The default cursor
     Arrow,

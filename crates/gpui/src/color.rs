@@ -622,7 +622,7 @@ impl<'de> Deserialize<'de> for Hsla {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[repr(C)]
 pub(crate) enum BackgroundTag {
     Solid = 0,
@@ -635,7 +635,7 @@ pub(crate) enum BackgroundTag {
 /// References:
 /// - <https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method>
 /// - <https://www.w3.org/TR/css-color-4/#typedef-color-space>
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 #[repr(C)]
 pub enum ColorSpace {
     #[default]
@@ -655,7 +655,7 @@ impl Display for ColorSpace {
 }
 
 /// A background color, which can be either a solid color or a linear gradient.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[repr(C)]
 pub struct Background {
     pub(crate) tag: BackgroundTag,
@@ -748,7 +748,7 @@ pub fn linear_gradient(
 /// A color stop in a linear gradient.
 ///
 /// <https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient#linear-color-stop>
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[repr(C)]
 pub struct LinearColorStop {
     /// The color of the color stop.

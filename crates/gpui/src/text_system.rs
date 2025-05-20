@@ -637,6 +637,7 @@ impl FontWeight {
 
 /// Allows italic or oblique faces to be selected.
 #[derive(Clone, Copy, Eq, PartialEq, Debug, Hash, Default)]
+#[derive(Serialize, Deserialize)]
 pub enum FontStyle {
     /// A face that is neither italic not obliqued.
     #[default]

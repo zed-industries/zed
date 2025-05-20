@@ -20,7 +20,7 @@ use crate::{
     DispatchPhase, EdgesRefinement, Element, ElementId, Entity, FocusHandle, Global,
     GlobalElementId, Hitbox, HitboxId, Hsla, InspectorElementId, IntoElement, IsZero, KeyContext,
     KeyDownEvent, KeyUpEvent, LayoutId, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, Rgba, ScrollWheelEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollWheelEvent,
     SharedString, Size, Style, StyleRefinement, Styled, Task, TooltipId, Visibility, Window, fill,
     point, px, size,
 };
@@ -1197,9 +1197,7 @@ pub struct DivFrameState {
 #[derive(Serialize, Deserialize)]
 pub struct DivInspectorState {
     /// todo!("document")
-    pub border_widths: EdgesRefinement<AbsoluteLength>,
-    /// todo!("document")
-    pub border_color: Option<Hsla>,
+    pub base_style: Box<StyleRefinement>,
 }
 
 impl Styled for Div {
@@ -1454,15 +1452,9 @@ impl Interactivity {
                 // todo! This seems inefficient to do for every single div. Load DivInspectorState
                 // on demand?
                 let inspector_state = inspector_state.get_or_insert_with(|| DivInspectorState {
-                    border_widths: self.base_style.border_widths.clone(),
-                    border_color: self.base_style.border_color.clone(),
+                    base_style: self.base_style.clone(),
                 });
-                self.base_style
-                    .border_widths
-                    .refine(&inspector_state.border_widths);
-                if let Some(border_color) = inspector_state.border_color {
-                    self.base_style.border_color = Some(border_color);
-                }
+                self.base_style.refine(&inspector_state.base_style);
 
                 window.with_optional_element_state::<InteractiveElementState, _>(
                     global_id,
