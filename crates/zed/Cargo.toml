@@ -12,6 +12,10 @@ workspace = true
 
 [[bin]]
 name = "zed"
+path = "src/zed-main.rs"
+
+[lib]
+name = "zed"
 path = "src/main.rs"
 
 [dependencies]

@@ -29,6 +29,8 @@ pub fn make_app() -> Command {
 
 fn main() -> Result<()> {
     let matches = make_app().get_matches();
+    zed::stdout_is_a_pty();
+    dump_all_gpui_actions();
 
     if let Some(sub_args) = matches.subcommand_matches("supports") {
         handle_supports(sub_args);
@@ -37,6 +39,37 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn dump_all_gpui_actions() {
+    #[derive(Debug, serde::Serialize)]
+    struct ActionDef {
+        name: &'static str,
+        human_name: String,
+        aliases: &'static [&'static str],
+    }
+    let mut actions = gpui::generate_list_of_all_registered_actions()
+        .into_iter()
+        .map(|action| ActionDef {
+            name: action.name,
+            human_name: command_palette::humanize_action_name(action.name),
+            aliases: action.aliases,
+        })
+        .collect::<Vec<ActionDef>>();
+
+    actions.sort_by_key(|a| a.name);
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open("/Users/neb/Zed/actions-gen.json")
+        .unwrap();
+    io::Write::write(
+        &mut file,
+        serde_json::to_string_pretty(&actions).unwrap().as_bytes(),
+    )
+    .unwrap();
 }
 
 fn handle_preprocessing() -> Result<()> {
