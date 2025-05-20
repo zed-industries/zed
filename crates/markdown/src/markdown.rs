@@ -583,6 +583,7 @@ impl MarkdownElement {
                     if phase.bubble() {
                         if let Some(link) = rendered_text.link_for_position(event.position) {
                             markdown.pressed_link = Some(link.clone());
+                            window.prevent_default();
                         } else {
                             let source_index =
                                 match rendered_text.source_index_for_position(event.position) {
@@ -601,10 +602,10 @@ impl MarkdownElement {
                                 reversed: false,
                                 pending: true,
                             };
+                            window.prevent_default();
                             window.focus(&markdown.focus_handle);
                         }
 
-                        window.prevent_default();
                         cx.notify();
                     }
                 } else if phase.capture() {
