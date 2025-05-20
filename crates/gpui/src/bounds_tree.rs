@@ -113,7 +113,7 @@ where
                 unreachable!()
             };
             if *max_ordering >= ordering {
-                break
+                break;
             }
             *max_ordering = ordering;
         }
