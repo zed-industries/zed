@@ -23,7 +23,7 @@ use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global, SemanticVersion,
     Subscription, Task, WeakEntity, actions,
 };
-use http_client::{HttpClient, Method};
+use http_client::{AsyncBody, HttpClient, Method, Request, Response};
 use input_excerpt::excerpt_for_cursor_position;
 use language::{
     Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, ToOffset, ToPoint, text_diff,
@@ -822,6 +822,64 @@ and then another
         }
     }
 
+    fn accept_edit_prediction(
+        params: AcceptEditPredictionParams,
+    ) -> impl Future<Output = Result<Option<EditPredictionUsage>>> {
+        async move {
+            let AcceptEditPredictionParams {
+                client,
+                llm_token,
+                app_version,
+                body,
+                ..
+            } = params;
+
+            let http_client = client.http_client();
+
+            dbg!(&body);
+
+            let mut response = llm_token_retry(&llm_token, &client, |token| {
+                let request_builder = http_client::Request::builder().method(Method::POST);
+                let request_builder = request_builder.uri(
+                    http_client
+                        .build_zed_llm_url("/predict_edits/accept", &[])?
+                        .as_ref(),
+                );
+                Ok(request_builder
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", format!("Bearer {}", token))
+                    .header(ZED_VERSION_HEADER_NAME, app_version.to_string())
+                    .body(serde_json::to_string(&body)?.into())?)
+            })
+            .await?;
+
+            if let Some(minimum_required_version) = response
+                .headers()
+                .get(MINIMUM_REQUIRED_VERSION_HEADER_NAME)
+                .and_then(|version| SemanticVersion::from_str(version.to_str().ok()?).ok())
+            {
+                if app_version < minimum_required_version {
+                    return Err(anyhow!(ZedUpdateRequiredError {
+                        minimum_version: minimum_required_version
+                    }));
+                }
+            }
+
+            if response.status().is_success() {
+                let usage = EditPredictionUsage::from_headers(response.headers()).ok();
+                return Ok(usage);
+            } else {
+                let mut body = String::new();
+                response.body_mut().read_to_string(&mut body).await?;
+                return Err(anyhow!(
+                    "error accepting edit prediction.\nStatus: {:?}\nBody: {}",
+                    response.status(),
+                    body
+                ));
+            }
+        }
+    }
+
     fn process_completion_response(
         prediction_response: PredictEditsResponse,
         buffer: Entity<Buffer>,
@@ -1067,6 +1125,13 @@ struct PerformPredictEditsParams {
     pub llm_token: LlmApiToken,
     pub app_version: SemanticVersion,
     pub body: PredictEditsBody,
+}
+
+struct AcceptEditPredictionParams {
+    pub client: Arc<Client>,
+    pub llm_token: LlmApiToken,
+    pub app_version: SemanticVersion,
+    pub body: zed_llm_client::AcceptEditPredictionBody,
 }
 
 #[derive(Error, Debug)]
@@ -1380,6 +1445,34 @@ impl ProviderDataCollection {
     }
 }
 
+async fn llm_token_retry(
+    llm_token: &LlmApiToken,
+    client: &Arc<Client>,
+    build_request: impl Fn(String) -> Result<Request<AsyncBody>>,
+) -> Result<Response<AsyncBody>> {
+    let mut did_retry = false;
+    let http_client = client.http_client();
+    let mut token = llm_token.acquire(client).await?;
+    loop {
+        let request = build_request(token.clone())?;
+        let response = http_client.send(request).await?;
+
+        if !did_retry
+            && !response.status().is_success()
+            && response
+                .headers()
+                .get(EXPIRED_LLM_TOKEN_HEADER_NAME)
+                .is_some()
+        {
+            did_retry = true;
+            token = llm_token.refresh(client).await?;
+            continue;
+        }
+
+        return Ok(response);
+    }
+}
+
 pub struct ZetaInlineCompletionProvider {
     zeta: Entity<Zeta>,
     pending_completions: ArrayVec<PendingCompletion, 2>,
@@ -1596,7 +1689,28 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
         // Right now we don't support cycling.
     }
 
-    fn accept(&mut self, _cx: &mut Context<Self>) {
+    fn accept(&mut self, cx: &mut Context<Self>) {
+        let request_id = self
+            .current_completion
+            .as_ref()
+            .map(|completion| completion.completion.id);
+        if let Some(request_id) = request_id {
+            let zeta = self.zeta.read(cx);
+            let client = zeta.client.clone();
+            let llm_token = zeta.llm_token.clone();
+            let app_version = AppVersion::global(cx);
+            cx.background_spawn(async move {
+                Zeta::accept_edit_prediction(AcceptEditPredictionParams {
+                    client,
+                    llm_token,
+                    app_version,
+                    body: zed_llm_client::AcceptEditPredictionBody {
+                        request_id: request_id.0,
+                    },
+                })
+            })
+            .detach();
+        }
         self.pending_completions.clear();
     }
 
