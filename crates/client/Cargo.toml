@@ -49,7 +49,7 @@ text.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tiny_http = "0.8"
-tokio-native-tls = "0.3"
+tokio-native-tls = {version = "0.3", features = ["vendored"]}
 tokio-socks = { version = "0.5.2", default-features = false, features = ["futures-io"] }
 url.workspace = true
 util.workspace = true
