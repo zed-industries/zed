@@ -1,5 +1,6 @@
 mod key_context_view;
 mod lsp_log;
+pub mod lsp_tool;
 mod syntax_tree_view;
 
 #[cfg(test)]
