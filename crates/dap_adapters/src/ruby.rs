@@ -6,8 +6,9 @@ use dap::{
         self, DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition,
     },
 };
-use gpui::AsyncApp;
-use std::path::PathBuf;
+use gpui::{AsyncApp, SharedString};
+use language::LanguageName;
+use std::{path::PathBuf, sync::Arc};
 use util::command::new_smol_command;
 
 use crate::ToDap;
@@ -25,9 +26,13 @@ impl DebugAdapter for RubyDebugAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
+    fn adapter_language_name(&self) -> Option<LanguageName> {
+        Some(SharedString::new_static("Ruby").into())
+    }
+
     async fn get_binary(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
         definition: &DebugTaskDefinition,
         _user_installed_path: Option<PathBuf>,
         _cx: &mut AsyncApp,
@@ -35,7 +40,7 @@ impl DebugAdapter for RubyDebugAdapter {
         let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
         let mut rdbg_path = adapter_path.join("rdbg");
         if !delegate.fs().is_file(&rdbg_path).await {
-            match delegate.which("rdbg".as_ref()) {
+            match delegate.which("rdbg".as_ref()).await {
                 Some(path) => rdbg_path = path,
                 None => {
                     delegate.output_to_console(
@@ -71,7 +76,7 @@ impl DebugAdapter for RubyDebugAdapter {
             format!("--port={}", port),
             format!("--host={}", host),
         ];
-        if delegate.which(launch.program.as_ref()).is_some() {
+        if delegate.which(launch.program.as_ref()).await.is_some() {
             arguments.push("--command".to_string())
         }
         arguments.push(launch.program);

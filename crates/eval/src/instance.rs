@@ -1,4 +1,4 @@
-use agent::{Message, MessageSegment, ThreadStore};
+use agent::{Message, MessageSegment, SerializedThread, ThreadStore};
 use anyhow::{Context, Result, anyhow, bail};
 use assistant_tool::ToolWorkingSet;
 use client::proto::LspWorkProgress;
@@ -9,7 +9,7 @@ use handlebars::Handlebars;
 use language::{Buffer, DiagnosticSeverity, OffsetRangeExt as _};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
-    MessageContent, Role, TokenUsage,
+    LanguageModelToolResultContent, MessageContent, Role, TokenUsage,
 };
 use project::lsp_store::OpenLspBufferHandle;
 use project::{DiagnosticSummary, Project, ProjectPath};
@@ -312,7 +312,14 @@ impl ExampleInstance {
             thread_store.update(cx, |thread_store, cx| thread_store.load_profile_by_id(profile_id, cx)).expect("Failed to load profile");
 
             let thread =
-                thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx))?;
+                thread_store.update(cx, |thread_store, cx| {
+                    if let Some(json) = &meta.existing_thread_json {
+                        let serialized = SerializedThread::from_json(json.as_bytes()).expect("Can't read serialized thread");
+                        thread_store.create_thread_from_serialized(serialized, cx)
+                    } else {
+                        thread_store.create_thread(cx)
+                    }
+                })?;
 
 
             thread.update(cx, |thread, _cx| {
@@ -964,7 +971,15 @@ impl RequestMarkdown {
                         if tool_result.is_error {
                             messages.push_str("**ERROR:**\n");
                         }
-                        messages.push_str(&format!("{}\n\n", tool_result.content));
+
+                        match &tool_result.content {
+                            LanguageModelToolResultContent::Text(str) => {
+                                writeln!(messages, "{}\n", str).ok();
+                            }
+                            LanguageModelToolResultContent::Image(image) => {
+                                writeln!(messages, "![Image](data:base64,{})\n", image.source).ok();
+                            }
+                        }
 
                         if let Some(output) = tool_result.output.as_ref() {
                             writeln!(

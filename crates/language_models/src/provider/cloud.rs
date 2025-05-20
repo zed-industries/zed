@@ -20,7 +20,7 @@ use language_model::{
 };
 use language_model::{
     LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider, LlmApiToken,
-    MaxMonthlySpendReachedError, PaymentRequiredError, RefreshLlmTokenListener,
+    PaymentRequiredError, RefreshLlmTokenListener,
 };
 use proto::Plan;
 use release_channel::AppVersion;
@@ -41,9 +41,9 @@ use ui::{TintColor, prelude::*};
 use zed_llm_client::{
     CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CURRENT_PLAN_HEADER_NAME, CompletionBody,
     CompletionRequestStatus, CountTokensBody, CountTokensResponse, EXPIRED_LLM_TOKEN_HEADER_NAME,
-    MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME, MODEL_REQUESTS_RESOURCE_HEADER_VALUE,
-    SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME,
-    TOOL_USE_LIMIT_REACHED_HEADER_NAME, ZED_VERSION_HEADER_NAME,
+    MODEL_REQUESTS_RESOURCE_HEADER_VALUE, SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME,
+    SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME, TOOL_USE_LIMIT_REACHED_HEADER_NAME,
+    ZED_VERSION_HEADER_NAME,
 };
 
 use crate::AllLanguageModelSettings;
@@ -592,13 +592,6 @@ impl CloudLanguageModel {
             } else if status == StatusCode::FORBIDDEN
                 && response
                     .headers()
-                    .get(MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME)
-                    .is_some()
-            {
-                return Err(anyhow!(MaxMonthlySpendReachedError));
-            } else if status == StatusCode::FORBIDDEN
-                && response
-                    .headers()
                     .get(SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME)
                     .is_some()
             {
@@ -683,6 +676,14 @@ impl LanguageModel for CloudLanguageModel {
             CloudModel::Anthropic(_) => true,
             CloudModel::Google(_) => true,
             CloudModel::OpenAi(_) => true,
+        }
+    }
+
+    fn supports_images(&self) -> bool {
+        match self.model {
+            CloudModel::Anthropic(_) => true,
+            CloudModel::Google(_) => true,
+            CloudModel::OpenAi(_) => false,
         }
     }
 

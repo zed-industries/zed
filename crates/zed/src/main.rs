@@ -294,6 +294,11 @@ fn main() {
         fs.clone(),
         paths::settings_file().clone(),
     );
+    let global_settings_file_rx = watch_config_file(
+        &app.background_executor(),
+        fs.clone(),
+        paths::global_settings_file().clone(),
+    );
     let user_keymap_file_rx = watch_config_file(
         &app.background_executor(),
         fs.clone(),
@@ -340,7 +345,12 @@ fn main() {
         }
         settings::init(cx);
         zlog_settings::init(cx);
-        handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
+        handle_settings_file_changes(
+            user_settings_file_rx,
+            global_settings_file_rx,
+            cx,
+            handle_settings_changed,
+        );
         handle_keymap_file_changes(user_keymap_file_rx, cx);
         client::init_settings(cx);
         let user_agent = format!(
@@ -409,6 +419,7 @@ fn main() {
         .detach();
         let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
 
+        debug_adapter_extension::init(extension_host_proxy.clone(), cx);
         language::init(cx);
         language_extension::init(extension_host_proxy.clone(), languages.clone());
         languages::init(languages.clone(), node_runtime.clone(), cx);
@@ -555,6 +566,7 @@ fn main() {
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
         git_ui::init(cx);
+        jj_ui::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
         welcome::init(cx);

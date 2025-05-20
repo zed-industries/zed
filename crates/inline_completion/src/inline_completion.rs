@@ -83,6 +83,13 @@ impl EditPredictionUsage {
 
         Ok(Self { limit, amount })
     }
+
+    pub fn over_limit(&self) -> bool {
+        match self.limit {
+            UsageLimit::Limited(limit) => self.amount >= limit,
+            UsageLimit::Unlimited => false,
+        }
+    }
 }
 
 pub trait EditPredictionProvider: 'static + Sized {

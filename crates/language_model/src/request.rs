@@ -21,6 +21,16 @@ pub struct LanguageModelImage {
     size: Size<DevicePixels>,
 }
 
+impl LanguageModelImage {
+    pub fn len(&self) -> usize {
+        self.source.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.source.is_empty()
+    }
+}
+
 impl std::fmt::Debug for LanguageModelImage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LanguageModelImage")
@@ -134,8 +144,43 @@ pub struct LanguageModelToolResult {
     pub tool_use_id: LanguageModelToolUseId,
     pub tool_name: Arc<str>,
     pub is_error: bool,
-    pub content: Arc<str>,
+    pub content: LanguageModelToolResultContent,
     pub output: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Hash)]
+#[serde(untagged)]
+pub enum LanguageModelToolResultContent {
+    Text(Arc<str>),
+    Image(LanguageModelImage),
+}
+
+impl LanguageModelToolResultContent {
+    pub fn to_str(&self) -> Option<&str> {
+        match self {
+            Self::Text(text) => Some(&text),
+            Self::Image(_) => None,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Self::Text(text) => text.chars().all(|c| c.is_whitespace()),
+            Self::Image(_) => false,
+        }
+    }
+}
+
+impl From<&str> for LanguageModelToolResultContent {
+    fn from(value: &str) -> Self {
+        Self::Text(Arc::from(value))
+    }
+}
+
+impl From<String> for LanguageModelToolResultContent {
+    fn from(value: String) -> Self {
+        Self::Text(Arc::from(value))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
@@ -149,6 +194,29 @@ pub enum MessageContent {
     Image(LanguageModelImage),
     ToolUse(LanguageModelToolUse),
     ToolResult(LanguageModelToolResult),
+}
+
+impl MessageContent {
+    pub fn to_str(&self) -> Option<&str> {
+        match self {
+            MessageContent::Text(text) => Some(text.as_str()),
+            MessageContent::Thinking { text, .. } => Some(text.as_str()),
+            MessageContent::RedactedThinking(_) => None,
+            MessageContent::ToolResult(tool_result) => tool_result.content.to_str(),
+            MessageContent::ToolUse(_) | MessageContent::Image(_) => None,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            MessageContent::Text(text) => text.chars().all(|c| c.is_whitespace()),
+            MessageContent::Thinking { text, .. } => text.chars().all(|c| c.is_whitespace()),
+            MessageContent::ToolResult(tool_result) => tool_result.content.is_empty(),
+            MessageContent::RedactedThinking(_)
+            | MessageContent::ToolUse(_)
+            | MessageContent::Image(_) => false,
+        }
+    }
 }
 
 impl From<String> for MessageContent {
@@ -173,13 +241,7 @@ pub struct LanguageModelRequestMessage {
 impl LanguageModelRequestMessage {
     pub fn string_contents(&self) -> String {
         let mut buffer = String::new();
-        for string in self.content.iter().filter_map(|content| match content {
-            MessageContent::Text(text) => Some(text.as_str()),
-            MessageContent::Thinking { text, .. } => Some(text.as_str()),
-            MessageContent::RedactedThinking(_) => None,
-            MessageContent::ToolResult(tool_result) => Some(tool_result.content.as_ref()),
-            MessageContent::ToolUse(_) | MessageContent::Image(_) => None,
-        }) {
+        for string in self.content.iter().filter_map(|content| content.to_str()) {
             buffer.push_str(string);
         }
 
@@ -187,16 +249,7 @@ impl LanguageModelRequestMessage {
     }
 
     pub fn contents_empty(&self) -> bool {
-        self.content.iter().all(|content| match content {
-            MessageContent::Text(text) => text.chars().all(|c| c.is_whitespace()),
-            MessageContent::Thinking { text, .. } => text.chars().all(|c| c.is_whitespace()),
-            MessageContent::ToolResult(tool_result) => {
-                tool_result.content.chars().all(|c| c.is_whitespace())
-            }
-            MessageContent::RedactedThinking(_)
-            | MessageContent::ToolUse(_)
-            | MessageContent::Image(_) => false,
-        })
+        self.content.iter().all(|content| content.is_empty())
     }
 }
 

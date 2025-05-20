@@ -595,7 +595,7 @@ impl PlatformTextSystem for NoopTextSystem {
                 .unwrap()
                 .width
             / metrics.units_per_em as f32;
-        let mut glyphs = SmallVec::default();
+        let mut glyphs = Vec::new();
         for (ix, c) in text.char_indices() {
             if let Some(glyph) = self.glyph_for_char(FontId(0), c) {
                 glyphs.push(ShapedGlyph {

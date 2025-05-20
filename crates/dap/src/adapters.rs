@@ -4,11 +4,11 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
-use dap_types::{StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest};
+pub use dap_types::{StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest};
 use futures::io::BufReader;
 use gpui::{AsyncApp, SharedString};
 pub use http_client::{HttpClient, github::latest_github_release};
-use language::LanguageToolchainStore;
+use language::{LanguageName, LanguageToolchainStore};
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
 use settings::WorktreeId;
@@ -32,15 +32,17 @@ pub enum DapStatus {
     Failed { error: String },
 }
 
-#[async_trait(?Send)]
-pub trait DapDelegate {
+#[async_trait]
+pub trait DapDelegate: Send + Sync + 'static {
     fn worktree_id(&self) -> WorktreeId;
+    fn worktree_root_path(&self) -> &Path;
     fn http_client(&self) -> Arc<dyn HttpClient>;
     fn node_runtime(&self) -> NodeRuntime;
     fn toolchain_store(&self) -> Arc<dyn LanguageToolchainStore>;
     fn fs(&self) -> Arc<dyn Fs>;
     fn output_to_console(&self, msg: String);
-    fn which(&self, command: &OsStr) -> Option<PathBuf>;
+    async fn which(&self, command: &OsStr) -> Option<PathBuf>;
+    async fn read_text_file(&self, path: PathBuf) -> Result<String>;
     async fn shell_env(&self) -> collections::HashMap<String, String>;
 }
 
@@ -413,11 +415,16 @@ pub trait DebugAdapter: 'static + Send + Sync {
 
     async fn get_binary(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary>;
+
+    /// Returns the language name of an adapter if it only supports one language
+    fn adapter_language_name(&self) -> Option<LanguageName> {
+        None
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -467,7 +474,7 @@ impl DebugAdapter for FakeAdapter {
 
     async fn get_binary(
         &self,
-        _: &dyn DapDelegate,
+        _: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         _: Option<PathBuf>,
         _: &mut AsyncApp,

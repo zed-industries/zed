@@ -1131,8 +1131,6 @@ impl LanguageServer {
     where
         T::Result: 'static + Send,
         T: request::Request,
-        // TODO kb
-        // <T as lsp_types::request::Request>::Result: ConnectionResult,
     {
         let id = next_id.fetch_add(1, SeqCst);
         let message = serde_json::to_string(&Request {

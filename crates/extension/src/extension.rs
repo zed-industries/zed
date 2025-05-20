@@ -135,6 +135,14 @@ pub trait Extension: Send + Sync + 'static {
         package_name: Arc<str>,
         kv_store: Arc<dyn KeyValueStoreDelegate>,
     ) -> Result<()>;
+
+    async fn get_dap_binary(
+        &self,
+        dap_name: Arc<str>,
+        config: DebugTaskDefinition,
+        user_installed_path: Option<PathBuf>,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<DebugAdapterBinary>;
 }
 
 pub fn parse_wasm_extension_version(

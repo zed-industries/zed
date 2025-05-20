@@ -19,7 +19,7 @@ use gpui::{
 };
 use heed::Database;
 use heed::types::SerdeBincode;
-use language_model::{LanguageModelToolUseId, Role, TokenUsage};
+use language_model::{LanguageModelToolResultContent, LanguageModelToolUseId, Role, TokenUsage};
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
@@ -386,6 +386,25 @@ impl ThreadStore {
         })
     }
 
+    pub fn create_thread_from_serialized(
+        &mut self,
+        serialized: SerializedThread,
+        cx: &mut Context<Self>,
+    ) -> Entity<Thread> {
+        cx.new(|cx| {
+            Thread::deserialize(
+                ThreadId::new(),
+                serialized,
+                self.project.clone(),
+                self.tools.clone(),
+                self.prompt_builder.clone(),
+                self.project_context.clone(),
+                None,
+                cx,
+            )
+        })
+    }
+
     pub fn open_thread(
         &self,
         id: &ThreadId,
@@ -411,7 +430,7 @@ impl ThreadStore {
                         this.tools.clone(),
                         this.prompt_builder.clone(),
                         this.project_context.clone(),
-                        window,
+                        Some(window),
                         cx,
                     )
                 })
@@ -775,7 +794,7 @@ pub struct SerializedToolUse {
 pub struct SerializedToolResult {
     pub tool_use_id: LanguageModelToolUseId,
     pub is_error: bool,
-    pub content: Arc<str>,
+    pub content: LanguageModelToolResultContent,
     pub output: Option<serde_json::Value>,
 }
 

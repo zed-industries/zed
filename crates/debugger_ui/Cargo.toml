@@ -36,6 +36,7 @@ dap_adapters = { workspace = true, optional = true }
 db.workspace = true
 editor.workspace = true
 feature_flags.workspace = true
+file_icons.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true

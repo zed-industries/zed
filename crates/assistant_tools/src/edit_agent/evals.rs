@@ -1,5 +1,9 @@
 use super::*;
-use crate::{ReadFileToolInput, edit_file_tool::EditFileToolInput, grep_tool::GrepToolInput};
+use crate::{
+    ReadFileToolInput,
+    edit_file_tool::{EditFileMode, EditFileToolInput},
+    grep_tool::GrepToolInput,
+};
 use Role::*;
 use anyhow::anyhow;
 use assistant_tool::ToolRegistry;
@@ -10,8 +14,8 @@ use futures::{FutureExt, future::LocalBoxFuture};
 use gpui::{AppContext, TestAppContext};
 use indoc::{formatdoc, indoc};
 use language_model::{
-    LanguageModelRegistry, LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolUse,
-    LanguageModelToolUseId,
+    LanguageModelRegistry, LanguageModelRequestTool, LanguageModelToolResult,
+    LanguageModelToolResultContent, LanguageModelToolUse, LanguageModelToolUseId, SelectedModel,
 };
 use project::Project;
 use rand::prelude::*;
@@ -21,6 +25,7 @@ use std::{
     cmp::Reverse,
     fmt::{self, Display},
     io::Write as _,
+    str::FromStr,
     sync::mpsc,
 };
 use util::path;
@@ -71,7 +76,7 @@ fn eval_extract_handle_command_output() {
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
-                            create_or_overwrite: false,
+                            mode: EditFileMode::Edit,
                         },
                     )],
                 ),
@@ -127,7 +132,7 @@ fn eval_delete_run_git_blame() {
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
-                            create_or_overwrite: false,
+                            mode: EditFileMode::Edit,
                         },
                     )],
                 ),
@@ -182,7 +187,7 @@ fn eval_translate_doc_comments() {
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
-                            create_or_overwrite: false,
+                            mode: EditFileMode::Edit,
                         },
                     )],
                 ),
@@ -297,7 +302,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
-                            create_or_overwrite: false,
+                            mode: EditFileMode::Edit,
                         },
                     )],
                 ),
@@ -372,7 +377,7 @@ fn eval_disable_cursor_blinking() {
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
-                            create_or_overwrite: false,
+                            mode: EditFileMode::Edit,
                         },
                     )],
                 ),
@@ -566,7 +571,7 @@ fn eval_from_pixels_constructor() {
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
-                            create_or_overwrite: false,
+                            mode: EditFileMode::Edit,
                         },
                     )],
                 ),
@@ -643,7 +648,7 @@ fn eval_zode() {
                             EditFileToolInput {
                                 display_description: edit_description.into(),
                                 path: input_file_path.into(),
-                                create_or_overwrite: true,
+                                mode: EditFileMode::Create,
                             },
                         ),
                     ],
@@ -888,7 +893,7 @@ fn eval_add_overwrite_test() {
                             EditFileToolInput {
                                 display_description: edit_description.into(),
                                 path: input_file_path.into(),
-                                create_or_overwrite: false,
+                                mode: EditFileMode::Edit,
                             },
                         ),
                     ],
@@ -951,7 +956,7 @@ fn tool_result(
         tool_use_id: LanguageModelToolUseId::from(id.into()),
         tool_name: name.into(),
         is_error: false,
-        content: result.into(),
+        content: LanguageModelToolResultContent::Text(result.into()),
         output: None,
     })
 }
@@ -1212,7 +1217,7 @@ fn report_progress(evaluated_count: usize, failed_count: usize, iterations: usiz
         passed_count as f64 / evaluated_count as f64
     };
     print!(
-        "\r\x1b[KEvaluated {}/{} ({:.2}%)",
+        "\r\x1b[KEvaluated {}/{} ({:.2}% passed)",
         evaluated_count,
         iterations,
         passed_ratio * 100.0
@@ -1251,13 +1256,21 @@ impl EditAgentTest {
 
         fs.insert_tree("/root", json!({})).await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let agent_model = SelectedModel::from_str(
+            &std::env::var("ZED_AGENT_MODEL")
+                .unwrap_or("anthropic/claude-3-7-sonnet-latest".into()),
+        )
+        .unwrap();
+        let judge_model = SelectedModel::from_str(
+            &std::env::var("ZED_JUDGE_MODEL")
+                .unwrap_or("anthropic/claude-3-7-sonnet-latest".into()),
+        )
+        .unwrap();
         let (agent_model, judge_model) = cx
             .update(|cx| {
                 cx.spawn(async move |cx| {
-                    let agent_model =
-                        Self::load_model("anthropic", "claude-3-7-sonnet-latest", cx).await;
-                    let judge_model =
-                        Self::load_model("anthropic", "claude-3-7-sonnet-latest", cx).await;
+                    let agent_model = Self::load_model(&agent_model, cx).await;
+                    let judge_model = Self::load_model(&judge_model, cx).await;
                     (agent_model.unwrap(), judge_model.unwrap())
                 })
             })
@@ -1272,15 +1285,17 @@ impl EditAgentTest {
     }
 
     async fn load_model(
-        provider: &str,
-        id: &str,
+        selected_model: &SelectedModel,
         cx: &mut AsyncApp,
     ) -> Result<Arc<dyn LanguageModel>> {
         let (provider, model) = cx.update(|cx| {
             let models = LanguageModelRegistry::read_global(cx);
             let model = models
                 .available_models(cx)
-                .find(|model| model.provider_id().0 == provider && model.id().0 == id)
+                .find(|model| {
+                    model.provider_id() == selected_model.provider
+                        && model.id() == selected_model.model
+                })
                 .unwrap();
             let provider = models.provider(&model.provider_id()).unwrap();
             (provider, model)

@@ -36,7 +36,8 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, TokenUsage,
+    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, RateLimiter, Role,
+    TokenUsage,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -490,6 +491,10 @@ impl LanguageModel for BedrockModel {
         self.model.supports_tool_use()
     }
 
+    fn supports_images(&self) -> bool {
+        false
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto | LanguageModelToolChoice::Any => {
@@ -635,9 +640,17 @@ pub fn into_bedrock(
                         MessageContent::ToolResult(tool_result) => {
                             BedrockToolResultBlock::builder()
                                 .tool_use_id(tool_result.tool_use_id.to_string())
-                                .content(BedrockToolResultContentBlock::Text(
-                                    tool_result.content.to_string(),
-                                ))
+                                .content(match tool_result.content {
+                                    LanguageModelToolResultContent::Text(text) => {
+                                        BedrockToolResultContentBlock::Text(text.to_string())
+                                    }
+                                    LanguageModelToolResultContent::Image(_) => {
+                                        BedrockToolResultContentBlock::Text(
+                                            // TODO: Bedrock image support
+                                            "[Tool responded with an image, but Zed doesn't support these in Bedrock models yet]".to_string()
+                                        )
+                                    }
+                                })
                                 .status({
                                     if tool_result.is_error {
                                         BedrockToolResultStatus::Error
@@ -762,9 +775,14 @@ pub fn get_bedrock_tokens(
                         MessageContent::ToolUse(_tool_use) => {
                             // TODO: Estimate token usage from tool uses.
                         }
-                        MessageContent::ToolResult(tool_result) => {
-                            string_contents.push_str(&tool_result.content);
-                        }
+                        MessageContent::ToolResult(tool_result) => match tool_result.content {
+                            LanguageModelToolResultContent::Text(text) => {
+                                string_contents.push_str(&text);
+                            }
+                            LanguageModelToolResultContent::Image(image) => {
+                                tokens_from_images += image.estimate_tokens();
+                            }
+                        },
                     }
                 }
 
