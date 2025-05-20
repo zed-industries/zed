@@ -65,6 +65,7 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotifyTaskExt},
 };
 use worktree::CreatedEntry;
+use zed_actions::OpenRecent;
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
@@ -2854,12 +2855,9 @@ impl ProjectPanel {
                 }
                 let precedes_new_entry = if let Some(new_entry_id) = new_entry_parent_id {
                     entry.id == new_entry_id || {
-                        self.ancestors.get(&entry.id).map_or(false, |entries| {
-                            entries
-                                .ancestors
-                                .iter()
-                                .any(|entry_id| *entry_id == new_entry_id)
-                        })
+                        self.ancestors
+                            .get(&entry.id)
+                            .map_or(false, |entries| entries.ancestors.contains(&new_entry_id))
                     }
                 } else {
                     false
@@ -3369,10 +3367,7 @@ impl ProjectPanel {
                                     .ancestors
                                     .get(&entry.id)
                                     .is_some_and(|auto_folded_dirs| {
-                                        auto_folded_dirs
-                                            .ancestors
-                                            .iter()
-                                            .any(|entry_id| *entry_id == edit_state.entry_id)
+                                        auto_folded_dirs.ancestors.contains(&edit_state.entry_id)
                                     })
                         };
 
@@ -4887,11 +4882,16 @@ impl Render for ProjectPanel {
                 .child(
                     Button::new("open_project", "Open a project")
                         .full_width()
-                        .key_binding(KeyBinding::for_action(&workspace::Open, window, cx))
+                        .key_binding(KeyBinding::for_action_in(
+                            &OpenRecent::default(),
+                            &self.focus_handle,
+                            window,
+                            cx,
+                        ))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.workspace
                                 .update(cx, |_, cx| {
-                                    window.dispatch_action(Box::new(workspace::Open), cx)
+                                    window.dispatch_action(OpenRecent::default().boxed_clone(), cx);
                                 })
                                 .log_err();
                         })),

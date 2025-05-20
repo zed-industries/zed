@@ -3415,7 +3415,6 @@ pub struct RemoteLspStore {
     upstream_project_id: u64,
 }
 
-#[allow(clippy::large_enum_variant)]
 pub(crate) enum LspStoreMode {
     Local(LocalLspStore),   // ssh host and collab host
     Remote(RemoteLspStore), // collab guest
@@ -8806,9 +8805,10 @@ impl LspStore {
                     })
                 });
 
-            let is_unnecessary = diagnostic.tags.as_ref().map_or(false, |tags| {
-                tags.iter().any(|tag| *tag == DiagnosticTag::UNNECESSARY)
-            });
+            let is_unnecessary = diagnostic
+                .tags
+                .as_ref()
+                .map_or(false, |tags| tags.contains(&DiagnosticTag::UNNECESSARY));
 
             if is_supporting {
                 supporting_diagnostics.insert(

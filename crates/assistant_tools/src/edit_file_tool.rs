@@ -22,7 +22,7 @@ use language::{
 };
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
-use project::Project;
+use project::{Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -86,7 +86,7 @@ pub struct EditFileToolInput {
     pub mode: EditFileMode,
 }
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum EditFileMode {
     Edit,
@@ -171,12 +171,9 @@ impl Tool for EditFileTool {
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
-        let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
-            return Task::ready(Err(anyhow!(
-                "Path {} not found in project",
-                input.path.display()
-            )))
-            .into();
+        let project_path = match resolve_path(&input, project.clone(), cx) {
+            Ok(path) => path,
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
         let card = window.and_then(|window| {
@@ -199,20 +196,6 @@ impl Tool for EditFileTool {
                 })?
                 .await?;
 
-            let exists = buffer.read_with(cx, |buffer, _| {
-                buffer
-                    .file()
-                    .as_ref()
-                    .map_or(false, |file| file.disk_state().exists())
-            })?;
-            let create_or_overwrite = match input.mode {
-                EditFileMode::Create | EditFileMode::Overwrite => true,
-                _ => false,
-            };
-            if !create_or_overwrite && !exists {
-                return Err(anyhow!("{} not found", input.path.display()));
-            }
-
             let old_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
             let old_text = cx
                 .background_spawn({
@@ -221,15 +204,15 @@ impl Tool for EditFileTool {
                 })
                 .await;
 
-            let (output, mut events) = if create_or_overwrite {
-                edit_agent.overwrite(
+            let (output, mut events) = if matches!(input.mode, EditFileMode::Edit) {
+                edit_agent.edit(
                     buffer.clone(),
                     input.display_description.clone(),
                     &request,
                     cx,
                 )
             } else {
-                edit_agent.edit(
+                edit_agent.overwrite(
                     buffer.clone(),
                     input.display_description.clone(),
                     &request,
@@ -349,6 +332,72 @@ impl Tool for EditFileTool {
     }
 }
 
+/// Validate that the file path is valid, meaning:
+///
+/// - For `edit` and `overwrite`, the path must point to an existing file.
+/// - For `create`, the file must not already exist, but it's parent dir must exist.
+fn resolve_path(
+    input: &EditFileToolInput,
+    project: Entity<Project>,
+    cx: &mut App,
+) -> Result<ProjectPath> {
+    let project = project.read(cx);
+
+    match input.mode {
+        EditFileMode::Edit | EditFileMode::Overwrite => {
+            let path = project
+                .find_project_path(&input.path, cx)
+                .ok_or_else(|| anyhow!("Can't edit file: path not found"))?;
+
+            let entry = project
+                .entry_for_path(&path, cx)
+                .ok_or_else(|| anyhow!("Can't edit file: path not found"))?;
+
+            if !entry.is_file() {
+                return Err(anyhow!("Can't edit file: path is a directory"));
+            }
+
+            Ok(path)
+        }
+
+        EditFileMode::Create => {
+            if let Some(path) = project.find_project_path(&input.path, cx) {
+                if project.entry_for_path(&path, cx).is_some() {
+                    return Err(anyhow!("Can't create file: file already exists"));
+                }
+            }
+
+            let parent_path = input
+                .path
+                .parent()
+                .ok_or_else(|| anyhow!("Can't create file: incorrect path"))?;
+
+            let parent_project_path = project.find_project_path(&parent_path, cx);
+
+            let parent_entry = parent_project_path
+                .as_ref()
+                .and_then(|path| project.entry_for_path(&path, cx))
+                .ok_or_else(|| anyhow!("Can't create file: parent directory doesn't exist"))?;
+
+            if !parent_entry.is_dir() {
+                return Err(anyhow!("Can't create file: parent is not a directory"));
+            }
+
+            let file_name = input
+                .path
+                .file_name()
+                .ok_or_else(|| anyhow!("Can't create file: invalid filename"))?;
+
+            let new_file_path = parent_project_path.map(|parent| ProjectPath {
+                path: Arc::from(parent.path.join(file_name)),
+                ..parent
+            });
+
+            new_file_path.ok_or_else(|| anyhow!("Can't create file"))
+        }
+    }
+}
+
 pub struct EditFileToolCard {
     path: PathBuf,
     editor: Entity<Editor>,
@@ -400,7 +449,7 @@ impl EditFileToolCard {
             diff_task: None,
             preview_expanded: true,
             error_expanded: None,
-            full_height_expanded: false,
+            full_height_expanded: true,
             total_lines: None,
         }
     }
@@ -868,7 +917,10 @@ async fn build_buffer_diff(
 
 #[cfg(test)]
 mod tests {
+    use std::result::Result;
+
     use super::*;
+    use client::TelemetrySettings;
     use fs::FakeFs;
     use gpui::TestAppContext;
     use language_model::fake_provider::FakeLanguageModel;
@@ -908,8 +960,100 @@ mod tests {
             .await;
         assert_eq!(
             result.unwrap_err().to_string(),
-            "root/nonexistent_file.txt not found"
+            "Can't edit file: path not found"
         );
+    }
+
+    #[gpui::test]
+    async fn test_resolve_path_for_creating_file(cx: &mut TestAppContext) {
+        let mode = &EditFileMode::Create;
+
+        let result = test_resolve_path(mode, "root/new.txt", cx);
+        assert_resolved_path_eq(result.await, "new.txt");
+
+        let result = test_resolve_path(mode, "new.txt", cx);
+        assert_resolved_path_eq(result.await, "new.txt");
+
+        let result = test_resolve_path(mode, "dir/new.txt", cx);
+        assert_resolved_path_eq(result.await, "dir/new.txt");
+
+        let result = test_resolve_path(mode, "root/dir/subdir/existing.txt", cx);
+        assert_eq!(
+            result.await.unwrap_err().to_string(),
+            "Can't create file: file already exists"
+        );
+
+        let result = test_resolve_path(mode, "root/dir/nonexistent_dir/new.txt", cx);
+        assert_eq!(
+            result.await.unwrap_err().to_string(),
+            "Can't create file: parent directory doesn't exist"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_resolve_path_for_editing_file(cx: &mut TestAppContext) {
+        let mode = &EditFileMode::Edit;
+
+        let path_with_root = "root/dir/subdir/existing.txt";
+        let path_without_root = "dir/subdir/existing.txt";
+        let result = test_resolve_path(mode, path_with_root, cx);
+        assert_resolved_path_eq(result.await, path_without_root);
+
+        let result = test_resolve_path(mode, path_without_root, cx);
+        assert_resolved_path_eq(result.await, path_without_root);
+
+        let result = test_resolve_path(mode, "root/nonexistent.txt", cx);
+        assert_eq!(
+            result.await.unwrap_err().to_string(),
+            "Can't edit file: path not found"
+        );
+
+        let result = test_resolve_path(mode, "root/dir", cx);
+        assert_eq!(
+            result.await.unwrap_err().to_string(),
+            "Can't edit file: path is a directory"
+        );
+    }
+
+    async fn test_resolve_path(
+        mode: &EditFileMode,
+        path: &str,
+        cx: &mut TestAppContext,
+    ) -> Result<ProjectPath, anyhow::Error> {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "dir": {
+                    "subdir": {
+                        "existing.txt": "hello"
+                    }
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        let input = EditFileToolInput {
+            display_description: "Some edit".into(),
+            path: path.into(),
+            mode: mode.clone(),
+        };
+
+        let result = cx.update(|cx| resolve_path(&input, project, cx));
+        result
+    }
+
+    fn assert_resolved_path_eq(path: Result<ProjectPath, anyhow::Error>, expected: &str) {
+        let actual = path
+            .expect("Should return valid path")
+            .path
+            .to_str()
+            .unwrap()
+            .replace("\\", "/"); // Naive Windows paths normalization
+        assert_eq!(actual, expected);
     }
 
     #[test]
@@ -984,6 +1128,7 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             language::init(cx);
+            TelemetrySettings::register(cx);
             Project::init_settings(cx);
         });
     }
