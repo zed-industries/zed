@@ -112,7 +112,10 @@ where
             else {
                 unreachable!()
             };
-            *max_ordering = cmp::max(*max_ordering, ordering);
+            if *max_ordering >= ordering {
+                break
+            }
+            *max_ordering = ordering;
         }
 
         ordering
