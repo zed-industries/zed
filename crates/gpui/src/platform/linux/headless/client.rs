@@ -95,9 +95,7 @@ impl LinuxClient for HeadlessClient {
         _handle: AnyWindowHandle,
         _params: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
-        Err(anyhow::anyhow!(
-            "neither DISPLAY nor WAYLAND_DISPLAY is set. You can run in headless mode"
-        ))
+        anyhow::bail!("neither DISPLAY nor WAYLAND_DISPLAY is set. You can run in headless mode");
     }
 
     fn compositor_name(&self) -> &'static str {

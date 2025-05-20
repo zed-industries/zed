@@ -7,7 +7,7 @@ use crate::{
     ShowStackTrace, StepBack, StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints,
     persistence,
 };
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use command_palette_hooks::CommandPaletteFilter;
 use dap::StartDebuggingRequestArguments;
 use dap::adapters::DebugAdapterName;
@@ -1021,17 +1021,13 @@ impl DebugPanel {
                     }
 
                     workspace.update(cx, |workspace, cx| {
-                        if let Some(project_path) = workspace
+                        workspace
                             .project()
                             .read(cx)
                             .project_path_for_absolute_path(&path, cx)
-                        {
-                            Ok(project_path)
-                        } else {
-                            Err(anyhow!(
-                                "Couldn't get project path for .zed/debug.json in active worktree"
-                            ))
-                        }
+                            .context(
+                                "Couldn't get project path for .zed/debug.json in active worktree",
+                            )
                     })?
                 })
             })

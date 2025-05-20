@@ -8,7 +8,7 @@ mod telemetry;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake_provider;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result};
 use client::Client;
 use futures::FutureExt;
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
@@ -122,12 +122,16 @@ impl RequestUsage {
     pub fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
         let limit = headers
             .get(MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME)
-            .ok_or_else(|| anyhow!("missing {MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME:?} header"))?;
+            .with_context(|| {
+                format!("missing {MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME:?} header")
+            })?;
         let limit = UsageLimit::from_str(limit.to_str()?)?;
 
         let amount = headers
             .get(MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME)
-            .ok_or_else(|| anyhow!("missing {MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME:?} header"))?;
+            .with_context(|| {
+                format!("missing {MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME:?} header")
+            })?;
         let amount = amount.to_str()?.parse::<i32>()?;
 
         Ok(Self { limit, amount })

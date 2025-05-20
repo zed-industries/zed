@@ -2,7 +2,7 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_context_editor::AssistantContext;
 use collections::{HashSet, IndexSet};
 use futures::{self, FutureExt};
@@ -142,17 +142,12 @@ impl ContextStore {
         remove_if_exists: bool,
         cx: &mut Context<Self>,
     ) -> Result<Option<AgentContextHandle>> {
-        let Some(project) = self.project.upgrade() else {
-            return Err(anyhow!("failed to read project"));
-        };
-
-        let Some(entry_id) = project
+        let project = self.project.upgrade().context("failed to read project")?;
+        let entry_id = project
             .read(cx)
             .entry_for_path(project_path, cx)
             .map(|entry| entry.id)
-        else {
-            return Err(anyhow!("no entry found for directory context"));
-        };
+            .context("no entry found for directory context")?;
 
         let context_id = self.next_context_id.post_inc();
         let context = AgentContextHandle::Directory(DirectoryContextHandle {

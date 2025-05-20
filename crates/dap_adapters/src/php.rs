@@ -1,4 +1,5 @@
 use adapters::latest_github_release;
+use anyhow::Context as _;
 use dap::adapters::{DebugTaskDefinition, TcpArguments};
 use gpui::{AsyncApp, SharedString};
 use language::LanguageName;
@@ -58,7 +59,7 @@ impl PhpDebugAdapter {
                 .assets
                 .iter()
                 .find(|asset| asset.name == asset_name)
-                .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?
+                .with_context(|| format!("no asset found matching {asset_name:?}"))?
                 .browser_download_url
                 .clone(),
         })
@@ -82,7 +83,7 @@ impl PhpDebugAdapter {
                 file_name.starts_with(&file_name_prefix)
             })
             .await
-            .ok_or_else(|| anyhow!("Couldn't find PHP dap directory"))?
+            .context("Couldn't find PHP dap directory")?
         };
 
         let tcp_connection = config.tcp_connection.clone().unwrap_or_default();

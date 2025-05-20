@@ -1630,7 +1630,7 @@ impl Thread {
                                         CompletionRequestStatus::Failed {
                                             code, message, request_id
                                         } => {
-                                            return Err(anyhow!("completion request failed. request_id: {request_id}, code: {code}, message: {message}"));
+                                            anyhow::bail!("completion request failed. request_id: {request_id}, code: {code}, message: {message}");
                                         }
                                         CompletionRequestStatus::UsageUpdated {
                                             amount, limit

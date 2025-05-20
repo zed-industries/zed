@@ -4,7 +4,7 @@
 mod reliability;
 mod zed;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use clap::{Parser, command};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{Client, ProxySettings, UserStore, parse_zed_link};
@@ -1073,7 +1073,7 @@ fn parse_url_arg(arg: &str, cx: &App) -> Result<String> {
             {
                 Ok(arg.into())
             } else {
-                Err(anyhow!("error parsing path argument: {}", error))
+                anyhow::bail!("error parsing path argument: {error}")
             }
         }
     }

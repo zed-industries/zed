@@ -1,4 +1,5 @@
 use adapters::latest_github_release;
+use anyhow::Context as _;
 use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
 use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
@@ -74,7 +75,7 @@ impl JsDebugAdapter {
                 .assets
                 .iter()
                 .find(|asset| asset.name == asset_name)
-                .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?
+                .with_context(|| format!("no asset found matching {asset_name:?}"))?
                 .browser_download_url
                 .clone(),
         })
@@ -98,7 +99,7 @@ impl JsDebugAdapter {
                 file_name.starts_with(&file_name_prefix)
             })
             .await
-            .ok_or_else(|| anyhow!("Couldn't find JavaScript dap directory"))?
+            .context("Couldn't find JavaScript dap directory")?
         };
 
         let tcp_connection = config.tcp_connection.clone().unwrap_or_default();
