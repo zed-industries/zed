@@ -1,5 +1,6 @@
 interface dap {
     use common.{env-vars};
+
     record launch-request {
         program: string,
         cwd: option<string>,
@@ -27,6 +28,7 @@ interface dap {
         host: option<u32>,
         timeout: option<u64>,
     }
+
     record debug-task-definition {
         label: string,
         adapter: string,
@@ -40,11 +42,12 @@ interface dap {
         launch,
         attach,
     }
+
     record start-debugging-request-arguments {
         configuration: string,
         request: start-debugging-request-arguments-request,
-
     }
+
     record debug-adapter-binary {
         command: string,
         arguments: list<string>,

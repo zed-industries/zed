@@ -81,6 +81,10 @@ impl RunningState {
     pub(crate) fn thread_id(&self) -> Option<ThreadId> {
         self.thread_id
     }
+
+    pub(crate) fn active_pane(&self) -> Option<&Entity<Pane>> {
+        self.active_pane.as_ref()
+    }
 }
 
 impl Render for RunningState {
@@ -502,20 +506,15 @@ impl DebugTerminal {
 
 impl gpui::Render for DebugTerminal {
     fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        if let Some(terminal) = self.terminal.clone() {
-            terminal.into_any_element()
-        } else {
-            div().track_focus(&self.focus_handle).into_any_element()
-        }
+        div()
+            .size_full()
+            .track_focus(&self.focus_handle)
+            .children(self.terminal.clone())
     }
 }
 impl Focusable for DebugTerminal {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        if let Some(terminal) = self.terminal.as_ref() {
-            return terminal.focus_handle(cx);
-        } else {
-            self.focus_handle.clone()
-        }
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -1219,10 +1218,16 @@ impl RunningState {
         }
     }
 
-    pub(crate) fn go_to_selected_stack_frame(&self, window: &Window, cx: &mut Context<Self>) {
+    pub(crate) fn go_to_selected_stack_frame(&self, window: &mut Window, cx: &mut Context<Self>) {
         if self.thread_id.is_some() {
             self.stack_frame_list
-                .update(cx, |list, cx| list.go_to_selected_stack_frame(window, cx));
+                .update(cx, |list, cx| {
+                    let Some(stack_frame_id) = list.opened_stack_frame_id() else {
+                        return Task::ready(Ok(()));
+                    };
+                    list.go_to_stack_frame(stack_frame_id, window, cx)
+                })
+                .detach();
         }
     }
 
@@ -1239,7 +1244,7 @@ impl RunningState {
     }
 
     pub(crate) fn selected_stack_frame_id(&self, cx: &App) -> Option<dap::StackFrameId> {
-        self.stack_frame_list.read(cx).selected_stack_frame_id()
+        self.stack_frame_list.read(cx).opened_stack_frame_id()
     }
 
     pub(crate) fn stack_frame_list(&self) -> &Entity<StackFrameList> {

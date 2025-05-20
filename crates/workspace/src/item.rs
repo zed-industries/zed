@@ -564,6 +564,10 @@ pub trait ItemHandle: 'static + Send {
     fn preserve_preview(&self, cx: &App) -> bool;
     fn include_in_nav_history(&self) -> bool;
     fn relay_action(&self, action: Box<dyn Action>, window: &mut Window, cx: &mut App);
+    fn can_autosave(&self, cx: &App) -> bool {
+        let is_deleted = self.project_entry_ids(cx).is_empty();
+        self.is_dirty(cx) && !self.has_conflict(cx) && self.can_save(cx) && !is_deleted
+    }
 }
 
 pub trait WeakItemHandle: Send + Sync {
