@@ -490,14 +490,14 @@ impl<T: 'static> Drop for PendingEntitySubscription<T> {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Deserialize, Debug)]
 pub struct TelemetrySettings {
     pub diagnostics: bool,
     pub metrics: bool,
 }
 
 /// Control what info is collected by Zed.
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct TelemetrySettingsContent {
     /// Send debug info like crash reports.
     ///
@@ -515,25 +515,7 @@ impl settings::Settings for TelemetrySettings {
     type FileContent = TelemetrySettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        Ok(Self {
-            diagnostics: sources
-                .user
-                .as_ref()
-                .or(sources.server.as_ref())
-                .and_then(|v| v.diagnostics)
-                .unwrap_or(
-                    sources
-                        .default
-                        .diagnostics
-                        .ok_or_else(Self::missing_default)?,
-                ),
-            metrics: sources
-                .user
-                .as_ref()
-                .or(sources.server.as_ref())
-                .and_then(|v| v.metrics)
-                .unwrap_or(sources.default.metrics.ok_or_else(Self::missing_default)?),
-        })
+        sources.json_merge()
     }
 
     fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
