@@ -483,7 +483,7 @@ impl DebugAdapter for PythonDebugAdapter {
                                 "type": "string"
                             },
                             "program": {
-                                "default": "${file}",
+                                "default": "${ZED_FILE}",
                                 "description": "Absolute path to the program.",
                                 "type": "string"
                             },
