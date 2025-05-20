@@ -1,5 +1,7 @@
 # Building Zed for FreeBSD
 
+Note, FreeBSD is not currently a supported platform, and so this is a work-in-progress.
+
 ## Repository
 
 Clone down the [Zed repository](https://github.com/zed-industries/zed).
@@ -11,10 +13,10 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 - Install the necessary system libraries:
 
   ```sh
-  script/linux
+  script/freebsd
   ```
 
-  If you prefer to install the system libraries manually, you can find the list of required packages in the `script/linux` file.
+  If you prefer to install the system libraries manually, you can find the list of required packages in the `script/freebsd` file.
 
 ---
 
