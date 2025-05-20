@@ -107,6 +107,15 @@ pub struct LoadedBinaryFile {
     pub content: Vec<u8>,
 }
 
+impl fmt::Debug for LoadedBinaryFile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LoadedBinaryFile")
+            .field("file", &self.file)
+            .field("content_bytes", &self.content.len())
+            .finish()
+    }
+}
+
 pub struct LocalWorktree {
     snapshot: LocalSnapshot,
     scan_requests_tx: channel::Sender<ScanRequest>,
@@ -3293,7 +3302,7 @@ impl fmt::Debug for Snapshot {
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct File {
     pub worktree: Entity<Worktree>,
     pub path: Arc<Path>,

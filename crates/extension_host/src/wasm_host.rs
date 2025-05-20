@@ -379,11 +379,13 @@ impl extension::Extension for WasmExtension {
         dap_name: Arc<str>,
         config: DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
+        worktree: Arc<dyn WorktreeDelegate>,
     ) -> Result<DebugAdapterBinary> {
         self.call(|extension, store| {
             async move {
+                let resource = store.data_mut().table().push(worktree)?;
                 let dap_binary = extension
-                    .call_get_dap_binary(store, dap_name, config, user_installed_path)
+                    .call_get_dap_binary(store, dap_name, config, user_installed_path, resource)
                     .await?
                     .map_err(|err| anyhow!("{err:?}"))?;
                 let dap_binary = dap_binary.try_into()?;

@@ -1,7 +1,7 @@
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
-mod proxy;
+mod socks;
 pub mod telemetry;
 pub mod user;
 pub mod zed_urls;
@@ -24,13 +24,13 @@ use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use parking_lot::RwLock;
 use postage::watch;
-use proxy::connect_proxy_stream;
 use rand::prelude::*;
 use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
+use socks::connect_socks_proxy_stream;
 use std::pin::Pin;
 use std::{
     any::TypeId,
@@ -490,14 +490,14 @@ impl<T: 'static> Drop for PendingEntitySubscription<T> {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Deserialize, Debug)]
 pub struct TelemetrySettings {
     pub diagnostics: bool,
     pub metrics: bool,
 }
 
 /// Control what info is collected by Zed.
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct TelemetrySettingsContent {
     /// Send debug info like crash reports.
     ///
@@ -515,25 +515,7 @@ impl settings::Settings for TelemetrySettings {
     type FileContent = TelemetrySettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        Ok(Self {
-            diagnostics: sources
-                .user
-                .as_ref()
-                .or(sources.server.as_ref())
-                .and_then(|v| v.diagnostics)
-                .unwrap_or(
-                    sources
-                        .default
-                        .diagnostics
-                        .ok_or_else(Self::missing_default)?,
-                ),
-            metrics: sources
-                .user
-                .as_ref()
-                .or(sources.server.as_ref())
-                .and_then(|v| v.metrics)
-                .unwrap_or(sources.default.metrics.ok_or_else(Self::missing_default)?),
-        })
+        sources.json_merge()
     }
 
     fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
@@ -1156,7 +1138,7 @@ impl Client {
                 let handle = cx.update(|cx| gpui_tokio::Tokio::handle(cx)).ok().unwrap();
                 let _guard = handle.enter();
                 match proxy {
-                    Some(proxy) => connect_proxy_stream(&proxy, rpc_host).await?,
+                    Some(proxy) => connect_socks_proxy_stream(&proxy, rpc_host).await?,
                     None => Box::new(TcpStream::connect(rpc_host).await?),
                 }
             };

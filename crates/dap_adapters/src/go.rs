@@ -50,13 +50,14 @@ impl DebugAdapter for GoDebugAdapter {
 
     async fn get_binary(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         _user_installed_path: Option<PathBuf>,
         _cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let delve_path = delegate
             .which(OsStr::new("dlv"))
+            .await
             .and_then(|p| p.to_str().map(|p| p.to_string()))
             .ok_or(anyhow!("Dlv not found in path"))?;
 
@@ -70,7 +71,7 @@ impl DebugAdapter for GoDebugAdapter {
                 "--listen".into(),
                 format!("{}:{}", host, port),
             ],
-            cwd: Some(delegate.cwd().to_path_buf()),
+            cwd: Some(delegate.worktree_root_path().to_path_buf()),
             envs: HashMap::default(),
             connection: Some(adapters::TcpArguments {
                 host,

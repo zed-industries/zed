@@ -26,6 +26,7 @@ use language::{
         AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
         LanguageSettingsContent, LspInsertMode, PrettierSettings,
     },
+    tree_sitter_python,
 };
 use language_settings::{Formatter, FormatterList, IndentGuideSettings};
 use lsp::CompletionParams;
@@ -13980,6 +13981,148 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(cx: &mut
 }
 
 #[gpui::test]
+async fn test_context_menus_hide_hover_popover(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+            code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+            completion_provider: Some(lsp::CompletionOptions {
+                resolve_provider: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+    cx.set_state(indoc! {"
+        struct TestStruct {
+            field: i32
+        }
+
+        fn mainˇ() {
+            let unused_var = 42;
+            let test_struct = TestStruct { field: 42 };
+        }
+    "});
+    let symbol_range = cx.lsp_range(indoc! {"
+        struct TestStruct {
+            field: i32
+        }
+
+        «fn main»() {
+            let unused_var = 42;
+            let test_struct = TestStruct { field: 42 };
+        }
+    "});
+    let mut hover_requests =
+        cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+            Ok(Some(lsp::Hover {
+                contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                    kind: lsp::MarkupKind::Markdown,
+                    value: "Function documentation".to_string(),
+                }),
+                range: Some(symbol_range),
+            }))
+        });
+
+    // Case 1: Test that code action menu hide hover popover
+    cx.dispatch_action(Hover);
+    hover_requests.next().await;
+    cx.condition(|editor, _| editor.hover_state.visible()).await;
+    let mut code_action_requests = cx.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
+        move |_, _, _| async move {
+            Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                lsp::CodeAction {
+                    title: "Remove unused variable".to_string(),
+                    kind: Some(CodeActionKind::QUICKFIX),
+                    edit: Some(lsp::WorkspaceEdit {
+                        changes: Some(
+                            [(
+                                lsp::Url::from_file_path(path!("/file.rs")).unwrap(),
+                                vec![lsp::TextEdit {
+                                    range: lsp::Range::new(
+                                        lsp::Position::new(5, 4),
+                                        lsp::Position::new(5, 27),
+                                    ),
+                                    new_text: "".to_string(),
+                                }],
+                            )]
+                            .into_iter()
+                            .collect(),
+                        ),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )]))
+        },
+    );
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_code_actions(
+            &ToggleCodeActions {
+                deployed_from_indicator: None,
+                quick_launch: false,
+            },
+            window,
+            cx,
+        );
+    });
+    code_action_requests.next().await;
+    cx.run_until_parked();
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, _, _| {
+        assert!(
+            !editor.hover_state.visible(),
+            "Hover popover should be hidden when code action menu is shown"
+        );
+        // Hide code actions
+        editor.context_menu.take();
+    });
+
+    // Case 2: Test that code completions hide hover popover
+    cx.dispatch_action(Hover);
+    hover_requests.next().await;
+    cx.condition(|editor, _| editor.hover_state.visible()).await;
+    let counter = Arc::new(AtomicUsize::new(0));
+    let mut completion_requests =
+        cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, _, _| {
+            let counter = counter.clone();
+            async move {
+                counter.fetch_add(1, atomic::Ordering::Release);
+                Ok(Some(lsp::CompletionResponse::Array(vec![
+                    lsp::CompletionItem {
+                        label: "main".into(),
+                        kind: Some(lsp::CompletionItemKind::FUNCTION),
+                        detail: Some("() -> ()".to_string()),
+                        ..Default::default()
+                    },
+                    lsp::CompletionItem {
+                        label: "TestStruct".into(),
+                        kind: Some(lsp::CompletionItemKind::STRUCT),
+                        detail: Some("struct TestStruct".to_string()),
+                        ..Default::default()
+                    },
+                ])))
+            }
+        });
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+    });
+    completion_requests.next().await;
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, _, _| {
+        assert!(
+            !editor.hover_state.visible(),
+            "Hover popover should be hidden when completion menu is shown"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_completions_resolve_happens_once(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -18715,7 +18858,7 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -18740,7 +18883,7 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -18762,7 +18905,7 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -18829,7 +18972,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -18850,7 +18993,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -18870,7 +19013,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -18893,7 +19036,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -18916,7 +19059,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -19009,7 +19152,7 @@ async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -19041,7 +19184,7 @@ async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -19077,7 +19220,7 @@ async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -20208,6 +20351,330 @@ async fn test_invisible_worktree_servers(cx: &mut TestAppContext) {
         "After reloading the worktree with local and external files opened, only one project should be started",
         cx,
     );
+}
+
+#[gpui::test]
+async fn test_tab_in_leading_whitespace_auto_indents_for_python(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = languages::language("python", tree_sitter_python::LANGUAGE.into());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // test cursor move to start of each line on tab
+    // for `if`, `elif`, `else`, `while`, `with` and `for`
+    cx.set_state(indoc! {"
+        def main():
+        ˇ    for item in items:
+        ˇ        while item.active:
+        ˇ            if item.value > 10:
+        ˇ                continue
+        ˇ            elif item.value < 0:
+        ˇ                break
+        ˇ            else:
+        ˇ                with item.context() as ctx:
+        ˇ                    yield count
+        ˇ        else:
+        ˇ            log('while else')
+        ˇ    else:
+        ˇ        log('for else')
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+        def main():
+            ˇfor item in items:
+                ˇwhile item.active:
+                    ˇif item.value > 10:
+                        ˇcontinue
+                    ˇelif item.value < 0:
+                        ˇbreak
+                    ˇelse:
+                        ˇwith item.context() as ctx:
+                            ˇyield count
+                ˇelse:
+                    ˇlog('while else')
+            ˇelse:
+                ˇlog('for else')
+    "});
+    // test relative indent is preserved when tab
+    // for `if`, `elif`, `else`, `while`, `with` and `for`
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+        def main():
+                ˇfor item in items:
+                    ˇwhile item.active:
+                        ˇif item.value > 10:
+                            ˇcontinue
+                        ˇelif item.value < 0:
+                            ˇbreak
+                        ˇelse:
+                            ˇwith item.context() as ctx:
+                                ˇyield count
+                    ˇelse:
+                        ˇlog('while else')
+                ˇelse:
+                    ˇlog('for else')
+    "});
+
+    // test cursor move to start of each line on tab
+    // for `try`, `except`, `else`, `finally`, `match` and `def`
+    cx.set_state(indoc! {"
+        def main():
+        ˇ    try:
+        ˇ       fetch()
+        ˇ    except ValueError:
+        ˇ       handle_error()
+        ˇ    else:
+        ˇ        match value:
+        ˇ            case _:
+        ˇ    finally:
+        ˇ        def status():
+        ˇ            return 0
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+        def main():
+            ˇtry:
+                ˇfetch()
+            ˇexcept ValueError:
+                ˇhandle_error()
+            ˇelse:
+                ˇmatch value:
+                    ˇcase _:
+            ˇfinally:
+                ˇdef status():
+                    ˇreturn 0
+    "});
+    // test relative indent is preserved when tab
+    // for `try`, `except`, `else`, `finally`, `match` and `def`
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+        def main():
+                ˇtry:
+                    ˇfetch()
+                ˇexcept ValueError:
+                    ˇhandle_error()
+                ˇelse:
+                    ˇmatch value:
+                        ˇcase _:
+                ˇfinally:
+                    ˇdef status():
+                        ˇreturn 0
+    "});
+}
+
+#[gpui::test]
+async fn test_outdent_after_input_for_python(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = languages::language("python", tree_sitter_python::LANGUAGE.into());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // test `else` auto outdents when typed inside `if` block
+    cx.set_state(indoc! {"
+        def main():
+            if i == 2:
+                return
+                ˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("else:", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        def main():
+            if i == 2:
+                return
+            else:ˇ
+    "});
+
+    // test `except` auto outdents when typed inside `try` block
+    cx.set_state(indoc! {"
+        def main():
+            try:
+                i = 2
+                ˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("except:", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        def main():
+            try:
+                i = 2
+            except:ˇ
+    "});
+
+    // test `else` auto outdents when typed inside `except` block
+    cx.set_state(indoc! {"
+        def main():
+            try:
+                i = 2
+            except:
+                j = 2
+                ˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("else:", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        def main():
+            try:
+                i = 2
+            except:
+                j = 2
+            else:ˇ
+    "});
+
+    // test `finally` auto outdents when typed inside `else` block
+    cx.set_state(indoc! {"
+        def main():
+            try:
+                i = 2
+            except:
+                j = 2
+            else:
+                k = 2
+                ˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("finally:", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        def main():
+            try:
+                i = 2
+            except:
+                j = 2
+            else:
+                k = 2
+            finally:ˇ
+    "});
+
+    // TODO: test `except` auto outdents when typed inside `try` block right after for block
+    // cx.set_state(indoc! {"
+    //     def main():
+    //         try:
+    //             for i in range(n):
+    //                 pass
+    //             ˇ
+    // "});
+    // cx.update_editor(|editor, window, cx| {
+    //     editor.handle_input("except:", window, cx);
+    // });
+    // cx.assert_editor_state(indoc! {"
+    //     def main():
+    //         try:
+    //             for i in range(n):
+    //                 pass
+    //         except:ˇ
+    // "});
+
+    // TODO: test `else` auto outdents when typed inside `except` block right after for block
+    // cx.set_state(indoc! {"
+    //     def main():
+    //         try:
+    //             i = 2
+    //         except:
+    //             for i in range(n):
+    //                 pass
+    //             ˇ
+    // "});
+    // cx.update_editor(|editor, window, cx| {
+    //     editor.handle_input("else:", window, cx);
+    // });
+    // cx.assert_editor_state(indoc! {"
+    //     def main():
+    //         try:
+    //             i = 2
+    //         except:
+    //             for i in range(n):
+    //                 pass
+    //         else:ˇ
+    // "});
+
+    // TODO: test `finally` auto outdents when typed inside `else` block right after for block
+    // cx.set_state(indoc! {"
+    //     def main():
+    //         try:
+    //             i = 2
+    //         except:
+    //             j = 2
+    //         else:
+    //             for i in range(n):
+    //                 pass
+    //             ˇ
+    // "});
+    // cx.update_editor(|editor, window, cx| {
+    //     editor.handle_input("finally:", window, cx);
+    // });
+    // cx.assert_editor_state(indoc! {"
+    //     def main():
+    //         try:
+    //             i = 2
+    //         except:
+    //             j = 2
+    //         else:
+    //             for i in range(n):
+    //                 pass
+    //         finally:ˇ
+    // "});
+
+    // test `else` stays at correct indent when typed after `for` block
+    cx.set_state(indoc! {"
+        def main():
+            for i in range(10):
+                if i == 3:
+                    break
+            ˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("else:", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        def main():
+            for i in range(10):
+                if i == 3:
+                    break
+            else:ˇ
+    "});
+}
+
+#[gpui::test]
+async fn test_indent_on_newline_for_python(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_language_settings(cx, |settings| {
+        settings.defaults.extend_comment_on_newline = Some(false);
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = languages::language("python", tree_sitter_python::LANGUAGE.into());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // test correct indent after newline on comment
+    cx.set_state(indoc! {"
+        # COMMENT:ˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Newline, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        # COMMENT:
+        ˇ
+    "});
+
+    // test correct indent after newline in curly brackets
+    cx.set_state(indoc! {"
+        {ˇ}
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Newline, window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc! {"
+        {
+            ˇ
+        }
+    "});
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {

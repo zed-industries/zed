@@ -791,6 +791,7 @@ impl Pane {
     pub(crate) fn open_item(
         &mut self,
         project_entry_id: Option<ProjectEntryId>,
+        project_path: ProjectPath,
         focus_item: bool,
         allow_preview: bool,
         activate: bool,
@@ -805,6 +806,14 @@ impl Pane {
                 if item.is_singleton(cx)
                     && item.project_entry_ids(cx).as_slice() == [project_entry_id]
                 {
+                    let item = item.boxed_clone();
+                    existing_item = Some((index, item));
+                    break;
+                }
+            }
+        } else {
+            for (index, item) in self.items.iter().enumerate() {
+                if item.is_singleton(cx) && item.project_path(cx).as_ref() == Some(&project_path) {
                     let item = item.boxed_clone();
                     existing_item = Some((index, item));
                     break;
@@ -1440,10 +1449,7 @@ impl Pane {
             }
         });
         if dirty_project_item_ids.is_empty() {
-            if item.is_singleton(cx) && item.is_dirty(cx) {
-                return false;
-            }
-            return true;
+            return !(item.is_singleton(cx) && item.is_dirty(cx));
         }
 
         for open_item in workspace.items(cx) {
@@ -1456,11 +1462,7 @@ impl Pane {
             let other_project_item_ids = open_item.project_item_model_ids(cx);
             dirty_project_item_ids.retain(|id| !other_project_item_ids.contains(id));
         }
-        if dirty_project_item_ids.is_empty() {
-            return true;
-        }
-
-        false
+        return dirty_project_item_ids.is_empty();
     }
 
     pub(super) fn file_names_for_prompt(
@@ -2914,12 +2916,12 @@ impl Pane {
         self.workspace
             .update(cx, |_, cx| {
                 cx.defer_in(window, move |workspace, window, cx| {
-                    if let Some(path) = workspace
+                    if let Some(project_path) = workspace
                         .project()
                         .read(cx)
                         .path_for_entry(project_entry_id, cx)
                     {
-                        let load_path_task = workspace.load_path(path, window, cx);
+                        let load_path_task = workspace.load_path(project_path.clone(), window, cx);
                         cx.spawn_in(window, async move |workspace, cx| {
                             if let Some((project_entry_id, build_item)) =
                                 load_path_task.await.notify_async_err(cx)
@@ -2937,6 +2939,7 @@ impl Pane {
                                         let new_item_handle = to_pane.update(cx, |pane, cx| {
                                             pane.open_item(
                                                 project_entry_id,
+                                                project_path,
                                                 true,
                                                 false,
                                                 true,

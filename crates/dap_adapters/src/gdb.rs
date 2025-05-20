@@ -65,7 +65,7 @@ impl DebugAdapter for GdbDebugAdapter {
 
     async fn get_binary(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<std::path::PathBuf>,
         _: &mut AsyncApp,
@@ -76,6 +76,7 @@ impl DebugAdapter for GdbDebugAdapter {
 
         let gdb_path = delegate
             .which(OsStr::new("gdb"))
+            .await
             .and_then(|p| p.to_str().map(|s| s.to_string()))
             .ok_or(anyhow!("Could not find gdb in path"));
 
@@ -89,7 +90,7 @@ impl DebugAdapter for GdbDebugAdapter {
             command: gdb_path,
             arguments: vec!["-i=dap".into()],
             envs: HashMap::default(),
-            cwd: Some(delegate.cwd().to_path_buf()),
+            cwd: Some(delegate.worktree_root_path().to_path_buf()),
             connection: None,
             request_args: self.request_args(config),
         })
