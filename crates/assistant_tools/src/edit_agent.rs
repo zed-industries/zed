@@ -24,6 +24,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{cmp, iter, mem, ops::Range, path::PathBuf, sync::Arc, task::Poll};
 use streaming_diff::{CharOperation, StreamingDiff};
+use util::debug_panic;
 
 #[derive(Serialize)]
 struct CreateFilePromptTemplate {
@@ -543,6 +544,11 @@ impl EditAgent {
                 if last_message.content.is_empty() {
                     conversation.messages.pop();
                 }
+            } else {
+                debug_panic!(
+                    "Last message must be an Assistant tool calling! Got {:?}",
+                    last_message.content
+                );
             }
         }
 
