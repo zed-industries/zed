@@ -44,7 +44,7 @@ use theme::{
     ActiveTheme, IconThemeNotFoundError, SystemAppearance, ThemeNotFoundError, ThemeRegistry,
     ThemeSettings,
 };
-use util::{ResultExt, TryFutureExt, maybe};
+use util::{ConnectionResult, ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use welcome::{BaseKeymap, FIRST_OPEN, show_welcome_view};
 use workspace::{AppState, SerializedWorkspaceLocation, WorkspaceSettings, WorkspaceStore};
@@ -294,6 +294,11 @@ fn main() {
         fs.clone(),
         paths::settings_file().clone(),
     );
+    let global_settings_file_rx = watch_config_file(
+        &app.background_executor(),
+        fs.clone(),
+        paths::global_settings_file().clone(),
+    );
     let user_keymap_file_rx = watch_config_file(
         &app.background_executor(),
         fs.clone(),
@@ -309,6 +314,8 @@ fn main() {
                 shell_env_loaded_tx.send(()).ok();
             })
             .detach()
+    } else {
+        drop(shell_env_loaded_tx)
     }
 
     app.on_open_urls({
@@ -338,7 +345,12 @@ fn main() {
         }
         settings::init(cx);
         zlog_settings::init(cx);
-        handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
+        handle_settings_file_changes(
+            user_settings_file_rx,
+            global_settings_file_rx,
+            cx,
+            handle_settings_changed,
+        );
         handle_keymap_file_changes(user_keymap_file_rx, cx);
         client::init_settings(cx);
         let user_agent = format!(
@@ -407,6 +419,7 @@ fn main() {
         .detach();
         let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
 
+        debug_adapter_extension::init(extension_host_proxy.clone(), cx);
         language::init(cx);
         language_extension::init(extension_host_proxy.clone(), languages.clone());
         languages::init(languages.clone(), node_runtime.clone(), cx);
@@ -553,6 +566,7 @@ fn main() {
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
         git_ui::init(cx);
+        jj_ui::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
         welcome::init(cx);
@@ -612,9 +626,17 @@ fn main() {
 
         cx.spawn({
             let client = app_state.client.clone();
-            async move |cx| authenticate(client, &cx).await
+            async move |cx| match authenticate(client, &cx).await {
+                ConnectionResult::Timeout => log::error!("Timeout during initial auth"),
+                ConnectionResult::ConnectionReset => {
+                    log::error!("Connection reset during initial auth")
+                }
+                ConnectionResult::Result(r) => {
+                    r.log_err();
+                }
+            }
         })
-        .detach_and_log_err(cx);
+        .detach();
 
         let urls: Vec<_> = args
             .paths_or_urls
@@ -650,7 +672,7 @@ fn main() {
 
         let app_state = app_state.clone();
 
-        component_preview::init(app_state.clone(), cx);
+        crate::zed::component_preview::init(app_state.clone(), cx);
 
         cx.spawn(async move |cx| {
             while let Some(urls) = open_rx.next().await {
@@ -727,7 +749,15 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 let client = app_state.client.clone();
                 // we continue even if authentication fails as join_channel/ open channel notes will
                 // show a visible error message.
-                authenticate(client, &cx).await.log_err();
+                match authenticate(client, &cx).await {
+                    ConnectionResult::Timeout => {
+                        log::error!("Timeout during open request handling")
+                    }
+                    ConnectionResult::ConnectionReset => {
+                        log::error!("Connection reset during open request handling")
+                    }
+                    ConnectionResult::Result(r) => r?,
+                };
 
                 if let Some(channel_id) = request.join_channel {
                     cx.update(|cx| {
@@ -777,17 +807,18 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     }
 }
 
-async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> Result<()> {
+async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> ConnectionResult<()> {
     if stdout_is_a_pty() {
         if client::IMPERSONATE_LOGIN.is_some() {
-            client.authenticate_and_connect(false, cx).await?;
+            return client.authenticate_and_connect(false, cx).await;
         } else if client.has_credentials(cx).await {
-            client.authenticate_and_connect(true, cx).await?;
+            return client.authenticate_and_connect(true, cx).await;
         }
     } else if client.has_credentials(cx).await {
-        client.authenticate_and_connect(true, cx).await?;
+        return client.authenticate_and_connect(true, cx).await;
     }
-    Ok::<_, anyhow::Error>(())
+
+    ConnectionResult::Result(Ok(()))
 }
 
 async fn system_id() -> Result<IdType> {

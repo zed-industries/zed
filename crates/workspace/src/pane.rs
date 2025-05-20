@@ -712,7 +712,7 @@ impl Pane {
         !self.nav_history.0.lock().forward_stack.is_empty()
     }
 
-    fn navigate_backward(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn navigate_backward(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(workspace) = self.workspace.upgrade() {
             let pane = cx.entity().downgrade();
             window.defer(cx, move |window, cx| {
@@ -791,6 +791,7 @@ impl Pane {
     pub(crate) fn open_item(
         &mut self,
         project_entry_id: Option<ProjectEntryId>,
+        project_path: ProjectPath,
         focus_item: bool,
         allow_preview: bool,
         activate: bool,
@@ -805,6 +806,14 @@ impl Pane {
                 if item.is_singleton(cx)
                     && item.project_entry_ids(cx).as_slice() == [project_entry_id]
                 {
+                    let item = item.boxed_clone();
+                    existing_item = Some((index, item));
+                    break;
+                }
+            }
+        } else {
+            for (index, item) in self.items.iter().enumerate() {
+                if item.is_singleton(cx) && item.project_path(cx).as_ref() == Some(&project_path) {
                     let item = item.boxed_clone();
                     existing_item = Some((index, item));
                     break;
@@ -1440,10 +1449,7 @@ impl Pane {
             }
         });
         if dirty_project_item_ids.is_empty() {
-            if item.is_singleton(cx) && item.is_dirty(cx) {
-                return false;
-            }
-            return true;
+            return !(item.is_singleton(cx) && item.is_dirty(cx));
         }
 
         for open_item in workspace.items(cx) {
@@ -1456,11 +1462,7 @@ impl Pane {
             let other_project_item_ids = open_item.project_item_model_ids(cx);
             dirty_project_item_ids.retain(|id| !other_project_item_ids.contains(id));
         }
-        if dirty_project_item_ids.is_empty() {
-            return true;
-        }
-
-        false
+        return dirty_project_item_ids.is_empty();
     }
 
     pub(super) fn file_names_for_prompt(
@@ -1857,7 +1859,7 @@ impl Pane {
                     matches!(
                         item.workspace_settings(cx).autosave,
                         AutosaveSetting::OnFocusChange | AutosaveSetting::OnWindowChange
-                    ) && Self::can_autosave_item(item, cx)
+                    ) && item.can_autosave(cx)
                 })?;
                 if !will_autosave {
                     let item_id = item.item_id();
@@ -1945,11 +1947,6 @@ impl Pane {
         })
     }
 
-    fn can_autosave_item(item: &dyn ItemHandle, cx: &App) -> bool {
-        let is_deleted = item.project_entry_ids(cx).is_empty();
-        item.is_dirty(cx) && !item.has_conflict(cx) && item.can_save(cx) && !is_deleted
-    }
-
     pub fn autosave_item(
         item: &dyn ItemHandle,
         project: Entity<Project>,
@@ -1960,7 +1957,7 @@ impl Pane {
             item.workspace_settings(cx).autosave,
             AutosaveSetting::AfterDelay { .. }
         );
-        if Self::can_autosave_item(item, cx) {
+        if item.can_autosave(cx) {
             item.save(format, project, window, cx)
         } else {
             Task::ready(Ok(()))
@@ -2671,11 +2668,7 @@ impl Pane {
                 }
             })
             .children(pinned_tabs.len().ne(&0).then(|| {
-                let content_width = self
-                    .tab_bar_scroll_handle
-                    .content_size()
-                    .map(|content_size| content_size.size.width)
-                    .unwrap_or(px(0.));
+                let content_width = self.tab_bar_scroll_handle.content_size().width;
                 let viewport_width = self.tab_bar_scroll_handle.viewport().size.width;
                 // We need to check both because offset returns delta values even when the scroll handle is not scrollable
                 let is_scrollable = content_width > viewport_width;
@@ -2923,12 +2916,12 @@ impl Pane {
         self.workspace
             .update(cx, |_, cx| {
                 cx.defer_in(window, move |workspace, window, cx| {
-                    if let Some(path) = workspace
+                    if let Some(project_path) = workspace
                         .project()
                         .read(cx)
                         .path_for_entry(project_entry_id, cx)
                     {
-                        let load_path_task = workspace.load_path(path, window, cx);
+                        let load_path_task = workspace.load_path(project_path.clone(), window, cx);
                         cx.spawn_in(window, async move |workspace, cx| {
                             if let Some((project_entry_id, build_item)) =
                                 load_path_task.await.notify_async_err(cx)
@@ -2946,6 +2939,7 @@ impl Pane {
                                         let new_item_handle = to_pane.update(cx, |pane, cx| {
                                             pane.open_item(
                                                 project_entry_id,
+                                                project_path,
                                                 true,
                                                 false,
                                                 true,

@@ -42,7 +42,9 @@ impl CodeLldbDebugAdapter {
                 if !launch.args.is_empty() {
                     map.insert("args".into(), launch.args.clone().into());
                 }
-
+                if !launch.env.is_empty() {
+                    map.insert("env".into(), launch.env_json());
+                }
                 if let Some(stop_on_entry) = config.stop_on_entry {
                     map.insert("stopOnEntry".into(), stop_on_entry.into());
                 }
@@ -59,7 +61,7 @@ impl CodeLldbDebugAdapter {
 
     async fn fetch_latest_adapter_version(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
     ) -> Result<AdapterVersion> {
         let release =
             latest_github_release("vadimcn/codelldb", true, false, delegate.http_client()).await?;
@@ -109,7 +111,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
 
     async fn get_binary(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         _: &mut AsyncApp,
@@ -127,7 +129,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                         self.name(),
                         version.clone(),
                         adapters::DownloadedFileType::Vsix,
-                        delegate,
+                        delegate.as_ref(),
                     )
                     .await?;
                     let version_path =

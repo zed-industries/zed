@@ -114,7 +114,6 @@ type MessageHeader = MessageMetadata;
 #[derive(Clone)]
 enum AssistError {
     PaymentRequired,
-    MaxMonthlySpendReached,
     Message(SharedString),
 }
 
@@ -731,9 +730,6 @@ impl ContextEditor {
             }
             ContextEvent::ShowPaymentRequiredError => {
                 self.last_error = Some(AssistError::PaymentRequired);
-            }
-            ContextEvent::ShowMaxMonthlySpendReachedError => {
-                self.last_error = Some(AssistError::MaxMonthlySpendReached);
             }
         }
     }
@@ -1594,7 +1590,7 @@ impl ContextEditor {
         &mut self,
         cx: &mut Context<Self>,
     ) -> (String, CopyMetadata, Vec<text::Selection<usize>>) {
-        let (selection, creases) = self.editor.update(cx, |editor, cx| {
+        let (mut selection, creases) = self.editor.update(cx, |editor, cx| {
             let mut selection = editor.selections.newest_adjusted(cx);
             let snapshot = editor.buffer().read(cx).snapshot(cx);
 
@@ -1652,7 +1648,18 @@ impl ContextEditor {
             } else if message.offset_range.end >= selection.range().start {
                 let range = cmp::max(message.offset_range.start, selection.range().start)
                     ..cmp::min(message.offset_range.end, selection.range().end);
-                if !range.is_empty() {
+                if range.is_empty() {
+                    let snapshot = context.buffer().read(cx).snapshot();
+                    let point = snapshot.offset_to_point(range.start);
+                    selection.start = snapshot.point_to_offset(Point::new(point.row, 0));
+                    selection.end = snapshot.point_to_offset(cmp::min(
+                        Point::new(point.row + 1, 0),
+                        snapshot.max_point(),
+                    ));
+                    for chunk in context.buffer().read(cx).text_for_range(selection.range()) {
+                        text.push_str(chunk);
+                    }
+                } else {
                     for chunk in context.buffer().read(cx).text_for_range(range) {
                         text.push_str(chunk);
                     }
@@ -1860,7 +1867,12 @@ impl ContextEditor {
     }
 
     pub fn title(&self, cx: &App) -> SharedString {
-        self.context.read(cx).summary_or_default()
+        self.context.read(cx).summary().or_default()
+    }
+
+    pub fn regenerate_summary(&mut self, cx: &mut Context<Self>) {
+        self.context
+            .update(cx, |context, cx| context.summarize(true, cx));
     }
 
     fn render_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -1894,11 +1906,24 @@ impl ContextEditor {
                                     .log_err();
 
                                 if let Some(client) = client {
-                                    cx.spawn(async move |this, cx| {
-                                        client.authenticate_and_connect(true, cx).await?;
-                                        this.update(cx, |_, cx| cx.notify())
+                                    cx.spawn(async move |context_editor, cx| {
+                                        match client.authenticate_and_connect(true, cx).await {
+                                            util::ConnectionResult::Timeout => {
+                                                log::error!("Authentication timeout")
+                                            }
+                                            util::ConnectionResult::ConnectionReset => {
+                                                log::error!("Connection reset")
+                                            }
+                                            util::ConnectionResult::Result(r) => {
+                                                if r.log_err().is_some() {
+                                                    context_editor
+                                                        .update(cx, |_, cx| cx.notify())
+                                                        .ok();
+                                                }
+                                            }
+                                        }
                                     })
-                                    .detach_and_log_err(cx)
+                                    .detach()
                                 }
                             })),
                     )
@@ -2089,9 +2114,6 @@ impl ContextEditor {
                 .occlude()
                 .child(match last_error {
                     AssistError::PaymentRequired => self.render_payment_required_error(cx),
-                    AssistError::MaxMonthlySpendReached => {
-                        self.render_max_monthly_spend_reached_error(cx)
-                    }
                     AssistError::Message(error_message) => {
                         self.render_assist_error(error_message, cx)
                     }
@@ -2130,48 +2152,6 @@ impl ContextEditor {
                             cx.notify();
                         },
                     )))
-                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
-                        |this, _, _window, cx| {
-                            this.last_error = None;
-                            cx.notify();
-                        },
-                    ))),
-            )
-            .into_any()
-    }
-
-    fn render_max_monthly_spend_reached_error(&self, cx: &mut Context<Self>) -> AnyElement {
-        const ERROR_MESSAGE: &str = "You have reached your maximum monthly spend. Increase your spend limit to continue using Zed LLMs.";
-
-        v_flex()
-            .gap_0p5()
-            .child(
-                h_flex()
-                    .gap_1p5()
-                    .items_center()
-                    .child(Icon::new(IconName::XCircle).color(Color::Error))
-                    .child(Label::new("Max Monthly Spend Reached").weight(FontWeight::MEDIUM)),
-            )
-            .child(
-                div()
-                    .id("error-message")
-                    .max_h_24()
-                    .overflow_y_scroll()
-                    .child(Label::new(ERROR_MESSAGE)),
-            )
-            .child(
-                h_flex()
-                    .justify_end()
-                    .mt_1()
-                    .child(
-                        Button::new("subscribe", "Update Monthly Spend Limit").on_click(
-                            cx.listener(|this, _, _window, cx| {
-                                this.last_error = None;
-                                cx.open_url(&zed_urls::account_url(cx));
-                                cx.notify();
-                            }),
-                        ),
-                    )
                     .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
                         |this, _, _window, cx| {
                             this.last_error = None;
@@ -3064,7 +3044,7 @@ fn invoked_slash_command_fold_placeholder(
                 .gap_2()
                 .bg(cx.theme().colors().surface_background)
                 .rounded_sm()
-                .child(Label::new(format!("/{}", command.name.clone())))
+                .child(Label::new(format!("/{}", command.name)))
                 .map(|parent| match &command.status {
                     InvokedSlashCommandStatus::Running(_) => {
                         parent.child(Icon::new(IconName::ArrowCircle).with_animation(
@@ -3233,9 +3213,77 @@ pub fn make_lsp_adapter_delegate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::App;
-    use language::Buffer;
+    use fs::FakeFs;
+    use gpui::{App, TestAppContext, VisualTestContext};
+    use language::{Buffer, LanguageRegistry};
+    use prompt_store::PromptBuilder;
     use unindent::Unindent;
+    use util::path;
+
+    #[gpui::test]
+    async fn test_copy_paste_no_selection(cx: &mut TestAppContext) {
+        cx.update(init_test);
+
+        let fs = FakeFs::new(cx.executor());
+        let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let context = cx.new(|cx| {
+            AssistantContext::local(
+                registry,
+                None,
+                None,
+                prompt_builder.clone(),
+                Arc::new(SlashCommandWorkingSet::default()),
+                cx,
+            )
+        });
+        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        let context_editor = window
+            .update(cx, |_, window, cx| {
+                cx.new(|cx| {
+                    ContextEditor::for_context(
+                        context,
+                        fs,
+                        workspace.downgrade(),
+                        project,
+                        None,
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .unwrap();
+
+        context_editor.update_in(cx, |context_editor, window, cx| {
+            context_editor.editor.update(cx, |editor, cx| {
+                editor.set_text("abc\ndef\nghi", window, cx);
+                editor.move_to_beginning(&Default::default(), window, cx);
+            })
+        });
+
+        context_editor.update_in(cx, |context_editor, window, cx| {
+            context_editor.editor.update(cx, |editor, cx| {
+                editor.copy(&Default::default(), window, cx);
+                editor.paste(&Default::default(), window, cx);
+
+                assert_eq!(editor.text(cx), "abc\nabc\ndef\nghi");
+            })
+        });
+
+        context_editor.update_in(cx, |context_editor, window, cx| {
+            context_editor.editor.update(cx, |editor, cx| {
+                editor.cut(&Default::default(), window, cx);
+                assert_eq!(editor.text(cx), "abc\ndef\nghi");
+
+                editor.paste(&Default::default(), window, cx);
+                assert_eq!(editor.text(cx), "abc\nabc\ndef\nghi");
+            })
+        });
+    }
 
     #[gpui::test]
     fn test_find_code_blocks(cx: &mut App) {
@@ -3309,5 +3357,18 @@ mod tests {
             let range = find_surrounding_code_block(&snapshot, offset);
             assert_eq!(range, expected, "unexpected result on row {:?}", row);
         }
+    }
+
+    fn init_test(cx: &mut App) {
+        let settings_store = SettingsStore::test(cx);
+        prompt_store::init(cx);
+        LanguageModelRegistry::test(cx);
+        cx.set_global(settings_store);
+        language::init(cx);
+        assistant_settings::init(cx);
+        Project::init_settings(cx);
+        theme::init(theme::LoadThemes::JustBase, cx);
+        workspace::init_settings(cx);
+        editor::init_settings(cx);
     }
 }

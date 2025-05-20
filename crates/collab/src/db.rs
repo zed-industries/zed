@@ -543,7 +543,7 @@ pub struct MembershipUpdated {
 
 /// The result of setting a member's role.
 #[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
+
 pub enum SetMemberRoleResult {
     InviteUpdated(Channel),
     MembershipUpdated(MembershipUpdated),

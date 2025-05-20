@@ -91,7 +91,7 @@ impl JsonLspAdapter {
         let tsconfig_schema = serde_json::Value::from_str(TSCONFIG_SCHEMA).unwrap();
         let package_json_schema = serde_json::Value::from_str(PACKAGE_JSON_SCHEMA).unwrap();
 
-        // This can be viewed via `debug: open language server logs` -> `json-language-server` ->
+        // This can be viewed via `dev: open language server logs` -> `json-language-server` ->
         // `Server Info`
         serde_json::json!({
             "json": {

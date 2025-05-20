@@ -29,7 +29,7 @@ pub struct InlineValueLocation {
 /// during debugging sessions. Implementors must also handle variable scoping
 /// themselves by traversing the syntax tree upwards to determine whether a
 /// variable is local or global.
-pub trait InlineValueProvider {
+pub trait InlineValueProvider: 'static + Send + Sync {
     /// Provides a list of inline value locations based on the given node and source code.
     ///
     /// # Parameters

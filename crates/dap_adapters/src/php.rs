@@ -1,6 +1,7 @@
 use adapters::latest_github_release;
 use dap::adapters::{DebugTaskDefinition, TcpArguments};
-use gpui::AsyncApp;
+use gpui::{AsyncApp, SharedString};
+use language::LanguageName;
 use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 use util::ResultExt;
 
@@ -29,6 +30,7 @@ impl PhpDebugAdapter {
                     "program": launch_config.program,
                     "cwd": launch_config.cwd,
                     "args": launch_config.args,
+                    "env": launch_config.env_json(),
                     "stopOnEntry": config.stop_on_entry.unwrap_or_default(),
                 }),
                 request: config.request.to_dap(),
@@ -38,7 +40,7 @@ impl PhpDebugAdapter {
 
     async fn fetch_latest_adapter_version(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
     ) -> Result<AdapterVersion> {
         let release = latest_github_release(
             &format!("{}/{}", "xdebug", Self::ADAPTER_PACKAGE_NAME),
@@ -64,7 +66,7 @@ impl PhpDebugAdapter {
 
     async fn get_installed_binary(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         _: &mut AsyncApp,
@@ -118,9 +120,13 @@ impl DebugAdapter for PhpDebugAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
+    fn adapter_language_name(&self) -> Option<LanguageName> {
+        Some(SharedString::new_static("PHP").into())
+    }
+
     async fn get_binary(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
@@ -132,7 +138,7 @@ impl DebugAdapter for PhpDebugAdapter {
                     self.name(),
                     version,
                     adapters::DownloadedFileType::Vsix,
-                    delegate,
+                    delegate.as_ref(),
                 )
                 .await?;
             }

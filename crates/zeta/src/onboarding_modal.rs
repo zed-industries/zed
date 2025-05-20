@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use crate::{ZED_PREDICT_DATA_COLLECTION_CHOICE, onboarding_event};
 use anyhow::Context as _;
-use client::{Client, UserStore, zed_urls};
+use client::{Client, UserStore};
 use db::kvp::KEY_VALUE_STORE;
 use fs::Fs;
 use gpui::{
@@ -139,7 +139,10 @@ impl ZedPredictModal {
         self.sign_in_status = SignInStatus::Waiting;
 
         cx.spawn(async move |this, cx| {
-            let result = client.authenticate_and_connect(true, &cx).await;
+            let result = client
+                .authenticate_and_connect(true, &cx)
+                .await
+                .into_response();
 
             let status = match result {
                 Ok(_) => SignInStatus::SignedIn,
@@ -381,47 +384,29 @@ impl Render for ZedPredictModal {
             } else {
                 (IconName::ChevronDown, IconName::ChevronUp)
             };
+            let plan = plan.unwrap_or(proto::Plan::Free);
 
             base.child(Label::new(copy).color(Color::Muted))
-                .child(h_flex().map(|parent| {
-                    if let Some(plan) = plan {
-                        parent.child(
-                            Checkbox::new("plan", ToggleState::Selected)
-                                .fill()
-                                .disabled(true)
-                                .label(format!(
-                                    "You get {} edit predictions through your {}.",
-                                    if plan == proto::Plan::Free {
-                                        "2,000"
-                                    } else {
-                                        "unlimited"
-                                    },
-                                    match plan {
-                                        proto::Plan::Free => "Zed Free plan",
-                                        proto::Plan::ZedPro => "Zed Pro plan",
-                                        proto::Plan::ZedProTrial => "Zed Pro trial",
-                                    }
-                                )),
-                        )
-                    } else {
-                        parent
-                            .child(
-                                Checkbox::new("plan-required", ToggleState::Unselected)
-                                    .fill()
-                                    .disabled(true)
-                                    .label("To get started with edit prediction"),
-                            )
-                            .child(
-                                Button::new("subscribe", "choose a plan")
-                                    .icon(IconName::ArrowUpRight)
-                                    .icon_size(IconSize::Indicator)
-                                    .icon_color(Color::Muted)
-                                    .on_click(|_event, _window, cx| {
-                                        cx.open_url(&zed_urls::account_url(cx));
-                                    }),
-                            )
-                    }
-                }))
+                .child(
+                    h_flex().child(
+                        Checkbox::new("plan", ToggleState::Selected)
+                            .fill()
+                            .disabled(true)
+                            .label(format!(
+                                "You get {} edit predictions through your {}.",
+                                if plan == proto::Plan::Free {
+                                    "2,000"
+                                } else {
+                                    "unlimited"
+                                },
+                                match plan {
+                                    proto::Plan::Free => "Zed Free plan",
+                                    proto::Plan::ZedPro => "Zed Pro plan",
+                                    proto::Plan::ZedProTrial => "Zed Pro trial",
+                                }
+                            )),
+                    ),
+                )
                 .child(
                     h_flex()
                         .child(
@@ -492,7 +477,7 @@ impl Render for ZedPredictModal {
                         .w_full()
                         .child(
                             Button::new("accept-tos", "Enable Edit Prediction")
-                                .disabled(plan.is_none() || !self.terms_of_service)
+                                .disabled(!self.terms_of_service)
                                 .style(ButtonStyle::Tinted(TintColor::Accent))
                                 .full_width()
                                 .on_click(cx.listener(Self::accept_and_enable)),

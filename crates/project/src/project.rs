@@ -47,6 +47,7 @@ use dap::{DapRegistry, client::DebugAdapterClient};
 
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
+pub use debugger::breakpoint_store::BreakpointWithPosition;
 use debugger::{
     breakpoint_store::{ActiveStackFrame, BreakpointStore},
     dap_store::{DapStore, DapStoreEvent},
@@ -1224,7 +1225,10 @@ impl Project {
         fs: Arc<dyn Fs>,
         cx: AsyncApp,
     ) -> Result<Entity<Self>> {
-        client.authenticate_and_connect(true, &cx).await?;
+        client
+            .authenticate_and_connect(true, &cx)
+            .await
+            .into_response()?;
 
         let subscriptions = [
             EntitySubscription::Project(client.subscribe_to_entity::<Self>(remote_id)?),
@@ -3577,7 +3581,9 @@ impl Project {
 
         let snapshot = buffer_handle.read(cx).snapshot();
 
-        let root_node = snapshot.syntax_root_ancestor(range.end).unwrap();
+        let Some(root_node) = snapshot.syntax_root_ancestor(range.end) else {
+            return Task::ready(Ok(vec![]));
+        };
 
         let row = snapshot
             .summary_for_anchor::<text::PointUtf16>(&range.end)
@@ -3648,7 +3654,7 @@ impl Project {
             let mut buffer_count = 0;
             let mut limit_reached = false;
             let query = Arc::new(query);
-            let mut chunks = matching_buffers_rx.ready_chunks(64);
+            let chunks = matching_buffers_rx.ready_chunks(64);
 
             // Now that we know what paths match the query, we will load at most
             // 64 buffers at a time to avoid overwhelming the main thread. For each
@@ -4387,7 +4393,7 @@ impl Project {
         envelope: TypedEnvelope<proto::LanguageServerPromptRequest>,
         mut cx: AsyncApp,
     ) -> Result<proto::LanguageServerPromptResponse> {
-        let (tx, mut rx) = smol::channel::bounded(1);
+        let (tx, rx) = smol::channel::bounded(1);
         let actions: Vec<_> = envelope
             .payload
             .actions

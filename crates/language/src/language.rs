@@ -755,6 +755,10 @@ pub struct LanguageConfig {
     /// A list of preferred debuggers for this language.
     #[serde(default)]
     pub debuggers: IndexSet<SharedString>,
+    /// Whether to treat documentation comment of this language differently by
+    /// auto adding prefix on new line, adjusting the indenting , etc.
+    #[serde(default)]
+    pub documentation: Option<DocumentationConfig>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -803,6 +807,19 @@ pub struct JsxTagAutoCloseConfig {
     /// normal tag name node name
     #[serde(default)]
     pub erroneous_close_tag_name_node_name: Option<String>,
+}
+
+/// The configuration for documentation block for this language.
+#[derive(Clone, Deserialize, JsonSchema)]
+pub struct DocumentationConfig {
+    /// A start tag of documentation block.
+    pub start: Arc<str>,
+    /// A end tag of documentation block.
+    pub end: Arc<str>,
+    /// A character to add as a prefix when a new line is added to a documentation block.
+    pub prefix: Arc<str>,
+    /// A indent to add for prefix and end line upon new line.
+    pub tab_size: NonZeroU32,
 }
 
 /// Represents a language for the given range. Some languages (e.g. HTML)
@@ -883,6 +900,7 @@ impl Default for LanguageConfig {
             completion_query_characters: Default::default(),
             debuggers: Default::default(),
             significant_indentation: Default::default(),
+            documentation: None,
         }
     }
 }
@@ -1802,6 +1820,14 @@ impl LanguageScope {
             .unwrap_or(false)
     }
 
+    /// Returns config to documentation block for this language.
+    ///
+    /// Used for documentation styles that require a leading character on each line,
+    /// such as the asterisk in JSDoc, Javadoc, etc.
+    pub fn documentation(&self) -> Option<&DocumentationConfig> {
+        self.language.config.documentation.as_ref()
+    }
+
     /// Returns a list of bracket pairs for a given language with an additional
     /// piece of information about whether the particular bracket pair is currently active for a given language.
     pub fn brackets(&self) -> impl Iterator<Item = (&BracketPair, bool)> {
@@ -1833,9 +1859,9 @@ impl LanguageScope {
     pub fn language_allowed(&self, name: &LanguageServerName) -> bool {
         let config = &self.language.config;
         let opt_in_servers = &config.scope_opt_in_language_servers;
-        if opt_in_servers.iter().any(|o| *o == *name) {
+        if opt_in_servers.contains(name) {
             if let Some(over) = self.config_override() {
-                over.opt_into_language_servers.iter().any(|o| *o == *name)
+                over.opt_into_language_servers.contains(name)
             } else {
                 false
             }

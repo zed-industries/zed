@@ -14,7 +14,6 @@ use gpui::{
     pulsating_between,
 };
 use indoc::indoc;
-use inline_completion::EditPredictionUsage;
 use language::{
     EditPredictionsMode, File, Language,
     language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
@@ -30,12 +29,11 @@ use ui::{
     Clickable, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconButtonShape,
     Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
 };
-use util::maybe;
 use workspace::{
     StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
     notifications::NotificationId,
 };
-use zed_actions::OpenBrowser;
+use zed_actions::{OpenBrowser, OpenZedUrl};
 use zed_llm_client::UsageLimit;
 use zeta::RateCompletions;
 
@@ -279,14 +277,31 @@ impl Render for InlineCompletionButton {
                     );
                 }
 
+                let mut over_limit = false;
+
+                if let Some(usage) = self
+                    .edit_prediction_provider
+                    .as_ref()
+                    .and_then(|provider| provider.usage(cx))
+                {
+                    over_limit = usage.over_limit()
+                }
+
                 let show_editor_predictions = self.editor_show_predictions;
 
                 let icon_button = IconButton::new("zed-predict-pending-button", zeta_icon)
                     .shape(IconButtonShape::Square)
-                    .when(enabled && !show_editor_predictions, |this| {
-                        this.indicator(Indicator::dot().color(Color::Muted))
+                    .when(
+                        enabled && (!show_editor_predictions || over_limit),
+                        |this| {
+                            this.indicator(Indicator::dot().when_else(
+                                over_limit,
+                                |dot| dot.color(Color::Error),
+                                |dot| dot.color(Color::Muted),
+                            ))
                             .indicator_border_color(Some(cx.theme().colors().status_bar_background))
-                    })
+                        },
+                    )
                     .when(!self.popover_menu_handle.is_deployed(), |element| {
                         element.tooltip(move |window, cx| {
                             if enabled {
@@ -405,64 +420,54 @@ impl InlineCompletionButton {
         let fs = self.fs.clone();
         let line_height = window.line_height();
 
-        if let Some(provider) = self.edit_prediction_provider.as_ref() {
-            let usage = provider.usage(cx).or_else(|| {
-                let user_store = self.user_store.read(cx);
-
-                maybe!({
-                    let amount = user_store.edit_predictions_usage_amount()?;
-                    let limit = user_store.edit_predictions_usage_limit()?.variant?;
-
-                    Some(EditPredictionUsage {
-                        amount: amount as i32,
-                        limit: match limit {
-                            proto::usage_limit::Variant::Limited(limited) => {
-                                zed_llm_client::UsageLimit::Limited(limited.limit as i32)
+        if let Some(usage) = self
+            .edit_prediction_provider
+            .as_ref()
+            .and_then(|provider| provider.usage(cx))
+        {
+            menu = menu.header("Usage");
+            menu = menu
+                .custom_entry(
+                    move |_window, cx| {
+                        let used_percentage = match usage.limit {
+                            UsageLimit::Limited(limit) => {
+                                Some((usage.amount as f32 / limit as f32) * 100.)
                             }
-                            proto::usage_limit::Variant::Unlimited(_) => {
-                                zed_llm_client::UsageLimit::Unlimited
-                            }
-                        },
+                            UsageLimit::Unlimited => None,
+                        };
+
+                        h_flex()
+                            .flex_1()
+                            .gap_1p5()
+                            .children(
+                                used_percentage
+                                    .map(|percent| ProgressBar::new("usage", percent, 100., cx)),
+                            )
+                            .child(
+                                Label::new(match usage.limit {
+                                    UsageLimit::Limited(limit) => {
+                                        format!("{} / {limit}", usage.amount)
+                                    }
+                                    UsageLimit::Unlimited => format!("{} / ∞", usage.amount),
+                                })
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                            )
+                            .into_any_element()
+                    },
+                    move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
+                )
+                .when(usage.over_limit(), |menu| -> ContextMenu {
+                    menu.entry("Subscribe to increase your limit", None, |window, cx| {
+                        window.dispatch_action(
+                            Box::new(OpenZedUrl {
+                                url: zed_urls::account_url(cx),
+                            }),
+                            cx,
+                        );
                     })
                 })
-            });
-
-            if let Some(usage) = usage {
-                menu = menu.header("Usage");
-                menu = menu
-                    .custom_entry(
-                        move |_window, cx| {
-                            let used_percentage = match usage.limit {
-                                UsageLimit::Limited(limit) => {
-                                    Some((usage.amount as f32 / limit as f32) * 100.)
-                                }
-                                UsageLimit::Unlimited => None,
-                            };
-
-                            h_flex()
-                                .flex_1()
-                                .gap_1p5()
-                                .children(
-                                    used_percentage.map(|percent| {
-                                        ProgressBar::new("usage", percent, 100., cx)
-                                    }),
-                                )
-                                .child(
-                                    Label::new(match usage.limit {
-                                        UsageLimit::Limited(limit) => {
-                                            format!("{} / {limit}", usage.amount)
-                                        }
-                                        UsageLimit::Unlimited => format!("{} / ∞", usage.amount),
-                                    })
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                                )
-                                .into_any_element()
-                        },
-                        move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
-                    )
-                    .separator();
-            }
+                .separator();
         }
 
         menu = menu.header("Show Edit Predictions For");
@@ -857,7 +862,7 @@ async fn open_disabled_globs_setting_in_editor(
             });
 
             if !edits.is_empty() {
-                item.edit(edits.iter().cloned(), cx);
+                item.edit(edits, cx);
             }
 
             let text = item.buffer().read(cx).snapshot(cx).text();

@@ -1,6 +1,7 @@
 use crate::*;
 use dap::{DebugRequest, StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
-use gpui::AsyncApp;
+use gpui::{AsyncApp, SharedString};
+use language::LanguageName;
 use std::{collections::HashMap, ffi::OsStr, path::PathBuf, sync::OnceLock};
 use util::ResultExt;
 
@@ -32,6 +33,9 @@ impl PythonDebugAdapter {
             DebugRequest::Launch(launch) => {
                 map.insert("program".into(), launch.program.clone().into());
                 map.insert("args".into(), launch.args.clone().into());
+                if !launch.env.is_empty() {
+                    map.insert("env".into(), launch.env_json());
+                }
 
                 if let Some(stop_on_entry) = config.stop_on_entry {
                     map.insert("stopOnEntry".into(), stop_on_entry.into());
@@ -48,26 +52,26 @@ impl PythonDebugAdapter {
     }
     async fn fetch_latest_adapter_version(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
     ) -> Result<AdapterVersion> {
         let github_repo = GithubRepo {
             repo_name: Self::ADAPTER_PACKAGE_NAME.into(),
             repo_owner: "microsoft".into(),
         };
 
-        adapters::fetch_latest_adapter_version_from_github(github_repo, delegate).await
+        adapters::fetch_latest_adapter_version_from_github(github_repo, delegate.as_ref()).await
     }
 
     async fn install_binary(
         &self,
         version: AdapterVersion,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
     ) -> Result<()> {
         let version_path = adapters::download_adapter_from_github(
             self.name(),
             version,
             adapters::DownloadedFileType::Zip,
-            delegate,
+            delegate.as_ref(),
         )
         .await?;
 
@@ -89,7 +93,7 @@ impl PythonDebugAdapter {
 
     async fn get_installed_binary(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
@@ -124,14 +128,18 @@ impl PythonDebugAdapter {
         let python_path = if let Some(toolchain) = toolchain {
             Some(toolchain.path.to_string())
         } else {
-            BINARY_NAMES
-                .iter()
-                .filter_map(|cmd| {
-                    delegate
-                        .which(OsStr::new(cmd))
-                        .map(|path| path.to_string_lossy().to_string())
-                })
-                .find(|_| true)
+            let mut name = None;
+
+            for cmd in BINARY_NAMES {
+                name = delegate
+                    .which(OsStr::new(cmd))
+                    .await
+                    .map(|path| path.to_string_lossy().to_string());
+                if name.is_some() {
+                    break;
+                }
+            }
+            name
         };
 
         Ok(DebugAdapterBinary {
@@ -162,9 +170,13 @@ impl DebugAdapter for PythonDebugAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
+    fn adapter_language_name(&self) -> Option<LanguageName> {
+        Some(SharedString::new_static("Python").into())
+    }
+
     async fn get_binary(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
