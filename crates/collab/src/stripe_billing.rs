@@ -278,7 +278,7 @@ impl StripeBilling {
             trial_period_days: Some(trial_period_days),
             trial_settings: Some(stripe::CreateCheckoutSessionSubscriptionDataTrialSettings {
                 end_behavior: stripe::CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehavior {
-                    missing_payment_method: stripe::CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehaviorMissingPaymentMethod::Pause,
+                    missing_payment_method: stripe::CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehaviorMissingPaymentMethod::Cancel,
                 }
             }),
             metadata: if !subscription_metadata.is_empty() {
