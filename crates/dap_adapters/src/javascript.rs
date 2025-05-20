@@ -52,7 +52,6 @@ impl JsDebugAdapter {
         //     configuration: args,
         //     request: config.request.to_dap(),
         // }
-        todo!()
     }
 
     async fn fetch_latest_adapter_version(
@@ -84,7 +83,7 @@ impl JsDebugAdapter {
     async fn get_installed_binary(
         &self,
         delegate: &dyn DapDelegate,
-        config: &DebugTaskDefinition,
+        task_definition: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
@@ -102,7 +101,7 @@ impl JsDebugAdapter {
             .ok_or_else(|| anyhow!("Couldn't find JavaScript dap directory"))?
         };
 
-        let tcp_connection = config.tcp_connection.clone().unwrap_or_default();
+        let tcp_connection = task_definition.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
         Ok(DebugAdapterBinary {
@@ -127,7 +126,10 @@ impl JsDebugAdapter {
                 port,
                 timeout,
             }),
-            request_args: self.request_args(config),
+            request_args: StartDebuggingRequestArguments {
+                configuration: task_definition.config.clone(),
+                request: self.validate_config(&task_definition.config)?,
+            },
         })
     }
 }

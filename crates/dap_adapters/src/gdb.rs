@@ -13,42 +13,6 @@ pub(crate) struct GdbDebugAdapter;
 
 impl GdbDebugAdapter {
     const ADAPTER_NAME: &'static str = "GDB";
-
-    fn request_args(&self, definition: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
-        // let map = args.as_object_mut().unwrap();
-        // match &config.request {
-        //     DebugRequest::Attach(attach) => {
-        //         map.insert("pid".into(), attach.process_id.into());
-        //     }
-
-        //     DebugRequest::Launch(launch) => {
-        //         map.insert("program".into(), launch.program.clone().into());
-
-        //         if !launch.args.is_empty() {
-        //             map.insert("args".into(), launch.args.clone().into());
-        //         }
-
-        //         if !launch.env.is_empty() {
-        //             map.insert("env".into(), launch.env_json());
-        //         }
-
-        //         if let Some(stop_on_entry) = config.stop_on_entry {
-        //             map.insert(
-        //                 "stopAtBeginningOfMainSubprogram".into(),
-        //                 stop_on_entry.into(),
-        //             );
-        //         }
-        //         if let Some(cwd) = launch.cwd.as_ref() {
-        //             map.insert("cwd".into(), cwd.to_string_lossy().into_owned().into());
-        //         }
-        //     }
-        // }
-        // StartDebuggingRequestArguments {
-        //     configuration: args,
-        //     request: config.request.to_dap(),
-        // }
-        todo!()
-    }
 }
 
 #[async_trait(?Send)]
@@ -58,7 +22,43 @@ impl DebugAdapter for GdbDebugAdapter {
     }
 
     fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
-        todo!()
+        let mut obj = serde_json::Map::default();
+
+        match &zed_scenario.request {
+            dap::DebugRequest::Attach(attach) => {
+                obj.insert("pid".into(), attach.process_id.into());
+            }
+
+            dap::DebugRequest::Launch(launch) => {
+                obj.insert("program".into(), launch.program.clone().into());
+
+                if !launch.args.is_empty() {
+                    obj.insert("args".into(), launch.args.clone().into());
+                }
+
+                if !launch.env.is_empty() {
+                    obj.insert("env".into(), launch.env_json());
+                }
+
+                if let Some(stop_on_entry) = zed_scenario.stop_on_entry {
+                    obj.insert(
+                        "stopAtBeginningOfMainSubprogram".into(),
+                        stop_on_entry.into(),
+                    );
+                }
+                if let Some(cwd) = launch.cwd.as_ref() {
+                    obj.insert("cwd".into(), cwd.to_string_lossy().into_owned().into());
+                }
+            }
+        }
+
+        Ok(DebugScenario {
+            adapter: zed_scenario.adapter,
+            label: zed_scenario.label,
+            build: None,
+            config: serde_json::Value::Object(obj),
+            tcp_connection: None,
+        })
     }
 
     fn dap_schema(&self) -> serde_json::Value {
@@ -174,13 +174,18 @@ impl DebugAdapter for GdbDebugAdapter {
 
         let gdb_path = user_setting_path.unwrap_or(gdb_path?);
 
+        let request_args = StartDebuggingRequestArguments {
+            request: self.validate_config(&config.config)?,
+            configuration: config.config.clone(),
+        };
+
         Ok(DebugAdapterBinary {
             command: gdb_path,
             arguments: vec!["-i=dap".into()],
             envs: HashMap::default(),
             cwd: None,
             connection: None,
-            request_args: self.request_args(&config),
+            request_args,
         })
     }
 }
