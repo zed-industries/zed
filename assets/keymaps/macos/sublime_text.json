@@ -59,8 +59,6 @@
   {
     "context": "Editor && mode == full",
     "bindings": {
-      "cmd-g": "editor::FindNextMatch",
-      "cmd-shift-g": "editor::FindPreviousMatch",
       "cmd-r": "outline::Toggle"
     }
   },
