@@ -14069,6 +14069,89 @@ async fn test_code_action_hides_hover_popover(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_completion_hides_hover_popover(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+            completion_provider: Some(lsp::CompletionOptions {
+                resolve_provider: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+    cx.set_state(indoc! {"
+        struct TestStruct {
+            field: i32,
+        }
+
+        fn main() {
+            let varˇ = TestStruct { field: 42 };
+        }
+    "});
+    let symbol_range = cx.lsp_range(indoc! {"
+        struct TestStruct {
+            field: i32,
+        }
+
+        fn main() {
+            let «var» = TestStruct { field: 42 };
+        }
+    "});
+    let mut hover_requests =
+        cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+            Ok(Some(lsp::Hover {
+                contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                    kind: lsp::MarkupKind::Markdown,
+                    value: "Variable of type TestStruct".to_string(),
+                }),
+                range: Some(symbol_range),
+            }))
+        });
+    cx.dispatch_action(Hover);
+    hover_requests.next().await;
+    cx.condition(|editor, _| editor.hover_state.visible()).await;
+    let counter = Arc::new(AtomicUsize::new(0));
+    let mut completion_requests =
+        cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, _, _| {
+            let counter = counter.clone();
+            async move {
+                counter.fetch_add(1, atomic::Ordering::Release);
+                Ok(Some(lsp::CompletionResponse::Array(vec![
+                    lsp::CompletionItem {
+                        label: "var".into(),
+                        kind: Some(lsp::CompletionItemKind::VARIABLE),
+                        detail: Some("TestStruct".to_string()),
+                        ..Default::default()
+                    },
+                    lsp::CompletionItem {
+                        label: "field".into(),
+                        kind: Some(lsp::CompletionItemKind::FIELD),
+                        detail: Some("i32".to_string()),
+                        ..Default::default()
+                    },
+                ])))
+            }
+        });
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+    });
+    completion_requests.next().await;
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, _, _| {
+        assert!(
+            !editor.hover_state.visible(),
+            "Hover popover should be hidden when completion menu is shown"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_completions_resolve_happens_once(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
