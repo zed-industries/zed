@@ -88,7 +88,7 @@ impl AppContext for AsyncApp {
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {
         let app = self.app.upgrade().context("app was released")?;
-        let mut lock = app.borrow_mut();
+        let mut lock = app.try_borrow_mut()?;
         lock.update_window(window, f)
     }
 

@@ -47,6 +47,7 @@ use dap::{DapRegistry, client::DebugAdapterClient};
 
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
+pub use debugger::breakpoint_store::BreakpointWithPosition;
 use debugger::{
     breakpoint_store::{ActiveStackFrame, BreakpointStore},
     dap_store::{DapStore, DapStoreEvent},
