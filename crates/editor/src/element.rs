@@ -5921,7 +5921,7 @@ impl EditorElement {
         &mut self,
         layout: &EditorLayout,
         window: &mut Window,
-        cx: &mut App,
+        _cx: &mut App,
     ) {
         window.on_mouse_event({
             let position_map = layout.position_map.clone();
@@ -5929,11 +5929,18 @@ impl EditorElement {
             let hitbox = layout.hitbox.clone();
             let mut delta = ScrollDelta::default();
 
-            // Set a minimum scroll_sensitivity of 0.01 to make sure the user doesn't
-            // accidentally turn off their scrolling.
-            let scroll_sensitivity = EditorSettings::get_global(cx).scroll_sensitivity.max(0.01);
-
             move |event: &ScrollWheelEvent, phase, window, cx| {
+                let scroll_sensitivity = {
+                    // Set a minimum scroll_sensitivity of 0.01 to make sure the user doesn't
+                    // accidentally turn off their scrolling.
+                    let base = EditorSettings::get_global(cx).scroll_sensitivity.max(0.01);
+                    if event.modifiers.alt {
+                        base * 4.0
+                    } else {
+                        base
+                    }
+                };
+
                 if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
                     delta = delta.coalesce(event.delta);
                     editor.update(cx, |editor, cx| {
