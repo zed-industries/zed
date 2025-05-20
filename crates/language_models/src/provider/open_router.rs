@@ -14,7 +14,7 @@ use language_model::{
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
     RateLimiter, Role, StopReason,
 };
-use open_router::{Model, ResponseStreamEvent, get_models, stream_completion};
+use open_router::{Model, ResponseStreamEvent, list_models, stream_completion};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -142,26 +142,8 @@ impl State {
         let http_client = self.http_client.clone();
         let api_url = settings.api_url.clone();
 
-        // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(async move |this, cx| {
-            // This now uses the optimized get_models function that performs parallel API requests
-            let model_entries = get_models(http_client.as_ref(), &api_url).await?;
-
-            // Convert ModelEntry objects to our Model objects
-            let models: Vec<open_router::Model> = model_entries
-                .into_iter()
-                .map(|entry| {
-                    // Safely unwrap context_length with a default value
-                    let max_tokens = entry.context_length.unwrap_or(2048);
-                    open_router::Model::new(
-                        &entry.id,
-                        Some(&entry.name),
-                        Some(max_tokens),
-                        Some(entry.supports_tool_calls),
-                        entry.excels_at_coding,
-                    )
-                })
-                .collect();
+            let models = list_models(http_client.as_ref(), &api_url).await?;
 
             this.update(cx, |this, cx| {
                 this.available_models = models;
@@ -185,7 +167,6 @@ impl OpenRouterLanguageModelProvider {
             available_models: Vec::new(),
             fetch_models_task: None,
             _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
-                // Restart the fetch_models task when settings change
                 this.restart_fetch_models_task(cx);
                 cx.notify();
             }),
@@ -248,7 +229,6 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
                 display_name: model.display_name.clone(),
                 max_tokens: model.max_tokens,
                 supports_tools: Some(false),
-                excels_at_coding: false,
             });
         }
 
@@ -263,10 +243,6 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
                 models_from_api.push(settings_model.clone());
             }
         }
-
-        // Sort by whether the model excels at coding (descending), then alphabetically by name
-        models_from_api
-            .sort_by(|a, b| (b.excels_at_coding(), &a.name).cmp(&(a.excels_at_coding(), &b.name)));
 
         models_from_api
             .into_iter()
@@ -469,9 +445,9 @@ pub fn into_open_router(
     open_router::Request {
         model: model.id().into(),
         messages,
-        stream: true, // all open router requests should be streamed
+        stream: true,
         stop: request.stop,
-        temperature: request.temperature.unwrap_or(0.4), // Lower temperature value is preferred in terms of best practices for coding agents
+        temperature: request.temperature.unwrap_or(0.4),
         max_tokens: max_output_tokens,
         parallel_tool_calls: if model.supports_parallel_tool_calls() && !request.tools.is_empty() {
             // Disable parallel tool calls, as the Agent currently expects a maximum of one per turn.

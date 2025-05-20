@@ -1,5 +1,4 @@
 use anyhow::{Context, Result, anyhow};
-use futures::join;
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
@@ -53,7 +52,6 @@ pub struct Model {
     pub display_name: Option<String>,
     pub max_tokens: usize,
     pub supports_tools: Option<bool>,
-    pub excels_at_coding: bool,
 }
 
 impl Model {
@@ -63,7 +61,6 @@ impl Model {
             Some("Auto Router"),
             Some(2000000),
             Some(true),
-            true,
         )
     }
 
@@ -76,14 +73,12 @@ impl Model {
         display_name: Option<&str>,
         max_tokens: Option<usize>,
         supports_tools: Option<bool>,
-        excels_at_coding: bool,
     ) -> Self {
         Self {
             name: name.to_owned(),
             display_name: display_name.map(|s| s.to_owned()),
             max_tokens: max_tokens.unwrap_or(2000000),
             supports_tools,
-            excels_at_coding,
         }
     }
 
@@ -105,10 +100,6 @@ impl Model {
 
     pub fn supports_tool_calls(&self) -> bool {
         self.supports_tools.unwrap_or(false)
-    }
-
-    pub fn excels_at_coding(&self) -> bool {
-        self.excels_at_coding
     }
 
     /// Indicates whether the model supports parallel tool calls.
@@ -279,13 +270,6 @@ pub struct ModelEntry {
     pub context_length: Option<usize>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub supported_parameters: Vec<String>,
-
-    /// Indicates whether the model can handle OpenAI‑style tool/function calls.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub supports_tool_calls: bool,
-    /// Indicates whether the model is generally strong at code‑related tasks.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub excels_at_coding: bool,
 }
 
 pub async fn complete(
@@ -459,42 +443,8 @@ pub async fn stream_completion(
     }
 }
 
-pub async fn get_models(client: &dyn HttpClient, api_url: &str) -> Result<Vec<ModelEntry>> {
-    // Fetch base models and coding models in parallel
-    let (base_models_result, coding_models_result) = join!(
-        fetch_models(client, api_url, None),
-        // this is intentional and put make it convenient to figure out which models to put on top of the list as openrouter supports more than 300 nmodels.
-        fetch_models(client, api_url, Some("category=programming"))
-    );
-
-    // Get the base model list
-    let mut models = base_models_result?;
-
-    // Create HashSet of coding model IDs for efficient lookups
-    let coding_model_ids = coding_models_result?
-        .into_iter()
-        .map(|m| m.id)
-        .collect::<std::collections::HashSet<_>>();
-
-    // Update model flags based on supported_parameters and coding category
-    for model in &mut models {
-        model.supports_tool_calls = model.supported_parameters.contains(&"tools".to_string());
-        model.excels_at_coding = coding_model_ids.contains(&model.id);
-    }
-
-    Ok(models)
-}
-
-async fn fetch_models(
-    client: &dyn HttpClient,
-    api_url: &str,
-    query_params: Option<&str>,
-) -> Result<Vec<ModelEntry>> {
-    let uri = match query_params {
-        Some(params) => format!("{api_url}/models?{params}"),
-        None => format!("{api_url}/models"),
-    };
-
+pub async fn list_models(client: &dyn HttpClient, api_url: &str) -> Result<Vec<Model>> {
+    let uri = format!("{api_url}/models");
     let request_builder = HttpRequest::builder()
         .method(Method::GET)
         .uri(uri)
@@ -509,7 +459,20 @@ async fn fetch_models(
     if response.status().is_success() {
         let response: ListModelsResponse =
             serde_json::from_str(&body).context("Unable to parse OpenRouter models response")?;
-        Ok(response.data)
+
+        // Convert ModelEntry vector to Model vector
+        let models = response
+            .data
+            .into_iter()
+            .map(|entry| Model {
+                name: entry.id,
+                display_name: Some(entry.name),
+                max_tokens: entry.context_length.unwrap_or(2000000),
+                supports_tools: Some(entry.supported_parameters.contains(&"tools".to_string())),
+            })
+            .collect();
+
+        Ok(models)
     } else {
         Err(anyhow!(
             "Failed to connect to OpenRouter API: {} {}",
