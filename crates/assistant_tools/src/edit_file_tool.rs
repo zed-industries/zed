@@ -38,7 +38,7 @@ use workspace::Workspace;
 
 pub struct EditFileTool;
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditFileToolInput {
     /// A one-line, user-friendly markdown description of the edit. This will be
     /// shown in the UI and also passed to another model to perform the edit.
