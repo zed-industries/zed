@@ -260,7 +260,7 @@ impl DapStore {
                     let (program, args) = wrap_for_ssh(
                         &ssh_command,
                         Some((&binary.command, &binary.arguments)),
-                        binary.cwd.as_ref().map(|cwd| cwd.as_path()),
+                        binary.cwd.as_deref(),
                         binary.envs,
                         None,
                     );
