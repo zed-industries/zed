@@ -189,10 +189,6 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                     "enum": ["attach", "launch"],
                     "description": "Debug adapter request type"
                 },
-                "name": {
-                    "type": "string",
-                    "description": "Name for the debug session"
-                },
                 "program": {
                     "type": "string",
                     "description": "Path to the program to debug or attach to"

@@ -336,11 +336,6 @@ impl DebugAdapter for JsDebugAdapter {
                                     "description": "The type of debug session",
                                     "default": "pwa-node"
                                 },
-                                "name": {
-                                    "type": "string",
-                                    "description": "The name of the debug session",
-                                    "default": "Attach to JavaScript"
-                                },
                                 "processId": {
                                     "type": ["string", "number"],
                                     "description": "ID of process to attach to (Node.js debugging)"
