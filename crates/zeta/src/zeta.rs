@@ -840,7 +840,7 @@ and then another
                     } else {
                         request_builder.uri(
                             http_client
-                                .build_zed_llm_url("/accept_edit_prediction", &[])?
+                                .build_zed_llm_url("/predict_edits/accept", &[])?
                                 .as_ref(),
                         )
                     };
