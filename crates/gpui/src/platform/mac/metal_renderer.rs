@@ -1079,11 +1079,7 @@ fn create_msaa_texture(
     texture_descriptor.set_texture_type(metal::MTLTextureType::D2Multisample);
 
     // MTLStorageMode default is `shared` only for Apple silicon GPUs. Use `private` for Apple and Intel GPUs both.
-    //
-    // Reference:
-    //
-    // - https://developer.apple.com/documentation/metal/mtlstoragemode/shared
-    // - https://developer.apple.com/documentation/metal/mtlstoragemode/private
+    // Reference: https://developer.apple.com/documentation/metal/choosing-a-resource-storage-mode-for-apple-gpus
     texture_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
 
     texture_descriptor.set_width(width);
