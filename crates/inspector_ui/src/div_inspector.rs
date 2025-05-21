@@ -52,13 +52,13 @@ pub(crate) fn render_or_load_div_inspector(
 
     if start_load {
         // todo! Better error handling
-        let json_text = serde_json::to_string_pretty(state).unwrap();
+        let base_style_json = serde_json::to_string_pretty(&state.base_style).unwrap();
         let id = Rc::new(id);
         *load_state = Some(DivInspectorLoadState {
             id: id.clone(),
             task: window
                 .spawn(cx, async move |cx| {
-                    DivInspector::load(inspector_options, &id, json_text, cx).await
+                    DivInspector::load(inspector_options, &id, base_style_json, cx).await
                 })
                 .shared(),
         });
@@ -72,7 +72,7 @@ impl DivInspector {
     async fn load(
         inspector_options: Entity<InspectorOptions>,
         id: &InspectorElementId,
-        json_text: String,
+        base_style_json: String,
         cx: &mut AsyncWindowContext,
     ) -> DivInspector {
         // todo! Make a new project instead of needing the current window to be a workspace.
@@ -100,7 +100,7 @@ impl DivInspector {
             .unwrap();
         let project_path = ProjectPath {
             worktree_id,
-            path: Path::new("zed-div-inspector.json").into(),
+            path: Path::new("zed-inspector-style.json").into(),
         };
 
         let style_buffer = project
@@ -118,7 +118,9 @@ impl DivInspector {
 
         let style_editor = cx
             .new_window_entity(|window, cx| {
-                style_buffer.update(cx, |style_buffer, cx| style_buffer.set_text(json_text, cx));
+                style_buffer.update(cx, |style_buffer, cx| {
+                    style_buffer.set_text(base_style_json, cx)
+                });
                 let multi_buffer = cx.new(|cx| MultiBuffer::singleton(style_buffer, cx));
                 let mut editor =
                     Editor::new(EditorMode::full(), multi_buffer, Some(project), window, cx);
@@ -140,17 +142,19 @@ impl DivInspector {
                     move |editor, event: &EditorEvent, window, cx| {
                         match event {
                             EditorEvent::BufferEdited => {
-                                let json_text = editor.read(cx).text(cx);
+                                let base_style_json = editor.read(cx).text(cx);
                                 // todo! error handling
-                                let Some(new_state) =
-                                    serde_json_lenient::from_str(&json_text).log_err()
+                                let Some(new_base_style) =
+                                    serde_json_lenient::from_str(&base_style_json).log_err()
                                 else {
                                     return;
                                 };
                                 window.update_inspector_state::<DivInspectorState, _>(
                                     &id,
                                     |state, _window| {
-                                        *state = new_state;
+                                        if let Some(state) = state.as_mut() {
+                                            *state.base_style = new_base_style;
+                                        }
                                     },
                                 )
                             }

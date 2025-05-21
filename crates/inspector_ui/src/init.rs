@@ -12,8 +12,6 @@ use util::ResultExt as _;
 // * Refine "Open code" - confusing that it doesn't do anything when checked. Add another way to
 // open code?
 //
-// * Something better than "base_style"
-//
 // * Way to open actual user code instead of ui component
 
 pub fn init(cx: &mut App) {

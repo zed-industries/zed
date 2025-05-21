@@ -25,8 +25,6 @@ use crate::{
 };
 use collections::HashMap;
 use refineable::Refineable;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
@@ -1193,7 +1191,6 @@ pub struct DivFrameState {
 }
 
 /// todo!("document")
-#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct DivInspectorState {
     /// todo!("document")
     #[cfg(any(feature = "inspector", debug_assertions))]

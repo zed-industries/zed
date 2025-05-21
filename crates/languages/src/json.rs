@@ -4,7 +4,7 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
-use gpui::{App, AsyncApp, DivInspectorState};
+use gpui::{App, AsyncApp, StyleRefinement};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use language::{LanguageRegistry, LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{LanguageServerBinary, LanguageServerName};
@@ -91,7 +91,7 @@ impl JsonLspAdapter {
         let snippets_schema = snippet_provider::format::VsSnippetsFile::generate_json_schema();
         let tsconfig_schema = serde_json::Value::from_str(TSCONFIG_SCHEMA).unwrap();
         let package_json_schema = serde_json::Value::from_str(PACKAGE_JSON_SCHEMA).unwrap();
-        let div_inspector_schema = generate_div_inspector_schema();
+        let inspector_style_schema = generate_inspector_style_schema();
 
         // This can be viewed via `dev: open language server logs` -> `json-language-server` ->
         // `Server Info`
@@ -151,9 +151,9 @@ impl JsonLspAdapter {
                     },
                     {
                         "fileMatch": [
-                            "zed-div-inspector.json"
+                            "zed-inspector-style.json"
                         ],
-                        "schema": div_inspector_schema,
+                        "schema": inspector_style_schema,
                     }
                 ]
             }
@@ -175,11 +175,11 @@ impl JsonLspAdapter {
     }
 }
 
-fn generate_div_inspector_schema() -> serde_json_lenient::Value {
+fn generate_inspector_style_schema() -> serde_json_lenient::Value {
     let schema = SchemaSettings::draft07()
         .with(|settings| settings.option_add_null_type = false)
         .into_generator()
-        .into_root_schema_for::<DivInspectorState>();
+        .into_root_schema_for::<StyleRefinement>();
 
     serde_json_lenient::to_value(schema).unwrap()
 }
