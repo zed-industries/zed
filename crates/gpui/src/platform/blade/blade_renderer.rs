@@ -814,7 +814,7 @@ fn create_msaa_texture_if_needed(
         mip_level_count: 1,
         sample_count,
         dimension: gpu::TextureDimension::D2,
-        usage: gpu::TextureUsage::TARGET | gpu::TextureUsage::RESOURCE | gpu::TextureUsage::COPY,
+        usage: gpu::TextureUsage::TARGET,
         external: None,
     });
     let texture_view_msaa = gpu.create_texture_view(
