@@ -3663,7 +3663,7 @@ impl EditorElement {
 
         let min_height = height_above_menu + min_menu_height + height_below_menu;
         let max_height = height_above_menu + max_menu_height + height_below_menu;
-        let Some((laid_out_popovers, y_flipped)) = self.layout_popovers_above_or_below_line(
+        let (laid_out_popovers, y_flipped) = self.layout_popovers_above_or_below_line(
             target_position,
             line_height,
             min_height,
@@ -3721,16 +3721,11 @@ impl EditorElement {
                     .flatten()
                     .collect::<Vec<_>>()
             },
-        ) else {
-            return None;
-        };
+        )?;
 
-        let Some((menu_ix, (_, menu_bounds))) = laid_out_popovers
+        let (menu_ix, (_, menu_bounds)) = laid_out_popovers
             .iter()
-            .find_position(|(x, _)| matches!(x, CursorPopoverType::CodeContextMenu))
-        else {
-            return None;
-        };
+            .find_position(|(x, _)| matches!(x, CursorPopoverType::CodeContextMenu))?;
         let last_ix = laid_out_popovers.len() - 1;
         let menu_is_last = menu_ix == last_ix;
         let first_popover_bounds = laid_out_popovers[0].1;
@@ -4014,13 +4009,11 @@ impl EditorElement {
                 available_within_viewport.right - px(1.),
                 MENU_ASIDE_MAX_WIDTH,
             );
-            let Some(mut aside) = self.render_context_menu_aside(
+            let mut aside = self.render_context_menu_aside(
                 size(max_width, max_height - POPOVER_Y_PADDING),
                 window,
                 cx,
-            ) else {
-                return None;
-            };
+            )?;
             let size = aside.layout_as_root(AvailableSpace::min_size(), window, cx);
             let right_position = point(target_bounds.right(), menu_bounds.origin.y);
             Some((aside, right_position, size))
@@ -4040,9 +4033,7 @@ impl EditorElement {
                     ),
                 ) - POPOVER_Y_PADDING,
             );
-            let Some(mut aside) = self.render_context_menu_aside(max_size, window, cx) else {
-                return None;
-            };
+            let mut aside = self.render_context_menu_aside(max_size, window, cx)?;
             let actual_size = aside.layout_as_root(AvailableSpace::min_size(), window, cx);
 
             let top_position = point(
@@ -4406,14 +4397,10 @@ impl EditorElement {
                     // bottom of context menu
                     point(menu.bounds.left(), menu.bounds.bottom() + HOVER_POPOVER_GAP),
                 ];
-                for origin in possible_origins {
-                    if Bounds::new(origin, size(total_width, overall_height))
+                possible_origins.into_iter().find(|&origin| {
+                    Bounds::new(origin, size(total_width, overall_height))
                         .is_contained_within(hitbox)
-                    {
-                        return Some(origin);
-                    }
-                }
-                None
+                })
             });
             if let Some(origin) = origin_surrounding_menu {
                 let mut current_y = origin.y;
@@ -4666,12 +4653,9 @@ impl EditorElement {
                     // bottom of context menu
                     point(menu.bounds.left(), menu.bounds.bottom() + HOVER_POPOVER_GAP),
                 ];
-                for origin in possible_origins {
-                    if Bounds::new(origin, actual_size).is_contained_within(hitbox) {
-                        return Some(origin);
-                    }
-                }
-                None
+                possible_origins
+                    .into_iter()
+                    .find(|&origin| Bounds::new(origin, actual_size).is_contained_within(hitbox))
             });
             origin_surrounding_menu.unwrap_or_else(|| {
                 // fallback to existing above/below cursor logic
