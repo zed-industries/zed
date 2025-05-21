@@ -6,10 +6,7 @@ use anyhow::{Context as _, anyhow};
 use core::fmt::Debug;
 use derive_more::{Add, AddAssign, Div, DivAssign, Mul, Neg, Sub, SubAssign};
 use refineable::Refineable;
-use schemars::{
-    JsonSchema, SchemaGenerator,
-    schema::{InstanceType, Schema, SchemaObject},
-};
+use schemars::{JsonSchema, SchemaGenerator, schema::Schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{
     cmp::{self, PartialOrd},

@@ -1,8 +1,5 @@
 use anyhow::{Context, bail};
-use schemars::{
-    JsonSchema, SchemaGenerator,
-    schema::{InstanceType, Schema, SchemaObject},
-};
+use schemars::{JsonSchema, SchemaGenerator, schema::Schema};
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{

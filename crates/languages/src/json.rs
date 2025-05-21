@@ -10,11 +10,7 @@ use language::{LanguageRegistry, LanguageToolchainStore, LspAdapter, LspAdapterD
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::{ContextProviderWithTasks, Fs, lsp_store::language_server_settings};
-use schemars::{
-    JsonSchema,
-    r#gen::SchemaSettings,
-    schema::{ObjectValidation, Schema, SchemaObject},
-};
+use schemars::r#gen::SchemaSettings;
 use serde_json::{Value, json};
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::{
