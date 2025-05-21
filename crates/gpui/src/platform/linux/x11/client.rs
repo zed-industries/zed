@@ -1048,7 +1048,9 @@ impl X11Client {
                         match compose_state.status() {
                             xkbc::Status::Composed => {
                                 state.pre_edit_text.take();
-                                keystroke.key_char = compose_state.utf8();
+                                let key_char = compose_state.utf8();
+                                println!("    Composed: {:#?}", key_char);
+                                keystroke.key_char = key_char;
                                 if let Some(keysym) = compose_state.keysym() {
                                     keystroke.key = xkbc::keysym_get_name(keysym);
                                 }
@@ -1061,11 +1063,13 @@ impl X11Client {
                                 let pre_edit =
                                     state.pre_edit_text.clone().unwrap_or(String::default());
                                 drop(state);
+                                println!("    Composing: {:#?}", pre_edit);
                                 window.handle_ime_preedit(pre_edit);
                                 state = self.0.borrow_mut();
                             }
                             xkbc::Status::Cancelled => {
                                 let pre_edit = state.pre_edit_text.take();
+                                println!("    Cancelled: {:#?}", pre_edit);
                                 drop(state);
                                 if let Some(pre_edit) = pre_edit {
                                     window.handle_ime_commit(pre_edit);
