@@ -1293,15 +1293,10 @@ async fn get_current_usage(
         .get_subscription_usage_for_period(user.id, period_start_at, period_end_at)
         .await?;
 
-    let plan = usage
-        .as_ref()
-        .map(|usage| usage.plan.into())
-        .unwrap_or_else(|| {
-            subscription
-                .kind
-                .map(Into::into)
-                .unwrap_or(zed_llm_client::Plan::ZedFree)
-        });
+    let plan = subscription
+        .kind
+        .map(Into::into)
+        .unwrap_or(zed_llm_client::Plan::ZedFree);
 
     let model_requests_limit = match plan.model_requests_limit() {
         zed_llm_client::UsageLimit::Limited(limit) => {
