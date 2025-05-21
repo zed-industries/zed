@@ -1,7 +1,7 @@
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use collections::{HashMap, HashSet};
 #[cfg(any(feature = "wayland", feature = "x11"))]
-use xkbcommon::xkb::Keycode;
+use xkbcommon::xkb::{Keycode, Keysym};
 
 use crate::{PlatformKeyboardLayout, SharedString};
 
@@ -48,11 +48,26 @@ impl LinuxKeyboardMapper {
         for &scan_code in TYPEABLE_CODES {
             let keycode = Keycode::new(scan_code);
             let key = xkb_state.key_get_utf8(keycode);
-            code_to_key.insert(keycode, key.clone());
-            inserted.insert(key);
 
-            let shifted_key = shifted_state.key_get_utf8(keycode);
-            code_to_shifted_key.insert(keycode, shifted_key);
+            if !key.is_empty() {
+                code_to_key.insert(keycode, key.clone());
+                inserted.insert(key);
+
+                let shifted_key = shifted_state.key_get_utf8(keycode);
+                code_to_shifted_key.insert(keycode, shifted_key);
+            } else {
+                // keycode might be a dead key
+                let keysym = xkb_state.key_get_one_sym(keycode);
+                if let Some(key) = underlying_dead_key(keysym) {
+                    code_to_key.insert(keycode, key.clone());
+                    inserted.insert(key);
+                }
+
+                let shifted_keysym = shifted_state.key_get_one_sym(keycode);
+                if let Some(shifted_key) = underlying_dead_key(shifted_keysym) {
+                    code_to_shifted_key.insert(keycode, shifted_key);
+                }
+            }
         }
         insert_letters_if_missing(&inserted, &mut code_to_key);
 
@@ -107,6 +122,66 @@ fn is_alphabetic_key(keycode: Keycode) -> bool {
         | 0x001d // y
         | 0x0034 // z
     )
+}
+
+/**
+ * Returns which symbol the dead key represents
+ * <https://developer.mozilla.org/en-US/docs/Web/API/UI_Events/Keyboard_event_key_values#dead_keycodes_for_linux>
+ */
+#[cfg(any(feature = "wayland", feature = "x11"))]
+pub(crate) fn underlying_dead_key(keysym: Keysym) -> Option<String> {
+    match keysym {
+        Keysym::dead_grave => Some("`".to_owned()),
+        Keysym::dead_acute => Some("´".to_owned()),
+        Keysym::dead_circumflex => Some("^".to_owned()),
+        Keysym::dead_tilde => Some("~".to_owned()),
+        Keysym::dead_macron => Some("¯".to_owned()),
+        Keysym::dead_breve => Some("˘".to_owned()),
+        Keysym::dead_abovedot => Some("˙".to_owned()),
+        Keysym::dead_diaeresis => Some("¨".to_owned()),
+        Keysym::dead_abovering => Some("˚".to_owned()),
+        Keysym::dead_doubleacute => Some("˝".to_owned()),
+        Keysym::dead_caron => Some("ˇ".to_owned()),
+        Keysym::dead_cedilla => Some("¸".to_owned()),
+        Keysym::dead_ogonek => Some("˛".to_owned()),
+        Keysym::dead_iota => Some("ͅ".to_owned()),
+        Keysym::dead_voiced_sound => Some("゙".to_owned()),
+        Keysym::dead_semivoiced_sound => Some("゚".to_owned()),
+        Keysym::dead_belowdot => Some("̣̣".to_owned()),
+        Keysym::dead_hook => Some("̡".to_owned()),
+        Keysym::dead_horn => Some("̛".to_owned()),
+        Keysym::dead_stroke => Some("̶̶".to_owned()),
+        Keysym::dead_abovecomma => Some("̓̓".to_owned()),
+        Keysym::dead_abovereversedcomma => Some("ʽ".to_owned()),
+        Keysym::dead_doublegrave => Some("̏".to_owned()),
+        Keysym::dead_belowring => Some("˳".to_owned()),
+        Keysym::dead_belowmacron => Some("̱".to_owned()),
+        Keysym::dead_belowcircumflex => Some("ꞈ".to_owned()),
+        Keysym::dead_belowtilde => Some("̰".to_owned()),
+        Keysym::dead_belowbreve => Some("̮".to_owned()),
+        Keysym::dead_belowdiaeresis => Some("̤".to_owned()),
+        Keysym::dead_invertedbreve => Some("̯".to_owned()),
+        Keysym::dead_belowcomma => Some("̦".to_owned()),
+        Keysym::dead_currency => None,
+        Keysym::dead_lowline => None,
+        Keysym::dead_aboveverticalline => None,
+        Keysym::dead_belowverticalline => None,
+        Keysym::dead_longsolidusoverlay => None,
+        Keysym::dead_a => None,
+        Keysym::dead_A => None,
+        Keysym::dead_e => None,
+        Keysym::dead_E => None,
+        Keysym::dead_i => None,
+        Keysym::dead_I => None,
+        Keysym::dead_o => None,
+        Keysym::dead_O => None,
+        Keysym::dead_u => None,
+        Keysym::dead_U => None,
+        Keysym::dead_small_schwa => Some("ə".to_owned()),
+        Keysym::dead_capital_schwa => Some("Ə".to_owned()),
+        Keysym::dead_greek => None,
+        _ => None,
+    }
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
