@@ -23,6 +23,7 @@ use std::{
     sync::Arc,
 };
 use task::{AttachRequest, DebugRequest, DebugScenario, LaunchRequest, TcpArgumentsTemplate};
+use util::archive::extract_zip;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DapStatus {
@@ -363,12 +364,7 @@ pub async fn download_adapter_from_github(
             futures::io::copy(response.body_mut(), &mut file).await?;
 
             // we cannot check the status as some adapter include files with names that trigger `Illegal byte sequence`
-            util::command::new_smol_command("unzip")
-                .arg(&zip_path)
-                .arg("-d")
-                .arg(&version_path)
-                .output()
-                .await?;
+            extract_zip(&version_path, file).await?;
 
             util::fs::remove_matching(&adapter_path, |entry| {
                 entry

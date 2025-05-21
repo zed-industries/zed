@@ -10051,7 +10051,6 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
- "tempfile",
  "util",
  "which 6.0.3",
  "workspace-hack",

@@ -9,7 +9,7 @@ use project::lsp_store::clangd_ext;
 use serde_json::json;
 use smol::fs::{self, File};
 use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
-use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
+use util::{ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into};
 
 pub struct CLspAdapter;
 
@@ -87,13 +87,9 @@ impl super::LspAdapter for CLspAdapter {
             );
             futures::io::copy(response.body_mut(), &mut file).await?;
 
-            let unzip_status = util::command::new_smol_command("unzip")
-                .current_dir(&container_dir)
-                .arg(&zip_path)
-                .output()
-                .await?
-                .status;
-            anyhow::ensure!(unzip_status.success(), "failed to unzip clangd archive");
+            extract_zip(&container_dir, file)
+                .await
+                .context("unzipping clangd archive")?;
             remove_matching(&container_dir, |entry| entry != version_dir).await;
         }
 
