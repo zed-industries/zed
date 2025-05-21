@@ -1046,7 +1046,7 @@ impl X11Client {
                         xkb_state.locked_layout,
                     );
                     let mut keystroke =
-                        crate::Keystroke::from_xkb(&state.keyboard_state.state, modifiers, code);
+                        crate::Keystroke::from_xkb(&state.keyboard_state, modifiers, code);
                     let keysym = state.keyboard_state.state.key_get_one_sym(code);
                     if keysym.is_modifier_key() {
                         return Some(());
@@ -1121,7 +1121,7 @@ impl X11Client {
                         xkb_state.locked_layout,
                     );
                     let keystroke =
-                        crate::Keystroke::from_xkb(&state.keyboard_state.state, modifiers, code);
+                        crate::Keystroke::from_xkb(&state.keyboard_state, modifiers, code);
                     let keysym = state.keyboard_state.state.key_get_one_sym(code);
                     if keysym.is_modifier_key() {
                         return Some(());
@@ -1342,7 +1342,7 @@ impl X11Client {
             Event::KeyPress(event) | Event::KeyRelease(event) => {
                 let mut state = self.0.borrow_mut();
                 state.pre_key_char_down = Some(Keystroke::from_xkb(
-                    &state.keyboard_state.state,
+                    &state.keyboard_state,
                     state.modifiers,
                     event.detail.into(),
                 ));

@@ -726,13 +726,12 @@ impl KeyboardState {
 #[cfg(any(feature = "wayland", feature = "x11"))]
 impl crate::Keystroke {
     pub(super) fn from_xkb(
-        state: &State,
+        keyboard_state: &KeyboardState,
         mut modifiers: crate::Modifiers,
         keycode: Keycode,
     ) -> Self {
-        let key_utf32 = state.key_get_utf32(keycode);
-        let key_utf8 = state.key_get_utf8(keycode);
-        let key_sym = state.key_get_one_sym(keycode);
+        let key_utf8 = keyboard_state.state.key_get_utf8(keycode);
+        let key_sym = keyboard_state.state.key_get_one_sym(keycode);
 
         let key = match key_sym {
             Keysym::space => "space".to_owned(),
@@ -760,14 +759,17 @@ impl crate::Keystroke {
             Keysym::XF86_New => "new".to_owned(),
             Keysym::XF86_Open => "open".to_owned(),
             Keysym::XF86_Save => "save".to_owned(),
-            _ => {
-                let name = xkb::keysym_get_name(key_sym).to_lowercase();
-                if key_sym.is_keypad_key() {
-                    name.replace("kp_", "")
-                } else {
-                    name
-                }
-            }
+            _ => keyboard_state
+                .mapper
+                .get_key(keycode, modifiers.shift)
+                .unwrap_or_else(|| {
+                    let name = xkb::keysym_get_name(key_sym).to_lowercase();
+                    if key_sym.is_keypad_key() {
+                        name.replace("kp_", "")
+                    } else {
+                        name
+                    }
+                }),
         };
 
         if modifiers.shift {
@@ -780,8 +782,8 @@ impl crate::Keystroke {
         }
 
         // Ignore control characters (and DEL) for the purposes of key_char
-        let key_char =
-            (key_utf32 >= 32 && key_utf32 != 127 && !key_utf8.is_empty()).then_some(key_utf8);
+        let key_char = (!key_utf8.is_empty() && !key_utf8.chars().next().unwrap().is_control())
+            .then_some(key_utf8);
 
         Self {
             modifiers,
