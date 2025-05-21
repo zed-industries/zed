@@ -1082,7 +1082,7 @@ fn create_msaa_texture(
     texture_descriptor.set_pixel_format(layer.pixel_format());
     texture_descriptor
         .set_usage(metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead);
-    texture_descriptor.set_sample_count(4);
+    texture_descriptor.set_sample_count(sample_count);
     let metal_texture = device.new_texture(&texture_descriptor);
     Some(metal_texture)
 }
