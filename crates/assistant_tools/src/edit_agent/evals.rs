@@ -36,13 +36,13 @@ use util::path;
 fn eval_extract_handle_command_output() {
     // Test how well agent generates multiple edit hunks.
     //
-    // Results (model/pass rate):
-    //
-    // claude-3.7       0.96 -> 0.98 -> 0.98
-    // gemini-2.5-pro   0.35 -> 0.80 -> 0.86
-    // gemini-2.5-flash 0.11
-    // gpt-4.1          0.81         -> 1.00
-    //
+    // Model                       | Pass rate
+    // ----------------------------|----------
+    // claude-3.7-sonnet           |  0.98
+    // gemini-2.5-pro              |  0.86
+    // gemini-2.5-flash            |  0.11
+    // gpt-4.1                     |  1.00
+
     let input_file_path = "root/blame.rs";
     let input_file_content = include_str!("evals/fixtures/extract_handle_command_output/before.rs");
     let possible_diffs = vec![
@@ -114,7 +114,7 @@ fn eval_delete_run_git_blame() {
     let output_file_content = include_str!("evals/fixtures/delete_run_git_blame/after.rs");
     let edit_description = "Delete the `run_git_blame` function.";
     eval(
-        10,
+        100,
         0.95,
         EvalInput::from_conversation(
             vec![
