@@ -9,17 +9,17 @@ Alternatively, you can also visit the panel's Settings view by running the `agen
 Zed supports multiple large language model providers.
 Here's an overview of the supported providers and tool call support:
 
-| Provider                                        | Tool Use Supported |
-| ----------------------------------------------- | ------------------ |
-| [Anthropic](#anthropic)                         | ✅                 |
-| [GitHub Copilot Chat](#github-copilot-chat)     | In Some Cases      |
-| [Google AI](#google-ai)                         | ✅                 |
-| [Mistral](#mistral)                             | ✅                 |
-| [Ollama](#ollama)                               | ✅                 |
-| [OpenAI](#openai)                               | ✅                 |
-| [DeepSeek](#deepseek)                           | 🚫                 |
-| [OpenAI API Compatible](#openai-api-compatible) | 🚫                 |
-| [LM Studio](#lmstudio)                          | 🚫                 |
+| Provider                                        | Tool Use Supported                                                                                                                                                          |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Anthropic](#anthropic)                         | ✅                                                                                                                                                                          |
+| [GitHub Copilot Chat](#github-copilot-chat)     | For Some Models ([link](https://github.com/zed-industries/zed/blob/9e0330ba7d848755c9734bf456c716bddf0973f3/crates/language_models/src/provider/copilot_chat.rs#L189-L198)) |
+| [Google AI](#google-ai)                         | ✅                                                                                                                                                                          |
+| [Mistral](#mistral)                             | ✅                                                                                                                                                                          |
+| [Ollama](#ollama)                               | ✅                                                                                                                                                                          |
+| [OpenAI](#openai)                               | ✅                                                                                                                                                                          |
+| [DeepSeek](#deepseek)                           | 🚫                                                                                                                                                                          |
+| [OpenAI API Compatible](#openai-api-compatible) | 🚫                                                                                                                                                                          |
+| [LM Studio](#lmstudio)                          | 🚫                                                                                                                                                                          |
 
 ## Use Your Own Keys {#use-your-own-keys}
 
