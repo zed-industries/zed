@@ -3964,15 +3964,18 @@ impl Editor {
                                     .skip(num_of_whitespaces)
                                     .take(max_len_of_delimiter)
                                     .collect::<String>();
-                                let (delimiter, trimmed_len) =
-                                    delimiters.iter().find_map(|delimiter| {
-                                        let trimmed = delimiter.trim_end();
-                                        if comment_candidate.starts_with(trimmed) {
-                                            Some((delimiter, trimmed.len()))
+                                let (delimiter, trimmed_len) = delimiters
+                                    .iter()
+                                    .filter_map(|delimiter| {
+                                        let prefix = delimiter.trim_end();
+                                        if comment_candidate.starts_with(prefix) {
+                                            Some((delimiter, prefix.len()))
                                         } else {
                                             None
                                         }
-                                    })?;
+                                    })
+                                    .max_by_key(|(_, len)| *len)?;
+
                                 let cursor_is_placed_after_comment_marker =
                                     num_of_whitespaces + trimmed_len <= start_point.column as usize;
                                 if cursor_is_placed_after_comment_marker {
