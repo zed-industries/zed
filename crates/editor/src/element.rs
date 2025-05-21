@@ -4195,7 +4195,6 @@ impl EditorElement {
         &self,
         snapshot: &EditorSnapshot,
         hitbox: &Hitbox,
-        text_hitbox: &Hitbox,
         visible_display_row_range: Range<DisplayRow>,
         content_origin: gpui::Point<Pixels>,
         scroll_pixel_position: gpui::Point<Pixels>,
@@ -4249,11 +4248,9 @@ impl EditorElement {
         for mut hover_popover in hover_popovers {
             let size = hover_popover.layout_as_root(AvailableSpace::min_size(), window, cx);
             let horizontal_offset =
-                (text_hitbox.top_right().x - POPOVER_RIGHT_OFFSET - (hovered_point.x + size.width))
+                (hitbox.top_right().x - POPOVER_RIGHT_OFFSET - (hovered_point.x + size.width))
                     .min(Pixels::ZERO);
-
             overall_height += HOVER_POPOVER_GAP + size.height;
-
             measured_hover_popovers.push(MeasuredHoverPopover {
                 element: hover_popover,
                 size,
@@ -4277,8 +4274,12 @@ impl EditorElement {
             window.defer_draw(occlusion, origin, 2);
         }
 
-        if hovered_point.y > overall_height {
-            // There is enough space above. Render popovers above the hovered point
+        fn place_popovers_above(
+            hovered_point: gpui::Point<Pixels>,
+            measured_hover_popovers: Vec<MeasuredHoverPopover>,
+            window: &mut Window,
+            cx: &mut App,
+        ) {
             let mut current_y = hovered_point.y;
             for (position, popover) in measured_hover_popovers.into_iter().with_position() {
                 let size = popover.size;
@@ -4295,8 +4296,15 @@ impl EditorElement {
 
                 current_y = popover_origin.y - HOVER_POPOVER_GAP;
             }
-        } else {
-            // There is not enough space above. Render popovers below the hovered point
+        }
+
+        fn place_popovers_below(
+            hovered_point: gpui::Point<Pixels>,
+            measured_hover_popovers: Vec<MeasuredHoverPopover>,
+            line_height: Pixels,
+            window: &mut Window,
+            cx: &mut App,
+        ) {
             let mut current_y = hovered_point.y + line_height;
             for (position, popover) in measured_hover_popovers.into_iter().with_position() {
                 let size = popover.size;
@@ -4309,6 +4317,127 @@ impl EditorElement {
                 }
 
                 current_y = popover_origin.y + size.height + HOVER_POPOVER_GAP;
+            }
+        }
+
+        let intersects_menu = |bounds: Bounds<Pixels>| -> bool {
+            context_menu_layout
+                .as_ref()
+                .map_or(false, |menu| bounds.intersects(&menu.bounds))
+        };
+
+        let can_place_above = {
+            let mut bounds_above = Vec::new();
+            let mut current_y = hovered_point.y;
+            for popover in &measured_hover_popovers {
+                let size = popover.size;
+                let popover_origin = point(
+                    hovered_point.x + popover.horizontal_offset,
+                    current_y - size.height,
+                );
+                bounds_above.push(Bounds::new(popover_origin, size));
+                current_y = popover_origin.y - HOVER_POPOVER_GAP;
+            }
+            bounds_above
+                .iter()
+                .all(|b| b.is_contained_within(hitbox) && !intersects_menu(*b))
+        };
+
+        let can_place_below = || {
+            let mut bounds_below = Vec::new();
+            let mut current_y = hovered_point.y + line_height;
+            for popover in &measured_hover_popovers {
+                let size = popover.size;
+                let popover_origin = point(hovered_point.x + popover.horizontal_offset, current_y);
+                bounds_below.push(Bounds::new(popover_origin, size));
+                current_y = popover_origin.y + size.height + HOVER_POPOVER_GAP;
+            }
+            bounds_below
+                .iter()
+                .all(|b| b.is_contained_within(hitbox) && !intersects_menu(*b))
+        };
+
+        if can_place_above {
+            // try placing above hovered point
+            place_popovers_above(hovered_point, measured_hover_popovers, window, cx);
+        } else if can_place_below() {
+            // try placing below hovered point
+            place_popovers_below(
+                hovered_point,
+                measured_hover_popovers,
+                line_height,
+                window,
+                cx,
+            );
+        } else {
+            // try to place popovers around the context menu
+            let origin_surrounding_menu = context_menu_layout.as_ref().and_then(|menu| {
+                let total_width = measured_hover_popovers
+                    .iter()
+                    .map(|p| p.size.width)
+                    .max()
+                    .unwrap_or(Pixels::ZERO);
+                let y_for_horizontal_positioning = if menu.y_flipped {
+                    menu.bounds.bottom() - overall_height
+                } else {
+                    menu.bounds.top()
+                };
+                let possible_origins = vec![
+                    // left of context menu
+                    point(
+                        menu.bounds.left() - total_width - HOVER_POPOVER_GAP,
+                        y_for_horizontal_positioning,
+                    ),
+                    // right of context menu
+                    point(
+                        menu.bounds.right() + HOVER_POPOVER_GAP,
+                        y_for_horizontal_positioning,
+                    ),
+                    // top of context menu
+                    point(
+                        menu.bounds.left(),
+                        menu.bounds.top() - overall_height - HOVER_POPOVER_GAP,
+                    ),
+                    // bottom of context menu
+                    point(menu.bounds.left(), menu.bounds.bottom() + HOVER_POPOVER_GAP),
+                ];
+                for origin in possible_origins {
+                    if Bounds::new(origin, size(total_width, overall_height))
+                        .is_contained_within(hitbox)
+                    {
+                        return Some(origin);
+                    }
+                }
+                None
+            });
+            if let Some(origin) = origin_surrounding_menu {
+                let mut current_y = origin.y;
+                for (position, popover) in measured_hover_popovers.into_iter().with_position() {
+                    let size = popover.size;
+                    let popover_origin = point(origin.x, current_y);
+
+                    window.defer_draw(popover.element, popover_origin, 2);
+                    if position != itertools::Position::Last {
+                        let origin = point(popover_origin.x, popover_origin.y + size.height);
+                        draw_occluder(size.width, origin, window, cx);
+                    }
+
+                    current_y = popover_origin.y + size.height + HOVER_POPOVER_GAP;
+                }
+            } else {
+                // fallback to existing above/below cursor logic
+                // this might overlap menu or overflow in rare case
+                if can_place_above {
+                    place_popovers_above(hovered_point, measured_hover_popovers, window, cx);
+                } else {
+                    place_popovers_below(
+                        hovered_point,
+                        measured_hover_popovers,
+                        line_height,
+                        window,
+                        cx,
+                    );
+                }
             }
         }
     }
@@ -4417,7 +4546,6 @@ impl EditorElement {
     fn layout_signature_help(
         &self,
         hitbox: &Hitbox,
-        text_hitbox: &Hitbox,
         content_origin: gpui::Point<Pixels>,
         scroll_pixel_position: gpui::Point<Pixels>,
         newest_selection_head: Option<DisplayPoint>,
@@ -4533,8 +4661,6 @@ impl EditorElement {
                     // bottom of context menu
                     point(menu.bounds.left(), menu.bounds.bottom() + HOVER_POPOVER_GAP),
                 ];
-                // TODO: In future we can re-layout in case of left/right
-                // to fit available space if not too short
                 for origin in possible_origins {
                     if Bounds::new(origin, actual_size).is_contained_within(hitbox) {
                         return Some(origin);
@@ -8050,7 +8176,6 @@ impl Element for EditorElement {
 
                     self.layout_signature_help(
                         &hitbox,
-                        &text_hitbox,
                         content_origin,
                         scroll_pixel_position,
                         newest_selection_head,
@@ -8067,7 +8192,6 @@ impl Element for EditorElement {
                         self.layout_hover_popovers(
                             &snapshot,
                             &hitbox,
-                            &text_hitbox,
                             start_row..end_row,
                             content_origin,
                             scroll_pixel_position,
