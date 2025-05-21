@@ -1400,7 +1400,7 @@ fn paragraph(
     around: bool,
 ) -> Option<Range<DisplayPoint>> {
     let mut paragraph_start = start_of_paragraph(map, relative_to);
-    let mut paragraph_end = end_of_paragraph(map, relative_to);
+    let mut paragraph_end = end_of_paragraph(map, relative_to, false);
 
     let paragraph_end_row = paragraph_end.row();
     let paragraph_ends_with_eof = paragraph_end_row == map.max_point().row();
@@ -1421,7 +1421,7 @@ fn paragraph(
             }
         } else {
             let next_paragraph_start = DisplayPoint::new(paragraph_end_row + 1, 0);
-            paragraph_end = end_of_paragraph(map, next_paragraph_start);
+            paragraph_end = end_of_paragraph(map, next_paragraph_start, true);
         }
     }
 
@@ -1451,8 +1451,12 @@ pub fn start_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) ->
 
 /// Returns a position of the end of the current paragraph, where a paragraph
 /// is defined as a run of non-blank lines or a run of blank lines.
-/// The trailing newline is excluded from the paragraph.
-pub fn end_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
+/// If include_trailing_newline is true, the trailing newline is included in the paragraph.
+pub fn end_of_paragraph(
+    map: &DisplaySnapshot,
+    display_point: DisplayPoint,
+    include_trailing_newline: bool,
+) -> DisplayPoint {
     let point = display_point.to_point(map);
     if point.row == map.buffer_snapshot.max_row().0 {
         return map.max_point();
@@ -1464,11 +1468,15 @@ pub fn end_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) -> D
         let blank = map.buffer_snapshot.is_line_blank(MultiBufferRow(row));
         if blank != is_current_line_blank {
             let previous_row = row - 1;
-            return Point::new(
-                previous_row,
-                map.buffer_snapshot.line_len(MultiBufferRow(previous_row)),
-            )
-            .to_display_point(map);
+            if include_trailing_newline {
+                return Point::new(row, 0).to_display_point(map);
+            } else {
+                return Point::new(
+                    previous_row,
+                    map.buffer_snapshot.line_len(MultiBufferRow(previous_row)),
+                )
+                .to_display_point(map);
+            }
         }
     }
 

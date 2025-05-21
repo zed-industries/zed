@@ -32,3 +32,13 @@
 {"Key":"u"}
 {"Key":"shift-p"}
 {"Get":{"state":"The quick brown\nfox jumps ˇover\nthe lazy doover\nthe lazy dog","mode":"Normal"}}
+{"Put":{"state":"The quick ˇbrown\n\nfox jumps over"}}
+{"Key":"y"}
+{"Key":"a"}
+{"Key":"p"}
+{"Get":{"state":"ˇThe quick brown\n\nfox jumps over","mode":"Normal"}}
+{"ReadRegister":{"name":"\"","value":"The quick brown\n\n"}}
+{"Key":"j"}
+{"Get":{"state":"The quick brown\nˇ\nfox jumps over","mode":"Normal"}}
+{"Key":"p"}
+{"Get":{"state":"The quick brown\n\nˇThe quick brown\n\nfox jumps over","mode":"Normal"}}

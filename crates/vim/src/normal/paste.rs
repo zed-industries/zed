@@ -382,6 +382,27 @@ mod test {
             fox jumps ˇover
             the lazy doover
             the lazy dog"});
+
+        // multiline, trailing newline
+        cx.set_shared_state(indoc! {"
+            The quick ˇbrown
+
+            fox jumps over"})
+            .await;
+        cx.simulate_shared_keystrokes("y a p").await;
+        cx.shared_clipboard().await.assert_eq("The quick brown\n\n");
+        cx.simulate_shared_keystrokes("j").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown
+            ˇ
+            fox jumps over"});
+        cx.simulate_shared_keystrokes("p").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            The quick brown
+
+            ˇThe quick brown
+
+            fox jumps over"});
     }
 
     #[gpui::test]
