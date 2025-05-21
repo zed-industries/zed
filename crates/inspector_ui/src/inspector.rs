@@ -1,10 +1,7 @@
-use crate::div_inspector::render_or_load_div_inspector;
-use crate::options::InspectorOptions;
 use anyhow::Context as _;
-use gpui::App;
-use std::cell::RefCell;
-use std::rc::Rc;
-use ui::prelude::*;
+use gpui::{App, IntoElement, Window};
+use std::{cell::RefCell, rc::Rc};
+use ui::{CheckboxWithLabel, Label, prelude::*};
 use util::ResultExt as _;
 
 // todo!
@@ -38,7 +35,7 @@ pub fn init(cx: &mut App) {
 
     let load_state = Rc::new(RefCell::new(None));
     cx.register_inspector_element(move |id, state, window, cx| {
-        render_or_load_div_inspector(
+        crate::div_inspector::render_or_load(
             inspector_options.clone(),
             &load_state,
             id,
@@ -47,4 +44,21 @@ pub fn init(cx: &mut App) {
             cx,
         )
     })
+}
+
+pub(crate) struct InspectorOptions {
+    pub open_code_on_inspect: bool,
+}
+
+impl Render for InspectorOptions {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        CheckboxWithLabel::new(
+            "open-code-on-inspect",
+            Label::new("Open code"),
+            self.open_code_on_inspect.into(),
+            cx.listener(|this, selection: &ToggleState, _, _| {
+                this.open_code_on_inspect = selection.selected();
+            }),
+        )
+    }
 }

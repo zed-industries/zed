@@ -1,12 +1,12 @@
 #[cfg(debug_assertions)]
 mod div_inspector;
 #[cfg(debug_assertions)]
-mod init;
-#[cfg(debug_assertions)]
-mod options;
+mod inspector;
 
 #[cfg(debug_assertions)]
-pub use init::init;
+pub use inspector::init;
+#[cfg(debug_assertions)]
+pub(crate) use inspector::*;
 
 #[cfg(not(debug_assertions))]
 pub fn init(cx: &mut gpui::App) {

@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
 
-use crate::options::InspectorOptions;
+use crate::InspectorOptions;
 use anyhow::{Context as _, anyhow};
 use editor::{Editor, EditorEvent, EditorMode, MultiBuffer};
 use futures::{FutureExt as _, future::Shared};
@@ -28,7 +28,7 @@ struct DivInspector {
     style_editor: Entity<Editor>,
 }
 
-pub(crate) fn render_or_load_div_inspector(
+pub(crate) fn render_or_load(
     inspector_options: Entity<InspectorOptions>,
     load_state: &Rc<RefCell<Option<DivInspectorLoadState>>>,
     id: InspectorElementId,
