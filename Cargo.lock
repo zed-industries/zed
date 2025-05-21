@@ -9540,6 +9540,7 @@ dependencies = [
  "async-recursion 1.1.1",
  "collections",
  "editor",
+ "fs",
  "gpui",
  "language",
  "linkify",
