@@ -688,6 +688,7 @@ dependencies = [
  "portable-pty",
  "pretty_assertions",
  "project",
+ "prompt_store",
  "rand 0.8.5",
  "regex",
  "reqwest_client",
