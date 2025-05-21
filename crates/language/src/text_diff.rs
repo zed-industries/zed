@@ -120,7 +120,7 @@ pub fn text_diff_with_options(
     edits
 }
 
-pub fn apply_patch(base_text: &str, patch: &str) -> Result<String, anyhow::Error> {
+pub fn apply_diff_patch(base_text: &str, patch: &str) -> Result<String, anyhow::Error> {
     let patch = diffy::Patch::from_str(patch).context("Failed to parse patch")?;
     let result = diffy::apply(base_text, &patch);
     result.map_err(|err| anyhow!(err))
@@ -279,10 +279,10 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_patch() {
+    fn test_apply_diff_patch() {
         let old_text = "one two\nthree four five\nsix seven eight nine\nten\n";
         let new_text = "one two\nthree FOUR five\nsix SEVEN eight nine\nten\nELEVEN\n";
         let patch = unified_diff(old_text, new_text);
-        assert_eq!(apply_patch(old_text, &patch).unwrap(), new_text);
+        assert_eq!(apply_diff_patch(old_text, &patch).unwrap(), new_text);
     }
 }

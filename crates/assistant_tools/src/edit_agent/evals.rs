@@ -34,18 +34,25 @@ use util::path;
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_extract_handle_command_output() {
+    // Test how well agent generates multiple edit hunks.
+    //
+    // Results (model/pass rate):
+    //
+    // claude-3.7       1.0
+    // gemini-2.5-pro   0.68
+    //
     let input_file_path = "root/blame.rs";
     let input_file_content = include_str!("evals/fixtures/extract_handle_command_output/before.rs");
-    // let output_file_content = include_str!("evals/fixtures/extract_handle_command_output/after.rs");
     let possible_diffs = vec![
         include_str!("evals/fixtures/extract_handle_command_output/expected-1.diff"),
         include_str!("evals/fixtures/extract_handle_command_output/expected-2.diff"),
         include_str!("evals/fixtures/extract_handle_command_output/expected-3.diff"),
         include_str!("evals/fixtures/extract_handle_command_output/expected-4.diff"),
+        include_str!("evals/fixtures/extract_handle_command_output/expected-5.diff"),
     ];
     let edit_description = "Extract `handle_command_output` method from `run_git_blame`.";
     eval(
-        5,
+        100,
         0.95,
         EvalInput::from_conversation(
             vec![
@@ -656,7 +663,7 @@ fn eval_zode() {
                 let invalid_starts = [' ', '`', '\n'];
                 let mut message = String::new();
                 for start in invalid_starts {
-                    if sample.text.starts_with(start) {
+                    if sample.text_after.starts_with(start) {
                         message.push_str(&format!("The sample starts with a {:?}\n", start));
                         break;
                     }
@@ -1081,7 +1088,8 @@ impl EvalInput {
 
 #[derive(Clone)]
 struct EvalSample {
-    text: String,
+    text_before: String,
+    text_after: String,
     edit_output: EditAgentOutput,
     diff: String,
 }
@@ -1138,7 +1146,7 @@ impl EvalAssertion {
         let expected = expected.into();
         Self::new(async move |sample, _judge, _cx| {
             Ok(EvalAssertionOutcome {
-                score: if strip_empty_lines(&sample.text) == strip_empty_lines(&expected) {
+                score: if strip_empty_lines(&sample.text_after) == strip_empty_lines(&expected) {
                     100
                 } else {
                     0
@@ -1151,10 +1159,11 @@ impl EvalAssertion {
     fn assert_diff_any(expected_diffs: Vec<impl Into<String>>) -> Self {
         let expected_diffs: Vec<String> = expected_diffs.into_iter().map(Into::into).collect();
         Self::new(async move |sample, _judge, _cx| {
-            let actual_diff = strip_empty_lines(&sample.diff);
-            let matches = expected_diffs
-                .iter()
-                .any(|expected| strip_empty_lines(expected) == actual_diff);
+            let matches = expected_diffs.iter().any(|possible_diff| {
+                let expected =
+                    language::apply_diff_patch(&sample.text_before, possible_diff).unwrap();
+                strip_empty_lines(&expected) == strip_empty_lines(&sample.text_after)
+            });
 
             Ok(EvalAssertionOutcome {
                 score: if matches { 100 } else { 0 },
@@ -1247,7 +1256,7 @@ fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
                 if output.assertion.score < 80 {
                     failed_count += 1;
                     failed_evals
-                        .entry(output.sample.text.clone())
+                        .entry(output.sample.text_after.clone())
                         .or_insert(Vec::new())
                         .push(output);
                 }
@@ -1521,7 +1530,8 @@ impl EditAgentTest {
                 eval.input_content.as_deref().unwrap_or_default(),
                 &buffer_text,
             ),
-            text: buffer_text,
+            text_before: eval.input_content.unwrap_or_default(),
+            text_after: buffer_text,
         };
         let assertion = eval
             .assertion
