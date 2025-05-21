@@ -4245,19 +4245,24 @@ impl EditorElement {
 
         let mut overall_height = Pixels::ZERO;
         let mut measured_hover_popovers = Vec::new();
-        for mut hover_popover in hover_popovers {
+        for (position, mut hover_popover) in hover_popovers.into_iter().with_position() {
             let size = hover_popover.layout_as_root(AvailableSpace::min_size(), window, cx);
             let horizontal_offset =
                 (hitbox.top_right().x - POPOVER_RIGHT_OFFSET - (hovered_point.x + size.width))
                     .min(Pixels::ZERO);
-            overall_height += HOVER_POPOVER_GAP + size.height;
+            match position {
+                itertools::Position::Middle | itertools::Position::Last => {
+                    overall_height += HOVER_POPOVER_GAP
+                }
+                _ => {}
+            }
+            overall_height += size.height;
             measured_hover_popovers.push(MeasuredHoverPopover {
                 element: hover_popover,
                 size,
                 horizontal_offset,
             });
         }
-        overall_height += HOVER_POPOVER_GAP;
 
         fn draw_occluder(
             width: Pixels,
