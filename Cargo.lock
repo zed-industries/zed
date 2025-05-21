@@ -10043,7 +10043,6 @@ dependencies = [
  "async-tar",
  "async-trait",
  "async-watch",
- "async_zip",
  "futures 0.3.31",
  "http_client",
  "log",
@@ -10054,7 +10053,6 @@ dependencies = [
  "smol",
  "tempfile",
  "util",
- "walkdir",
  "which 6.0.3",
  "workspace-hack",
 ]
@@ -16988,6 +16986,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-fs",
+ "async_zip",
  "collections",
  "dirs 4.0.0",
  "dunce",
@@ -17009,6 +17008,7 @@ dependencies = [
  "tendril",
  "unicase",
  "util_macros",
+ "walkdir",
  "workspace-hack",
 ]
 

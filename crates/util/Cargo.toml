@@ -18,6 +18,7 @@ test-support = ["tempfile", "git2", "rand", "util_macros"]
 [dependencies]
 anyhow.workspace = true
 async-fs.workspace = true
+async_zip.workspace = true
 collections.workspace = true
 dirs.workspace = true
 futures-lite.workspace = true
@@ -36,6 +37,7 @@ take-until.workspace = true
 tempfile = { workspace = true, optional = true }
 unicase.workspace = true
 util_macros = { workspace = true, optional = true }
+walkdir.workspace = true
 workspace-hack.workspace = true
 
 [target.'cfg(unix)'.dependencies]
