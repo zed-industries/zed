@@ -7,9 +7,9 @@ pub use language::*;
 use lsp::{DiagnosticTag, InitializeParams, LanguageServerBinary, LanguageServerName};
 use project::lsp_store::clangd_ext;
 use serde_json::json;
-use smol::fs::{self, File};
+use smol::{fs, io::BufReader};
 use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
-use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
+use util::{ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into};
 
 pub struct CLspAdapter;
 
@@ -32,7 +32,7 @@ impl super::LspAdapter for CLspAdapter {
         let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
         Some(LanguageServerBinary {
             path,
-            arguments: vec![],
+            arguments: Vec::new(),
             env: None,
         })
     }
@@ -69,7 +69,6 @@ impl super::LspAdapter for CLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
-        let zip_path = container_dir.join(format!("clangd_{}.zip", version.name));
         let version_dir = container_dir.join(format!("clangd_{}", version.name));
         let binary_path = version_dir.join("bin/clangd");
 
@@ -79,28 +78,31 @@ impl super::LspAdapter for CLspAdapter {
                 .get(&version.url, Default::default(), true)
                 .await
                 .context("error downloading release")?;
-            let mut file = File::create(&zip_path).await?;
             anyhow::ensure!(
                 response.status().is_success(),
                 "download failed with status {}",
                 response.status().to_string()
             );
-            futures::io::copy(response.body_mut(), &mut file).await?;
-
-            let unzip_status = util::command::new_smol_command("unzip")
-                .current_dir(&container_dir)
-                .arg(&zip_path)
-                .output()
-                .await?
-                .status;
-            anyhow::ensure!(unzip_status.success(), "failed to unzip clangd archive");
+            extract_zip(&container_dir, BufReader::new(response.body_mut()))
+                .await
+                .with_context(|| format!("unzipping clangd archive to {container_dir:?}"))?;
             remove_matching(&container_dir, |entry| entry != version_dir).await;
+
+            // todo("windows")
+            #[cfg(not(windows))]
+            {
+                fs::set_permissions(
+                    &binary_path,
+                    <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
+                )
+                .await?;
+            }
         }
 
         Ok(LanguageServerBinary {
             path: binary_path,
             env: None,
-            arguments: vec![],
+            arguments: Vec::new(),
         })
     }
 
@@ -306,7 +308,7 @@ impl super::LspAdapter for CLspAdapter {
                 .map(move |diag| {
                     let range =
                         language::range_to_lsp(diag.range.to_point_utf16(&snapshot)).unwrap();
-                    let mut tags = vec![];
+                    let mut tags = Vec::with_capacity(1);
                     if diag.diagnostic.is_unnecessary {
                         tags.push(DiagnosticTag::UNNECESSARY);
                     }
@@ -344,7 +346,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
         Ok(LanguageServerBinary {
             path: clangd_bin,
             env: None,
-            arguments: vec![],
+            arguments: Vec::new(),
         })
     })
     .await

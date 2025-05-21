@@ -1,7 +1,4 @@
-mod archive;
-
 use anyhow::{Context as _, Result, anyhow, bail};
-pub use archive::extract_zip;
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use futures::{AsyncReadExt, FutureExt as _, channel::oneshot, future::Shared};
@@ -19,6 +16,7 @@ use std::{
     sync::Arc,
 };
 use util::ResultExt;
+use util::archive::extract_zip;
 
 const NODE_CA_CERTS_ENV_VAR: &str = "NODE_EXTRA_CA_CERTS";
 
@@ -353,7 +351,7 @@ impl ManagedNodeRuntime {
                     let archive = Archive::new(decompressed_bytes);
                     archive.unpack(&node_containing_dir).await?;
                 }
-                ArchiveType::Zip => archive::extract_zip(&node_containing_dir, body).await?,
+                ArchiveType::Zip => extract_zip(&node_containing_dir, body).await?,
             }
         }
 

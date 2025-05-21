@@ -136,6 +136,34 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                 };
             let adapter_dir = version_path.join("extension").join("adapter");
             let path = adapter_dir.join("codelldb").to_string_lossy().to_string();
+            // todo("windows")
+            #[cfg(not(windows))]
+            {
+                use smol::fs;
+
+                fs::set_permissions(
+                    &path,
+                    <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
+                )
+                .await
+                .with_context(|| format!("Settings executable permissions to {path:?}"))?;
+
+                let lldb_binaries_dir = version_path.join("extension").join("lldb").join("bin");
+                let mut lldb_binaries =
+                    fs::read_dir(&lldb_binaries_dir).await.with_context(|| {
+                        format!("reading lldb binaries dir contents {lldb_binaries_dir:?}")
+                    })?;
+                while let Some(binary) = lldb_binaries.next().await {
+                    let binary_entry = binary?;
+                    let path = binary_entry.path();
+                    fs::set_permissions(
+                        &path,
+                        <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
+                    )
+                    .await
+                    .with_context(|| format!("Settings executable permissions to {path:?}"))?;
+                }
+            }
             self.path_to_codelldb.set(path.clone()).ok();
             command = Some(path);
         };

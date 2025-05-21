@@ -19,6 +19,7 @@ use std::{
     sync::Arc,
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
+use util::archive::extract_zip;
 use util::{ResultExt, fs::remove_matching, maybe};
 
 pub(super) fn typescript_task_context() -> ContextProviderWithTasks {
@@ -514,14 +515,11 @@ impl LspAdapter for EsLintLspAdapter {
                         })?;
                 }
                 AssetKind::Zip => {
-                    node_runtime::extract_zip(
-                        &destination_path,
-                        BufReader::new(response.body_mut()),
-                    )
-                    .await
-                    .with_context(|| {
-                        format!("unzipping {} to {:?}", version.url, destination_path)
-                    })?;
+                    extract_zip(&destination_path, BufReader::new(response.body_mut()))
+                        .await
+                        .with_context(|| {
+                            format!("unzipping {} to {:?}", version.url, destination_path)
+                        })?;
                 }
             }
 
