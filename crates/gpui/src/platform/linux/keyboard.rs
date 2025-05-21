@@ -1,6 +1,8 @@
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use collections::{HashMap, HashSet};
 #[cfg(any(feature = "wayland", feature = "x11"))]
+use strum::EnumIter;
+#[cfg(any(feature = "wayland", feature = "x11"))]
 use xkbcommon::xkb::{Keycode, Keysym};
 
 use crate::{PlatformKeyboardLayout, SharedString};
@@ -226,6 +228,118 @@ fn insert_letters_if_missing(
     insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x0034), "z");
 }
 
+#[cfg(any(feature = "wayland", feature = "x11"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter)]
+enum LinuxScanCodes {
+    A = 0x0026,
+    B = 0x0038,
+    C = 0x0036,
+    D = 0x0028,
+    E = 0x001a,
+    F = 0x0029,
+    G = 0x002a,
+    H = 0x002b,
+    I = 0x001f,
+    J = 0x002c,
+    K = 0x002d,
+    L = 0x002e,
+    M = 0x003a,
+    N = 0x0039,
+    O = 0x0020,
+    P = 0x0021,
+    Q = 0x0018,
+    R = 0x001b,
+    S = 0x0027,
+    T = 0x001c,
+    U = 0x001e,
+    V = 0x0037,
+    W = 0x0019,
+    X = 0x0035,
+    Y = 0x001d,
+    Z = 0x0034,
+    Digit0 = 0x0013,
+    Digit1 = 0x000a,
+    Digit2 = 0x000b,
+    Digit3 = 0x000c,
+    Digit4 = 0x000d,
+    Digit5 = 0x000e,
+    Digit6 = 0x000f,
+    Digit7 = 0x0010,
+    Digit8 = 0x0011,
+    Digit9 = 0x0012,
+    Backquote = 0x0031,
+    Minus = 0x0014,
+    Equal = 0x0015,
+    LeftBracket = 0x0022,
+    RightBracket = 0x0023,
+    Backslash = 0x0033,
+    Semicolon = 0x002f,
+    Quote = 0x0030,
+    Comma = 0x003b,
+    Period = 0x003c,
+    Slash = 0x003d,
+    IntlBackslash = 0x005e,
+    IntlRo = 0x0061,
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+#[cfg(test)]
+impl LinuxScanCodes {
+    fn to_str(&self) -> &str {
+        match self {
+            LinuxScanCodes::A => "a",
+            LinuxScanCodes::B => "b",
+            LinuxScanCodes::C => "c",
+            LinuxScanCodes::D => "d",
+            LinuxScanCodes::E => "e",
+            LinuxScanCodes::F => "f",
+            LinuxScanCodes::G => "g",
+            LinuxScanCodes::H => "h",
+            LinuxScanCodes::I => "i",
+            LinuxScanCodes::J => "j",
+            LinuxScanCodes::K => "k",
+            LinuxScanCodes::L => "l",
+            LinuxScanCodes::M => "m",
+            LinuxScanCodes::N => "n",
+            LinuxScanCodes::O => "o",
+            LinuxScanCodes::P => "p",
+            LinuxScanCodes::Q => "q",
+            LinuxScanCodes::R => "r",
+            LinuxScanCodes::S => "s",
+            LinuxScanCodes::T => "t",
+            LinuxScanCodes::U => "u",
+            LinuxScanCodes::V => "v",
+            LinuxScanCodes::W => "w",
+            LinuxScanCodes::X => "x",
+            LinuxScanCodes::Y => "y",
+            LinuxScanCodes::Z => "z",
+            LinuxScanCodes::Digit0 => "0",
+            LinuxScanCodes::Digit1 => "1",
+            LinuxScanCodes::Digit2 => "2",
+            LinuxScanCodes::Digit3 => "3",
+            LinuxScanCodes::Digit4 => "4",
+            LinuxScanCodes::Digit5 => "5",
+            LinuxScanCodes::Digit6 => "6",
+            LinuxScanCodes::Digit7 => "7",
+            LinuxScanCodes::Digit8 => "8",
+            LinuxScanCodes::Digit9 => "9",
+            LinuxScanCodes::Backquote => "`",
+            LinuxScanCodes::Minus => "-",
+            LinuxScanCodes::Equal => "=",
+            LinuxScanCodes::LeftBracket => "[",
+            LinuxScanCodes::RightBracket => "]",
+            LinuxScanCodes::Backslash => "\\",
+            LinuxScanCodes::Semicolon => ";",
+            LinuxScanCodes::Quote => "'",
+            LinuxScanCodes::Comma => ",",
+            LinuxScanCodes::Period => ".",
+            LinuxScanCodes::Slash => "/",
+            LinuxScanCodes::IntlBackslash => "⧸",
+            LinuxScanCodes::IntlRo => "ʁ",
+        }
+    }
+}
+
 // All typeable scan codes for the standard US keyboard layout, ANSI104
 #[cfg(any(feature = "wayland", feature = "x11"))]
 const TYPEABLE_CODES: &[u32] = &[
@@ -276,4 +390,51 @@ const TYPEABLE_CODES: &[u32] = &[
     0x003b, // , Comma
     0x003c, // . Period
     0x003d, // / Slash
+    0x005e, // This key is typically located near LeftShift key, varies on international keyboards: Dan: <> Dutch: ][ Ger: <> UK: \|
+    0x0061, // Used for Brazilian /? and Japanese _ 'ro'.
 ];
+
+#[cfg(test)]
+mod tests {
+    use std::sync::LazyLock;
+
+    use strum::IntoEnumIterator;
+    use x11rb::{protocol::xkb::ConnectionExt as _, xcb_ffi::XCBConnection};
+    use xkbcommon::xkb::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
+
+    use super::LinuxKeyboardMapper;
+
+    static XCB_CONNECTION: LazyLock<XCBConnection> =
+        LazyLock::new(|| XCBConnection::connect(None).unwrap().0);
+
+    fn create_test_mapper() -> LinuxKeyboardMapper {
+        let _ = XCB_CONNECTION
+            .xkb_use_extension(XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION)
+            .unwrap()
+            .reply()
+            .unwrap();
+        let xkb_context = xkbcommon::xkb::Context::new(xkbcommon::xkb::CONTEXT_NO_FLAGS);
+        let xkb_device_id = xkbcommon::xkb::x11::get_core_keyboard_device_id(&*XCB_CONNECTION);
+        let xkb_state = {
+            let xkb_keymap = xkbcommon::xkb::x11::keymap_new_from_device(
+                &xkb_context,
+                &*XCB_CONNECTION,
+                xkb_device_id,
+                xkbcommon::xkb::KEYMAP_COMPILE_NO_FLAGS,
+            );
+            xkbcommon::xkb::x11::state_new_from_device(&xkb_keymap, &*XCB_CONNECTION, xkb_device_id)
+        };
+        LinuxKeyboardMapper::new(&xkb_state)
+    }
+
+    #[test]
+    fn test_us_layout_mapper() {
+        let mapper = create_test_mapper();
+        for scan_code in super::LinuxScanCodes::iter() {
+            let keycode = xkbcommon::xkb::Keycode::new(scan_code as u32);
+            let key = mapper.get_key(keycode, &mut crate::Modifiers::default());
+            // assert_eq!(key, Some(scan_code.to_str().to_string()));
+            println!("Keycode: {:?}, Key: {:?}", keycode, key);
+        }
+    }
+}
