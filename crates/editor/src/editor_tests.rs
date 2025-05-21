@@ -5965,8 +5965,34 @@ async fn test_add_selection_above_below(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc!(
         r#"abc
            defˇghi
-
+           ˇ
            jk
+           nlmo
+           "#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_below(&Default::default(), window, cx);
+    });
+
+    cx.assert_editor_state(indoc!(
+        r#"abc
+           defˇghi
+           ˇ
+           jkˇ
+           nlmo
+           "#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_below(&Default::default(), window, cx);
+    });
+
+    cx.assert_editor_state(indoc!(
+        r#"abc
+           defˇghi
+           ˇ
+           jkˇ
            nlmˇo
            "#
     ));
@@ -5978,10 +6004,10 @@ async fn test_add_selection_above_below(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc!(
         r#"abc
            defˇghi
-
-           jk
+           ˇ
+           jkˇ
            nlmˇo
-           "#
+           ˇ"#
     ));
 
     // change selections
