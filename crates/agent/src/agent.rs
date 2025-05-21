@@ -217,7 +217,6 @@ fn register_slash_commands(cx: &mut App) {
     slash_command_registry.register_command(assistant_slash_commands::PromptSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::SelectionCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::DefaultSlashCommand, false);
-    slash_command_registry.register_command(assistant_slash_commands::TerminalSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::NowSlashCommand, false);
     slash_command_registry
         .register_command(assistant_slash_commands::DiagnosticsSlashCommand, true);

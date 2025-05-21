@@ -1,4 +1,5 @@
 use crate::*;
+use anyhow::Context as _;
 use dap::{DebugRequest, StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::{AsyncApp, SharedString};
 use language::LanguageName;
@@ -112,7 +113,7 @@ impl PythonDebugAdapter {
                 file_name.starts_with(&file_name_prefix)
             })
             .await
-            .ok_or_else(|| anyhow!("Debugpy directory not found"))?
+            .context("Debugpy directory not found")?
         };
 
         let toolchain = delegate
@@ -143,7 +144,7 @@ impl PythonDebugAdapter {
         };
 
         Ok(DebugAdapterBinary {
-            command: python_path.ok_or(anyhow!("failed to find binary path for python"))?,
+            command: python_path.context("failed to find binary path for Python")?,
             arguments: vec![
                 debugpy_dir
                     .join(Self::ADAPTER_PATH)

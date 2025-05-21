@@ -3,7 +3,7 @@ use crate::{
     edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent},
     schema::json_schema_for,
 };
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{
     ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput,
     ToolUseStatus,
@@ -38,7 +38,7 @@ use workspace::Workspace;
 
 pub struct EditFileTool;
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditFileToolInput {
     /// A one-line, user-friendly markdown description of the edit. This will be
     /// shown in the UI and also passed to another model to perform the edit.
@@ -279,15 +279,15 @@ impl Tool for EditFileTool {
 
             let input_path = input.path.display();
             if diff.is_empty() {
-                if hallucinated_old_text {
-                    Err(anyhow!(formatdoc! {"
-                        Some edits were produced but none of them could be applied.
-                        Read the relevant sections of {input_path} again so that
-                        I can perform the requested edits.
-                    "}))
-                } else {
-                    Ok("No edits were made.".to_string().into())
-                }
+                anyhow::ensure!(
+                    !hallucinated_old_text,
+                    formatdoc! {"
+                    Some edits were produced but none of them could be applied.
+                    Read the relevant sections of {input_path} again so that
+                    I can perform the requested edits.
+                "}
+                );
+                Ok("No edits were made.".to_string().into())
             } else {
                 Ok(ToolResultOutput {
                     content: ToolResultContent::Text(format!(
@@ -347,53 +347,52 @@ fn resolve_path(
         EditFileMode::Edit | EditFileMode::Overwrite => {
             let path = project
                 .find_project_path(&input.path, cx)
-                .ok_or_else(|| anyhow!("Can't edit file: path not found"))?;
+                .context("Can't edit file: path not found")?;
 
             let entry = project
                 .entry_for_path(&path, cx)
-                .ok_or_else(|| anyhow!("Can't edit file: path not found"))?;
+                .context("Can't edit file: path not found")?;
 
-            if !entry.is_file() {
-                return Err(anyhow!("Can't edit file: path is a directory"));
-            }
-
+            anyhow::ensure!(entry.is_file(), "Can't edit file: path is a directory");
             Ok(path)
         }
 
         EditFileMode::Create => {
             if let Some(path) = project.find_project_path(&input.path, cx) {
-                if project.entry_for_path(&path, cx).is_some() {
-                    return Err(anyhow!("Can't create file: file already exists"));
-                }
+                anyhow::ensure!(
+                    project.entry_for_path(&path, cx).is_none(),
+                    "Can't create file: file already exists"
+                );
             }
 
             let parent_path = input
                 .path
                 .parent()
-                .ok_or_else(|| anyhow!("Can't create file: incorrect path"))?;
+                .context("Can't create file: incorrect path")?;
 
             let parent_project_path = project.find_project_path(&parent_path, cx);
 
             let parent_entry = parent_project_path
                 .as_ref()
                 .and_then(|path| project.entry_for_path(&path, cx))
-                .ok_or_else(|| anyhow!("Can't create file: parent directory doesn't exist"))?;
+                .context("Can't create file: parent directory doesn't exist")?;
 
-            if !parent_entry.is_dir() {
-                return Err(anyhow!("Can't create file: parent is not a directory"));
-            }
+            anyhow::ensure!(
+                parent_entry.is_dir(),
+                "Can't create file: parent is not a directory"
+            );
 
             let file_name = input
                 .path
                 .file_name()
-                .ok_or_else(|| anyhow!("Can't create file: invalid filename"))?;
+                .context("Can't create file: invalid filename")?;
 
             let new_file_path = parent_project_path.map(|parent| ProjectPath {
                 path: Arc::from(parent.path.join(file_name)),
                 ..parent
             });
 
-            new_file_path.ok_or_else(|| anyhow!("Can't create file"))
+            new_file_path.context("Can't create file")
         }
     }
 }
@@ -917,8 +916,6 @@ async fn build_buffer_diff(
 
 #[cfg(test)]
 mod tests {
-    use std::result::Result;
-
     use super::*;
     use client::TelemetrySettings;
     use fs::FakeFs;
@@ -1019,7 +1016,7 @@ mod tests {
         mode: &EditFileMode,
         path: &str,
         cx: &mut TestAppContext,
-    ) -> Result<ProjectPath, anyhow::Error> {
+    ) -> anyhow::Result<ProjectPath> {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
@@ -1046,7 +1043,7 @@ mod tests {
         result
     }
 
-    fn assert_resolved_path_eq(path: Result<ProjectPath, anyhow::Error>, expected: &str) {
+    fn assert_resolved_path_eq(path: anyhow::Result<ProjectPath>, expected: &str) {
         let actual = path
             .expect("Should return valid path")
             .path

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyhow::anyhow;
+use anyhow::Context as _;
 use collections::HashMap;
 use gpui::SharedString;
 use serde::Deserialize;
@@ -53,9 +53,9 @@ impl VsCodeDebugTaskDefinition {
             request: match self.request {
                 Request::Launch => {
                     let cwd = self.cwd.map(|cwd| PathBuf::from(replacer.replace(&cwd)));
-                    let program = self.program.ok_or_else(|| {
-                        anyhow!("vscode debug launch configuration does not define a program")
-                    })?;
+                    let program = self
+                        .program
+                        .context("vscode debug launch configuration does not define a program")?;
                     let program = replacer.replace(&program);
                     let args = self
                         .args

@@ -11,7 +11,6 @@ use instance::{ExampleInstance, JudgeOutput, RunOutput, run_git};
 pub(crate) use tool_metrics::*;
 
 use ::fs::RealFs;
-use anyhow::anyhow;
 use clap::Parser;
 use client::{Client, ProxySettings, UserStore};
 use collections::{HashMap, HashSet};
@@ -255,13 +254,10 @@ fn main() {
 
                         let actual_origin =
                             run_git(&repo_path, &["remote", "get-url", "origin"]).await?;
-                        if actual_origin != repo_url {
-                            return Err(anyhow!(
-                                "remote origin {} does not match expected origin {}",
-                                actual_origin,
-                                repo_url,
-                            ));
-                        }
+                        anyhow::ensure!(
+                            actual_origin == repo_url,
+                            "remote origin {actual_origin} does not match expected origin {repo_url}"
+                        );
                     }
                 }
             }
@@ -428,6 +424,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
     languages::init(languages.clone(), node_runtime.clone(), cx);
     prompt_store::init(cx);
+    terminal_view::init(cx);
     let stdout_is_a_pty = false;
     let prompt_builder = PromptBuilder::load(fs.clone(), stdout_is_a_pty, cx);
     agent::init(
@@ -467,7 +464,7 @@ pub fn find_model(
 
     match matching_models.as_slice() {
         [model] => Ok(model.clone()),
-        [] => Err(anyhow!(
+        [] => anyhow::bail!(
             "No language model with ID {}/{} was available. Available models: {}",
             provider_id,
             model_id,
@@ -476,15 +473,15 @@ pub fn find_model(
                 .map(|model| format!("{}/{}", model.provider_id().0, model.id().0))
                 .collect::<Vec<_>>()
                 .join(", ")
-        )),
-        _ => Err(anyhow!(
+        ),
+        _ => anyhow::bail!(
             "Multiple language models with ID {} available - use `--provider` to choose one of: {:?}",
             model_id,
             matching_models
                 .iter()
                 .map(|model| model.provider_id().0)
                 .collect::<Vec<_>>()
-        )),
+        ),
     }
 }
 
