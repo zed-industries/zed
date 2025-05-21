@@ -1822,7 +1822,6 @@ impl Window {
         self.tooltip_bounds.take();
 
         let inspector_width: Pixels = rems(30.0).to_pixels(self.rem_size());
-
         let root_size = match &self.mode {
             WindowMode::Normal => self.viewport_size,
             WindowMode::Inspector(_) => {
@@ -1835,6 +1834,7 @@ impl Window {
         // Layout all root elements.
         let mut root_element = self.root.as_ref().unwrap().clone().into_any();
         root_element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
+        let inspector_element = self.prepaint_inspector(inspector_width, cx);
 
         let mut sorted_deferred_draws =
             (0..self.next_frame.deferred_draws.len()).collect::<SmallVec<[_; 8]>>();
@@ -1859,27 +1859,12 @@ impl Window {
             tooltip_element = self.prepaint_tooltip(cx);
         }
 
-        let mode = mem::replace(&mut self.mode, WindowMode::Normal);
-        let inspector_element = match mode {
-            WindowMode::Normal => None,
-            WindowMode::Inspector(inspector) => {
-                let mut inspector_element = AnyView::from(inspector.clone()).into_any_element();
-                inspector_element.prepaint_as_root(
-                    point(self.viewport_size.width - inspector_width, px(0.0)),
-                    size(inspector_width, self.viewport_size.height).into(),
-                    self,
-                    cx,
-                );
-                self.mode = WindowMode::Inspector(inspector);
-                Some(inspector_element)
-            }
-        };
-
         self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
 
         // Now actually paint the elements.
         self.invalidator.set_phase(DrawPhase::Paint);
         root_element.paint(self, cx);
+        self.paint_inspector(inspector_element, cx);
 
         self.paint_deferred_draws(&sorted_deferred_draws, cx);
 
@@ -1889,16 +1874,6 @@ impl Window {
             drag_element.paint(self, cx);
         } else if let Some(mut tooltip_element) = tooltip_element {
             tooltip_element.paint(self, cx);
-        }
-
-        let mode = mem::replace(&mut self.mode, WindowMode::Normal);
-        match mode {
-            WindowMode::Normal => {}
-            WindowMode::Inspector(inspector) => {
-                let mut inspector_element = inspector_element.unwrap();
-                inspector_element.paint(self, cx);
-                self.mode = WindowMode::Inspector(inspector);
-            }
         }
     }
 
@@ -2033,6 +2008,31 @@ impl Window {
         }
         self.next_frame.deferred_draws = deferred_draws;
         self.element_id_stack.clear();
+    }
+
+    fn prepaint_inspector(&mut self, inspector_width: Pixels, cx: &mut App) -> Option<AnyElement> {
+        let mode = mem::replace(&mut self.mode, WindowMode::Normal);
+        match mode {
+            WindowMode::Normal => None,
+            WindowMode::Inspector(inspector) => {
+                let mut inspector_element = AnyView::from(inspector.clone()).into_any_element();
+                inspector_element.prepaint_as_root(
+                    point(self.viewport_size.width - inspector_width, px(0.0)),
+                    size(inspector_width, self.viewport_size.height).into(),
+                    self,
+                    cx,
+                );
+                self.mode = WindowMode::Inspector(inspector);
+                Some(inspector_element)
+            }
+        }
+    }
+
+    fn paint_inspector(&mut self, mut inspector_element: Option<AnyElement>, cx: &mut App) {
+        let Some(mut inspector_element) = inspector_element else {
+            return;
+        };
+        inspector_element.paint(self, cx);
     }
 
     pub(crate) fn prepaint_index(&self) -> PrepaintStateIndex {
