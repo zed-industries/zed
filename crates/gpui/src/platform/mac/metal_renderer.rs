@@ -4,7 +4,7 @@ use crate::{
     Path, PathVertex, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
     Surface, Underline, point, size,
 };
-use anyhow::{Context as _, Result};
+use anyhow::{Result, anyhow};
 use block::ConcreteBlock;
 use cocoa::{
     base::{NO, YES},
@@ -1085,13 +1085,6 @@ fn create_msaa_texture(
     texture_descriptor.set_usage(metal::MTLTextureUsage::RenderTarget);
     texture_descriptor.set_sample_count(sample_count);
 
-    println!(
-        "Creating MSAA texture: width: {}, height: {}, format: {}, sample_count: {}",
-        width,
-        height,
-        layer.pixel_format(),
-        sample_count
-    );
     let metal_texture = device.new_texture(&texture_descriptor);
     Some(metal_texture)
 }
