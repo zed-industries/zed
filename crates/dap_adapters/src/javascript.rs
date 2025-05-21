@@ -1,4 +1,5 @@
 use adapters::latest_github_release;
+use anyhow::Context as _;
 use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
 use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
@@ -56,7 +57,7 @@ impl JsDebugAdapter {
 
     async fn fetch_latest_adapter_version(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
     ) -> Result<AdapterVersion> {
         let release = latest_github_release(
             &format!("{}/{}", "microsoft", Self::ADAPTER_NPM_NAME),
@@ -74,7 +75,7 @@ impl JsDebugAdapter {
                 .assets
                 .iter()
                 .find(|asset| asset.name == asset_name)
-                .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?
+                .with_context(|| format!("no asset found matching {asset_name:?}"))?
                 .browser_download_url
                 .clone(),
         })
@@ -82,7 +83,7 @@ impl JsDebugAdapter {
 
     async fn get_installed_binary(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         _: &mut AsyncApp,
@@ -98,7 +99,7 @@ impl JsDebugAdapter {
                 file_name.starts_with(&file_name_prefix)
             })
             .await
-            .ok_or_else(|| anyhow!("Couldn't find JavaScript dap directory"))?
+            .context("Couldn't find JavaScript dap directory")?
         };
 
         let tcp_connection = config.tcp_connection.clone().unwrap_or_default();
@@ -139,7 +140,7 @@ impl DebugAdapter for JsDebugAdapter {
 
     async fn get_binary(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
@@ -151,7 +152,7 @@ impl DebugAdapter for JsDebugAdapter {
                     self.name(),
                     version,
                     adapters::DownloadedFileType::GzipTar,
-                    delegate,
+                    delegate.as_ref(),
                 )
                 .await?;
             }

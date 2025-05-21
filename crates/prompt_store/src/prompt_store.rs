@@ -1,6 +1,6 @@
 mod prompts;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
 use futures::FutureExt as _;
@@ -266,10 +266,7 @@ impl PromptStore {
         let bodies = self.bodies;
         cx.background_spawn(async move {
             let txn = env.read_txn()?;
-            let mut prompt = bodies
-                .get(&txn, &id)?
-                .ok_or_else(|| anyhow!("prompt not found"))?
-                .into();
+            let mut prompt = bodies.get(&txn, &id)?.context("prompt not found")?.into();
             LineEnding::normalize(&mut prompt);
             Ok(prompt)
         })

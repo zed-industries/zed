@@ -2,8 +2,10 @@ mod persistence;
 pub mod terminal_element;
 pub mod terminal_panel;
 pub mod terminal_scrollbar;
+mod terminal_slash_command;
 pub mod terminal_tab_tooltip;
 
+use assistant_slash_command::SlashCommandRegistry;
 use editor::{Editor, EditorSettings, actions::SelectAll, scroll::ScrollbarAutoHide};
 use gpui::{
     AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, KeyContext,
@@ -29,6 +31,7 @@ use terminal::{
 use terminal_element::{TerminalElement, is_blank};
 use terminal_panel::TerminalPanel;
 use terminal_scrollbar::TerminalScrollHandle;
+use terminal_slash_command::TerminalSlashCommand;
 use terminal_tab_tooltip::TerminalTooltip;
 use ui::{
     ContextMenu, Icon, IconName, Label, Scrollbar, ScrollbarState, Tooltip, h_flex, prelude::*,
@@ -52,7 +55,7 @@ use zed_actions::assistant::InlineAssist;
 
 use std::{
     cmp,
-    ops::RangeInclusive,
+    ops::{Range, RangeInclusive},
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -78,6 +81,7 @@ actions!(terminal, [RerunTask]);
 impl_actions!(terminal, [SendText, SendKeystroke]);
 
 pub fn init(cx: &mut App) {
+    assistant_slash_command::init(cx);
     terminal_panel::init(cx);
     terminal::init(cx);
 
@@ -87,6 +91,7 @@ pub fn init(cx: &mut App) {
         workspace.register_action(TerminalView::deploy);
     })
     .detach();
+    SlashCommandRegistry::global(cx).register_command(TerminalSlashCommand, true);
 }
 
 pub struct BlockProperties {
@@ -126,6 +131,8 @@ pub struct TerminalView {
     scroll_handle: TerminalScrollHandle,
     show_scrollbar: bool,
     hide_scrollbar_task: Option<Task<()>>,
+    marked_text: Option<String>,
+    marked_range_utf16: Option<Range<usize>>,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
 }
@@ -218,6 +225,8 @@ impl TerminalView {
             show_scrollbar: !Self::should_autohide_scrollbar(cx),
             hide_scrollbar_task: None,
             cwd_serialized: false,
+            marked_text: None,
+            marked_range_utf16: None,
             _subscriptions: vec![
                 focus_in,
                 focus_out,
@@ -225,6 +234,45 @@ impl TerminalView {
             ],
             _terminal_subscriptions: terminal_subscriptions,
         }
+    }
+
+    /// Sets the marked (pre-edit) text from the IME.
+    pub(crate) fn set_marked_text(
+        &mut self,
+        text: String,
+        range: Range<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        self.marked_text = Some(text);
+        self.marked_range_utf16 = Some(range);
+        cx.notify();
+    }
+
+    /// Gets the current marked range (UTF-16).
+    pub(crate) fn marked_text_range(&self) -> Option<Range<usize>> {
+        self.marked_range_utf16.clone()
+    }
+
+    /// Clears the marked (pre-edit) text state.
+    pub(crate) fn clear_marked_text(&mut self, cx: &mut Context<Self>) {
+        if self.marked_text.is_some() {
+            self.marked_text = None;
+            self.marked_range_utf16 = None;
+            cx.notify();
+        }
+    }
+
+    /// Commits (sends) the given text to the PTY. Called by InputHandler::replace_text_in_range.
+    pub(crate) fn commit_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        if !text.is_empty() {
+            self.terminal.update(cx, |term, _| {
+                term.input(text.to_string());
+            });
+        }
+    }
+
+    pub(crate) fn terminal_bounds(&self, cx: &App) -> TerminalBounds {
+        self.terminal.read(cx).last_content().terminal_bounds
     }
 
     pub fn entity(&self) -> &Entity<Terminal> {
@@ -1625,7 +1673,7 @@ impl SerializableItem for TerminalView {
         alive_items: Vec<workspace::ItemId>,
         _window: &mut Window,
         cx: &mut App,
-    ) -> Task<gpui::Result<()>> {
+    ) -> Task<anyhow::Result<()>> {
         delete_unloaded_items(alive_items, workspace_id, "terminals", &TERMINAL_DB, cx)
     }
 
@@ -1636,7 +1684,7 @@ impl SerializableItem for TerminalView {
         _closing: bool,
         _: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Task<gpui::Result<()>>> {
+    ) -> Option<Task<anyhow::Result<()>>> {
         let terminal = self.terminal().read(cx);
         if terminal.task().is_some() {
             return None;

@@ -21,16 +21,15 @@ By default, to avoid mishandling non-Ansible YAML files, the Ansible Language is
       "**/meta/*.yml",
       "**/meta/*.yaml",
       "**/tasks/*.yml",
-      "**/tasks/*.yml",
       "**/tasks/*.yaml",
       "**/handlers/*.yml",
       "**/handlers/*.yaml",
       "**/group_vars/*.yml",
       "**/group_vars/*.yaml",
-      "**/playbooks/*.yaml",
       "**/playbooks/*.yml",
-      "**playbook*.yaml",
-      "**playbook*.yml"
+      "**/playbooks/*.yaml",
+      "**playbook*.yml",
+      "**playbook*.yaml"
     ]
   }
 ```

@@ -1,6 +1,6 @@
 use std::{
     any::{TypeId, type_name},
-    cell::{Ref, RefCell, RefMut},
+    cell::{BorrowMutError, Ref, RefCell, RefMut},
     marker::PhantomData,
     mem,
     ops::{Deref, DerefMut},
@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use derive_more::{Deref, DerefMut};
 use futures::{
     Future, FutureExt,
@@ -38,7 +38,9 @@ use crate::{
     PlatformDisplay, PlatformKeyboardLayout, Point, PromptBuilder, PromptHandle, PromptLevel,
     Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString,
     SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance,
-    WindowHandle, WindowId, WindowInvalidator, current_platform, hash, init_app_menus,
+    WindowHandle, WindowId, WindowInvalidator,
+    colors::{Colors, GlobalColors},
+    current_platform, hash, init_app_menus,
 };
 
 mod async_context;
@@ -76,6 +78,16 @@ impl AppCell {
             eprintln!("borrowed {thread_id:?}");
         }
         AppRefMut(self.app.borrow_mut())
+    }
+
+    #[doc(hidden)]
+    #[track_caller]
+    pub fn try_borrow_mut(&self) -> Result<AppRefMut, BorrowMutError> {
+        if option_env!("TRACK_THREAD_BORROWS").is_some() {
+            let thread_id = std::thread::current().id();
+            eprintln!("borrowed {thread_id:?}");
+        }
+        Ok(AppRefMut(self.app.try_borrow_mut()?))
     }
 }
 
@@ -1009,9 +1021,9 @@ impl App {
             let mut window = cx
                 .windows
                 .get_mut(id)
-                .ok_or_else(|| anyhow!("window not found"))?
+                .context("window not found")?
                 .take()
-                .ok_or_else(|| anyhow!("window not found"))?;
+                .context("window not found")?;
 
             let root_view = window.root.clone().unwrap();
 
@@ -1030,7 +1042,7 @@ impl App {
             } else {
                 cx.windows
                     .get_mut(id)
-                    .ok_or_else(|| anyhow!("window not found"))?
+                    .context("window not found")?
                     .replace(window);
             }
 
@@ -1107,7 +1119,7 @@ impl App {
         self.globals_by_type
             .get(&TypeId::of::<G>())
             .map(|any_state| any_state.downcast_ref::<G>().unwrap())
-            .ok_or_else(|| anyhow!("no state of type {} exists", type_name::<G>()))
+            .with_context(|| format!("no state of type {} exists", type_name::<G>()))
             .unwrap()
     }
 
@@ -1126,7 +1138,7 @@ impl App {
         self.globals_by_type
             .get_mut(&global_type)
             .and_then(|any_state| any_state.downcast_mut::<G>())
-            .ok_or_else(|| anyhow!("no state of type {} exists", type_name::<G>()))
+            .with_context(|| format!("no state of type {} exists", type_name::<G>()))
             .unwrap()
     }
 
@@ -1189,7 +1201,7 @@ impl App {
         GlobalLease::new(
             self.globals_by_type
                 .remove(&TypeId::of::<G>())
-                .ok_or_else(|| anyhow!("no global registered of type {}", type_name::<G>()))
+                .with_context(|| format!("no global registered of type {}", type_name::<G>()))
                 .unwrap(),
         )
     }
@@ -1656,6 +1668,13 @@ impl App {
             _ = window.drop_image(image);
         }
     }
+
+    /// Initializes gpui's default colors for the application.
+    ///
+    /// These colors can be accessed through `cx.default_colors()`.
+    pub fn init_colors(&mut self) {
+        self.set_global(GlobalColors(Arc::new(Colors::default())));
+    }
 }
 
 impl AppContext for App {
@@ -1746,7 +1765,7 @@ impl AppContext for App {
         let window = self
             .windows
             .get(window.id)
-            .ok_or_else(|| anyhow!("window not found"))?
+            .context("window not found")?
             .as_ref()
             .expect("attempted to read a window that is already on the stack");
 
@@ -1896,9 +1915,12 @@ impl HttpClient for NullHttpClient {
         _req: http_client::Request<http_client::AsyncBody>,
     ) -> futures::future::BoxFuture<
         'static,
-        Result<http_client::Response<http_client::AsyncBody>, anyhow::Error>,
+        anyhow::Result<http_client::Response<http_client::AsyncBody>>,
     > {
-        async move { Err(anyhow!("No HttpClient available")) }.boxed()
+        async move {
+            anyhow::bail!("No HttpClient available");
+        }
+        .boxed()
     }
 
     fn proxy(&self) -> Option<&Url> {

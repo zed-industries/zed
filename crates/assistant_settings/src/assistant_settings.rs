@@ -10,6 +10,7 @@ use deepseek::Model as DeepseekModel;
 use gpui::{App, Pixels, SharedString};
 use language_model::{CloudModel, LanguageModel};
 use lmstudio::Model as LmStudioModel;
+use mistral::Model as MistralModel;
 use ollama::Model as OllamaModel;
 use schemars::{JsonSchema, schema::Schema};
 use serde::{Deserialize, Serialize};
@@ -69,6 +70,11 @@ pub enum AssistantProviderContentV1 {
     #[serde(rename = "deepseek")]
     DeepSeek {
         default_model: Option<DeepseekModel>,
+        api_url: Option<String>,
+    },
+    #[serde(rename = "mistral")]
+    Mistral {
+        default_model: Option<MistralModel>,
         api_url: Option<String>,
     },
 }
@@ -246,6 +252,12 @@ impl AssistantSettingsContent {
                             AssistantProviderContentV1::DeepSeek { default_model, .. } => {
                                 default_model.map(|model| LanguageModelSelection {
                                     provider: "deepseek".into(),
+                                    model: model.id().to_string(),
+                                })
+                            }
+                            AssistantProviderContentV1::Mistral { default_model, .. } => {
+                                default_model.map(|model| LanguageModelSelection {
+                                    provider: "mistral".into(),
                                     model: model.id().to_string(),
                                 })
                             }
@@ -700,6 +712,7 @@ impl JsonSchema for LanguageModelProviderSetting {
                 "zed.dev".into(),
                 "copilot_chat".into(),
                 "deepseek".into(),
+                "mistral".into(),
             ]),
             ..Default::default()
         }
