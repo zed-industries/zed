@@ -20235,6 +20235,7 @@ impl SemanticsProvider for Entity<Project> {
     fn inline_values(
         &self,
         buffer_handle: Entity<Buffer>,
+
         range: Range<text::Anchor>,
         cx: &mut App,
     ) -> Option<Task<anyhow::Result<Vec<InlayHint>>>> {

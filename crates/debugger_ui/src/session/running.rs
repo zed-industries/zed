@@ -1514,6 +1514,26 @@ impl RunningState {
         let center_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
 
         center_pane.update(cx, |this, cx| {
+            let weak_console = console.downgrade();
+            this.add_item(
+                Box::new(SubView::new(
+                    console.focus_handle(cx),
+                    console.clone().into(),
+                    DebuggerPaneItem::Console,
+                    Some(Box::new(move |cx| {
+                        weak_console
+                            .read_with(cx, |console, cx| console.show_indicator(cx))
+                            .unwrap_or_default()
+                    })),
+                    cx,
+                )),
+                true,
+                false,
+                None,
+                window,
+                cx,
+            );
+
             this.add_item(
                 Box::new(SubView::new(
                     variable_list.focus_handle(cx),
@@ -1548,26 +1568,6 @@ impl RunningState {
 
         let rightmost_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
         rightmost_pane.update(cx, |this, cx| {
-            let weak_console = console.downgrade();
-            this.add_item(
-                Box::new(SubView::new(
-                    console.focus_handle(cx),
-                    console.clone().into(),
-                    DebuggerPaneItem::Console,
-                    Some(Box::new(move |cx| {
-                        weak_console
-                            .read_with(cx, |console, cx| console.show_indicator(cx))
-                            .unwrap_or_default()
-                    })),
-                    cx,
-                )),
-                true,
-                false,
-                None,
-                window,
-                cx,
-            );
-
             this.add_item(
                 Box::new(SubView::new(
                     debug_terminal.focus_handle(cx),
