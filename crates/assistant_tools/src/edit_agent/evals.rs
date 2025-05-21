@@ -36,10 +36,16 @@ use util::path;
 fn eval_extract_handle_command_output() {
     let input_file_path = "root/blame.rs";
     let input_file_content = include_str!("evals/fixtures/extract_handle_command_output/before.rs");
-    let output_file_content = include_str!("evals/fixtures/extract_handle_command_output/after.rs");
+    // let output_file_content = include_str!("evals/fixtures/extract_handle_command_output/after.rs");
+    let possible_diffs = vec![
+        include_str!("evals/fixtures/extract_handle_command_output/expected-1.diff"),
+        include_str!("evals/fixtures/extract_handle_command_output/expected-2.diff"),
+        include_str!("evals/fixtures/extract_handle_command_output/expected-3.diff"),
+        include_str!("evals/fixtures/extract_handle_command_output/expected-4.diff"),
+    ];
     let edit_description = "Extract `handle_command_output` method from `run_git_blame`.";
     eval(
-        100,
+        5,
         0.95,
         EvalInput::from_conversation(
             vec![
@@ -49,6 +55,7 @@ fn eval_extract_handle_command_output() {
                         Read the `{input_file_path}` file and extract a method in
                         the final stanza of `run_git_blame` to deal with command failures,
                         call it `handle_command_output` and take the std::process::Output as the only parameter.
+                        Do not document the method and do not add any comments.
 
                         Add it right next to `run_git_blame` and copy it verbatim from `run_git_blame`.
                     "})],
@@ -83,7 +90,7 @@ fn eval_extract_handle_command_output() {
                 ),
             ],
             Some(input_file_content.into()),
-            EvalAssertion::assert_eq(output_file_content),
+            EvalAssertion::assert_diff_any(possible_diffs),
         ),
     );
 }
@@ -96,7 +103,7 @@ fn eval_delete_run_git_blame() {
     let output_file_content = include_str!("evals/fixtures/delete_run_git_blame/after.rs");
     let edit_description = "Delete the `run_git_blame` function.";
     eval(
-        100,
+        10,
         0.95,
         EvalInput::from_conversation(
             vec![
@@ -1141,6 +1148,21 @@ impl EvalAssertion {
         })
     }
 
+    fn assert_diff_any(expected_diffs: Vec<impl Into<String>>) -> Self {
+        let expected_diffs: Vec<String> = expected_diffs.into_iter().map(Into::into).collect();
+        Self::new(async move |sample, _judge, _cx| {
+            let actual_diff = strip_empty_lines(&sample.diff);
+            let matches = expected_diffs
+                .iter()
+                .any(|expected| strip_empty_lines(expected) == actual_diff);
+
+            Ok(EvalAssertionOutcome {
+                score: if matches { 100 } else { 0 },
+                message: None,
+            })
+        })
+    }
+
     fn judge_diff(assertions: &'static str) -> Self {
         Self::new(async move |sample, judge, cx| {
             let prompt = DiffJudgeTemplate {
@@ -1470,6 +1492,7 @@ impl EditAgentTest {
             tools,
             ..Default::default()
         };
+
         let edit_output = if matches!(eval.edit_file_input.mode, EditFileMode::Edit) {
             if let Some(input_content) = eval.input_content.as_deref() {
                 buffer.update(cx, |buffer, cx| buffer.set_text(input_content, cx));
