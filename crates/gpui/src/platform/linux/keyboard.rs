@@ -198,7 +198,7 @@ fn insert_letters_if_missing(
         let keycode = Keycode::new(*scan_code as u32);
         let key = scan_code.to_str();
         if !inserted.contains(key) {
-            code_to_key.insert(keycode, key.to_string());
+            code_to_key.insert(keycode, key.to_owned());
         }
     }
 }
@@ -343,6 +343,61 @@ impl LinuxScanCodes {
             LinuxScanCodes::IntlRo => "unknown",
         }
     }
+
+    #[cfg(test)]
+    fn to_shifted(&self) -> &str {
+        match self {
+            LinuxScanCodes::A => "a",
+            LinuxScanCodes::B => "b",
+            LinuxScanCodes::C => "c",
+            LinuxScanCodes::D => "d",
+            LinuxScanCodes::E => "e",
+            LinuxScanCodes::F => "f",
+            LinuxScanCodes::G => "g",
+            LinuxScanCodes::H => "h",
+            LinuxScanCodes::I => "i",
+            LinuxScanCodes::J => "j",
+            LinuxScanCodes::K => "k",
+            LinuxScanCodes::L => "l",
+            LinuxScanCodes::M => "m",
+            LinuxScanCodes::N => "n",
+            LinuxScanCodes::O => "o",
+            LinuxScanCodes::P => "p",
+            LinuxScanCodes::Q => "q",
+            LinuxScanCodes::R => "r",
+            LinuxScanCodes::S => "s",
+            LinuxScanCodes::T => "t",
+            LinuxScanCodes::U => "u",
+            LinuxScanCodes::V => "v",
+            LinuxScanCodes::W => "w",
+            LinuxScanCodes::X => "x",
+            LinuxScanCodes::Y => "y",
+            LinuxScanCodes::Z => "z",
+            LinuxScanCodes::Digit0 => ")",
+            LinuxScanCodes::Digit1 => "!",
+            LinuxScanCodes::Digit2 => "@",
+            LinuxScanCodes::Digit3 => "#",
+            LinuxScanCodes::Digit4 => "$",
+            LinuxScanCodes::Digit5 => "%",
+            LinuxScanCodes::Digit6 => "^",
+            LinuxScanCodes::Digit7 => "&",
+            LinuxScanCodes::Digit8 => "*",
+            LinuxScanCodes::Digit9 => "(",
+            LinuxScanCodes::Backquote => "~",
+            LinuxScanCodes::Minus => "_",
+            LinuxScanCodes::Equal => "+",
+            LinuxScanCodes::LeftBracket => "{",
+            LinuxScanCodes::RightBracket => "}",
+            LinuxScanCodes::Backslash => "|",
+            LinuxScanCodes::Semicolon => ":",
+            LinuxScanCodes::Quote => "\"",
+            LinuxScanCodes::Comma => "<",
+            LinuxScanCodes::Period => ">",
+            LinuxScanCodes::Slash => "?",
+            LinuxScanCodes::IntlBackslash => "unknown",
+            LinuxScanCodes::IntlRo => "unknown",
+        }
+    }
 }
 
 #[cfg(all(test, any(feature = "wayland", feature = "x11")))]
@@ -388,8 +443,21 @@ mod tests {
                 continue;
             }
             let keycode = xkbcommon::xkb::Keycode::new(scan_code as u32);
-            let key = mapper.get_key(keycode, &mut crate::Modifiers::default());
-            assert_eq!(key, Some(scan_code.to_str().to_string()));
+            let key = mapper
+                .get_key(keycode, &mut crate::Modifiers::default())
+                .unwrap();
+            assert_eq!(key.as_str(), scan_code.to_str());
+
+            let shifted_key = mapper
+                .get_key(
+                    keycode,
+                    &mut crate::Modifiers {
+                        shift: true,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            assert_eq!(shifted_key.as_str(), scan_code.to_shifted());
         }
     }
 }
