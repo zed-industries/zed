@@ -1077,8 +1077,15 @@ fn create_msaa_texture(
 
     let texture_descriptor = metal::TextureDescriptor::new();
     texture_descriptor.set_texture_type(metal::MTLTextureType::D2Multisample);
-    // NOTE: Using `MTLStorageMode::Private` provides better performance, and some MacBooks can only create MSAA textures in private video memory.
+
+    // MTLStorageMode default is `shared` only for Apple silicon GPUs. Use `private` for Apple and Intel GPUs both.
+    //
+    // Reference:
+    //
+    // - https://developer.apple.com/documentation/metal/mtlstoragemode/shared
+    // - https://developer.apple.com/documentation/metal/mtlstoragemode/private
     texture_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
+
     texture_descriptor.set_width(width);
     texture_descriptor.set_height(height);
     texture_descriptor.set_pixel_format(layer.pixel_format());
