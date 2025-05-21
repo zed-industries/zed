@@ -71,7 +71,7 @@ pub enum HoverLink {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct InlayHighlight {
+pub struct InlayHighlight {
     pub inlay: InlayId,
     pub inlay_position: Anchor,
     pub range: Range<usize>,
@@ -649,7 +649,7 @@ pub fn show_link_definition(
                 }
             })?;
 
-            Ok::<_, anyhow::Error>(())
+            anyhow::Ok(())
         }
         .log_err()
         .await
@@ -1280,6 +1280,7 @@ mod tests {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
+                show_value_hints: false,
                 edit_debounce_ms: 0,
                 scroll_debounce_ms: 0,
                 show_type_hints: true,

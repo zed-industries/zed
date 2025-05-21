@@ -22,7 +22,7 @@ collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
 log.workspace = true
-lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "1fff0dd12e2071c5667327394cfec163d2a466ab" }
+lsp-types.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 serde.workspace = true

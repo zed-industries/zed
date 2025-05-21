@@ -140,6 +140,7 @@ let
           libxkbcommon
           wayland
           gpu-lib
+          xorg.libX11
           xorg.libxcb
         ]
         ++ lib.optionals stdenv'.hostPlatform.isDarwin [

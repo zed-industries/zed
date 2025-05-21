@@ -193,7 +193,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
             return;
         };
 
-        let http_client = workspace.read(cx).client().http_client().clone();
+        let http_client = workspace.read(cx).client().http_client();
         let url = self.url.clone();
         cx.spawn_in(window, async move |this, cx| {
             let text = cx
@@ -227,7 +227,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let added = self.context_store.upgrade().map_or(false, |context_store| {
-            context_store.read(cx).includes_url(&self.url).is_some()
+            context_store.read(cx).includes_url(&self.url)
         });
 
         Some(

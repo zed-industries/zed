@@ -63,8 +63,8 @@ impl Global for GlobalAppVersion {}
 pub struct AppVersion;
 
 impl AppVersion {
-    /// Initializes the global [`AppVersion`].
-    pub fn init(pkg_version: &str) -> SemanticVersion {
+    /// Load the app version from env.
+    pub fn load(pkg_version: &str) -> SemanticVersion {
         if let Ok(from_env) = env::var("ZED_APP_VERSION") {
             from_env.parse().expect("invalid ZED_APP_VERSION")
         } else {

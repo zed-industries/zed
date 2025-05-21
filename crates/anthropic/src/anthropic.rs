@@ -1,5 +1,3 @@
-mod supported_countries;
-
 use std::str::FromStr;
 
 use anyhow::{Context as _, Result, anyhow};
@@ -10,8 +8,6 @@ use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString};
 use thiserror::Error;
-
-pub use supported_countries::*;
 
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
 
@@ -74,6 +70,10 @@ pub enum Model {
 }
 
 impl Model {
+    pub fn default_fast() -> Self {
+        Self::Claude3_5Haiku
+    }
+
     pub fn from_id(id: &str) -> Result<Self> {
         if id.starts_with("claude-3-5-sonnet") {
             Ok(Self::Claude3_5Sonnet)
@@ -90,7 +90,7 @@ impl Model {
         } else if id.starts_with("claude-3-haiku") {
             Ok(Self::Claude3Haiku)
         } else {
-            Err(anyhow!("invalid model id"))
+            anyhow::bail!("invalid model id {id}");
         }
     }
 
@@ -385,10 +385,10 @@ impl RateLimitInfo {
     }
 }
 
-fn get_header<'a>(key: &str, headers: &'a HeaderMap) -> Result<&'a str, anyhow::Error> {
+fn get_header<'a>(key: &str, headers: &'a HeaderMap) -> anyhow::Result<&'a str> {
     Ok(headers
         .get(key)
-        .ok_or_else(|| anyhow!("missing header `{key}`"))?
+        .with_context(|| format!("missing header `{key}`"))?
         .to_str()?)
 }
 
@@ -507,6 +507,15 @@ pub enum RequestContent {
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
     },
+    #[serde(rename = "thinking")]
+    Thinking {
+        thinking: String,
+        signature: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
+    #[serde(rename = "redacted_thinking")]
+    RedactedThinking { data: String },
     #[serde(rename = "image")]
     Image {
         source: ImageSource,
@@ -525,10 +534,24 @@ pub enum RequestContent {
     ToolResult {
         tool_use_id: String,
         is_error: bool,
-        content: String,
+        content: ToolResultContent,
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
     },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ToolResultContent {
+    Plain(String),
+    Multipart(Vec<ToolResultPart>),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ToolResultPart {
+    Text { text: String },
+    Image { source: ImageSource },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -569,6 +592,7 @@ pub enum ToolChoice {
     Auto,
     Any,
     Tool { name: String },
+    None,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

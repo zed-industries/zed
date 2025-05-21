@@ -21,8 +21,14 @@ impl<M: ManagedView> RightClickMenu<M> {
         self
     }
 
-    pub fn trigger<E: IntoElement + 'static>(mut self, e: E) -> Self {
-        self.child_builder = Some(Box::new(move |_| e.into_any_element()));
+    pub fn trigger<F, E>(mut self, e: F) -> Self
+    where
+        F: FnOnce(bool) -> E + 'static,
+        E: IntoElement + 'static,
+    {
+        self.child_builder = Some(Box::new(move |is_menu_active| {
+            e(is_menu_active).into_any_element()
+        }));
         self
     }
 

@@ -482,6 +482,16 @@ fn paint_line_background(
                         background_origin.x = origin.x;
                         background_origin.y += line_height;
                     }
+
+                    glyph_origin.x = aligned_origin_x(
+                        origin,
+                        align_width.unwrap_or(layout.width),
+                        glyph.position.x,
+                        &align,
+                        layout,
+                        wraps.peek(),
+                    );
+                    glyph_origin.y += line_height;
                 }
                 prev_glyph_position = glyph.position;
 

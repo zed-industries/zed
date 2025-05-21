@@ -1,13 +1,17 @@
 use adapters::latest_github_release;
-use dap::adapters::TcpArguments;
-use gpui::AsyncApp;
-use std::path::PathBuf;
-use task::DebugTaskDefinition;
+use anyhow::Context as _;
+use dap::adapters::{DebugTaskDefinition, TcpArguments};
+use gpui::{AsyncApp, SharedString};
+use language::LanguageName;
+use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
+use util::ResultExt;
 
 use crate::*;
 
 #[derive(Default)]
-pub(crate) struct PhpDebugAdapter;
+pub(crate) struct PhpDebugAdapter {
+    checked: OnceLock<()>,
+}
 
 impl PhpDebugAdapter {
     const ADAPTER_NAME: &'static str = "PHP";
@@ -19,33 +23,25 @@ impl PhpDebugAdapter {
         config: &DebugTaskDefinition,
     ) -> Result<dap::StartDebuggingRequestArguments> {
         match &config.request {
-            dap::DebugRequestType::Attach(_) => {
+            dap::DebugRequest::Attach(_) => {
                 anyhow::bail!("php adapter does not support attaching")
             }
-            dap::DebugRequestType::Launch(launch_config) => {
-                Ok(dap::StartDebuggingRequestArguments {
-                    configuration: json!({
-                        "program": launch_config.program,
-                        "cwd": launch_config.cwd,
-                        "args": launch_config.args,
-                        "stopOnEntry": config.stop_on_entry.unwrap_or_default(),
-                    }),
-                    request: config.request.to_dap(),
-                })
-            }
+            dap::DebugRequest::Launch(launch_config) => Ok(dap::StartDebuggingRequestArguments {
+                configuration: json!({
+                    "program": launch_config.program,
+                    "cwd": launch_config.cwd,
+                    "args": launch_config.args,
+                    "env": launch_config.env_json(),
+                    "stopOnEntry": config.stop_on_entry.unwrap_or_default(),
+                }),
+                request: config.request.to_dap(),
+            }),
         }
-    }
-}
-
-#[async_trait(?Send)]
-impl DebugAdapter for PhpDebugAdapter {
-    fn name(&self) -> DebugAdapterName {
-        DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
     async fn fetch_latest_adapter_version(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
     ) -> Result<AdapterVersion> {
         let release = latest_github_release(
             &format!("{}/{}", "xdebug", Self::ADAPTER_PACKAGE_NAME),
@@ -63,7 +59,7 @@ impl DebugAdapter for PhpDebugAdapter {
                 .assets
                 .iter()
                 .find(|asset| asset.name == asset_name)
-                .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?
+                .with_context(|| format!("no asset found matching {asset_name:?}"))?
                 .browser_download_url
                 .clone(),
         })
@@ -71,7 +67,7 @@ impl DebugAdapter for PhpDebugAdapter {
 
     async fn get_installed_binary(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         _: &mut AsyncApp,
@@ -87,48 +83,69 @@ impl DebugAdapter for PhpDebugAdapter {
                 file_name.starts_with(&file_name_prefix)
             })
             .await
-            .ok_or_else(|| anyhow!("Couldn't find PHP dap directory"))?
+            .context("Couldn't find PHP dap directory")?
         };
 
         let tcp_connection = config.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
         Ok(DebugAdapterBinary {
-            adapter_name: self.name(),
             command: delegate
                 .node_runtime()
                 .binary_path()
                 .await?
                 .to_string_lossy()
                 .into_owned(),
-            arguments: Some(vec![
-                adapter_path.join(Self::ADAPTER_PATH).into(),
-                format!("--server={}", port).into(),
-            ]),
+            arguments: vec![
+                adapter_path
+                    .join(Self::ADAPTER_PATH)
+                    .to_string_lossy()
+                    .to_string(),
+                format!("--server={}", port),
+            ],
             connection: Some(TcpArguments {
                 port,
                 host,
                 timeout,
             }),
             cwd: None,
-            envs: None,
+            envs: HashMap::default(),
             request_args: self.request_args(config)?,
         })
     }
+}
 
-    async fn install_binary(
+#[async_trait(?Send)]
+impl DebugAdapter for PhpDebugAdapter {
+    fn name(&self) -> DebugAdapterName {
+        DebugAdapterName(Self::ADAPTER_NAME.into())
+    }
+
+    fn adapter_language_name(&self) -> Option<LanguageName> {
+        Some(SharedString::new_static("PHP").into())
+    }
+
+    async fn get_binary(
         &self,
-        version: AdapterVersion,
-        delegate: &dyn DapDelegate,
-    ) -> Result<()> {
-        adapters::download_adapter_from_github(
-            self.name(),
-            version,
-            adapters::DownloadedFileType::Vsix,
-            delegate,
-        )
-        .await?;
+        delegate: &Arc<dyn DapDelegate>,
+        config: &DebugTaskDefinition,
+        user_installed_path: Option<PathBuf>,
+        cx: &mut AsyncApp,
+    ) -> Result<DebugAdapterBinary> {
+        if self.checked.set(()).is_ok() {
+            delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
+            if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
+                adapters::download_adapter_from_github(
+                    self.name(),
+                    version,
+                    adapters::DownloadedFileType::Vsix,
+                    delegate.as_ref(),
+                )
+                .await?;
+            }
+        }
 
-        Ok(())
+        self.get_installed_binary(delegate, &config, user_installed_path, cx)
+            .await
     }
 }

@@ -46,6 +46,7 @@ language.workspace = true
 log.workspace = true
 lsp.workspace = true
 node_runtime.workspace = true
+parking_lot.workspace = true
 paths.workspace = true
 pet-conda.workspace = true
 pet-core.workspace = true

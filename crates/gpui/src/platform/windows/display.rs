@@ -172,21 +172,6 @@ impl WindowsDisplay {
             .collect()
     }
 
-    pub(crate) fn frequency(&self) -> Option<u32> {
-        get_monitor_info(self.handle).ok().and_then(|info| {
-            let mut devmode = DEVMODEW::default();
-            unsafe {
-                EnumDisplaySettingsW(
-                    PCWSTR(info.szDevice.as_ptr()),
-                    ENUM_CURRENT_SETTINGS,
-                    &mut devmode,
-                )
-            }
-            .as_bool()
-            .then(|| devmode.dmDisplayFrequency)
-        })
-    }
-
     /// Check if this monitor is still online
     pub fn is_connected(hmonitor: HMONITOR) -> bool {
         available_monitors().iter().contains(&hmonitor)

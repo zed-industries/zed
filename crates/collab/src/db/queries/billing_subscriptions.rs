@@ -1,3 +1,5 @@
+use anyhow::Context as _;
+
 use crate::db::billing_subscription::{
     StripeCancellationReason, StripeSubscriptionStatus, SubscriptionKind,
 };
@@ -32,9 +34,9 @@ impl Database {
     pub async fn create_billing_subscription(
         &self,
         params: &CreateBillingSubscriptionParams,
-    ) -> Result<()> {
+    ) -> Result<billing_subscription::Model> {
         self.transaction(|tx| async move {
-            billing_subscription::Entity::insert(billing_subscription::ActiveModel {
+            let id = billing_subscription::Entity::insert(billing_subscription::ActiveModel {
                 billing_customer_id: ActiveValue::set(params.billing_customer_id),
                 kind: ActiveValue::set(params.kind),
                 stripe_subscription_id: ActiveValue::set(params.stripe_subscription_id.clone()),
@@ -44,10 +46,14 @@ impl Database {
                 stripe_current_period_end: ActiveValue::set(params.stripe_current_period_end),
                 ..Default::default()
             })
-            .exec_without_returning(&*tx)
-            .await?;
+            .exec(&*tx)
+            .await?
+            .last_insert_id;
 
-            Ok(())
+            Ok(billing_subscription::Entity::find_by_id(id)
+                .one(&*tx)
+                .await?
+                .context("failed to retrieve inserted billing subscription")?)
         })
         .await
     }
@@ -119,8 +125,15 @@ impl Database {
                 .filter(
                     Condition::all()
                         .add(
-                            billing_subscription::Column::StripeSubscriptionStatus
-                                .eq(StripeSubscriptionStatus::Active),
+                            Condition::any()
+                                .add(
+                                    billing_subscription::Column::StripeSubscriptionStatus
+                                        .eq(StripeSubscriptionStatus::Active),
+                                )
+                                .add(
+                                    billing_subscription::Column::StripeSubscriptionStatus
+                                        .eq(StripeSubscriptionStatus::Trialing),
+                                ),
                         )
                         .add(billing_subscription::Column::Kind.is_not_null()),
                 )
@@ -184,6 +197,38 @@ impl Database {
         .await
     }
 
+    pub async fn get_active_zed_pro_billing_subscriptions(
+        &self,
+        user_ids: HashSet<UserId>,
+    ) -> Result<HashMap<UserId, (billing_customer::Model, billing_subscription::Model)>> {
+        self.transaction(|tx| {
+            let user_ids = user_ids.clone();
+            async move {
+                let mut rows = billing_subscription::Entity::find()
+                    .inner_join(billing_customer::Entity)
+                    .select_also(billing_customer::Entity)
+                    .filter(billing_customer::Column::UserId.is_in(user_ids))
+                    .filter(
+                        billing_subscription::Column::StripeSubscriptionStatus
+                            .eq(StripeSubscriptionStatus::Active),
+                    )
+                    .filter(billing_subscription::Column::Kind.eq(SubscriptionKind::ZedPro))
+                    .order_by_asc(billing_subscription::Column::Id)
+                    .stream(&*tx)
+                    .await?;
+
+                let mut subscriptions = HashMap::default();
+                while let Some(row) = rows.next().await {
+                    if let (subscription, Some(customer)) = row? {
+                        subscriptions.insert(customer.user_id, (customer, subscription));
+                    }
+                }
+                Ok(subscriptions)
+            }
+        })
+        .await
+    }
+
     /// Returns whether the user has an active billing subscription.
     pub async fn has_active_billing_subscription(&self, user_id: UserId) -> Result<bool> {
         Ok(self.count_active_billing_subscriptions(user_id).await? > 0)
@@ -197,7 +242,9 @@ impl Database {
                 .filter(
                     billing_customer::Column::UserId.eq(user_id).and(
                         billing_subscription::Column::StripeSubscriptionStatus
-                            .eq(StripeSubscriptionStatus::Active),
+                            .eq(StripeSubscriptionStatus::Active)
+                            .or(billing_subscription::Column::StripeSubscriptionStatus
+                                .eq(StripeSubscriptionStatus::Trialing)),
                     ),
                 )
                 .count(&*tx)

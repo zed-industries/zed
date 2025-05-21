@@ -119,15 +119,7 @@ impl<T: ReceiveData> DataOffer<T> {
 
     fn read_image(&self, connection: &Connection) -> Option<ClipboardItem> {
         for format in ImageFormat::iter() {
-            let mime_type = match format {
-                ImageFormat::Png => "image/png",
-                ImageFormat::Jpeg => "image/jpeg",
-                ImageFormat::Webp => "image/webp",
-                ImageFormat::Gif => "image/gif",
-                ImageFormat::Svg => "image/svg+xml",
-                ImageFormat::Bmp => "image/bmp",
-                ImageFormat::Tiff => "image/tiff",
-            };
+            let mime_type = format.mime_type();
             if !self.has_mime_type(mime_type) {
                 continue;
             }

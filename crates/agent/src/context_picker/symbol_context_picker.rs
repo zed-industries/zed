@@ -10,11 +10,11 @@ use gpui::{
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use project::{DocumentSymbol, Symbol};
-use text::OffsetRangeExt;
 use ui::{ListItem, prelude::*};
 use util::ResultExt as _;
 use workspace::Workspace;
 
+use crate::context::AgentContextHandle;
 use crate::context_picker::ContextPicker;
 use crate::context_store::ContextStore;
 
@@ -144,7 +144,7 @@ impl PickerDelegate for SymbolContextPickerDelegate {
 
         let selected_index = self.selected_index;
         cx.spawn(async move |this, cx| {
-            let included = add_symbol_task.await?;
+            let (_, included) = add_symbol_task.await?;
             this.update(cx, |this, _| {
                 if let Some(mat) = this.delegate.matches.get_mut(selected_index) {
                     mat.is_included = included;
@@ -172,10 +172,7 @@ impl PickerDelegate for SymbolContextPickerDelegate {
         let mat = &self.matches[ix];
 
         Some(ListItem::new(ix).inset(true).toggle_state(selected).child(
-            render_symbol_context_entry(
-                ElementId::NamedInteger("symbol-ctx-picker".into(), ix),
-                mat,
-            ),
+            render_symbol_context_entry(ElementId::named_usize("symbol-ctx-picker", ix), mat),
         ))
     }
 }
@@ -191,7 +188,7 @@ pub(crate) fn add_symbol(
     workspace: Entity<Workspace>,
     context_store: WeakEntity<ContextStore>,
     cx: &mut App,
-) -> Task<Result<bool>> {
+) -> Task<Result<(Option<AgentContextHandle>, bool)>> {
     let project = workspace.read(cx).project().clone();
     let open_buffer_task = project.update(cx, |project, cx| {
         project.open_buffer(symbol.path.clone(), cx)
@@ -228,18 +225,16 @@ pub(crate) fn add_symbol(
             )
         })?;
 
-        context_store
-            .update(cx, move |context_store, cx| {
-                context_store.add_symbol(
-                    buffer,
-                    name.into(),
-                    range,
-                    enclosing_range,
-                    remove_if_exists,
-                    cx,
-                )
-            })?
-            .await
+        context_store.update(cx, move |context_store, cx| {
+            context_store.add_symbol(
+                buffer,
+                name.into(),
+                range,
+                enclosing_range,
+                remove_if_exists,
+                cx,
+            )
+        })
     })
 }
 
@@ -353,38 +348,13 @@ fn compute_symbol_entries(
     context_store: &ContextStore,
     cx: &App,
 ) -> Vec<SymbolEntry> {
-    let mut symbol_entries = Vec::with_capacity(symbols.len());
-    for SymbolMatch { symbol, .. } in symbols {
-        let symbols_for_path = context_store.included_symbols_by_path().get(&symbol.path);
-        let is_included = if let Some(symbols_for_path) = symbols_for_path {
-            let mut is_included = false;
-            for included_symbol_id in symbols_for_path {
-                if included_symbol_id.name.as_ref() == symbol.name.as_str() {
-                    if let Some(buffer) = context_store.buffer_for_symbol(included_symbol_id) {
-                        let snapshot = buffer.read(cx).snapshot();
-                        let included_symbol_range =
-                            included_symbol_id.range.to_point_utf16(&snapshot);
-
-                        if included_symbol_range.start == symbol.range.start.0
-                            && included_symbol_range.end == symbol.range.end.0
-                        {
-                            is_included = true;
-                            break;
-                        }
-                    }
-                }
-            }
-            is_included
-        } else {
-            false
-        };
-
-        symbol_entries.push(SymbolEntry {
+    symbols
+        .into_iter()
+        .map(|SymbolMatch { symbol, .. }| SymbolEntry {
+            is_included: context_store.includes_symbol(&symbol, cx),
             symbol,
-            is_included,
         })
-    }
-    symbol_entries
+        .collect::<Vec<_>>()
 }
 
 pub fn render_symbol_context_entry(id: ElementId, entry: &SymbolEntry) -> Stateful<Div> {

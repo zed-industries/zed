@@ -42,6 +42,30 @@ impl RequestType {
     }
 }
 
+impl TryFrom<&str> for RequestType {
+    type Error = ();
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        match s {
+            "initialize" => Ok(RequestType::Initialize),
+            "tools/call" => Ok(RequestType::CallTool),
+            "resources/unsubscribe" => Ok(RequestType::ResourcesUnsubscribe),
+            "resources/subscribe" => Ok(RequestType::ResourcesSubscribe),
+            "resources/read" => Ok(RequestType::ResourcesRead),
+            "resources/list" => Ok(RequestType::ResourcesList),
+            "logging/setLevel" => Ok(RequestType::LoggingSetLevel),
+            "prompts/get" => Ok(RequestType::PromptsGet),
+            "prompts/list" => Ok(RequestType::PromptsList),
+            "completion/complete" => Ok(RequestType::CompletionComplete),
+            "ping" => Ok(RequestType::Ping),
+            "tools/list" => Ok(RequestType::ListTools),
+            "resources/templates/list" => Ok(RequestType::ListResourceTemplates),
+            "roots/list" => Ok(RequestType::ListRoots),
+            _ => Err(()),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ProtocolVersion(pub String);
@@ -154,7 +178,7 @@ pub struct CompletionArgument {
     pub value: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InitializeResponse {
     pub protocol_version: ProtocolVersion,
@@ -343,7 +367,7 @@ pub struct ClientCapabilities {
     pub roots: Option<RootsCapabilities>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Default, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerCapabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -586,7 +610,7 @@ pub enum ToolResponseContent {
     Resource { resource: ResourceContents },
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListToolsResponse {
     pub tools: Vec<Tool>,

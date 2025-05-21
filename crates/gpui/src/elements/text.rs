@@ -4,7 +4,7 @@ use crate::{
     Pixels, Point, SharedString, Size, TextOverflow, TextRun, TextStyle, TooltipId, WhiteSpace,
     Window, WrappedLine, WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
-use anyhow::anyhow;
+use anyhow::Context as _;
 use smallvec::SmallVec;
 use std::{
     cell::{Cell, RefCell},
@@ -278,6 +278,7 @@ impl IntoElement for StyledText {
 pub struct TextLayout(Rc<RefCell<Option<TextLayoutInner>>>);
 
 struct TextLayoutInner {
+    len: usize,
     lines: SmallVec<[WrappedLine; 1]>,
     line_height: Pixels,
     wrap_width: Option<Pixels>,
@@ -349,6 +350,7 @@ impl TextLayout {
                 } else {
                     text.clone()
                 };
+                let len = text.len();
 
                 let Some(lines) = window
                     .text_system()
@@ -363,6 +365,7 @@ impl TextLayout {
                 else {
                     element_state.0.borrow_mut().replace(TextLayoutInner {
                         lines: Default::default(),
+                        len: 0,
                         line_height,
                         wrap_width,
                         size: Some(Size::default()),
@@ -380,6 +383,7 @@ impl TextLayout {
 
                 element_state.0.borrow_mut().replace(TextLayoutInner {
                     lines,
+                    len,
                     line_height,
                     wrap_width,
                     size: Some(size),
@@ -397,7 +401,7 @@ impl TextLayout {
         let mut element_state = self.0.borrow_mut();
         let element_state = element_state
             .as_mut()
-            .ok_or_else(|| anyhow!("measurement has not been performed on {}", text))
+            .with_context(|| format!("measurement has not been performed on {text}"))
             .unwrap();
         element_state.bounds = Some(bounds);
     }
@@ -406,11 +410,11 @@ impl TextLayout {
         let element_state = self.0.borrow();
         let element_state = element_state
             .as_ref()
-            .ok_or_else(|| anyhow!("measurement has not been performed on {}", text))
+            .with_context(|| format!("measurement has not been performed on {text}"))
             .unwrap();
         let bounds = element_state
             .bounds
-            .ok_or_else(|| anyhow!("prepaint has not been performed on {:?}", text))
+            .with_context(|| format!("prepaint has not been performed on {text}"))
             .unwrap();
 
         let line_height = element_state.line_height;
@@ -542,6 +546,11 @@ impl TextLayout {
     /// The line height for this layout.
     pub fn line_height(&self) -> Pixels {
         self.0.borrow().as_ref().unwrap().line_height
+    }
+
+    /// The UTF-8 length of the underlying text.
+    pub fn len(&self) -> usize {
+        self.0.borrow().as_ref().unwrap().len
     }
 
     /// The text for this layout.

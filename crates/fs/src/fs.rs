@@ -33,7 +33,7 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tempfile::{NamedTempFile, TempDir};
+use tempfile::TempDir;
 use text::LineEnding;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -111,6 +111,7 @@ pub trait Fs: Send + Sync {
     async fn load_bytes(&self, path: &Path) -> Result<Vec<u8>>;
     async fn atomic_write(&self, path: PathBuf, text: String) -> Result<()>;
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()>;
+    async fn write(&self, path: &Path, content: &[u8]) -> Result<()>;
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
     async fn is_file(&self, path: &Path) -> bool;
     async fn is_dir(&self, path: &Path) -> bool;
@@ -359,7 +360,7 @@ impl Fs for RealFs {
             if options.ignore_if_exists {
                 return Ok(());
             } else {
-                return Err(anyhow!("{target:?} already exists"));
+                anyhow::bail!("{target:?} already exists");
             }
         }
 
@@ -372,7 +373,7 @@ impl Fs for RealFs {
             if options.ignore_if_exists {
                 return Ok(());
             } else {
-                return Err(anyhow!("{target:?} already exists"));
+                anyhow::bail!("{target:?} already exists");
             }
         }
 
@@ -524,32 +525,52 @@ impl Fs for RealFs {
         Ok(bytes)
     }
 
+    #[cfg(not(target_os = "windows"))]
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
         smol::unblock(move || {
             let mut tmp_file = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
                 // Use the directory of the destination as temp dir to avoid
                 // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
                 // See https://github.com/zed-industries/zed/pull/8437 for more details.
-                NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
-            } else if cfg!(target_os = "windows") {
-                // If temp dir is set to a different drive than the destination,
-                // we receive error:
-                //
-                // failed to persist temporary file:
-                // The system cannot move the file to a different disk drive. (os error 17)
-                //
-                // So we use the directory of the destination as a temp dir to avoid it.
-                // https://github.com/zed-industries/zed/issues/16571
-                NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
+                tempfile::NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
             } else {
-                NamedTempFile::new()
+                tempfile::NamedTempFile::new()
             }?;
             tmp_file.write_all(data.as_bytes())?;
             tmp_file.persist(path)?;
-            Ok::<(), anyhow::Error>(())
+            anyhow::Ok(())
         })
         .await?;
 
+        Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
+        smol::unblock(move || {
+            // If temp dir is set to a different drive than the destination,
+            // we receive error:
+            //
+            // failed to persist temporary file:
+            // The system cannot move the file to a different disk drive. (os error 17)
+            //
+            // This is because `ReplaceFileW` does not support cross volume moves.
+            // See the remark section: "The backup file, replaced file, and replacement file must all reside on the same volume."
+            // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew#remarks
+            //
+            // So we use the directory of the destination as a temp dir to avoid it.
+            // https://github.com/zed-industries/zed/issues/16571
+            let temp_dir = TempDir::new_in(path.parent().unwrap_or(paths::temp_dir()))?;
+            let temp_file = {
+                let temp_file_path = temp_dir.path().join("temp_file");
+                let mut file = std::fs::File::create_new(&temp_file_path)?;
+                file.write_all(data.as_bytes())?;
+                temp_file_path
+            };
+            atomic_replace(path.as_path(), temp_file.as_path())?;
+            anyhow::Ok(())
+        })
+        .await?;
         Ok(())
     }
 
@@ -564,6 +585,14 @@ impl Fs for RealFs {
             writer.write_all(chunk.as_bytes()).await?;
         }
         writer.flush().await?;
+        Ok(())
+    }
+
+    async fn write(&self, path: &Path, content: &[u8]) -> Result<()> {
+        if let Some(path) = path.parent() {
+            self.create_dir(path).await?;
+        }
+        smol::fs::write(path, content).await?;
         Ok(())
     }
 
@@ -643,7 +672,7 @@ impl Fs for RealFs {
     ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>> {
         let result = smol::fs::read_dir(path).await?.map(|entry| match entry {
             Ok(entry) => Ok(entry.path()),
-            Err(error) => Err(anyhow!("failed to read dir entry {:?}", error)),
+            Err(error) => Err(anyhow!("failed to read dir entry {error:?}")),
         });
         Ok(Box::pin(result))
     }
@@ -913,7 +942,7 @@ impl FakeFsState {
             .ok_or_else(|| {
                 anyhow!(io::Error::new(
                     io::ErrorKind::NotFound,
-                    format!("not found: {}", target.display())
+                    format!("not found: {target:?}")
                 ))
             })?
             .0)
@@ -983,9 +1012,7 @@ impl FakeFsState {
         Fn: FnOnce(btree_map::Entry<String, Arc<Mutex<FakeFsEntry>>>) -> Result<T>,
     {
         let path = normalize_path(path);
-        let filename = path
-            .file_name()
-            .ok_or_else(|| anyhow!("cannot overwrite the root"))?;
+        let filename = path.file_name().context("cannot overwrite the root")?;
         let parent_path = path.parent().unwrap();
 
         let parent = self.read_path(parent_path)?;
@@ -1323,7 +1350,7 @@ impl FakeFs {
                     let path = std::str::from_utf8(content)
                         .ok()
                         .and_then(|content| content.strip_prefix("gitdir:"))
-                        .ok_or_else(|| anyhow!("not a valid gitfile"))?
+                        .context("not a valid gitfile")?
                         .trim();
                     git_dir_path.insert(normalize_path(&dot_git.parent().unwrap().join(path)))
                 }
@@ -1365,7 +1392,7 @@ impl FakeFs {
 
             Ok(result)
         } else {
-            Err(anyhow!("not a valid git repository"))
+            anyhow::bail!("not a valid git repository");
         }
     }
 
@@ -1715,7 +1742,7 @@ impl FakeFsEntry {
         if let Self::File { content, .. } = self {
             Ok(content)
         } else {
-            Err(anyhow!("not a file: {}", path.display()))
+            anyhow::bail!("not a file: {path:?}");
         }
     }
 
@@ -1726,7 +1753,7 @@ impl FakeFsEntry {
         if let Self::Dir { entries, .. } = self {
             Ok(entries)
         } else {
-            Err(anyhow!("not a directory: {}", path.display()))
+            anyhow::bail!("not a directory: {path:?}");
         }
     }
 }
@@ -1838,7 +1865,7 @@ impl Fs for FakeFs {
                         kind = Some(PathEventKind::Changed);
                         *e.get_mut() = file;
                     } else if !options.ignore_if_exists {
-                        return Err(anyhow!("path already exists: {}", path.display()));
+                        anyhow::bail!("path already exists: {path:?}");
                     }
                 }
                 btree_map::Entry::Vacant(e) => {
@@ -1912,7 +1939,7 @@ impl Fs for FakeFs {
             if let btree_map::Entry::Occupied(e) = e {
                 Ok(e.get().clone())
             } else {
-                Err(anyhow!("path does not exist: {}", &old_path.display()))
+                anyhow::bail!("path does not exist: {old_path:?}")
             }
         })?;
 
@@ -1930,7 +1957,7 @@ impl Fs for FakeFs {
                     if options.overwrite {
                         *e.get_mut() = moved_entry;
                     } else if !options.ignore_if_exists {
-                        return Err(anyhow!("path already exists: {}", new_path.display()));
+                        anyhow::bail!("path already exists: {new_path:?}");
                     }
                 }
                 btree_map::Entry::Vacant(e) => {
@@ -1974,7 +2001,7 @@ impl Fs for FakeFs {
                     kind = Some(PathEventKind::Changed);
                     Ok(Some(e.get().clone()))
                 } else if !options.ignore_if_exists {
-                    return Err(anyhow!("{target:?} already exists"));
+                    anyhow::bail!("{target:?} already exists");
                 } else {
                     Ok(None)
                 }
@@ -1998,10 +2025,8 @@ impl Fs for FakeFs {
         self.simulate_random_delay().await;
 
         let path = normalize_path(path);
-        let parent_path = path
-            .parent()
-            .ok_or_else(|| anyhow!("cannot remove the root"))?;
-        let base_name = path.file_name().unwrap();
+        let parent_path = path.parent().context("cannot remove the root")?;
+        let base_name = path.file_name().context("cannot remove the root")?;
 
         let mut state = self.state.lock();
         let parent_entry = state.read_path(parent_path)?;
@@ -2013,7 +2038,7 @@ impl Fs for FakeFs {
         match entry {
             btree_map::Entry::Vacant(_) => {
                 if !options.ignore_if_not_exists {
-                    return Err(anyhow!("{path:?} does not exist"));
+                    anyhow::bail!("{path:?} does not exist");
                 }
             }
             btree_map::Entry::Occupied(e) => {
@@ -2021,7 +2046,7 @@ impl Fs for FakeFs {
                     let mut entry = e.get().lock();
                     let children = entry.dir_entries(&path)?;
                     if !options.recursive && !children.is_empty() {
-                        return Err(anyhow!("{path:?} is not empty"));
+                        anyhow::bail!("{path:?} is not empty");
                     }
                 }
                 e.remove();
@@ -2035,9 +2060,7 @@ impl Fs for FakeFs {
         self.simulate_random_delay().await;
 
         let path = normalize_path(path);
-        let parent_path = path
-            .parent()
-            .ok_or_else(|| anyhow!("cannot remove the root"))?;
+        let parent_path = path.parent().context("cannot remove the root")?;
         let base_name = path.file_name().unwrap();
         let mut state = self.state.lock();
         let parent_entry = state.read_path(parent_path)?;
@@ -2048,7 +2071,7 @@ impl Fs for FakeFs {
         match entry {
             btree_map::Entry::Vacant(_) => {
                 if !options.ignore_if_not_exists {
-                    return Err(anyhow!("{path:?} does not exist"));
+                    anyhow::bail!("{path:?} does not exist");
                 }
             }
             btree_map::Entry::Occupied(e) => {
@@ -2105,15 +2128,24 @@ impl Fs for FakeFs {
         Ok(())
     }
 
+    async fn write(&self, path: &Path, content: &[u8]) -> Result<()> {
+        self.simulate_random_delay().await;
+        let path = normalize_path(path);
+        if let Some(path) = path.parent() {
+            self.create_dir(path).await?;
+        }
+        self.write_file_internal(path, content.to_vec(), false)?;
+        Ok(())
+    }
+
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
         let path = normalize_path(path);
         self.simulate_random_delay().await;
         let state = self.state.lock();
-        if let Some((_, canonical_path)) = state.try_read_path(&path, true) {
-            Ok(canonical_path)
-        } else {
-            Err(anyhow!("path does not exist: {}", path.display()))
-        }
+        let (_, canonical_path) = state
+            .try_read_path(&path, true)
+            .with_context(|| format!("path does not exist: {path:?}"))?;
+        Ok(canonical_path)
     }
 
     async fn is_file(&self, path: &Path) -> bool {
@@ -2181,15 +2213,14 @@ impl Fs for FakeFs {
         self.simulate_random_delay().await;
         let path = normalize_path(path);
         let state = self.state.lock();
-        if let Some((entry, _)) = state.try_read_path(&path, false) {
-            let entry = entry.lock();
-            if let FakeFsEntry::Symlink { target } = &*entry {
-                Ok(target.clone())
-            } else {
-                Err(anyhow!("not a symlink: {}", path.display()))
-            }
+        let (entry, _) = state
+            .try_read_path(&path, false)
+            .with_context(|| format!("path does not exist: {path:?}"))?;
+        let entry = entry.lock();
+        if let FakeFsEntry::Symlink { target } = &*entry {
+            Ok(target.clone())
         } else {
-            Err(anyhow!("path does not exist: {}", path.display()))
+            anyhow::bail!("not a symlink: {path:?}")
         }
     }
 
@@ -2301,15 +2332,19 @@ impl Fs for FakeFs {
 fn chunks(rope: &Rope, line_ending: LineEnding) -> impl Iterator<Item = &str> {
     rope.chunks().flat_map(move |chunk| {
         let mut newline = false;
-        chunk.split('\n').flat_map(move |line| {
-            let ending = if newline {
-                Some(line_ending.as_str())
-            } else {
-                None
-            };
-            newline = true;
-            ending.into_iter().chain([line])
-        })
+        let end_with_newline = chunk.ends_with('\n').then_some(line_ending.as_str());
+        chunk
+            .lines()
+            .flat_map(move |line| {
+                let ending = if newline {
+                    Some(line_ending.as_str())
+                } else {
+                    None
+                };
+                newline = true;
+                ending.into_iter().chain([line])
+            })
+            .chain(end_with_newline)
     })
 }
 
@@ -2346,7 +2381,7 @@ pub async fn copy_recursive<'a>(
     target: &'a Path,
     options: CopyOptions,
 ) -> Result<()> {
-    for (is_dir, item) in read_dir_items(fs, source).await? {
+    for (item, is_dir) in read_dir_items(fs, source).await? {
         let Ok(item_relative_path) = item.strip_prefix(source) else {
             continue;
         };
@@ -2360,7 +2395,7 @@ pub async fn copy_recursive<'a>(
                 if options.ignore_if_exists {
                     continue;
                 } else {
-                    return Err(anyhow!("{target_item:?} already exists"));
+                    anyhow::bail!("{target_item:?} already exists");
                 }
             }
             let _ = fs
@@ -2380,7 +2415,10 @@ pub async fn copy_recursive<'a>(
     Ok(())
 }
 
-async fn read_dir_items<'a>(fs: &'a dyn Fs, source: &'a Path) -> Result<Vec<(bool, PathBuf)>> {
+/// Recursively reads all of the paths in the given directory.
+///
+/// Returns a vector of tuples of (path, is_dir).
+pub async fn read_dir_items<'a>(fs: &'a dyn Fs, source: &'a Path) -> Result<Vec<(PathBuf, bool)>> {
     let mut items = Vec::new();
     read_recursive(fs, source, &mut items).await?;
     Ok(items)
@@ -2389,7 +2427,7 @@ async fn read_dir_items<'a>(fs: &'a dyn Fs, source: &'a Path) -> Result<Vec<(boo
 fn read_recursive<'a>(
     fs: &'a dyn Fs,
     source: &'a Path,
-    output: &'a mut Vec<(bool, PathBuf)>,
+    output: &'a mut Vec<(PathBuf, bool)>,
 ) -> BoxFuture<'a, Result<()>> {
     use futures::future::FutureExt;
 
@@ -2397,10 +2435,10 @@ fn read_recursive<'a>(
         let metadata = fs
             .metadata(source)
             .await?
-            .ok_or_else(|| anyhow!("path does not exist: {}", source.display()))?;
+            .with_context(|| format!("path does not exist: {source:?}"))?;
 
         if metadata.is_dir {
-            output.push((true, source.to_path_buf()));
+            output.push((source.to_path_buf(), true));
             let mut children = fs.read_dir(source).await?;
             while let Some(child_path) = children.next().await {
                 if let Ok(child_path) = child_path {
@@ -2408,7 +2446,7 @@ fn read_recursive<'a>(
                 }
             }
         } else {
-            output.push((false, source.to_path_buf()));
+            output.push((source.to_path_buf(), false));
         }
         Ok(())
     }
@@ -2445,6 +2483,31 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
         Ok(((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64))
     })
     .await
+}
+
+#[cfg(target_os = "windows")]
+fn atomic_replace<P: AsRef<Path>>(
+    replaced_file: P,
+    replacement_file: P,
+) -> windows::core::Result<()> {
+    use windows::{
+        Win32::Storage::FileSystem::{REPLACE_FILE_FLAGS, ReplaceFileW},
+        core::HSTRING,
+    };
+
+    // If the file does not exist, create it.
+    let _ = std::fs::File::create_new(replaced_file.as_ref());
+
+    unsafe {
+        ReplaceFileW(
+            &HSTRING::from(replaced_file.as_ref().to_string_lossy().to_string()),
+            &HSTRING::from(replacement_file.as_ref().to_string_lossy().to_string()),
+            None,
+            REPLACE_FILE_FLAGS::default(),
+            None,
+            None,
+        )
+    }
 }
 
 #[cfg(test)]
@@ -2865,5 +2928,38 @@ mod tests {
                 .unwrap(),
             "B"
         );
+    }
+
+    #[gpui::test]
+    async fn test_realfs_atomic_write(executor: BackgroundExecutor) {
+        // With the file handle still open, the file should be replaced
+        // https://github.com/zed-industries/zed/issues/30054
+        let fs = RealFs {
+            git_binary_path: None,
+            executor,
+        };
+        let temp_dir = TempDir::new().unwrap();
+        let file_to_be_replaced = temp_dir.path().join("file.txt");
+        let mut file = std::fs::File::create_new(&file_to_be_replaced).unwrap();
+        file.write_all(b"Hello").unwrap();
+        // drop(file);  // We still hold the file handle here
+        let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
+        assert_eq!(content, "Hello");
+        smol::block_on(fs.atomic_write(file_to_be_replaced.clone(), "World".into())).unwrap();
+        let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
+        assert_eq!(content, "World");
+    }
+
+    #[gpui::test]
+    async fn test_realfs_atomic_write_non_existing_file(executor: BackgroundExecutor) {
+        let fs = RealFs {
+            git_binary_path: None,
+            executor,
+        };
+        let temp_dir = TempDir::new().unwrap();
+        let file_to_be_replaced = temp_dir.path().join("file.txt");
+        smol::block_on(fs.atomic_write(file_to_be_replaced.clone(), "Hello".into())).unwrap();
+        let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
+        assert_eq!(content, "Hello");
     }
 }

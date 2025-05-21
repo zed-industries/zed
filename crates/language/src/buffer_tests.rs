@@ -2508,6 +2508,59 @@ fn test_language_at_with_hidden_languages(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_language_at_for_markdown_code_block(cx: &mut App) {
+    init_settings(cx, |_| {});
+
+    cx.new(|cx| {
+        let text = r#"
+            ```rs
+            let a = 2;
+            // let b = 3;
+            ```
+        "#
+        .unindent();
+
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+        language_registry.add(Arc::new(markdown_lang()));
+        language_registry.add(Arc::new(markdown_inline_lang()));
+        language_registry.add(Arc::new(rust_lang()));
+
+        let mut buffer = Buffer::local(text, cx);
+        buffer.set_language_registry(language_registry.clone());
+        buffer.set_language(
+            language_registry
+                .language_for_name("Markdown")
+                .now_or_never()
+                .unwrap()
+                .ok(),
+            cx,
+        );
+
+        let snapshot = buffer.snapshot();
+
+        // Test points in the code line
+        for point in [Point::new(1, 4), Point::new(1, 6)] {
+            let config = snapshot.language_scope_at(point).unwrap();
+            assert_eq!(config.language_name(), "Rust".into());
+
+            let language = snapshot.language_at(point).unwrap();
+            assert_eq!(language.name().as_ref(), "Rust");
+        }
+
+        // Test points in the comment line to verify it's still detected as Rust
+        for point in [Point::new(2, 4), Point::new(2, 6)] {
+            let config = snapshot.language_scope_at(point).unwrap();
+            assert_eq!(config.language_name(), "Rust".into());
+
+            let language = snapshot.language_at(point).unwrap();
+            assert_eq!(language.name().as_ref(), "Rust");
+        }
+
+        buffer
+    });
+}
+
+#[gpui::test]
 fn test_serialization(cx: &mut gpui::App) {
     let mut now = Instant::now();
 

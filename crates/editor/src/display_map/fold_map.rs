@@ -4,7 +4,6 @@ use super::{
 };
 use gpui::{AnyElement, App, ElementId, HighlightStyle, Pixels, Window};
 use language::{Edit, HighlightId, Point, TextSummary};
-use lsp::DiagnosticSeverity;
 use multi_buffer::{
     Anchor, AnchorRangeExt, MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset,
 };
@@ -1065,7 +1064,7 @@ pub struct FoldId(usize);
 
 impl From<FoldId> for ElementId {
     fn from(val: FoldId) -> Self {
-        ElementId::Integer(val.0)
+        val.0.into()
     }
 }
 
@@ -1253,7 +1252,7 @@ pub struct Chunk<'a> {
     /// the editor.
     pub highlight_style: Option<HighlightStyle>,
     /// The severity of diagnostic associated with this chunk, if any.
-    pub diagnostic_severity: Option<DiagnosticSeverity>,
+    pub diagnostic_severity: Option<lsp::DiagnosticSeverity>,
     /// Whether this chunk of text is marked as unnecessary.
     pub is_unnecessary: bool,
     /// Whether this chunk of text was originally a tab character.

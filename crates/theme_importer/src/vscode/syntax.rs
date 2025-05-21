@@ -150,7 +150,7 @@ impl ZedSyntaxToken {
             VsCodeTokenScope::Many(scopes) => scopes.iter().collect(),
         }
         .iter()
-        .map(|scope| scope.as_str())
+        .flat_map(|scope| scope.split(',').map(|s| s.trim()))
         .collect::<Vec<_>>();
 
         let scopes_to_match = self.to_vscode();

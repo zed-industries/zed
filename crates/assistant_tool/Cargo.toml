@@ -24,10 +24,12 @@ language.workspace = true
 language_model.workspace = true
 parking_lot.workspace = true
 project.workspace = true
+regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 text.workspace = true
 util.workspace = true
+workspace.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]

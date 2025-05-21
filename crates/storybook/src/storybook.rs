@@ -129,7 +129,7 @@ impl Render for StoryWrapper {
     }
 }
 
-fn load_embedded_fonts(cx: &App) -> gpui::Result<()> {
+fn load_embedded_fonts(cx: &App) -> anyhow::Result<()> {
     let font_paths = cx.asset_source().list("fonts")?;
     let mut embedded_fonts = Vec::new();
     for font_path in font_paths {

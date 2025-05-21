@@ -9,12 +9,13 @@ use gpui::{
 };
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, StopReason,
+    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
+    RateLimiter, Role, StopReason, WrappedTextContent,
 };
-use open_ai::{Model, ResponseStreamEvent, stream_completion};
+use open_ai::{ImageUrl, Model, ResponseStreamEvent, stream_completion};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -24,7 +25,7 @@ use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
-use util::{ResultExt, maybe};
+use util::ResultExt;
 
 use crate::{AllLanguageModelSettings, ui::InstructionListItem};
 
@@ -148,6 +149,16 @@ impl OpenAiLanguageModelProvider {
 
         Self { http_client, state }
     }
+
+    fn create_language_model(&self, model: open_ai::Model) -> Arc<dyn LanguageModel> {
+        Arc::new(OpenAiLanguageModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            state: self.state.clone(),
+            http_client: self.http_client.clone(),
+            request_limiter: RateLimiter::new(4),
+        })
+    }
 }
 
 impl LanguageModelProviderState for OpenAiLanguageModelProvider {
@@ -172,14 +183,11 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let model = open_ai::Model::default();
-        Some(Arc::new(OpenAiLanguageModel {
-            id: LanguageModelId::from(model.id().to_string()),
-            model,
-            state: self.state.clone(),
-            http_client: self.http_client.clone(),
-            request_limiter: RateLimiter::new(4),
-        }))
+        Some(self.create_language_model(open_ai::Model::default()))
+    }
+
+    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        Some(self.create_language_model(open_ai::Model::default_fast()))
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -211,15 +219,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
 
         models
             .into_values()
-            .map(|model| {
-                Arc::new(OpenAiLanguageModel {
-                    id: LanguageModelId::from(model.id().to_string()),
-                    model,
-                    state: self.state.clone(),
-                    http_client: self.http_client.clone(),
-                    request_limiter: RateLimiter::new(4),
-                }) as Arc<dyn LanguageModel>
-            })
+            .map(|model| self.create_language_model(model))
             .collect()
     }
 
@@ -265,7 +265,7 @@ impl OpenAiLanguageModel {
         };
 
         let future = self.request_limiter.stream(async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("Missing OpenAI API Key"))?;
+            let api_key = api_key.context("Missing OpenAI API Key")?;
             let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
             let response = request.await?;
             Ok(response)
@@ -296,6 +296,18 @@ impl LanguageModel for OpenAiLanguageModel {
         true
     }
 
+    fn supports_images(&self) -> bool {
+        false
+    }
+
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        match choice {
+            LanguageModelToolChoice::Auto => true,
+            LanguageModelToolChoice::Any => true,
+            LanguageModelToolChoice::None => true,
+        }
+    }
+
     fn telemetry_id(&self) -> String {
         format!("openai/{}", self.model.id())
     }
@@ -322,12 +334,20 @@ impl LanguageModel for OpenAiLanguageModel {
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
-        Result<futures::stream::BoxStream<'static, Result<LanguageModelCompletionEvent>>>,
+        Result<
+            futures::stream::BoxStream<
+                'static,
+                Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+            >,
+        >,
     > {
         let request = into_open_ai(request, &self.model, self.max_output_tokens());
         let completions = self.stream_completion(request, cx);
-        async move { Ok(map_to_language_model_completion_events(completions.await?).boxed()) }
-            .boxed()
+        async move {
+            let mapper = OpenAiEventMapper::new();
+            Ok(mapper.map_stream(completions.await?).boxed())
+        }
+        .boxed()
     }
 }
 
@@ -342,15 +362,26 @@ pub fn into_open_ai(
     for message in request.messages {
         for content in message.content {
             match content {
-                MessageContent::Text(text) => messages.push(match message.role {
-                    Role::User => open_ai::RequestMessage::User { content: text },
-                    Role::Assistant => open_ai::RequestMessage::Assistant {
-                        content: Some(text),
-                        tool_calls: Vec::new(),
-                    },
-                    Role::System => open_ai::RequestMessage::System { content: text },
-                }),
-                MessageContent::Image(_) => {}
+                MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
+                    add_message_content_part(
+                        open_ai::MessagePart::Text { text: text },
+                        message.role,
+                        &mut messages,
+                    )
+                }
+                MessageContent::RedactedThinking(_) => {}
+                MessageContent::Image(image) => {
+                    add_message_content_part(
+                        open_ai::MessagePart::Image {
+                            image_url: ImageUrl {
+                                url: image.to_base64_url(),
+                                detail: None,
+                            },
+                        },
+                        message.role,
+                        &mut messages,
+                    );
+                }
                 MessageContent::ToolUse(tool_use) => {
                     let tool_call = open_ai::ToolCall {
                         id: tool_use.id.to_string(),
@@ -363,24 +394,40 @@ pub fn into_open_ai(
                         },
                     };
 
-                    if let Some(last_assistant_message) = messages.iter_mut().rfind(|message| {
-                        matches!(message, open_ai::RequestMessage::Assistant { .. })
-                    }) {
-                        if let open_ai::RequestMessage::Assistant { tool_calls, .. } =
-                            last_assistant_message
-                        {
-                            tool_calls.push(tool_call);
-                        }
+                    if let Some(open_ai::RequestMessage::Assistant { tool_calls, .. }) =
+                        messages.last_mut()
+                    {
+                        tool_calls.push(tool_call);
                     } else {
                         messages.push(open_ai::RequestMessage::Assistant {
-                            content: None,
+                            content: open_ai::MessageContent::empty(),
                             tool_calls: vec![tool_call],
                         });
                     }
                 }
                 MessageContent::ToolResult(tool_result) => {
+                    let content = match &tool_result.content {
+                        LanguageModelToolResultContent::Text(text)
+                        | LanguageModelToolResultContent::WrappedText(WrappedTextContent {
+                            text,
+                            ..
+                        }) => {
+                            vec![open_ai::MessagePart::Text {
+                                text: text.to_string(),
+                            }]
+                        }
+                        LanguageModelToolResultContent::Image(image) => {
+                            vec![open_ai::MessagePart::Image {
+                                image_url: ImageUrl {
+                                    url: image.to_base64_url(),
+                                    detail: None,
+                                },
+                            }]
+                        }
+                    };
+
                     messages.push(open_ai::RequestMessage::Tool {
-                        content: tool_result.content.to_string(),
+                        content: content.into(),
                         tool_call_id: tool_result.tool_use_id.to_string(),
                     });
                 }
@@ -412,120 +459,149 @@ pub fn into_open_ai(
                 },
             })
             .collect(),
-        tool_choice: None,
+        tool_choice: request.tool_choice.map(|choice| match choice {
+            LanguageModelToolChoice::Auto => open_ai::ToolChoice::Auto,
+            LanguageModelToolChoice::Any => open_ai::ToolChoice::Required,
+            LanguageModelToolChoice::None => open_ai::ToolChoice::None,
+        }),
     }
 }
 
-pub fn map_to_language_model_completion_events(
-    events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
-) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
-    #[derive(Default)]
-    struct RawToolCall {
-        id: String,
-        name: String,
-        arguments: String,
+fn add_message_content_part(
+    new_part: open_ai::MessagePart,
+    role: Role,
+    messages: &mut Vec<open_ai::RequestMessage>,
+) {
+    match (role, messages.last_mut()) {
+        (Role::User, Some(open_ai::RequestMessage::User { content }))
+        | (Role::Assistant, Some(open_ai::RequestMessage::Assistant { content, .. }))
+        | (Role::System, Some(open_ai::RequestMessage::System { content, .. })) => {
+            content.push_part(new_part);
+        }
+        _ => {
+            messages.push(match role {
+                Role::User => open_ai::RequestMessage::User {
+                    content: open_ai::MessageContent::from(vec![new_part]),
+                },
+                Role::Assistant => open_ai::RequestMessage::Assistant {
+                    content: open_ai::MessageContent::from(vec![new_part]),
+                    tool_calls: Vec::new(),
+                },
+                Role::System => open_ai::RequestMessage::System {
+                    content: open_ai::MessageContent::from(vec![new_part]),
+                },
+            });
+        }
     }
+}
 
-    struct State {
-        events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
-        tool_calls_by_index: HashMap<usize, RawToolCall>,
-    }
+pub struct OpenAiEventMapper {
+    tool_calls_by_index: HashMap<usize, RawToolCall>,
+}
 
-    futures::stream::unfold(
-        State {
-            events,
+impl OpenAiEventMapper {
+    pub fn new() -> Self {
+        Self {
             tool_calls_by_index: HashMap::default(),
-        },
-        |mut state| async move {
-            if let Some(event) = state.events.next().await {
-                match event {
-                    Ok(event) => {
-                        let Some(choice) = event.choices.first() else {
-                            return Some((
-                                vec![Err(anyhow!("Response contained no choices"))],
-                                state,
-                            ));
-                        };
+        }
+    }
 
-                        let mut events = Vec::new();
-                        if let Some(content) = choice.delta.content.clone() {
-                            events.push(Ok(LanguageModelCompletionEvent::Text(content)));
-                        }
+    pub fn map_stream(
+        mut self,
+        events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
+    ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
+    {
+        events.flat_map(move |event| {
+            futures::stream::iter(match event {
+                Ok(event) => self.map_event(event),
+                Err(error) => vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))],
+            })
+        })
+    }
 
-                        if let Some(tool_calls) = choice.delta.tool_calls.as_ref() {
-                            for tool_call in tool_calls {
-                                let entry = state
-                                    .tool_calls_by_index
-                                    .entry(tool_call.index)
-                                    .or_default();
+    pub fn map_event(
+        &mut self,
+        event: ResponseStreamEvent,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let Some(choice) = event.choices.first() else {
+            return vec![Err(LanguageModelCompletionError::Other(anyhow!(
+                "Response contained no choices"
+            )))];
+        };
 
-                                if let Some(tool_id) = tool_call.id.clone() {
-                                    entry.id = tool_id;
-                                }
+        let mut events = Vec::new();
+        if let Some(content) = choice.delta.content.clone() {
+            events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+        }
 
-                                if let Some(function) = tool_call.function.as_ref() {
-                                    if let Some(name) = function.name.clone() {
-                                        entry.name = name;
-                                    }
+        if let Some(tool_calls) = choice.delta.tool_calls.as_ref() {
+            for tool_call in tool_calls {
+                let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
 
-                                    if let Some(arguments) = function.arguments.clone() {
-                                        entry.arguments.push_str(&arguments);
-                                    }
-                                }
-                            }
-                        }
+                if let Some(tool_id) = tool_call.id.clone() {
+                    entry.id = tool_id;
+                }
 
-                        match choice.finish_reason.as_deref() {
-                            Some("stop") => {
-                                events.push(Ok(LanguageModelCompletionEvent::Stop(
-                                    StopReason::EndTurn,
-                                )));
-                            }
-                            Some("tool_calls") => {
-                                events.extend(state.tool_calls_by_index.drain().map(
-                                    |(_, tool_call)| {
-                                        maybe!({
-                                            Ok(LanguageModelCompletionEvent::ToolUse(
-                                                LanguageModelToolUse {
-                                                    id: tool_call.id.into(),
-                                                    name: tool_call.name.as_str().into(),
-                                                    input: serde_json::Value::from_str(
-                                                        &tool_call.arguments,
-                                                    )?,
-                                                },
-                                            ))
-                                        })
-                                    },
-                                ));
-
-                                events.push(Ok(LanguageModelCompletionEvent::Stop(
-                                    StopReason::ToolUse,
-                                )));
-                            }
-                            Some(stop_reason) => {
-                                log::error!("Unexpected OpenAI stop_reason: {stop_reason:?}",);
-                                events.push(Ok(LanguageModelCompletionEvent::Stop(
-                                    StopReason::EndTurn,
-                                )));
-                            }
-                            None => {}
-                        }
-
-                        return Some((events, state));
+                if let Some(function) = tool_call.function.as_ref() {
+                    if let Some(name) = function.name.clone() {
+                        entry.name = name;
                     }
-                    Err(err) => return Some((vec![Err(err)], state)),
+
+                    if let Some(arguments) = function.arguments.clone() {
+                        entry.arguments.push_str(&arguments);
+                    }
                 }
             }
+        }
 
-            None
-        },
-    )
-    .flat_map(futures::stream::iter)
+        match choice.finish_reason.as_deref() {
+            Some("stop") => {
+                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+            }
+            Some("tool_calls") => {
+                events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
+                    match serde_json::Value::from_str(&tool_call.arguments) {
+                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
+                            LanguageModelToolUse {
+                                id: tool_call.id.clone().into(),
+                                name: tool_call.name.as_str().into(),
+                                is_input_complete: true,
+                                input,
+                                raw_input: tool_call.arguments.clone(),
+                            },
+                        )),
+                        Err(error) => Err(LanguageModelCompletionError::BadInputJson {
+                            id: tool_call.id.into(),
+                            tool_name: tool_call.name.as_str().into(),
+                            raw_input: tool_call.arguments.into(),
+                            json_parse_error: error.to_string(),
+                        }),
+                    }
+                }));
+
+                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
+            }
+            Some(stop_reason) => {
+                log::error!("Unexpected OpenAI stop_reason: {stop_reason:?}",);
+                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+            }
+            None => {}
+        }
+
+        events
+    }
+}
+
+#[derive(Default)]
+struct RawToolCall {
+    id: String,
+    name: String,
+    arguments: String,
 }
 
 pub fn count_open_ai_tokens(
     request: LanguageModelRequest,
-    model: open_ai::Model,
+    model: Model,
     cx: &App,
 ) -> BoxFuture<'static, Result<usize>> {
     cx.background_spawn(async move {
@@ -545,11 +621,35 @@ pub fn count_open_ai_tokens(
             .collect::<Vec<_>>();
 
         match model {
-            open_ai::Model::Custom { .. }
-            | open_ai::Model::O1Mini
-            | open_ai::Model::O1
-            | open_ai::Model::O3Mini => tiktoken_rs::num_tokens_from_messages("gpt-4", &messages),
-            _ => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
+            Model::Custom { max_tokens, .. } => {
+                let model = if max_tokens >= 100_000 {
+                    // If the max tokens is 100k or more, it is likely the o200k_base tokenizer from gpt4o
+                    "gpt-4o"
+                } else {
+                    // Otherwise fallback to gpt-4, since only cl100k_base and o200k_base are
+                    // supported with this tiktoken method
+                    "gpt-4"
+                };
+                tiktoken_rs::num_tokens_from_messages(model, &messages)
+            }
+            // Currently supported by tiktoken_rs
+            // Sometimes tiktoken-rs is behind on model support. If that is the case, make a new branch
+            // arm with an override. We enumerate all supported models here so that we can check if new
+            // models are supported yet or not.
+            Model::ThreePointFiveTurbo
+            | Model::Four
+            | Model::FourTurbo
+            | Model::FourOmni
+            | Model::FourOmniMini
+            | Model::FourPointOne
+            | Model::FourPointOneMini
+            | Model::FourPointOneNano
+            | Model::O1
+            | Model::O1Preview
+            | Model::O1Mini
+            | Model::O3
+            | Model::O3Mini
+            | Model::O4Mini => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
         }
     })
     .boxed()
@@ -693,7 +793,7 @@ impl Render for ConfigurationView {
                         .py_1()
                         .bg(cx.theme().colors().editor_background)
                         .border_1()
-                        .border_color(cx.theme().colors().border_variant)
+                        .border_color(cx.theme().colors().border)
                         .rounded_sm()
                         .child(self.render_api_key_editor(cx)),
                 )
@@ -712,8 +812,13 @@ impl Render for ConfigurationView {
                 .into_any()
         } else {
             h_flex()
-                .size_full()
+                .mt_1()
+                .p_1()
                 .justify_between()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().background)
                 .child(
                     h_flex()
                         .gap_1()
@@ -725,7 +830,8 @@ impl Render for ConfigurationView {
                         })),
                 )
                 .child(
-                    Button::new("reset-key", "Reset key")
+                    Button::new("reset-key", "Reset Key")
+                        .label_size(LabelSize::Small)
                         .icon(Some(IconName::Trash))
                         .icon_size(IconSize::Small)
                         .icon_position(IconPosition::Start)
@@ -736,6 +842,45 @@ impl Render for ConfigurationView {
                         .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
                 )
                 .into_any()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::TestAppContext;
+    use language_model::LanguageModelRequestMessage;
+
+    use super::*;
+
+    #[gpui::test]
+    fn tiktoken_rs_support(cx: &TestAppContext) {
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            mode: None,
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("message".into())],
+                cache: false,
+            }],
+            tools: vec![],
+            tool_choice: None,
+            stop: vec![],
+            temperature: None,
+        };
+
+        // Validate that all models are supported by tiktoken-rs
+        for model in Model::iter() {
+            let count = cx
+                .executor()
+                .block(count_open_ai_tokens(
+                    request.clone(),
+                    model,
+                    &cx.app.borrow(),
+                ))
+                .unwrap();
+            assert!(count > 0);
         }
     }
 }

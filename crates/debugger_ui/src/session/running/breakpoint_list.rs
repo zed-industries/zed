@@ -21,8 +21,8 @@ use project::{
 use ui::{
     App, Clickable, Color, Context, Div, Icon, IconButton, IconName, Indicator, InteractiveElement,
     IntoElement, Label, LabelCommon, LabelSize, ListItem, ParentElement, Render, RenderOnce,
-    Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement, Styled, Window, div,
-    h_flex, px, v_flex,
+    Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement, Styled, Tooltip, Window,
+    div, h_flex, px, v_flex,
 };
 use util::{ResultExt, maybe};
 use workspace::Workspace;
@@ -45,6 +45,7 @@ impl Focusable for BreakpointList {
         self.focus_handle.clone()
     }
 }
+
 impl BreakpointList {
     pub(super) fn new(
         session: Entity<Session>,
@@ -147,7 +148,7 @@ impl Render for BreakpointList {
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
         let old_len = self.breakpoints.len();
-        let breakpoints = self.breakpoint_store.read(cx).all_breakpoints(cx);
+        let breakpoints = self.breakpoint_store.read(cx).all_source_breakpoints(cx);
         self.breakpoints.clear();
         let weak = cx.weak_entity();
         let breakpoints = breakpoints.into_iter().flat_map(|(path, mut breakpoints)| {
@@ -213,6 +214,7 @@ impl Render for BreakpointList {
         }
         v_flex()
             .id("breakpoint-list")
+            .track_focus(&self.focus_handle)
             .on_hover(cx.listener(|this, hovered, window, cx| {
                 if *hovered {
                     this.show_scrollbar = true;
@@ -257,6 +259,11 @@ impl LineBreakpoint {
                 dir, name, line
             )))
             .cursor_pointer()
+            .tooltip(Tooltip::text(if breakpoint.state.is_enabled() {
+                "Disable Breakpoint"
+            } else {
+                "Enable Breakpoint"
+            }))
             .on_click({
                 let weak = weak.clone();
                 let path = path.clone();
@@ -288,6 +295,9 @@ impl LineBreakpoint {
         )))
         .start_slot(indicator)
         .rounded()
+        .on_secondary_mouse_down(|_, _, cx| {
+            cx.stop_propagation();
+        })
         .end_hover_slot(
             IconButton::new(
                 SharedString::from(format!(
@@ -367,7 +377,7 @@ impl LineBreakpoint {
                                         })
                                         .ok();
                                 }
-                                Result::<_, anyhow::Error>::Ok(())
+                                anyhow::Ok(())
                             })
                             .detach();
 
@@ -421,12 +431,20 @@ impl ExceptionBreakpoint {
             self.id
         )))
         .rounded()
+        .on_secondary_mouse_down(|_, _, cx| {
+            cx.stop_propagation();
+        })
         .start_slot(
             div()
                 .id(SharedString::from(format!(
                     "exception-breakpoint-ui-item-{}-click-handler",
                     self.id
                 )))
+                .tooltip(Tooltip::text(if self.is_enabled {
+                    "Disable Exception Breakpoint"
+                } else {
+                    "Enable Exception Breakpoint"
+                }))
                 .on_click(move |_, _, cx| {
                     list.update(cx, |this, cx| {
                         this.session.update(cx, |this, cx| {

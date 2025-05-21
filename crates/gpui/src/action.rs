@@ -1,5 +1,5 @@
 use crate::SharedString;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result};
 use collections::HashMap;
 pub use no_action::{NoAction, is_no_action};
 use serde_json::json;
@@ -235,7 +235,7 @@ impl ActionRegistry {
         let name = self
             .names_by_type_id
             .get(type_id)
-            .ok_or_else(|| anyhow!("no action type registered for {:?}", type_id))?
+            .with_context(|| format!("no action type registered for {type_id:?}"))?
             .clone();
 
         Ok(self.build_action(&name, None)?)
@@ -394,7 +394,10 @@ macro_rules! action_with_deprecated_aliases {
     };
 }
 
-/// Defines and registers a unit struct that can be used as an action, with some deprecated aliases.
+/// Registers the action and implements the Action trait for any struct that implements Clone,
+/// Default, PartialEq, serde_deserialize::Deserialize, and schemars::JsonSchema.
+///
+/// Similar to `impl_actions!`, but only handles one struct, and registers some deprecated aliases.
 #[macro_export]
 macro_rules! impl_action_with_deprecated_aliases {
     ($namespace:path, $name:ident, [$($alias:literal),* $(,)?]) => {

@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -74,9 +74,7 @@ pub fn create(
     video_grant: VideoGrant,
 ) -> Result<String> {
     if video_grant.room_join.is_some() && identity.is_none() {
-        Err(anyhow!(
-            "identity is required for room_join grant, but it is none"
-        ))?;
+        anyhow::bail!("identity is required for room_join grant, but it is none");
     }
 
     let now = SystemTime::now();

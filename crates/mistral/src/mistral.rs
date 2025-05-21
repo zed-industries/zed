@@ -26,7 +26,7 @@ impl TryFrom<String> for Role {
             "assistant" => Ok(Self::Assistant),
             "system" => Ok(Self::System),
             "tool" => Ok(Self::Tool),
-            _ => Err(anyhow!("invalid role '{value}'")),
+            _ => anyhow::bail!("invalid role '{value}'"),
         }
     }
 }
@@ -46,15 +46,17 @@ impl From<Role> for String {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
     #[serde(rename = "codestral-latest", alias = "codestral-latest")]
+    #[default]
     CodestralLatest,
     #[serde(rename = "mistral-large-latest", alias = "mistral-large-latest")]
     MistralLargeLatest,
+    #[serde(rename = "mistral-medium-latest", alias = "mistral-medium-latest")]
+    MistralMediumLatest,
     #[serde(rename = "mistral-small-latest", alias = "mistral-small-latest")]
     MistralSmallLatest,
     #[serde(rename = "open-mistral-nemo", alias = "open-mistral-nemo")]
     OpenMistralNemo,
     #[serde(rename = "open-codestral-mamba", alias = "open-codestral-mamba")]
-    #[default]
     OpenCodestralMamba,
 
     #[serde(rename = "custom")]
@@ -65,18 +67,24 @@ pub enum Model {
         max_tokens: usize,
         max_output_tokens: Option<u32>,
         max_completion_tokens: Option<u32>,
+        supports_tools: Option<bool>,
     },
 }
 
 impl Model {
+    pub fn default_fast() -> Self {
+        Model::MistralSmallLatest
+    }
+
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
             "codestral-latest" => Ok(Self::CodestralLatest),
             "mistral-large-latest" => Ok(Self::MistralLargeLatest),
+            "mistral-medium-latest" => Ok(Self::MistralMediumLatest),
             "mistral-small-latest" => Ok(Self::MistralSmallLatest),
             "open-mistral-nemo" => Ok(Self::OpenMistralNemo),
             "open-codestral-mamba" => Ok(Self::OpenCodestralMamba),
-            _ => Err(anyhow!("invalid model id")),
+            invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
 
@@ -84,6 +92,7 @@ impl Model {
         match self {
             Self::CodestralLatest => "codestral-latest",
             Self::MistralLargeLatest => "mistral-large-latest",
+            Self::MistralMediumLatest => "mistral-medium-latest",
             Self::MistralSmallLatest => "mistral-small-latest",
             Self::OpenMistralNemo => "open-mistral-nemo",
             Self::OpenCodestralMamba => "open-codestral-mamba",
@@ -95,6 +104,7 @@ impl Model {
         match self {
             Self::CodestralLatest => "codestral-latest",
             Self::MistralLargeLatest => "mistral-large-latest",
+            Self::MistralMediumLatest => "mistral-medium-latest",
             Self::MistralSmallLatest => "mistral-small-latest",
             Self::OpenMistralNemo => "open-mistral-nemo",
             Self::OpenCodestralMamba => "open-codestral-mamba",
@@ -108,6 +118,7 @@ impl Model {
         match self {
             Self::CodestralLatest => 256000,
             Self::MistralLargeLatest => 131000,
+            Self::MistralMediumLatest => 128000,
             Self::MistralSmallLatest => 32000,
             Self::OpenMistralNemo => 131000,
             Self::OpenCodestralMamba => 256000,
@@ -123,6 +134,18 @@ impl Model {
             _ => None,
         }
     }
+
+    pub fn supports_tools(&self) -> bool {
+        match self {
+            Self::CodestralLatest
+            | Self::MistralLargeLatest
+            | Self::MistralMediumLatest
+            | Self::MistralSmallLatest
+            | Self::OpenMistralNemo
+            | Self::OpenCodestralMamba => true,
+            Self::Custom { supports_tools, .. } => supports_tools.unwrap_or(false),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -136,6 +159,10 @@ pub struct Request {
     pub temperature: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response_format: Option<ResponseFormat>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parallel_tool_calls: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolDefinition>,
 }
@@ -180,12 +207,13 @@ pub enum Prediction {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(rename_all = "snake_case")]
 pub enum ToolChoice {
     Auto,
     Required,
     None,
-    Other(ToolDefinition),
+    Any,
+    Function(ToolDefinition),
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -335,10 +363,10 @@ pub async fn stream_completion(
     } else {
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
-        Err(anyhow!(
+        anyhow::bail!(
             "Failed to connect to Mistral API: {} {}",
             response.status(),
             body,
-        ))
+        );
     }
 }

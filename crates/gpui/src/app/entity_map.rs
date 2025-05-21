@@ -1,5 +1,5 @@
 use crate::{App, AppContext, VisualContext, Window, seal::Sealed};
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result};
 use collections::FxHashSet;
 use derive_more::{Deref, DerefMut};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
@@ -15,7 +15,7 @@ use std::{
     num::NonZeroU64,
     sync::{
         Arc, Weak,
-        atomic::{AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},
     },
     thread::panicking,
 };
@@ -409,17 +409,6 @@ impl<T: 'static> Entity<T> {
         }
     }
 
-    /// Upgrade the given weak pointer to a retaining pointer, if it still exists
-    pub fn upgrade_from(weak: &WeakEntity<T>) -> Option<Self>
-    where
-        Self: Sized,
-    {
-        Some(Entity {
-            any_entity: weak.any_entity.upgrade()?,
-            entity_type: weak.entity_type,
-        })
-    }
-
     /// Convert this into a dynamically typed entity.
     pub fn into_any(self) -> AnyEntity {
         self.any_entity
@@ -440,32 +429,22 @@ impl<T: 'static> Entity<T> {
     }
 
     /// Updates the entity referenced by this handle with the given function.
-    ///
-    /// The update function receives a context appropriate for its environment.
-    /// When updating in an `App`, it receives a `Context`.
-    /// When updating in a `Window`, it receives a `Window` and a `Context`.
-    pub fn update<C, R>(
+    pub fn update<R, C: AppContext>(
         &self,
         cx: &mut C,
         update: impl FnOnce(&mut T, &mut Context<T>) -> R,
-    ) -> C::Result<R>
-    where
-        C: AppContext,
-    {
+    ) -> C::Result<R> {
         cx.update_entity(self, update)
     }
 
     /// Updates the entity referenced by this handle with the given function if
     /// the referenced entity still exists, within a visual context that has a window.
     /// Returns an error if the entity has been released.
-    pub fn update_in<C, R>(
+    pub fn update_in<R, C: VisualContext>(
         &self,
         cx: &mut C,
         update: impl FnOnce(&mut T, &mut Window, &mut Context<T>) -> R,
-    ) -> C::Result<R>
-    where
-        C: VisualContext,
-    {
+    ) -> C::Result<R> {
         cx.update_window_entity(self, update)
     }
 }
@@ -593,6 +572,30 @@ impl AnyWeakEntity {
             )
         }
     }
+
+    /// Creates a weak entity that can never be upgraded.
+    pub fn new_invalid() -> Self {
+        /// To hold the invariant that all ids are unique, and considering that slotmap
+        /// increases their IDs from `0`, we can decrease ours from `u64::MAX` so these
+        /// two will never conflict (u64 is way too large).
+        static UNIQUE_NON_CONFLICTING_ID_GENERATOR: AtomicU64 = AtomicU64::new(u64::MAX);
+        let entity_id = UNIQUE_NON_CONFLICTING_ID_GENERATOR.fetch_sub(1, SeqCst);
+
+        Self {
+            // Safety:
+            //   Docs say this is safe but can be unspecified if slotmap changes the representation
+            //   after `1.0.7`, that said, providing a valid entity_id here is not necessary as long
+            //   as we guarantee that that `entity_id` is never used if `entity_ref_counts` equals
+            //   to `Weak::new()` (that is, it's unable to upgrade), that is the invariant that
+            //   actually needs to be hold true.
+            //
+            //   And there is no sane reason to read an entity slot if `entity_ref_counts` can't be
+            //   read in the first place, so we're good!
+            entity_id: entity_id.into(),
+            entity_type: TypeId::of::<()>(),
+            entity_ref_counts: Weak::new(),
+        }
+    }
 }
 
 impl std::fmt::Debug for AnyWeakEntity {
@@ -669,8 +672,10 @@ impl<T> Clone for WeakEntity<T> {
 impl<T: 'static> WeakEntity<T> {
     /// Upgrade this weak entity reference into a strong entity reference
     pub fn upgrade(&self) -> Option<Entity<T>> {
-        // Delegate to the trait implementation to keep behavior in one place.
-        Entity::upgrade_from(self)
+        Some(Entity {
+            any_entity: self.any_entity.upgrade()?,
+            entity_type: self.entity_type,
+        })
     }
 
     /// Updates the entity referenced by this handle with the given function if
@@ -687,7 +692,7 @@ impl<T: 'static> WeakEntity<T> {
     {
         crate::Flatten::flatten(
             self.upgrade()
-                .ok_or_else(|| anyhow!("entity released"))
+                .context("entity released")
                 .map(|this| cx.update_entity(&this, update)),
         )
     }
@@ -705,7 +710,7 @@ impl<T: 'static> WeakEntity<T> {
         Result<C::Result<R>>: crate::Flatten<R>,
     {
         let window = cx.window_handle();
-        let this = self.upgrade().ok_or_else(|| anyhow!("entity released"))?;
+        let this = self.upgrade().context("entity released")?;
 
         crate::Flatten::flatten(window.update(cx, |_, window, cx| {
             this.update(cx, |entity, cx| update(entity, window, cx))
@@ -722,9 +727,17 @@ impl<T: 'static> WeakEntity<T> {
     {
         crate::Flatten::flatten(
             self.upgrade()
-                .ok_or_else(|| anyhow!("entity release"))
+                .context("entity released")
                 .map(|this| cx.read_entity(&this, read)),
         )
+    }
+
+    /// Create a new weak entity that can never be upgraded.
+    pub fn new_invalid() -> Self {
+        Self {
+            any_entity: AnyWeakEntity::new_invalid(),
+            entity_type: PhantomData,
+        }
     }
 }
 

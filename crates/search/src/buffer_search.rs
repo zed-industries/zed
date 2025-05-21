@@ -143,7 +143,7 @@ impl BufferSearchBar {
         };
 
         let mut editor_style = EditorStyle {
-            background: cx.theme().colors().editor_background,
+            background: cx.theme().colors().toolbar_background,
             local_player: cx.theme().players().local(),
             text: text_style,
             ..EditorStyle::default()
@@ -657,6 +657,16 @@ impl BufferSearchBar {
         registrar.register_handler(ForDeployed(|this, deploy, window, cx| {
             this.deploy(deploy, window, cx);
         }));
+        registrar.register_handler(ForDismissed(|this, deploy, window, cx| {
+            this.deploy(deploy, window, cx);
+        }));
+        registrar.register_handler(ForDeployed(|this, _: &DeployReplace, window, cx| {
+            if this.supported_options(cx).find_in_results {
+                cx.propagate();
+            } else {
+                this.deploy(&Deploy::replace(), window, cx);
+            }
+        }));
         registrar.register_handler(ForDismissed(|this, _: &DeployReplace, window, cx| {
             if this.supported_options(cx).find_in_results {
                 cx.propagate();
@@ -664,9 +674,6 @@ impl BufferSearchBar {
                 this.deploy(&Deploy::replace(), window, cx);
             }
         }));
-        registrar.register_handler(ForDismissed(|this, deploy, window, cx| {
-            this.deploy(deploy, window, cx);
-        }))
     }
 
     pub fn new(
@@ -1245,6 +1252,7 @@ impl BufferSearchBar {
                                 .contains(SearchOptions::ONE_MATCH_PER_LINE),
                             Default::default(),
                             Default::default(),
+                            false,
                             None,
                         ) {
                             Ok(query) => query.with_replacement(self.replacement(cx)),
@@ -1263,6 +1271,7 @@ impl BufferSearchBar {
                             false,
                             Default::default(),
                             Default::default(),
+                            false,
                             None,
                         ) {
                             Ok(query) => query.with_replacement(self.replacement(cx)),
@@ -2779,6 +2788,7 @@ mod tests {
         let (_editor, search_bar, cx) = init_test(cx);
         update_search_settings(
             SearchSettings {
+                button: true,
                 whole_word: false,
                 case_sensitive: false,
                 include_ignored: false,
@@ -2844,6 +2854,7 @@ mod tests {
 
         update_search_settings(
             SearchSettings {
+                button: true,
                 whole_word: false,
                 case_sensitive: true,
                 include_ignored: false,

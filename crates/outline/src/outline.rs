@@ -4,6 +4,7 @@ use std::{
     sync::Arc,
 };
 
+use editor::RowHighlightOptions;
 use editor::{Anchor, AnchorRangeExt, Editor, scroll::Autoscroll};
 use fuzzy::StringMatch;
 use gpui::{
@@ -171,7 +172,10 @@ impl OutlineViewDelegate {
                 active_editor.highlight_rows::<OutlineRowHighlights>(
                     outline_item.range.start..outline_item.range.end,
                     cx.theme().colors().editor_highlighted_line_background,
-                    true,
+                    RowHighlightOptions {
+                        autoscroll: true,
+                        ..Default::default()
+                    },
                     cx,
                 );
                 active_editor.request_autoscroll(Autoscroll::center(), cx);

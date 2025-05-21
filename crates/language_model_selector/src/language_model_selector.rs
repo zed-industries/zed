@@ -1,27 +1,35 @@
-use std::sync::Arc;
+use std::{cmp::Reverse, sync::Arc};
 
 use collections::{HashSet, IndexMap};
-use feature_flags::{Assistant2FeatureFlag, ZedPro};
+use feature_flags::ZedProFeatureFlag;
+use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    Action, AnyElement, AnyView, App, Corner, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, Subscription, Task, WeakEntity, action_with_deprecated_aliases,
+    Action, AnyElement, AnyView, App, BackgroundExecutor, Corner, DismissEvent, Entity,
+    EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
+    action_with_deprecated_aliases,
 };
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelProviderId, LanguageModelRegistry,
+    AuthenticateError, ConfiguredModel, LanguageModel, LanguageModelProviderId,
+    LanguageModelRegistry,
 };
+use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use proto::Plan;
 use ui::{ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger, prelude::*};
 
 action_with_deprecated_aliases!(
-    assistant,
+    agent,
     ToggleModelSelector,
-    ["assistant2::ToggleModelSelector"]
+    [
+        "assistant::ToggleModelSelector",
+        "assistant2::ToggleModelSelector"
+    ]
 );
 
 const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
 
-type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &App) + 'static>;
+type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &mut App) + 'static>;
+type GetActiveModel = Arc<dyn Fn(&App) -> Option<ConfiguredModel> + 'static>;
 
 pub struct LanguageModelSelector {
     picker: Entity<Picker<LanguageModelPickerDelegate>>,
@@ -31,7 +39,8 @@ pub struct LanguageModelSelector {
 
 impl LanguageModelSelector {
     pub fn new(
-        on_model_changed: impl Fn(Arc<dyn LanguageModel>, &App) + 'static,
+        get_active_model: impl Fn(&App) -> Option<ConfiguredModel> + 'static,
+        on_model_changed: impl Fn(Arc<dyn LanguageModel>, &mut App) + 'static,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -44,8 +53,9 @@ impl LanguageModelSelector {
             language_model_selector: cx.entity().downgrade(),
             on_model_changed: on_model_changed.clone(),
             all_models: Arc::new(all_models),
-            selected_index: Self::get_active_model_index(&entries, cx),
+            selected_index: Self::get_active_model_index(&entries, get_active_model(cx)),
             filtered_entries: entries,
+            get_active_model: Arc::new(get_active_model),
         };
 
         let picker = cx.new(|cx| {
@@ -194,8 +204,14 @@ impl LanguageModelSelector {
         }
     }
 
-    fn get_active_model_index(entries: &[LanguageModelPickerEntry], cx: &App) -> usize {
-        let active_model = LanguageModelRegistry::read_global(cx).default_model();
+    pub fn active_model(&self, cx: &App) -> Option<ConfiguredModel> {
+        (self.picker.read(cx).delegate.get_active_model)(cx)
+    }
+
+    fn get_active_model_index(
+        entries: &[LanguageModelPickerEntry],
+        active_model: Option<ConfiguredModel>,
+    ) -> usize {
         entries
             .iter()
             .position(|entry| {
@@ -204,7 +220,7 @@ impl LanguageModelSelector {
                         .as_ref()
                         .map(|active_model| {
                             active_model.model.id() == model.model.id()
-                                && active_model.model.provider_id() == model.model.provider_id()
+                                && active_model.provider.id() == model.model.provider_id()
                         })
                         .unwrap_or_default()
                 } else {
@@ -297,6 +313,7 @@ struct ModelInfo {
 pub struct LanguageModelPickerDelegate {
     language_model_selector: WeakEntity<LanguageModelSelector>,
     on_model_changed: OnModelChanged,
+    get_active_model: GetActiveModel,
     all_models: Arc<GroupedModels>,
     filtered_entries: Vec<LanguageModelPickerEntry>,
     selected_index: usize,
@@ -308,6 +325,29 @@ struct GroupedModels {
 }
 
 impl GroupedModels {
+    pub fn new(other: Vec<ModelInfo>, recommended: Vec<ModelInfo>) -> Self {
+        let recommended_ids: HashSet<_> = recommended.iter().map(|info| info.model.id()).collect();
+
+        let mut other_by_provider: IndexMap<_, Vec<ModelInfo>> = IndexMap::default();
+        for model in other {
+            if recommended_ids.contains(&model.model.id()) {
+                continue;
+            }
+
+            let provider = model.model.provider_id();
+            if let Some(models) = other_by_provider.get_mut(&provider) {
+                models.push(model);
+            } else {
+                other_by_provider.insert(provider, vec![model]);
+            }
+        }
+
+        Self {
+            recommended,
+            other: other_by_provider,
+        }
+    }
+
     fn entries(&self) -> Vec<LanguageModelPickerEntry> {
         let mut entries = Vec::new();
 
@@ -335,11 +375,97 @@ impl GroupedModels {
         }
         entries
     }
+
+    fn model_infos(&self) -> Vec<ModelInfo> {
+        let other = self
+            .other
+            .values()
+            .flat_map(|model| model.iter())
+            .cloned()
+            .collect::<Vec<_>>();
+        self.recommended
+            .iter()
+            .chain(&other)
+            .cloned()
+            .collect::<Vec<_>>()
+    }
 }
 
 enum LanguageModelPickerEntry {
     Model(ModelInfo),
     Separator(SharedString),
+}
+
+struct ModelMatcher {
+    models: Vec<ModelInfo>,
+    bg_executor: BackgroundExecutor,
+    candidates: Vec<StringMatchCandidate>,
+}
+
+impl ModelMatcher {
+    fn new(models: Vec<ModelInfo>, bg_executor: BackgroundExecutor) -> ModelMatcher {
+        let candidates = Self::make_match_candidates(&models);
+        Self {
+            models,
+            bg_executor,
+            candidates,
+        }
+    }
+
+    pub fn fuzzy_search(&self, query: &str) -> Vec<ModelInfo> {
+        let mut matches = self.bg_executor.block(match_strings(
+            &self.candidates,
+            &query,
+            false,
+            100,
+            &Default::default(),
+            self.bg_executor.clone(),
+        ));
+
+        let sorting_key = |mat: &StringMatch| {
+            let candidate = &self.candidates[mat.candidate_id];
+            (Reverse(OrderedFloat(mat.score)), candidate.id)
+        };
+        matches.sort_unstable_by_key(sorting_key);
+
+        let matched_models: Vec<_> = matches
+            .into_iter()
+            .map(|mat| self.models[mat.candidate_id].clone())
+            .collect();
+
+        matched_models
+    }
+
+    pub fn exact_search(&self, query: &str) -> Vec<ModelInfo> {
+        self.models
+            .iter()
+            .filter(|m| {
+                m.model
+                    .name()
+                    .0
+                    .to_lowercase()
+                    .contains(&query.to_lowercase())
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+    }
+
+    fn make_match_candidates(model_infos: &Vec<ModelInfo>) -> Vec<StringMatchCandidate> {
+        model_infos
+            .iter()
+            .enumerate()
+            .map(|(index, model)| {
+                StringMatchCandidate::new(
+                    index,
+                    &format!(
+                        "{}/{}",
+                        &model.model.provider_name().0,
+                        &model.model.name().0
+                    ),
+                )
+            })
+            .collect::<Vec<_>>()
+    }
 }
 
 impl PickerDelegate for LanguageModelPickerDelegate {
@@ -382,56 +508,45 @@ impl PickerDelegate for LanguageModelPickerDelegate {
     ) -> Task<()> {
         let all_models = self.all_models.clone();
         let current_index = self.selected_index;
+        let bg_executor = cx.background_executor();
 
         let language_model_registry = LanguageModelRegistry::global(cx);
 
         let configured_providers = language_model_registry
             .read(cx)
             .providers()
-            .iter()
+            .into_iter()
             .filter(|provider| provider.is_authenticated(cx))
+            .collect::<Vec<_>>();
+
+        let configured_provider_ids = configured_providers
+            .iter()
             .map(|provider| provider.id())
             .collect::<Vec<_>>();
 
+        let recommended_models = all_models
+            .recommended
+            .iter()
+            .filter(|m| configured_provider_ids.contains(&m.model.provider_id()))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let available_models = all_models
+            .model_infos()
+            .iter()
+            .filter(|m| configured_provider_ids.contains(&m.model.provider_id()))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let matcher_rec = ModelMatcher::new(recommended_models, bg_executor.clone());
+        let matcher_all = ModelMatcher::new(available_models, bg_executor.clone());
+
+        let recommended = matcher_rec.exact_search(&query);
+        let all = matcher_all.fuzzy_search(&query);
+
+        let filtered_models = GroupedModels::new(all, recommended);
+
         cx.spawn_in(window, async move |this, cx| {
-            let filtered_models = cx
-                .background_spawn(async move {
-                    let matches = |info: &ModelInfo| {
-                        info.model
-                            .name()
-                            .0
-                            .to_lowercase()
-                            .contains(&query.to_lowercase())
-                    };
-
-                    let recommended_models = all_models
-                        .recommended
-                        .iter()
-                        .filter(|r| {
-                            configured_providers.contains(&r.model.provider_id()) && matches(r)
-                        })
-                        .cloned()
-                        .collect();
-                    let mut other_models = IndexMap::default();
-                    for (provider_id, models) in &all_models.other {
-                        if configured_providers.contains(&provider_id) {
-                            other_models.insert(
-                                provider_id.clone(),
-                                models
-                                    .iter()
-                                    .filter(|m| matches(m))
-                                    .cloned()
-                                    .collect::<Vec<_>>(),
-                            );
-                        }
-                    }
-                    GroupedModels {
-                        recommended: recommended_models,
-                        other: other_models,
-                    }
-                })
-                .await;
-
             this.update_in(cx, |this, window, cx| {
                 this.delegate.filtered_entries = filtered_models.entries();
                 // Preserve selection focus
@@ -493,8 +608,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                     .into_any_element(),
             ),
             LanguageModelPickerEntry::Model(model_info) => {
-                let active_model = LanguageModelRegistry::read_global(cx).default_model();
-
+                let active_model = (self.get_active_model)(cx);
                 let active_provider_id = active_model.as_ref().map(|m| m.provider.id());
                 let active_model_id = active_model.map(|m| m.model.id());
 
@@ -546,7 +660,6 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         use feature_flags::FeatureFlagAppExt;
 
         let plan = proto::Plan::ZedPro;
-        let is_trial = false;
 
         Some(
             h_flex()
@@ -556,9 +669,8 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 .p_1()
                 .gap_4()
                 .justify_between()
-                .when(cx.has_flag::<ZedPro>(), |this| {
+                .when(cx.has_flag::<ZedProFeatureFlag>(), |this| {
                     this.child(match plan {
-                        // Already a Zed Pro subscriber
                         Plan::ZedPro => Button::new("zed-pro", "Zed Pro")
                             .icon(IconName::ZedAssistant)
                             .icon_size(IconSize::Small)
@@ -568,10 +680,9 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                                 window
                                     .dispatch_action(Box::new(zed_actions::OpenAccountSettings), cx)
                             }),
-                        // Free user
-                        Plan::Free => Button::new(
+                        Plan::Free | Plan::ZedProTrial => Button::new(
                             "try-pro",
-                            if is_trial {
+                            if plan == Plan::ZedProTrial {
                                 "Upgrade to Pro"
                             } else {
                                 "Try Pro"
@@ -587,16 +698,223 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                         .icon_color(Color::Muted)
                         .icon_position(IconPosition::Start)
                         .on_click(|_, window, cx| {
-                            let configure_action = if cx.has_flag::<Assistant2FeatureFlag>() {
-                                zed_actions::agent::OpenConfiguration.boxed_clone()
-                            } else {
-                                zed_actions::assistant::ShowConfiguration.boxed_clone()
-                            };
-
-                            window.dispatch_action(configure_action, cx);
+                            window.dispatch_action(
+                                zed_actions::agent::OpenConfiguration.boxed_clone(),
+                                cx,
+                            );
                         }),
                 )
                 .into_any(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::{future::BoxFuture, stream::BoxStream};
+    use gpui::{AsyncApp, TestAppContext, http_client};
+    use language_model::{
+        LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
+        LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
+        LanguageModelRequest, LanguageModelToolChoice,
+    };
+    use ui::IconName;
+
+    #[derive(Clone)]
+    struct TestLanguageModel {
+        name: LanguageModelName,
+        id: LanguageModelId,
+        provider_id: LanguageModelProviderId,
+        provider_name: LanguageModelProviderName,
+    }
+
+    impl TestLanguageModel {
+        fn new(name: &str, provider: &str) -> Self {
+            Self {
+                name: LanguageModelName::from(name.to_string()),
+                id: LanguageModelId::from(name.to_string()),
+                provider_id: LanguageModelProviderId::from(provider.to_string()),
+                provider_name: LanguageModelProviderName::from(provider.to_string()),
+            }
+        }
+    }
+
+    impl LanguageModel for TestLanguageModel {
+        fn id(&self) -> LanguageModelId {
+            self.id.clone()
+        }
+
+        fn name(&self) -> LanguageModelName {
+            self.name.clone()
+        }
+
+        fn provider_id(&self) -> LanguageModelProviderId {
+            self.provider_id.clone()
+        }
+
+        fn provider_name(&self) -> LanguageModelProviderName {
+            self.provider_name.clone()
+        }
+
+        fn supports_tools(&self) -> bool {
+            false
+        }
+
+        fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
+            false
+        }
+
+        fn supports_images(&self) -> bool {
+            false
+        }
+
+        fn telemetry_id(&self) -> String {
+            format!("{}/{}", self.provider_id.0, self.name.0)
+        }
+
+        fn max_token_count(&self) -> usize {
+            1000
+        }
+
+        fn count_tokens(
+            &self,
+            _: LanguageModelRequest,
+            _: &App,
+        ) -> BoxFuture<'static, http_client::Result<usize>> {
+            unimplemented!()
+        }
+
+        fn stream_completion(
+            &self,
+            _: LanguageModelRequest,
+            _: &AsyncApp,
+        ) -> BoxFuture<
+            'static,
+            http_client::Result<
+                BoxStream<
+                    'static,
+                    http_client::Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+                >,
+            >,
+        > {
+            unimplemented!()
+        }
+    }
+
+    fn create_models(model_specs: Vec<(&str, &str)>) -> Vec<ModelInfo> {
+        model_specs
+            .into_iter()
+            .map(|(provider, name)| ModelInfo {
+                model: Arc::new(TestLanguageModel::new(name, provider)),
+                icon: IconName::Ai,
+            })
+            .collect()
+    }
+
+    fn assert_models_eq(result: Vec<ModelInfo>, expected: Vec<&str>) {
+        assert_eq!(
+            result.len(),
+            expected.len(),
+            "Number of models doesn't match"
+        );
+
+        for (i, expected_name) in expected.iter().enumerate() {
+            assert_eq!(
+                result[i].model.telemetry_id(),
+                *expected_name,
+                "Model at position {} doesn't match expected model",
+                i
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_exact_match(cx: &mut TestAppContext) {
+        let models = create_models(vec![
+            ("zed", "Claude 3.7 Sonnet"),
+            ("zed", "Claude 3.7 Sonnet Thinking"),
+            ("zed", "gpt-4.1"),
+            ("zed", "gpt-4.1-nano"),
+            ("openai", "gpt-3.5-turbo"),
+            ("openai", "gpt-4.1"),
+            ("openai", "gpt-4.1-nano"),
+            ("ollama", "mistral"),
+            ("ollama", "deepseek"),
+        ]);
+        let matcher = ModelMatcher::new(models, cx.background_executor.clone());
+
+        // The order of models should be maintained, case doesn't matter
+        let results = matcher.exact_search("GPT-4.1");
+        assert_models_eq(
+            results,
+            vec![
+                "zed/gpt-4.1",
+                "zed/gpt-4.1-nano",
+                "openai/gpt-4.1",
+                "openai/gpt-4.1-nano",
+            ],
+        );
+    }
+
+    #[gpui::test]
+    fn test_fuzzy_match(cx: &mut TestAppContext) {
+        let models = create_models(vec![
+            ("zed", "Claude 3.7 Sonnet"),
+            ("zed", "Claude 3.7 Sonnet Thinking"),
+            ("zed", "gpt-4.1"),
+            ("zed", "gpt-4.1-nano"),
+            ("openai", "gpt-3.5-turbo"),
+            ("openai", "gpt-4.1"),
+            ("openai", "gpt-4.1-nano"),
+            ("ollama", "mistral"),
+            ("ollama", "deepseek"),
+        ]);
+        let matcher = ModelMatcher::new(models, cx.background_executor.clone());
+
+        // Results should preserve models order whenever possible.
+        // In the case below, `zed/gpt-4.1` and `openai/gpt-4.1` have identical
+        // similarity scores, but `zed/gpt-4.1` was higher in the models list,
+        // so it should appear first in the results.
+        let results = matcher.fuzzy_search("41");
+        assert_models_eq(
+            results,
+            vec![
+                "zed/gpt-4.1",
+                "openai/gpt-4.1",
+                "zed/gpt-4.1-nano",
+                "openai/gpt-4.1-nano",
+            ],
+        );
+
+        // Model provider should be searchable as well
+        let results = matcher.fuzzy_search("ol"); // meaning "ollama"
+        assert_models_eq(results, vec!["ollama/mistral", "ollama/deepseek"]);
+
+        // Fuzzy search
+        let results = matcher.fuzzy_search("z4n");
+        assert_models_eq(results, vec!["zed/gpt-4.1-nano"]);
+    }
+
+    #[gpui::test]
+    fn test_exclude_recommended_models(_cx: &mut TestAppContext) {
+        let recommended_models = create_models(vec![("zed", "claude")]);
+        let all_models = create_models(vec![
+            ("zed", "claude"), // Should be filtered out from "other"
+            ("zed", "gemini"),
+            ("copilot", "o3"),
+        ]);
+
+        let grouped_models = GroupedModels::new(all_models, recommended_models);
+
+        let actual_other_models = grouped_models
+            .other
+            .values()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
+
+        // Recommended models should not appear in "other"
+        assert_models_eq(actual_other_models, vec!["zed/gemini", "copilot/o3"]);
     }
 }

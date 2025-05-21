@@ -7,7 +7,7 @@ use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{Context as _, Result, anyhow};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
-use fs::{Fs, MTime, PathEvent, RemoveOptions, Watcher, copy_recursive};
+use fs::{Fs, MTime, PathEvent, RemoveOptions, Watcher, copy_recursive, read_dir_items};
 use futures::{
     FutureExt as _, Stream, StreamExt,
     channel::{
@@ -105,6 +105,15 @@ pub struct LoadedFile {
 pub struct LoadedBinaryFile {
     pub file: Arc<File>,
     pub content: Vec<u8>,
+}
+
+impl fmt::Debug for LoadedBinaryFile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LoadedBinaryFile")
+            .field("file", &self.file)
+            .field("content_bytes", &self.content.len())
+            .finish()
+    }
 }
 
 pub struct LocalWorktree {
@@ -243,13 +252,7 @@ impl WorkDirectory {
         match self {
             WorkDirectory::InProject { relative_path } => Ok(path
                 .strip_prefix(relative_path)
-                .map_err(|_| {
-                    anyhow!(
-                        "could not relativize {:?} against {:?}",
-                        path,
-                        relative_path
-                    )
-                })?
+                .map_err(|_| anyhow!("could not relativize {path:?} against {relative_path:?}"))?
                 .into()),
             WorkDirectory::AboveProject {
                 location_in_repo, ..
@@ -847,18 +850,20 @@ impl Worktree {
         &mut self,
         path: impl Into<Arc<Path>>,
         is_directory: bool,
+        content: Option<Vec<u8>>,
         cx: &Context<Worktree>,
     ) -> Task<Result<CreatedEntry>> {
         let path: Arc<Path> = path.into();
         let worktree_id = self.id();
         match self {
-            Worktree::Local(this) => this.create_entry(path, is_directory, cx),
+            Worktree::Local(this) => this.create_entry(path, is_directory, content, cx),
             Worktree::Remote(this) => {
                 let project_id = this.project_id;
                 let request = this.client.request(proto::CreateProjectEntry {
                     worktree_id: worktree_id.to_proto(),
                     project_id,
                     path: path.as_ref().to_proto(),
+                    content,
                     is_directory,
                 });
                 cx.spawn(async move |this, cx| {
@@ -979,18 +984,14 @@ impl Worktree {
 
     pub fn copy_external_entries(
         &mut self,
-        target_directory: PathBuf,
+        target_directory: Arc<Path>,
         paths: Vec<Arc<Path>>,
-        overwrite_existing_files: bool,
+        fs: Arc<dyn Fs>,
         cx: &Context<Worktree>,
     ) -> Task<Result<Vec<ProjectEntryId>>> {
         match self {
-            Worktree::Local(this) => {
-                this.copy_external_entries(target_directory, paths, overwrite_existing_files, cx)
-            }
-            _ => Task::ready(Err(anyhow!(
-                "Copying external entries is not supported for remote worktrees"
-            ))),
+            Worktree::Local(this) => this.copy_external_entries(target_directory, paths, cx),
+            Worktree::Remote(this) => this.copy_external_entries(target_directory, paths, fs, cx),
         }
     }
 
@@ -1057,6 +1058,7 @@ impl Worktree {
                 this.create_entry(
                     Arc::<Path>::from_proto(request.path),
                     request.is_directory,
+                    request.content,
                     cx,
                 ),
             )
@@ -1085,7 +1087,7 @@ impl Worktree {
                 ),
             )
         })?;
-        task.ok_or_else(|| anyhow!("invalid entry"))?.await?;
+        task.context("invalid entry")?.await?;
         Ok(proto::ProjectEntryResponse {
             entry: None,
             worktree_scan_id: scan_id as u64,
@@ -1100,7 +1102,7 @@ impl Worktree {
         let task = this.update(&mut cx, |this, cx| {
             this.expand_entry(ProjectEntryId::from_proto(request.entry_id), cx)
         })?;
-        task.ok_or_else(|| anyhow!("no such entry"))?.await?;
+        task.context("no such entry")?.await?;
         let scan_id = this.read_with(&cx, |this, _| this.scan_id())?;
         Ok(proto::ExpandProjectEntryResponse {
             worktree_scan_id: scan_id as u64,
@@ -1115,7 +1117,7 @@ impl Worktree {
         let task = this.update(&mut cx, |this, cx| {
             this.expand_all_for_entry(ProjectEntryId::from_proto(request.entry_id), cx)
         })?;
-        task.ok_or_else(|| anyhow!("no such entry"))?.await?;
+        task.context("no such entry")?.await?;
         let scan_id = this.read_with(&cx, |this, _| this.scan_id())?;
         Ok(proto::ExpandAllForProjectEntryResponse {
             worktree_scan_id: scan_id as u64,
@@ -1479,9 +1481,7 @@ impl LocalWorktree {
             let abs_path = abs_path?;
             let content = fs.load_bytes(&abs_path).await?;
 
-            let worktree = worktree
-                .upgrade()
-                .ok_or_else(|| anyhow!("worktree was dropped"))?;
+            let worktree = worktree.upgrade().context("worktree was dropped")?;
             let file = match entry.await? {
                 Some(entry) => File::for_entry(entry, worktree),
                 None => {
@@ -1536,9 +1536,7 @@ impl LocalWorktree {
             }
             let text = fs.load(&abs_path).await?;
 
-            let worktree = this
-                .upgrade()
-                .ok_or_else(|| anyhow!("worktree was dropped"))?;
+            let worktree = this.upgrade().context("worktree was dropped")?;
             let file = match entry.await? {
                 Some(entry) => File::for_entry(entry, worktree),
                 None => {
@@ -1585,6 +1583,7 @@ impl LocalWorktree {
         &self,
         path: impl Into<Arc<Path>>,
         is_dir: bool,
+        content: Option<Vec<u8>>,
         cx: &Context<Worktree>,
     ) -> Task<Result<CreatedEntry>> {
         let path = path.into();
@@ -1601,7 +1600,7 @@ impl LocalWorktree {
                     .await
                     .with_context(|| format!("creating directory {task_abs_path:?}"))
             } else {
-                fs.save(&task_abs_path, &Rope::default(), LineEnding::default())
+                fs.write(&task_abs_path, content.as_deref().unwrap_or(&[]))
                     .await
                     .with_context(|| format!("creating file {task_abs_path:?}"))
             }
@@ -1674,7 +1673,7 @@ impl LocalWorktree {
                         .refresh_entry(path.clone(), None, cx)
                 })?
                 .await?;
-            let worktree = this.upgrade().ok_or_else(|| anyhow!("worktree dropped"))?;
+            let worktree = this.upgrade().context("worktree dropped")?;
             if let Some(entry) = entry {
                 Ok(File::for_entry(entry, worktree))
             } else {
@@ -1877,11 +1876,13 @@ impl LocalWorktree {
 
     pub fn copy_external_entries(
         &self,
-        target_directory: PathBuf,
+        target_directory: Arc<Path>,
         paths: Vec<Arc<Path>>,
-        overwrite_existing_files: bool,
         cx: &Context<Worktree>,
     ) -> Task<Result<Vec<ProjectEntryId>>> {
+        let Ok(target_directory) = self.absolutize(&target_directory) else {
+            return Task::ready(Err(anyhow!("invalid target path")));
+        };
         let worktree_path = self.abs_path().clone();
         let fs = self.fs.clone();
         let paths = paths
@@ -1913,23 +1914,23 @@ impl LocalWorktree {
                         &source,
                         &target,
                         fs::CopyOptions {
-                            overwrite: overwrite_existing_files,
+                            overwrite: true,
                             ..Default::default()
                         },
                     )
                     .await
                     .with_context(|| {
-                        anyhow!("Failed to copy file from {source:?} to {target:?}")
+                        format!("Failed to copy file from {source:?} to {target:?}")
                     })?;
                 }
-                Ok::<(), anyhow::Error>(())
+                anyhow::Ok(())
             })
             .await
             .log_err();
             let mut refresh = cx.read_entity(
                 &this.upgrade().with_context(|| "Dropped worktree")?,
                 |this, _| {
-                    Ok::<postage::barrier::Receiver, anyhow::Error>(
+                    anyhow::Ok::<postage::barrier::Receiver>(
                         this.as_local()
                             .with_context(|| "Worktree is not local")?
                             .refresh_entries_for_paths(paths_to_refresh.clone()),
@@ -1939,7 +1940,7 @@ impl LocalWorktree {
 
             cx.background_spawn(async move {
                 refresh.next().await;
-                Ok::<(), anyhow::Error>(())
+                anyhow::Ok(())
             })
             .await
             .log_err();
@@ -2029,7 +2030,7 @@ impl LocalWorktree {
             let new_entry = this.update(cx, |this, _| {
                 this.entry_for_path(path)
                     .cloned()
-                    .ok_or_else(|| anyhow!("failed to read path after update"))
+                    .context("reading path after update")
             })??;
             Ok(Some(new_entry))
         })
@@ -2283,6 +2284,62 @@ impl RemoteWorktree {
             }
         })
     }
+
+    fn copy_external_entries(
+        &self,
+        target_directory: Arc<Path>,
+        paths_to_copy: Vec<Arc<Path>>,
+        local_fs: Arc<dyn Fs>,
+        cx: &Context<Worktree>,
+    ) -> Task<anyhow::Result<Vec<ProjectEntryId>>> {
+        let client = self.client.clone();
+        let worktree_id = self.id().to_proto();
+        let project_id = self.project_id;
+
+        cx.background_spawn(async move {
+            let mut requests = Vec::new();
+            for root_path_to_copy in paths_to_copy {
+                let Some(filename) = root_path_to_copy.file_name() else {
+                    continue;
+                };
+                for (abs_path, is_directory) in
+                    read_dir_items(local_fs.as_ref(), &root_path_to_copy).await?
+                {
+                    let Ok(relative_path) = abs_path.strip_prefix(&root_path_to_copy) else {
+                        continue;
+                    };
+                    let content = if is_directory {
+                        None
+                    } else {
+                        Some(local_fs.load_bytes(&abs_path).await?)
+                    };
+
+                    let mut target_path = target_directory.join(filename);
+                    if relative_path.file_name().is_some() {
+                        target_path.push(relative_path)
+                    }
+
+                    requests.push(proto::CreateProjectEntry {
+                        project_id,
+                        worktree_id,
+                        path: target_path.to_string_lossy().to_string(),
+                        is_directory,
+                        content,
+                    });
+                }
+            }
+            requests.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+            requests.dedup();
+
+            let mut copied_entry_ids = Vec::new();
+            for request in requests {
+                let response = client.request(request).await?;
+                copied_entry_ids.extend(response.entry.map(|e| ProjectEntryId::from_proto(e.id)));
+            }
+
+            Ok(copied_entry_ids)
+        })
+    }
 }
 
 impl Snapshot {
@@ -2357,7 +2414,7 @@ impl Snapshot {
             .components()
             .any(|component| !matches!(component, std::path::Component::Normal(_)))
         {
-            return Err(anyhow!("invalid path"));
+            anyhow::bail!("invalid path");
         }
         if path.file_name().is_some() {
             Ok(self.abs_path.as_path().join(path))
@@ -2590,7 +2647,7 @@ impl Snapshot {
     }
 
     pub fn root_entry(&self) -> Option<&Entry> {
-        self.entry_for_path("")
+        self.entries_by_path.first()
     }
 
     /// TODO: what's the difference between `root_dir` and `abs_path`?
@@ -3235,7 +3292,7 @@ impl fmt::Debug for Snapshot {
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct File {
     pub worktree: Entity<Worktree>,
     pub path: Arc<Path>,
@@ -3335,15 +3392,12 @@ impl File {
         worktree: Entity<Worktree>,
         cx: &App,
     ) -> Result<Self> {
-        let worktree_id = worktree
-            .read(cx)
-            .as_remote()
-            .ok_or_else(|| anyhow!("not remote"))?
-            .id();
+        let worktree_id = worktree.read(cx).as_remote().context("not remote")?.id();
 
-        if worktree_id.to_proto() != proto.worktree_id {
-            return Err(anyhow!("worktree id does not match file"));
-        }
+        anyhow::ensure!(
+            worktree_id.to_proto() == proto.worktree_id,
+            "worktree id does not match file"
+        );
 
         let disk_state = if proto.is_deleted {
             DiskState::Deleted
@@ -3796,7 +3850,7 @@ impl BackgroundScanner {
             Some(ancestor_dot_git)
         });
 
-        log::info!("containing git repository: {containing_git_repository:?}");
+        log::trace!("containing git repository: {containing_git_repository:?}");
 
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
         {
@@ -4300,11 +4354,7 @@ impl BackgroundScanner {
                 let canonical_path = match self.fs.canonicalize(&child_abs_path).await {
                     Ok(path) => path,
                     Err(err) => {
-                        log::error!(
-                            "error reading target of symlink {:?}: {:?}",
-                            child_abs_path,
-                            err
-                        );
+                        log::error!("error reading target of symlink {child_abs_path:?}: {err:#}",);
                         continue;
                     }
                 };
@@ -5474,6 +5524,10 @@ impl ProjectEntryId {
         self.0 as u64
     }
 
+    pub fn from_usize(id: usize) -> Self {
+        ProjectEntryId(id)
+    }
+
     pub fn to_usize(&self) -> usize {
         self.0
     }
@@ -5492,7 +5546,7 @@ impl CreatedEntry {
 fn parse_gitfile(content: &str) -> anyhow::Result<&Path> {
     let path = content
         .strip_prefix("gitdir:")
-        .ok_or_else(|| anyhow!("failed to parse gitfile content {content:?}"))?;
+        .with_context(|| format!("parsing gitfile content {content:?}"))?;
     Ok(Path::new(path.trim()))
 }
 

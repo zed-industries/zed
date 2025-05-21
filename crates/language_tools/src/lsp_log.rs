@@ -201,7 +201,7 @@ pub(crate) struct LogMenuItem {
     pub server_kind: LanguageServerKind,
 }
 
-actions!(debug, [OpenLanguageServerLogs]);
+actions!(dev, [OpenLanguageServerLogs]);
 
 pub fn init(cx: &mut App) {
     let log_store = cx.new(LogStore::new);
@@ -1058,8 +1058,8 @@ impl Item for LspLogView {
         Editor::to_item_events(event, f)
     }
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("LSP Logs".into())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "LSP Logs".into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -1238,12 +1238,12 @@ impl Render for LspLogToolbarItemView {
             }
         });
         let available_language_servers: Vec<_> = menu_rows
-            .iter()
+            .into_iter()
             .map(|row| {
                 (
                     row.server_id,
-                    row.server_name.clone(),
-                    row.worktree_root_name.clone(),
+                    row.server_name,
+                    row.worktree_root_name,
                     row.selected_entry,
                 )
             })

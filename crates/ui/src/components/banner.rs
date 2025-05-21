@@ -31,7 +31,7 @@ pub enum Severity {
 #[derive(IntoElement, RegisterComponent)]
 pub struct Banner {
     severity: Severity,
-    children: Option<AnyElement>,
+    children: Vec<AnyElement>,
     icon: Option<(IconName, Option<Color>)>,
     action_slot: Option<AnyElement>,
 }
@@ -41,7 +41,7 @@ impl Banner {
     pub fn new() -> Self {
         Self {
             severity: Severity::Info,
-            children: None,
+            children: Vec::new(),
             icon: None,
             action_slot: None,
         }
@@ -64,11 +64,11 @@ impl Banner {
         self.action_slot = Some(element.into_any_element());
         self
     }
+}
 
-    /// A general container for the banner's main content.
-    pub fn children(mut self, element: impl IntoElement) -> Self {
-        self.children = Some(element.into_any_element());
-        self
+impl ParentElement for Banner {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        self.children.extend(elements)
     }
 }
 
@@ -117,9 +117,7 @@ impl RenderOnce for Banner {
                 content_area.child(Icon::new(icon).size(IconSize::XSmall).color(icon_color));
         }
 
-        if let Some(children) = self.children {
-            content_area = content_area.child(children);
-        }
+        content_area = content_area.children(self.children);
 
         if let Some(action_slot) = self.action_slot {
             container = container
@@ -146,14 +144,14 @@ impl Component for Banner {
             single_example(
                 "Default",
                 Banner::new()
-                    .children(Label::new("This is a default banner with no customization"))
+                    .child(Label::new("This is a default banner with no customization"))
                     .into_any_element(),
             ),
             single_example(
                 "Info",
                 Banner::new()
                     .severity(Severity::Info)
-                    .children(Label::new("This is an informational message"))
+                    .child(Label::new("This is an informational message"))
                     .action_slot(
                         Button::new("learn-more", "Learn More")
                             .icon(IconName::ArrowUpRight)
@@ -166,7 +164,7 @@ impl Component for Banner {
                 "Success",
                 Banner::new()
                     .severity(Severity::Success)
-                    .children(Label::new("Operation completed successfully"))
+                    .child(Label::new("Operation completed successfully"))
                     .action_slot(Button::new("dismiss", "Dismiss"))
                     .into_any_element(),
             ),
@@ -174,7 +172,7 @@ impl Component for Banner {
                 "Warning",
                 Banner::new()
                     .severity(Severity::Warning)
-                    .children(Label::new("Your settings file uses deprecated settings"))
+                    .child(Label::new("Your settings file uses deprecated settings"))
                     .action_slot(Button::new("update", "Update Settings"))
                     .into_any_element(),
             ),
@@ -182,7 +180,7 @@ impl Component for Banner {
                 "Error",
                 Banner::new()
                     .severity(Severity::Error)
-                    .children(Label::new("Connection error: unable to connect to server"))
+                    .child(Label::new("Connection error: unable to connect to server"))
                     .action_slot(Button::new("reconnect", "Retry"))
                     .into_any_element(),
             ),

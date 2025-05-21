@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context as _, Result, bail};
 use dap_types::{
     ErrorResponse,
     messages::{Message, Response},
@@ -21,8 +21,8 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use task::TCPHost;
-use util::ResultExt as _;
+use task::TcpArgumentsTemplate;
+use util::{ResultExt as _, TryFutureExt};
 
 use crate::{adapters::DebugAdapterBinary, debugger_settings::DebuggerSettings};
 
@@ -74,16 +74,14 @@ pub enum Transport {
 }
 
 impl Transport {
-    #[cfg(any(test, feature = "test-support"))]
-    async fn start(_: &DebugAdapterBinary, cx: AsyncApp) -> Result<(TransportPipe, Self)> {
-        #[cfg(any(test, feature = "test-support"))]
-        return FakeTransport::start(cx)
-            .await
-            .map(|(transports, fake)| (transports, Self::Fake(fake)));
-    }
-
-    #[cfg(not(any(test, feature = "test-support")))]
     async fn start(binary: &DebugAdapterBinary, cx: AsyncApp) -> Result<(TransportPipe, Self)> {
+        #[cfg(any(test, feature = "test-support"))]
+        if cfg!(any(test, feature = "test-support")) {
+            return FakeTransport::start(cx)
+                .await
+                .map(|(transports, fake)| (transports, Self::Fake(fake)));
+        }
+
         if binary.connection.is_some() {
             TcpTransport::start(binary, cx)
                 .await
@@ -128,6 +126,7 @@ pub(crate) struct TransportDelegate {
     pending_requests: Requests,
     transport: Transport,
     server_tx: Arc<Mutex<Option<Sender<Message>>>>,
+    _tasks: Vec<gpui::Task<Option<()>>>,
 }
 
 impl TransportDelegate {
@@ -142,6 +141,7 @@ impl TransportDelegate {
             log_handlers: Default::default(),
             current_requests: Default::default(),
             pending_requests: Default::default(),
+            _tasks: Default::default(),
         };
         let messages = this.start_handlers(transport_pipes, cx).await?;
         Ok((messages, this))
@@ -168,35 +168,43 @@ impl TransportDelegate {
 
         cx.update(|cx| {
             if let Some(stdout) = params.stdout.take() {
-                cx.background_executor()
-                    .spawn(Self::handle_adapter_log(stdout, log_handler.clone()))
-                    .detach_and_log_err(cx);
+                self._tasks.push(
+                    cx.background_executor()
+                        .spawn(Self::handle_adapter_log(stdout, log_handler.clone()).log_err()),
+                );
             }
 
-            cx.background_executor()
-                .spawn(Self::handle_output(
-                    params.output,
-                    client_tx,
-                    self.pending_requests.clone(),
-                    log_handler.clone(),
-                ))
-                .detach_and_log_err(cx);
+            self._tasks.push(
+                cx.background_executor().spawn(
+                    Self::handle_output(
+                        params.output,
+                        client_tx,
+                        self.pending_requests.clone(),
+                        log_handler.clone(),
+                    )
+                    .log_err(),
+                ),
+            );
 
             if let Some(stderr) = params.stderr.take() {
-                cx.background_executor()
-                    .spawn(Self::handle_error(stderr, self.log_handlers.clone()))
-                    .detach_and_log_err(cx);
+                self._tasks.push(
+                    cx.background_executor()
+                        .spawn(Self::handle_error(stderr, self.log_handlers.clone()).log_err()),
+                );
             }
 
-            cx.background_executor()
-                .spawn(Self::handle_input(
-                    params.input,
-                    client_rx,
-                    self.current_requests.clone(),
-                    self.pending_requests.clone(),
-                    log_handler.clone(),
-                ))
-                .detach_and_log_err(cx);
+            self._tasks.push(
+                cx.background_executor().spawn(
+                    Self::handle_input(
+                        params.input,
+                        client_rx,
+                        self.current_requests.clone(),
+                        self.pending_requests.clone(),
+                        log_handler.clone(),
+                    )
+                    .log_err(),
+                ),
+            );
         })?;
 
         {
@@ -216,19 +224,11 @@ impl TransportDelegate {
         pending_requests.insert(sequence_id, request);
     }
 
-    pub(crate) async fn cancel_pending_request(&self, sequence_id: &u64) {
-        let mut pending_requests = self.pending_requests.lock().await;
-        pending_requests.remove(sequence_id);
-    }
-
     pub(crate) async fn send_message(&self, message: Message) -> Result<()> {
         if let Some(server_tx) = self.server_tx.lock().await.as_ref() {
-            server_tx
-                .send(message)
-                .await
-                .map_err(|e| anyhow!("Failed to send message: {}", e))
+            server_tx.send(message).await.context("sending message")
         } else {
-            Err(anyhow!("Server tx already dropped"))
+            anyhow::bail!("Server tx already dropped")
         }
     }
 
@@ -251,7 +251,7 @@ impl TransportDelegate {
             };
 
             if bytes_read == 0 {
-                break Err(anyhow!("Debugger log stream closed"));
+                anyhow::bail!("Debugger log stream closed");
             }
 
             if let Some(log_handlers) = log_handlers.as_ref() {
@@ -369,13 +369,14 @@ impl TransportDelegate {
     where
         Stderr: AsyncRead + Unpin + Send + 'static,
     {
+        log::debug!("Handle error started");
         let mut buffer = String::new();
 
         let mut reader = BufReader::new(stderr);
 
         let result = loop {
             match reader.read_line(&mut buffer).await {
-                Ok(0) => break Err(anyhow!("debugger error stream closed")),
+                Ok(0) => anyhow::bail!("debugger error stream closed"),
                 Ok(_) => {
                     for (kind, log_handler) in log_handlers.lock().iter_mut() {
                         if matches!(kind, LogKind::Adapter) {
@@ -405,13 +406,13 @@ impl TransportDelegate {
                 .and_then(|response| response.error.map(|msg| msg.format))
                 .or_else(|| response.message.clone())
             {
-                return Err(anyhow!(error_message));
+                anyhow::bail!(error_message);
             };
 
-            Err(anyhow!(
+            anyhow::bail!(
                 "Received error response from adapter. Response: {:?}",
-                response.clone()
-            ))
+                response
+            );
         }
     }
 
@@ -433,7 +434,7 @@ impl TransportDelegate {
                 .with_context(|| "reading a message from server")?
                 == 0
             {
-                return Err(anyhow!("debugger reader stream closed"));
+                anyhow::bail!("debugger reader stream closed");
             };
 
             if buffer == "\r\n" {
@@ -520,39 +521,40 @@ pub struct TcpTransport {
 
 impl TcpTransport {
     /// Get an open port to use with the tcp client when not supplied by debug config
-    pub async fn port(host: &TCPHost) -> Result<u16> {
+    pub async fn port(host: &TcpArgumentsTemplate) -> Result<u16> {
         if let Some(port) = host.port {
             Ok(port)
         } else {
-            Ok(TcpListener::bind(SocketAddrV4::new(host.host(), 0))
-                .await?
-                .local_addr()?
-                .port())
+            Self::unused_port(host.host()).await
         }
     }
 
-    #[allow(dead_code, reason = "This is used in non test builds of Zed")]
+    pub async fn unused_port(host: Ipv4Addr) -> Result<u16> {
+        Ok(TcpListener::bind(SocketAddrV4::new(host, 0))
+            .await?
+            .local_addr()?
+            .port())
+    }
+
     async fn start(binary: &DebugAdapterBinary, cx: AsyncApp) -> Result<(TransportPipe, Self)> {
-        let Some(connection_args) = binary.connection.as_ref() else {
-            return Err(anyhow!("No connection arguments provided"));
-        };
+        let connection_args = binary
+            .connection
+            .as_ref()
+            .context("No connection arguments provided")?;
 
         let host = connection_args.host;
         let port = connection_args.port;
 
-        let mut command = util::command::new_smol_command(&binary.command);
+        let mut command = util::command::new_std_command(&binary.command);
+        util::set_pre_exec_to_start_new_session(&mut command);
+        let mut command = smol::process::Command::from(command);
 
         if let Some(cwd) = &binary.cwd {
             command.current_dir(cwd);
         }
 
-        if let Some(args) = &binary.arguments {
-            command.args(args);
-        }
-
-        if let Some(envs) = &binary.envs {
-            command.envs(envs);
-        }
+        command.args(&binary.arguments);
+        command.envs(&binary.envs);
 
         command
             .stdin(Stdio::null())
@@ -571,21 +573,31 @@ impl TcpTransport {
                 .unwrap_or(2000u64)
         });
 
-        let (rx, tx) = select! {
+        let (mut process, (rx, tx)) = select! {
             _ = cx.background_executor().timer(Duration::from_millis(timeout)).fuse() => {
-                return Err(anyhow!(format!("Connection to TCP DAP timeout {}:{}", host, port)))
+                anyhow::bail!("Connection to TCP DAP timeout {host}:{port}");
             },
             result = cx.spawn(async move |cx| {
                 loop {
                     match TcpStream::connect(address).await {
-                        Ok(stream) => return stream.split(),
+                        Ok(stream) => return Ok((process, stream.split())),
                         Err(_) => {
+                            if let Ok(Some(_)) = process.try_status() {
+                                let output = process.output().await?;
+                                let output = if output.stderr.is_empty() {
+                                    String::from_utf8_lossy(&output.stdout).to_string()
+                                } else {
+                                    String::from_utf8_lossy(&output.stderr).to_string()
+                                };
+                                anyhow::bail!("{output}\nerror: process exited before debugger attached.");
+                            }
                             cx.background_executor().timer(Duration::from_millis(100)).await;
                         }
                     }
                 }
-            }).fuse() => result
+            }).fuse() => result?
         };
+
         log::info!(
             "Debug adapter has connected to TCP server {}:{}",
             host,
@@ -629,19 +641,16 @@ pub struct StdioTransport {
 impl StdioTransport {
     #[allow(dead_code, reason = "This is used in non test builds of Zed")]
     async fn start(binary: &DebugAdapterBinary, _: AsyncApp) -> Result<(TransportPipe, Self)> {
-        let mut command = util::command::new_smol_command(&binary.command);
+        let mut command = util::command::new_std_command(&binary.command);
+        util::set_pre_exec_to_start_new_session(&mut command);
+        let mut command = smol::process::Command::from(command);
 
         if let Some(cwd) = &binary.cwd {
             command.current_dir(cwd);
         }
 
-        if let Some(args) = &binary.arguments {
-            command.args(args);
-        }
-
-        if let Some(envs) = &binary.envs {
-            command.envs(envs);
-        }
+        command.args(&binary.arguments);
+        command.envs(&binary.envs);
 
         command
             .stdin(Stdio::piped())
@@ -653,14 +662,8 @@ impl StdioTransport {
             .spawn()
             .with_context(|| "failed to spawn command.")?;
 
-        let stdin = process
-            .stdin
-            .take()
-            .ok_or_else(|| anyhow!("Failed to open stdin"))?;
-        let stdout = process
-            .stdout
-            .take()
-            .ok_or_else(|| anyhow!("Failed to open stdout"))?;
+        let stdin = process.stdin.take().context("Failed to open stdin")?;
+        let stdout = process.stdout.take().context("Failed to open stdout")?;
         let stderr = process
             .stderr
             .take()
@@ -782,7 +785,7 @@ impl FakeTransport {
 
                     match message {
                         Err(error) => {
-                            break anyhow!(error);
+                            break anyhow::anyhow!(error);
                         }
                         Ok(message) => {
                             match message {

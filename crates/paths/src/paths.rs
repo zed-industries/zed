@@ -74,10 +74,9 @@ pub fn config_dir() -> &'static PathBuf {
             if let Ok(flatpak_xdg_config) = std::env::var("FLATPAK_XDG_CONFIG_HOME") {
                 flatpak_xdg_config.into()
             } else {
-                dirs::config_dir()
-                    .expect("failed to determine XDG_CONFIG_HOME directory")
-                    .join("zed")
+                dirs::config_dir().expect("failed to determine XDG_CONFIG_HOME directory")
             }
+            .join("zed")
         } else {
             home_dir().join(".config").join("zed")
         }
@@ -95,10 +94,9 @@ pub fn data_dir() -> &'static PathBuf {
             if let Ok(flatpak_xdg_data) = std::env::var("FLATPAK_XDG_DATA_HOME") {
                 flatpak_xdg_data.into()
             } else {
-                dirs::data_local_dir()
-                    .expect("failed to determine XDG_DATA_HOME directory")
-                    .join("zed")
+                dirs::data_local_dir().expect("failed to determine XDG_DATA_HOME directory")
             }
+            .join("zed")
         } else if cfg!(target_os = "windows") {
             dirs::data_local_dir()
                 .expect("failed to determine LocalAppData directory")
@@ -193,6 +191,12 @@ pub fn settings_file() -> &'static PathBuf {
     SETTINGS_FILE.get_or_init(|| config_dir().join("settings.json"))
 }
 
+/// Returns the path to the global settings file.
+pub fn global_settings_file() -> &'static PathBuf {
+    static GLOBAL_SETTINGS_FILE: OnceLock<PathBuf> = OnceLock::new();
+    GLOBAL_SETTINGS_FILE.get_or_init(|| config_dir().join("global_settings.json"))
+}
+
 /// Returns the path to the `settings_backup.json` file.
 pub fn settings_backup_file() -> &'static PathBuf {
     static SETTINGS_FILE: OnceLock<PathBuf> = OnceLock::new();
@@ -218,9 +222,9 @@ pub fn tasks_file() -> &'static PathBuf {
 }
 
 /// Returns the path to the `debug.json` file.
-pub fn debug_tasks_file() -> &'static PathBuf {
-    static DEBUG_TASKS_FILE: OnceLock<PathBuf> = OnceLock::new();
-    DEBUG_TASKS_FILE.get_or_init(|| config_dir().join("debug.json"))
+pub fn debug_scenarios_file() -> &'static PathBuf {
+    static DEBUG_SCENARIOS_FILE: OnceLock<PathBuf> = OnceLock::new();
+    DEBUG_SCENARIOS_FILE.get_or_init(|| config_dir().join("debug.json"))
 }
 
 /// Returns the path to the extensions directory.
@@ -403,7 +407,7 @@ pub fn task_file_name() -> &'static str {
     "tasks.json"
 }
 
-/// Returns the relative path to a `launch.json` file within a project.
+/// Returns the relative path to a `debug.json` file within a project.
 pub fn local_debug_file_relative_path() -> &'static Path {
     Path::new(".zed/debug.json")
 }
@@ -411,4 +415,27 @@ pub fn local_debug_file_relative_path() -> &'static Path {
 /// Returns the relative path to a `.vscode/launch.json` file within a project.
 pub fn local_vscode_launch_file_relative_path() -> &'static Path {
     Path::new(".vscode/launch.json")
+}
+
+pub fn user_ssh_config_file() -> PathBuf {
+    home_dir().join(".ssh/config")
+}
+
+pub fn global_ssh_config_file() -> &'static Path {
+    Path::new("/etc/ssh/ssh_config")
+}
+
+/// Returns the path to the vscode user settings file
+pub fn vscode_settings_file() -> &'static PathBuf {
+    static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    let rel_path = "Code/User/settings.json";
+    LOGS_DIR.get_or_init(|| {
+        if cfg!(target_os = "macos") {
+            home_dir()
+                .join("Library/Application Support")
+                .join(rel_path)
+        } else {
+            config_dir().join(rel_path)
+        }
+    })
 }

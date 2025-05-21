@@ -40,6 +40,8 @@ use std::{
 use taffy::style::Overflow;
 use util::ResultExt;
 
+use super::ImageCacheProvider;
+
 const DRAG_THRESHOLD: f64 = 2.;
 const TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(500);
 const HOVERABLE_TOOLTIP_HIDE_DELAY: Duration = Duration::from_millis(500);
@@ -488,7 +490,7 @@ impl Interactivity {
 
     /// Bind the given callback on the hover start and end events of this element. Note that the boolean
     /// passed to the callback is true when the hover starts and false when it ends.
-    /// The imperative API equivalent to [`StatefulInteractiveElement::on_drag`]
+    /// The imperative API equivalent to [`StatefulInteractiveElement::on_hover`]
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_hover(&mut self, listener: impl Fn(&bool, &mut Window, &mut App) + 'static)
@@ -541,6 +543,15 @@ impl Interactivity {
     /// The imperative API equivalent to [`InteractiveElement::occlude`]
     pub fn occlude_mouse(&mut self) {
         self.occlude_mouse = true;
+    }
+
+    /// Registers event handles that stop propagation of mouse events for non-scroll events.
+    /// The imperative API equivalent to [`InteractiveElement::block_mouse_except_scroll`]
+    pub fn stop_mouse_events_except_scroll(&mut self) {
+        self.on_any_mouse_down(|_, _, cx| cx.stop_propagation());
+        self.on_any_mouse_up(|_, _, cx| cx.stop_propagation());
+        self.on_click(|_, _, cx| cx.stop_propagation());
+        self.on_hover(|_, _, cx| cx.stop_propagation());
     }
 }
 
@@ -917,10 +928,16 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Block the mouse from interacting with this element or any of its children
-    /// The fluent API equivalent to [`Interactivity::occlude_mouse`]
+    /// Stops propagation of left mouse down event.
     fn block_mouse_down(mut self) -> Self {
         self.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+    }
+
+    /// Registers event handles that stop propagation of mouse events for non-scroll events.
+    /// The fluent API equivalent to [`Interactivity::block_mouse_except_scroll`]
+    fn stop_mouse_events_except_scroll(mut self) -> Self {
+        self.interactivity().stop_mouse_events_except_scroll();
+        self
     }
 }
 
@@ -1134,6 +1151,7 @@ pub fn div() -> Div {
         interactivity,
         children: SmallVec::default(),
         prepaint_listener: None,
+        image_cache: None,
     }
 }
 
@@ -1142,6 +1160,7 @@ pub struct Div {
     interactivity: Interactivity,
     children: SmallVec<[AnyElement; 2]>,
     prepaint_listener: Option<Box<dyn Fn(Vec<Bounds<Pixels>>, &mut Window, &mut App) + 'static>>,
+    image_cache: Option<Box<dyn ImageCacheProvider>>,
 }
 
 impl Div {
@@ -1152,6 +1171,12 @@ impl Div {
         listener: impl Fn(Vec<Bounds<Pixels>>, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.prepaint_listener = Some(Box::new(listener));
+        self
+    }
+
+    /// Add an image cache at the location of this div in the element tree.
+    pub fn image_cache(mut self, cache: impl ImageCacheProvider) -> Self {
+        self.image_cache = Some(Box::new(cache));
         self
     }
 }
@@ -1199,7 +1224,12 @@ impl Element for Div {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut child_layout_ids = SmallVec::new();
-        let layout_id =
+        let image_cache = self
+            .image_cache
+            .as_mut()
+            .map(|provider| provider.provide(window, cx));
+
+        let layout_id = window.with_image_cache(image_cache, |window| {
             self.interactivity
                 .request_layout(global_id, window, cx, |style, window, cx| {
                     window.with_text_style(style.text_style().cloned(), |window| {
@@ -1210,7 +1240,9 @@ impl Element for Div {
                             .collect::<SmallVec<_>>();
                         window.request_layout(style, child_layout_ids.iter().copied(), cx)
                     })
-                });
+                })
+        });
+
         (layout_id, DivFrameState { child_layout_ids })
     }
 
@@ -1291,18 +1323,25 @@ impl Element for Div {
         window: &mut Window,
         cx: &mut App,
     ) {
-        self.interactivity.paint(
-            global_id,
-            bounds,
-            hitbox.as_ref(),
-            window,
-            cx,
-            |_style, window, cx| {
-                for child in &mut self.children {
-                    child.paint(window, cx);
-                }
-            },
-        );
+        let image_cache = self
+            .image_cache
+            .as_mut()
+            .map(|provider| provider.provide(window, cx));
+
+        window.with_image_cache(image_cache, |window| {
+            self.interactivity.paint(
+                global_id,
+                bounds,
+                hitbox.as_ref(),
+                window,
+                cx,
+                |_style, window, cx| {
+                    for child in &mut self.children {
+                        child.paint(window, cx);
+                    }
+                },
+            )
+        });
     }
 }
 
@@ -1520,32 +1559,20 @@ impl Interactivity {
     ) -> Point<Pixels> {
         if let Some(scroll_offset) = self.scroll_offset.as_ref() {
             let mut scroll_to_bottom = false;
-            if let Some(scroll_handle) = &self.tracked_scroll_handle {
-                let mut state = scroll_handle.0.borrow_mut();
-                state.overflow = style.overflow;
-                scroll_to_bottom = mem::take(&mut state.scroll_to_bottom);
+            let mut tracked_scroll_handle = self
+                .tracked_scroll_handle
+                .as_ref()
+                .map(|handle| handle.0.borrow_mut());
+            if let Some(mut scroll_handle_state) = tracked_scroll_handle.as_deref_mut() {
+                scroll_handle_state.overflow = style.overflow;
+                scroll_to_bottom = mem::take(&mut scroll_handle_state.scroll_to_bottom);
             }
 
             let rem_size = window.rem_size();
-            let padding_size = size(
-                style
-                    .padding
-                    .left
-                    .to_pixels(bounds.size.width.into(), rem_size)
-                    + style
-                        .padding
-                        .right
-                        .to_pixels(bounds.size.width.into(), rem_size),
-                style
-                    .padding
-                    .top
-                    .to_pixels(bounds.size.height.into(), rem_size)
-                    + style
-                        .padding
-                        .bottom
-                        .to_pixels(bounds.size.height.into(), rem_size),
-            );
-            let scroll_max = (self.content_size + padding_size - bounds.size).max(&Size::default());
+            let padding = style.padding.to_pixels(bounds.size.into(), rem_size);
+            let padding_size = size(padding.left + padding.right, padding.top + padding.bottom);
+            let padded_content_size = self.content_size + padding_size;
+            let scroll_max = (padded_content_size - bounds.size).max(&Size::default());
             // Clamp scroll offset in case scroll max is smaller now (e.g., if children
             // were removed or the bounds became larger).
             let mut scroll_offset = scroll_offset.borrow_mut();
@@ -1555,6 +1582,10 @@ impl Interactivity {
                 scroll_offset.y = -scroll_max.height;
             } else {
                 scroll_offset.y = scroll_offset.y.clamp(-scroll_max.height, px(0.));
+            }
+
+            if let Some(mut scroll_handle_state) = tracked_scroll_handle {
+                scroll_handle_state.padded_content_size = padded_content_size;
             }
 
             *scroll_offset
@@ -2874,6 +2905,7 @@ impl ScrollAnchor {
 struct ScrollHandleState {
     offset: Rc<RefCell<Point<Pixels>>>,
     bounds: Bounds<Pixels>,
+    padded_content_size: Size<Pixels>,
     child_bounds: Vec<Bounds<Pixels>>,
     scroll_to_bottom: bool,
     overflow: Point<Overflow>,
@@ -2934,6 +2966,11 @@ impl ScrollHandle {
     /// Get the bounds for a specific child.
     pub fn bounds_for_item(&self, ix: usize) -> Option<Bounds<Pixels>> {
         self.0.borrow().child_bounds.get(ix).cloned()
+    }
+
+    /// Get the size of the content with padding of the container.
+    pub fn padded_content_size(&self) -> Size<Pixels> {
+        self.0.borrow().padded_content_size
     }
 
     /// scroll_to_item scrolls the minimal amount to ensure that the child is

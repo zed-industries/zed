@@ -329,7 +329,7 @@ mod tests {
 
     fn build_wrapper() -> LineWrapper {
         let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
-        let cx = TestAppContext::new(dispatcher, None);
+        let cx = TestAppContext::build(dispatcher, None);
         let id = cx.text_system().font_id(&font("Zed Plex Mono")).unwrap();
         LineWrapper::new(id, px(16.), cx.text_system().platform_text_system.clone())
     }

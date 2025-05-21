@@ -5,9 +5,11 @@ use super::{
 use anyhow::Result;
 use collections::HashMap;
 use dap::OutputEvent;
-use editor::{CompletionProvider, Editor, EditorElement, EditorStyle, ExcerptId};
+use editor::{Bias, CompletionProvider, Editor, EditorElement, EditorStyle, ExcerptId};
 use fuzzy::StringMatchCandidate;
-use gpui::{Context, Entity, Render, Subscription, Task, TextStyle, WeakEntity};
+use gpui::{
+    Context, Entity, FocusHandle, Focusable, Render, Subscription, Task, TextStyle, WeakEntity,
+};
 use language::{Buffer, CodeLabel, ToOffset};
 use menu::Confirm;
 use project::{
@@ -28,6 +30,7 @@ pub struct Console {
     stack_frame_list: Entity<StackFrameList>,
     last_token: OutputToken,
     update_output_task: Task<()>,
+    focus_handle: FocusHandle,
 }
 
 impl Console {
@@ -42,7 +45,8 @@ impl Console {
             let mut editor = Editor::multi_line(window, cx);
             editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
             editor.set_read_only(true);
-            editor.set_show_gutter(true, cx);
+            editor.disable_scrollbars_and_minimap(window, cx);
+            editor.set_show_gutter(false, cx);
             editor.set_show_runnables(false, cx);
             editor.set_show_breakpoints(false, cx);
             editor.set_show_code_actions(false, cx);
@@ -54,8 +58,11 @@ impl Console {
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_show_edit_predictions(Some(false), window, cx);
+            editor.set_use_modal_editing(false);
+            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
             editor
         });
+        let focus_handle = cx.focus_handle();
 
         let this = cx.weak_entity();
         let query_bar = cx.new(|cx| {
@@ -70,8 +77,14 @@ impl Console {
             editor
         });
 
-        let _subscriptions =
-            vec![cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events)];
+        let _subscriptions = vec![
+            cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
+            cx.on_focus_in(&focus_handle, window, |console, window, cx| {
+                if console.is_running(cx) {
+                    console.query_bar.focus_handle(cx).focus(window);
+                }
+            }),
+        ];
 
         Self {
             session,
@@ -82,6 +95,7 @@ impl Console {
             stack_frame_list,
             update_output_task: Task::ready(()),
             last_token: OutputToken(0),
+            focus_handle,
         }
     }
 
@@ -90,7 +104,7 @@ impl Console {
         &self.console
     }
 
-    fn is_local(&self, cx: &Context<Self>) -> bool {
+    fn is_running(&self, cx: &Context<Self>) -> bool {
         self.session.read(cx).is_local()
     }
 
@@ -102,6 +116,7 @@ impl Console {
     ) {
         match event {
             StackFrameListEvent::SelectedStackFrameChanged(_) => cx.notify(),
+            StackFrameListEvent::BuiltEntries => {}
         }
     }
 
@@ -135,24 +150,31 @@ impl Console {
     pub fn evaluate(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
         let expression = self.query_bar.update(cx, |editor, cx| {
             let expression = editor.text(cx);
-
-            editor.clear(window, cx);
+            cx.defer_in(window, |editor, window, cx| {
+                editor.clear(window, cx);
+            });
 
             expression
         });
 
-        self.session.update(cx, |state, cx| {
-            state.evaluate(
-                expression,
-                Some(dap::EvaluateArgumentsContext::Variables),
-                self.stack_frame_list.read(cx).selected_stack_frame_id(),
-                None,
-                cx,
-            );
+        self.session.update(cx, |session, cx| {
+            session
+                .evaluate(
+                    expression,
+                    Some(dap::EvaluateArgumentsContext::Repl),
+                    self.stack_frame_list.read(cx).opened_stack_frame_id(),
+                    None,
+                    cx,
+                )
+                .detach();
         });
     }
 
     fn render_console(&self, cx: &Context<Self>) -> impl IntoElement {
+        EditorElement::new(&self.console, self.editor_style(cx))
+    }
+
+    fn editor_style(&self, cx: &Context<Self>) -> EditorStyle {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: if self.console.read(cx).read_only(cx) {
@@ -167,44 +189,16 @@ impl Console {
             line_height: relative(settings.buffer_line_height.value()),
             ..Default::default()
         };
-
-        EditorElement::new(
-            &self.console,
-            EditorStyle {
-                background: cx.theme().colors().editor_background,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                ..Default::default()
-            },
-        )
+        EditorStyle {
+            background: cx.theme().colors().editor_background,
+            local_player: cx.theme().players().local(),
+            text: text_style,
+            ..Default::default()
+        }
     }
 
     fn render_query_bar(&self, cx: &Context<Self>) -> impl IntoElement {
-        let settings = ThemeSettings::get_global(cx);
-        let text_style = TextStyle {
-            color: if self.console.read(cx).read_only(cx) {
-                cx.theme().colors().text_disabled
-            } else {
-                cx.theme().colors().text
-            },
-            font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features.clone(),
-            font_fallbacks: settings.ui_font.fallbacks.clone(),
-            font_size: TextSize::Editor.rems(cx).into(),
-            font_weight: settings.ui_font.weight,
-            line_height: relative(1.3),
-            ..Default::default()
-        };
-
-        EditorElement::new(
-            &self.query_bar,
-            EditorStyle {
-                background: cx.theme().colors().editor_background,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                ..Default::default()
-            },
-        )
+        EditorElement::new(&self.query_bar, self.editor_style(cx))
     }
 }
 
@@ -228,15 +222,22 @@ impl Render for Console {
         });
 
         v_flex()
+            .track_focus(&self.focus_handle)
             .key_context("DebugConsole")
             .on_action(cx.listener(Self::evaluate))
             .size_full()
             .child(self.render_console(cx))
-            .when(self.is_local(cx), |this| {
+            .when(self.is_running(cx), |this| {
                 this.child(Divider::horizontal())
                     .child(self.render_query_bar(cx))
             })
             .border_2()
+    }
+}
+
+impl Focusable for Console {
+    fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -277,7 +278,7 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
         _completion_indices: Vec<usize>,
         _completions: Rc<RefCell<Box<[Completion]>>>,
         _cx: &mut Context<Editor>,
-    ) -> gpui::Task<gpui::Result<bool>> {
+    ) -> gpui::Task<anyhow::Result<bool>> {
         Task::ready(Ok(false))
     }
 
@@ -288,7 +289,7 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
         _completion_index: usize,
         _push_to_history: bool,
         _cx: &mut Context<Editor>,
-    ) -> gpui::Task<gpui::Result<Option<language::Transaction>>> {
+    ) -> gpui::Task<anyhow::Result<Option<language::Transaction>>> {
         Task::ready(Ok(None))
     }
 
@@ -364,7 +365,7 @@ impl ConsoleQueryBarCompletionProvider {
                             new_text: string_match.string.clone(),
                             label: CodeLabel {
                                 filter_range: 0..string_match.string.len(),
-                                text: format!("{} {}", string_match.string.clone(), variable_value),
+                                text: format!("{} {}", string_match.string, variable_value),
                                 runs: Vec::new(),
                             },
                             icon_path: None,
@@ -388,7 +389,7 @@ impl ConsoleQueryBarCompletionProvider {
     ) -> Task<Result<Option<Vec<Completion>>>> {
         let completion_task = console.update(cx, |console, cx| {
             console.session.update(cx, |state, cx| {
-                let frame_id = console.stack_frame_list.read(cx).selected_stack_frame_id();
+                let frame_id = console.stack_frame_list.read(cx).opened_stack_frame_id();
 
                 state.completions(
                     CompletionsQuery::new(buffer.read(cx), buffer_position, frame_id),
@@ -409,28 +410,21 @@ impl ConsoleQueryBarCompletionProvider {
                             .as_ref()
                             .unwrap_or(&completion.label)
                             .to_owned();
-                        let mut word_bytes_length = 0;
-                        for chunk in snapshot
-                            .reversed_chunks_in_range(language::Anchor::MIN..buffer_position)
-                        {
-                            let mut processed_bytes = 0;
-                            if let Some(_) = chunk.chars().rfind(|c| {
-                                let is_whitespace = c.is_whitespace();
-                                if !is_whitespace {
-                                    processed_bytes += c.len_utf8();
-                                }
+                        let buffer_text = snapshot.text();
+                        let buffer_bytes = buffer_text.as_bytes();
+                        let new_bytes = new_text.as_bytes();
 
-                                is_whitespace
-                            }) {
-                                word_bytes_length += processed_bytes;
+                        let mut prefix_len = 0;
+                        for i in (0..new_bytes.len()).rev() {
+                            if buffer_bytes.ends_with(&new_bytes[0..i]) {
+                                prefix_len = i;
                                 break;
-                            } else {
-                                word_bytes_length += chunk.len();
                             }
                         }
 
                         let buffer_offset = buffer_position.to_offset(&snapshot);
-                        let start = buffer_offset - word_bytes_length;
+                        let start = buffer_offset - prefix_len;
+                        let start = snapshot.clip_offset(start, Bias::Left);
                         let start = snapshot.anchor_before(start);
                         let replace_range = start..buffer_position;
 

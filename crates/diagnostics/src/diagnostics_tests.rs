@@ -1,10 +1,13 @@
 use super::*;
 use collections::{HashMap, HashSet};
 use editor::{
-    DisplayPoint,
-    actions::{GoToDiagnostic, GoToPreviousDiagnostic, MoveToBeginning},
-    display_map::DisplayRow,
-    test::{editor_content_with_blocks, editor_test_context::EditorTestContext},
+    DisplayPoint, EditorSettings, InlayId,
+    actions::{GoToDiagnostic, GoToPreviousDiagnostic, Hover, MoveToBeginning},
+    display_map::{DisplayRow, Inlay},
+    test::{
+        editor_content_with_blocks, editor_lsp_test_context::EditorLspTestContext,
+        editor_test_context::EditorTestContext,
+    },
 };
 use gpui::{TestAppContext, VisualTestContext};
 use indoc::indoc;
@@ -134,11 +137,13 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                  // comment 1
                  // comment 2
                  c(y);
-             § use of moved value value used here after move
+             § use of moved value
+             § value used here after move
              § hint: move occurs because `y` has type `Vec<char>`, which does not
              § implement the `Copy` trait
                  d(x);
-             § use of moved value value used here after move
+             § use of moved value
+             § value used here after move
              § hint: move occurs because `x` has type `Vec<char>`, which does not
              § implement the `Copy` trait
              § hint: value moved here
@@ -168,7 +173,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                             lsp::Position::new(0, 15),
                         ),
                         severity: Some(lsp::DiagnosticSeverity::ERROR),
-                        message: "mismatched types\nexpected `usize`, found `char`".to_string(),
+                        message: "mismatched types expected `usize`, found `char`".to_string(),
                         ..Default::default()
                     }],
                     version: None,
@@ -206,11 +211,13 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                  // comment 1
                  // comment 2
                  c(y);
-             § use of moved value value used here after move
+             § use of moved value
+             § value used here after move
              § hint: move occurs because `y` has type `Vec<char>`, which does not
              § implement the `Copy` trait
                  d(x);
-             § use of moved value value used here after move
+             § use of moved value
+             § value used here after move
              § hint: move occurs because `x` has type `Vec<char>`, which does not
              § implement the `Copy` trait
              § hint: value moved here
@@ -241,7 +248,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                                 lsp::Position::new(0, 15),
                             ),
                             severity: Some(lsp::DiagnosticSeverity::ERROR),
-                            message: "mismatched types\nexpected `usize`, found `char`".to_string(),
+                            message: "mismatched types expected `usize`, found `char`".to_string(),
                             ..Default::default()
                         },
                         lsp::Diagnostic {
@@ -289,11 +296,13 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                  // comment 1
                  // comment 2
                  c(y);
-             § use of moved value value used here after move
+             § use of moved value
+             § value used here after move
              § hint: move occurs because `y` has type `Vec<char>`, which does not
              § implement the `Copy` trait
                  d(x);
-             § use of moved value value used here after move
+             § use of moved value
+             § value used here after move
              § hint: move occurs because `x` has type `Vec<char>`, which does not
              § implement the `Copy` trait
              § hint: value moved here
@@ -620,7 +629,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
 }
 
 #[gpui::test(iterations = 20)]
-async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
+async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng) {
     init_test(cx);
 
     let operations = env::var("OPERATIONS")
@@ -760,7 +769,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
 
     // The mutated view may contain more than the reference view as
     // we don't currently shrink excerpts when diagnostics were removed.
-    let mut ref_iter = reference_excerpts.lines();
+    let mut ref_iter = reference_excerpts.lines().filter(|line| *line != "§ -----");
     let mut next_ref_line = ref_iter.next();
     let mut skipped_block = false;
 
@@ -768,7 +777,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
         if let Some(ref_line) = next_ref_line {
             if mut_line == ref_line {
                 next_ref_line = ref_iter.next();
-            } else if mut_line.contains('§') {
+            } else if mut_line.contains('§') && mut_line != "§ -----" {
                 skipped_block = true;
             }
         }
@@ -777,6 +786,162 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
     if next_ref_line.is_some() || skipped_block {
         pretty_assertions::assert_eq!(mutated_excerpts, reference_excerpts);
     }
+}
+
+// similar to above, but with inlays. Used to find panics when mixing diagnostics and inlays.
+#[gpui::test]
+async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: StdRng) {
+    init_test(cx);
+
+    let operations = env::var("OPERATIONS")
+        .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+        .unwrap_or(10);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+
+    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let workspace = window.root(cx).unwrap();
+
+    let mutated_diagnostics = window.build_entity(cx, |window, cx| {
+        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
+    });
+
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.add_item_to_center(Box::new(mutated_diagnostics.clone()), window, cx);
+    });
+    mutated_diagnostics.update_in(cx, |diagnostics, window, _cx| {
+        assert!(diagnostics.focus_handle.is_focused(window));
+    });
+
+    let mut next_id = 0;
+    let mut next_filename = 0;
+    let mut language_server_ids = vec![LanguageServerId(0)];
+    let mut updated_language_servers = HashSet::default();
+    let mut current_diagnostics: HashMap<(PathBuf, LanguageServerId), Vec<lsp::Diagnostic>> =
+        Default::default();
+    let mut next_inlay_id = 0;
+
+    for _ in 0..operations {
+        match rng.gen_range(0..100) {
+            // language server completes its diagnostic check
+            0..=20 if !updated_language_servers.is_empty() => {
+                let server_id = *updated_language_servers.iter().choose(&mut rng).unwrap();
+                log::info!("finishing diagnostic check for language server {server_id}");
+                lsp_store.update(cx, |lsp_store, cx| {
+                    lsp_store.disk_based_diagnostics_finished(server_id, cx)
+                });
+
+                if rng.gen_bool(0.5) {
+                    cx.run_until_parked();
+                }
+            }
+
+            21..=50 => mutated_diagnostics.update_in(cx, |diagnostics, window, cx| {
+                diagnostics.editor.update(cx, |editor, cx| {
+                    let snapshot = editor.snapshot(window, cx);
+                    if snapshot.buffer_snapshot.len() > 0 {
+                        let position = rng.gen_range(0..snapshot.buffer_snapshot.len());
+                        let position = snapshot.buffer_snapshot.clip_offset(position, Bias::Left);
+                        log::info!(
+                            "adding inlay at {position}/{}: {:?}",
+                            snapshot.buffer_snapshot.len(),
+                            snapshot.buffer_snapshot.text(),
+                        );
+
+                        editor.splice_inlays(
+                            &[],
+                            vec![Inlay {
+                                id: InlayId::InlineCompletion(post_inc(&mut next_inlay_id)),
+                                position: snapshot.buffer_snapshot.anchor_before(position),
+                                text: Rope::from(format!("Test inlay {next_inlay_id}")),
+                            }],
+                            cx,
+                        );
+                    }
+                });
+            }),
+
+            // language server updates diagnostics
+            _ => {
+                let (path, server_id, diagnostics) =
+                    match current_diagnostics.iter_mut().choose(&mut rng) {
+                        // update existing set of diagnostics
+                        Some(((path, server_id), diagnostics)) if rng.gen_bool(0.5) => {
+                            (path.clone(), *server_id, diagnostics)
+                        }
+
+                        // insert a set of diagnostics for a new path
+                        _ => {
+                            let path: PathBuf =
+                                format!(path!("/test/{}.rs"), post_inc(&mut next_filename)).into();
+                            let len = rng.gen_range(128..256);
+                            let content =
+                                RandomCharIter::new(&mut rng).take(len).collect::<String>();
+                            fs.insert_file(&path, content.into_bytes()).await;
+
+                            let server_id = match language_server_ids.iter().choose(&mut rng) {
+                                Some(server_id) if rng.gen_bool(0.5) => *server_id,
+                                _ => {
+                                    let id = LanguageServerId(language_server_ids.len());
+                                    language_server_ids.push(id);
+                                    id
+                                }
+                            };
+
+                            (
+                                path.clone(),
+                                server_id,
+                                current_diagnostics.entry((path, server_id)).or_default(),
+                            )
+                        }
+                    };
+
+                updated_language_servers.insert(server_id);
+
+                lsp_store.update(cx, |lsp_store, cx| {
+                    log::info!("updating diagnostics. language server {server_id} path {path:?}");
+                    randomly_update_diagnostics_for_path(
+                        &fs,
+                        &path,
+                        diagnostics,
+                        &mut next_id,
+                        &mut rng,
+                    );
+                    lsp_store
+                        .update_diagnostics(
+                            server_id,
+                            lsp::PublishDiagnosticsParams {
+                                uri: lsp::Url::from_file_path(&path).unwrap_or_else(|_| {
+                                    lsp::Url::parse("file:///test/fallback.rs").unwrap()
+                                }),
+                                diagnostics: diagnostics.clone(),
+                                version: None,
+                            },
+                            &[],
+                            cx,
+                        )
+                        .unwrap()
+                });
+                cx.executor()
+                    .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+
+                cx.run_until_parked();
+            }
+        }
+    }
+
+    log::info!("updating mutated diagnostics view");
+    mutated_diagnostics.update_in(cx, |diagnostics, window, cx| {
+        diagnostics.update_stale_excerpts(window, cx)
+    });
+
+    cx.executor()
+        .advance_clock(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10));
+    cx.run_until_parked();
 }
 
 #[gpui::test]
@@ -1036,8 +1201,219 @@ async fn cycle_through_same_place_diagnostics(cx: &mut TestAppContext) {
     "});
 }
 
+#[gpui::test]
+async fn test_diagnostics_with_links(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        fn func(abˇc def: i32) -> u32 {
+        }
+    "});
+    let lsp_store =
+        cx.update_editor(|editor, _, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
+
+    cx.update(|_, cx| {
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.update_diagnostics(
+                LanguageServerId(0),
+                lsp::PublishDiagnosticsParams {
+                    uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
+                    version: None,
+                    diagnostics: vec![lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(0, 8), lsp::Position::new(0, 12)),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: "we've had problems with <https://link.one>, and <https://link.two> is broken".to_string(),
+                        ..Default::default()
+                    }],
+                },
+                &[],
+                cx,
+            )
+        })
+    }).unwrap();
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor::hover_popover::hover(editor, &Default::default(), window, cx)
+    });
+    cx.run_until_parked();
+    cx.update_editor(|editor, _, _| assert!(editor.hover_state.diagnostic_popover.is_some()))
+}
+
+#[gpui::test]
+async fn test_hover_diagnostic_and_info_popovers(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    // Hover with just diagnostic, pops DiagnosticPopover immediately and then
+    // info popover once request completes
+    cx.set_state(indoc! {"
+        fn teˇst() { println!(); }
+    "});
+    // Send diagnostic to client
+    let range = cx.lsp_range(indoc! {"
+        fn «test»() { println!(); }
+    "});
+    let lsp_store =
+        cx.update_editor(|editor, _, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
+    cx.update(|_, cx| {
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.update_diagnostics(
+                LanguageServerId(0),
+                lsp::PublishDiagnosticsParams {
+                    uri: lsp::Url::from_file_path(path!("/root/dir/file.rs")).unwrap(),
+                    version: None,
+                    diagnostics: vec![lsp::Diagnostic {
+                        range,
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: "A test diagnostic message.".to_string(),
+                        ..Default::default()
+                    }],
+                },
+                &[],
+                cx,
+            )
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    // Hover pops diagnostic immediately
+    cx.update_editor(|editor, window, cx| editor::hover_popover::hover(editor, &Hover, window, cx));
+    cx.background_executor.run_until_parked();
+
+    cx.editor(|Editor { hover_state, .. }, _, _| {
+        assert!(hover_state.diagnostic_popover.is_some());
+        assert!(hover_state.info_popovers.is_empty());
+    });
+
+    // Info Popover shows after request responded to
+    let range = cx.lsp_range(indoc! {"
+            fn «test»() { println!(); }
+        "});
+    cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+        Ok(Some(lsp::Hover {
+            contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                kind: lsp::MarkupKind::Markdown,
+                value: "some new docs".to_string(),
+            }),
+            range: Some(range),
+        }))
+    });
+    let delay = cx.update(|_, cx| EditorSettings::get_global(cx).hover_popover_delay + 1);
+    cx.background_executor
+        .advance_clock(Duration::from_millis(delay));
+
+    cx.background_executor.run_until_parked();
+    cx.editor(|Editor { hover_state, .. }, _, _| {
+        hover_state.diagnostic_popover.is_some() && hover_state.info_task.is_some()
+    });
+}
+#[gpui::test]
+async fn test_diagnostics_with_code(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "main.js": "
+                function test() {
+                    const x = 10;
+                    const y = 20;
+                    return 1;
+                }
+                test();
+            "
+            .unindent(),
+        }),
+    )
+    .await;
+
+    let language_server_id = LanguageServerId(0);
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let workspace = window.root(cx).unwrap();
+    let uri = lsp::Url::from_file_path(path!("/root/main.js")).unwrap();
+
+    // Create diagnostics with code fields
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store
+            .update_diagnostics(
+                language_server_id,
+                lsp::PublishDiagnosticsParams {
+                    uri: uri.clone(),
+                    diagnostics: vec![
+                        lsp::Diagnostic {
+                            range: lsp::Range::new(
+                                lsp::Position::new(1, 4),
+                                lsp::Position::new(1, 14),
+                            ),
+                            severity: Some(lsp::DiagnosticSeverity::WARNING),
+                            code: Some(lsp::NumberOrString::String("no-unused-vars".to_string())),
+                            source: Some("eslint".to_string()),
+                            message: "'x' is assigned a value but never used".to_string(),
+                            ..Default::default()
+                        },
+                        lsp::Diagnostic {
+                            range: lsp::Range::new(
+                                lsp::Position::new(2, 4),
+                                lsp::Position::new(2, 14),
+                            ),
+                            severity: Some(lsp::DiagnosticSeverity::WARNING),
+                            code: Some(lsp::NumberOrString::String("no-unused-vars".to_string())),
+                            source: Some("eslint".to_string()),
+                            message: "'y' is assigned a value but never used".to_string(),
+                            ..Default::default()
+                        },
+                    ],
+                    version: None,
+                },
+                &[],
+                cx,
+            )
+            .unwrap();
+    });
+
+    // Open the project diagnostics view
+    let diagnostics = window.build_entity(cx, |window, cx| {
+        ProjectDiagnosticsEditor::new(true, project.clone(), workspace.downgrade(), window, cx)
+    });
+    let editor = diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
+
+    diagnostics
+        .next_notification(DIAGNOSTICS_UPDATE_DELAY + Duration::from_millis(10), cx)
+        .await;
+
+    // Verify that the diagnostic codes are displayed correctly
+    pretty_assertions::assert_eq!(
+        editor_content_with_blocks(&editor, cx),
+        indoc::indoc! {
+            "§ main.js
+             § -----
+             function test() {
+                 const x = 10; § 'x' is assigned a value but never used (eslint no-unused-vars)
+                 const y = 20; § 'y' is assigned a value but never used (eslint no-unused-vars)
+                 return 1;
+             }"
+        }
+    );
+}
+
 fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
+        env_logger::try_init().ok();
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
         theme::init(theme::LoadThemes::JustBase, cx);
