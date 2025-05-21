@@ -86,7 +86,6 @@ dependencies = [
  "jsonschema",
  "language",
  "language_model",
- "language_model_selector",
  "log",
  "lsp",
  "markdown",
@@ -492,6 +491,7 @@ dependencies = [
  "collections",
  "context_server",
  "editor",
+ "feature_flags",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -499,17 +499,18 @@ dependencies = [
  "indexed_docs",
  "language",
  "language_model",
- "language_model_selector",
  "languages",
  "log",
  "multi_buffer",
  "open_ai",
+ "ordered-float 2.10.1",
  "parking_lot",
  "paths",
  "picker",
  "pretty_assertions",
  "project",
  "prompt_store",
+ "proto",
  "rand 0.8.5",
  "regex",
  "rope",
@@ -611,7 +612,6 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
- "terminal_view",
  "text",
  "toml 0.8.20",
  "ui",
@@ -5019,6 +5019,7 @@ dependencies = [
  "shellexpand 2.1.2",
  "smol",
  "telemetry",
+ "terminal_view",
  "toml 0.8.20",
  "unindent",
  "util",
@@ -8769,25 +8770,6 @@ dependencies = [
  "util",
  "workspace-hack",
  "zed_llm_client",
-]
-
-[[package]]
-name = "language_model_selector"
-version = "0.1.0"
-dependencies = [
- "collections",
- "feature_flags",
- "futures 0.3.31",
- "fuzzy",
- "gpui",
- "language_model",
- "log",
- "ordered-float 2.10.1",
- "picker",
- "proto",
- "ui",
- "workspace-hack",
- "zed_actions",
 ]
 
 [[package]]
@@ -15673,6 +15655,7 @@ name = "terminal_view"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assistant_slash_command",
  "async-recursion 1.1.1",
  "breadcrumbs",
  "client",
