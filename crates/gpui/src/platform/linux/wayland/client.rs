@@ -1295,6 +1295,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     wl_keyboard::KeyState::Pressed if !keysym.is_modifier_key() => {
                         let mut keystroke =
                             Keystroke::from_xkb(&keymap_state, state.modifiers, keycode);
+                        println!("Wayland Before {:#?}", keystroke);
                         if let Some(mut compose) = state.compose_state.take() {
                             compose.feed(keysym);
                             match compose.status() {
@@ -1335,6 +1336,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                             }
                             state.compose_state = Some(compose);
                         }
+                        println!("Wayland Key pressed: {:#?}", keystroke);
                         let input = PlatformInput::KeyDown(KeyDownEvent {
                             keystroke: keystroke.clone(),
                             is_held: false,
