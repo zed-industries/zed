@@ -803,6 +803,7 @@ mod tests {
                 command: "echo".into(),
                 args: vec!["hello!".into()],
             }],
+            debug_adapters: Vec::new(),
         }
     }
 }
