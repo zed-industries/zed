@@ -1,4 +1,5 @@
 pub mod arc_cow;
+pub mod archive;
 pub mod command;
 pub mod fs;
 pub mod markdown;
@@ -27,7 +28,7 @@ use std::{
 use unicase::UniCase;
 
 #[cfg(unix)]
-use anyhow::{Context as _, anyhow};
+use anyhow::Context as _;
 
 pub use take_until::*;
 #[cfg(any(test, feature = "test-support"))]
@@ -259,7 +260,7 @@ where
 }
 
 #[cfg(unix)]
-pub fn load_shell_from_passwd() -> Result<()> {
+fn load_shell_from_passwd() -> Result<()> {
     let buflen = match unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) } {
         n if n < 0 => 1024,
         n => n as usize,
@@ -309,6 +310,8 @@ pub fn load_shell_from_passwd() -> Result<()> {
 
 #[cfg(unix)]
 pub fn load_login_shell_environment() -> Result<()> {
+    load_shell_from_passwd().log_err();
+
     let marker = "ZED_LOGIN_SHELL_START";
     let shell = env::var("SHELL").context(
         "SHELL environment variable is not assigned so we can't source login environment variables",
@@ -333,9 +336,7 @@ pub fn load_login_shell_environment() -> Result<()> {
     )
     .output()
     .context("failed to spawn login shell to source login environment variables")?;
-    if !output.status.success() {
-        Err(anyhow!("login shell exited with error"))?;
-    }
+    anyhow::ensure!(output.status.success(), "login shell exited with error");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -1020,6 +1021,29 @@ pub fn get_system_shell() -> String {
     #[cfg(not(target_os = "windows"))]
     {
         std::env::var("SHELL").unwrap_or("/bin/sh".to_string())
+    }
+}
+
+#[derive(Debug)]
+pub enum ConnectionResult<O> {
+    Timeout,
+    ConnectionReset,
+    Result(anyhow::Result<O>),
+}
+
+impl<O> ConnectionResult<O> {
+    pub fn into_response(self) -> anyhow::Result<O> {
+        match self {
+            ConnectionResult::Timeout => anyhow::bail!("Request timed out"),
+            ConnectionResult::ConnectionReset => anyhow::bail!("Server reset the connection"),
+            ConnectionResult::Result(r) => r,
+        }
+    }
+}
+
+impl<O> From<anyhow::Result<O>> for ConnectionResult<O> {
+    fn from(result: anyhow::Result<O>) -> Self {
+        ConnectionResult::Result(result)
     }
 }
 

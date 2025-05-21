@@ -2100,14 +2100,14 @@ impl Window {
         let (task, is_first) = cx.fetch_asset::<A>(source);
         task.clone().now_or_never().or_else(|| {
             if is_first {
-                let entity = self.current_view();
+                let entity_id = self.current_view();
                 self.spawn(cx, {
                     let task = task.clone();
                     async move |cx| {
                         task.await;
 
                         cx.on_next_frame(move |_, cx| {
-                            cx.notify(entity);
+                            cx.notify(entity_id);
                         });
                     }
                 })
@@ -3922,7 +3922,7 @@ impl<V: 'static + Render> WindowHandle<V> {
                     .and_then(|window| window.root.clone())
                     .map(|root_view| root_view.downcast::<V>())
             })
-            .ok_or_else(|| anyhow!("window not found"))?
+            .context("window not found")?
             .map_err(|_| anyhow!("the type of the window's root view has changed"))?;
 
         Ok(x.read(cx))
@@ -4103,7 +4103,7 @@ impl TryInto<SharedString> for ElementId {
         if let ElementId::Name(name) = self {
             Ok(name)
         } else {
-            Err(anyhow!("element id is not string"))
+            anyhow::bail!("element id is not string")
         }
     }
 }

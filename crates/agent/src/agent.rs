@@ -49,7 +49,7 @@ pub use crate::context::{ContextLoadResult, LoadedContext};
 pub use crate::inline_assistant::InlineAssistant;
 use crate::slash_command_settings::SlashCommandSettings;
 pub use crate::thread::{Message, MessageSegment, Thread, ThreadEvent};
-pub use crate::thread_store::{TextThreadStore, ThreadStore};
+pub use crate::thread_store::{SerializedThread, TextThreadStore, ThreadStore};
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
 pub use context_store::ContextStore;
 pub use ui::preview::{all_agent_previews, get_agent_preview};
@@ -85,6 +85,7 @@ actions!(
         KeepAll,
         Follow,
         ResetTrialUpsell,
+        ResetTrialEndUpsell,
     ]
 );
 
@@ -216,7 +217,6 @@ fn register_slash_commands(cx: &mut App) {
     slash_command_registry.register_command(assistant_slash_commands::PromptSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::SelectionCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::DefaultSlashCommand, false);
-    slash_command_registry.register_command(assistant_slash_commands::TerminalSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::NowSlashCommand, false);
     slash_command_registry
         .register_command(assistant_slash_commands::DiagnosticsSlashCommand, true);

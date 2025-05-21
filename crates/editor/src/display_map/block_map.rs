@@ -282,7 +282,6 @@ struct Transform {
     block: Option<Block>,
 }
 
-#[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 pub enum Block {
     Custom(Arc<CustomBlock>),

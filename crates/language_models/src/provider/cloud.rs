@@ -20,7 +20,7 @@ use language_model::{
 };
 use language_model::{
     LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider, LlmApiToken,
-    MaxMonthlySpendReachedError, PaymentRequiredError, RefreshLlmTokenListener,
+    PaymentRequiredError, RefreshLlmTokenListener,
 };
 use proto::Plan;
 use release_channel::AppVersion;
@@ -41,9 +41,9 @@ use ui::{TintColor, prelude::*};
 use zed_llm_client::{
     CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CURRENT_PLAN_HEADER_NAME, CompletionBody,
     CompletionRequestStatus, CountTokensBody, CountTokensResponse, EXPIRED_LLM_TOKEN_HEADER_NAME,
-    MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME, MODEL_REQUESTS_RESOURCE_HEADER_VALUE,
-    SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME,
-    TOOL_USE_LIMIT_REACHED_HEADER_NAME, ZED_VERSION_HEADER_NAME,
+    MODEL_REQUESTS_RESOURCE_HEADER_VALUE, SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME,
+    SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME, TOOL_USE_LIMIT_REACHED_HEADER_NAME,
+    ZED_VERSION_HEADER_NAME,
 };
 
 use crate::AllLanguageModelSettings;
@@ -180,9 +180,12 @@ impl State {
 
     fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let client = self.client.clone();
-        cx.spawn(async move |this, cx| {
-            client.authenticate_and_connect(true, &cx).await?;
-            this.update(cx, |_, cx| cx.notify())
+        cx.spawn(async move |state, cx| {
+            client
+                .authenticate_and_connect(true, &cx)
+                .await
+                .into_response()?;
+            state.update(cx, |_, cx| cx.notify())
         })
     }
 
@@ -540,13 +543,9 @@ impl CloudLanguageModel {
         let mut retry_delay = Duration::from_secs(1);
 
         loop {
-            let request_builder = http_client::Request::builder().method(Method::POST);
-            let request_builder = if let Ok(completions_url) = std::env::var("ZED_COMPLETIONS_URL")
-            {
-                request_builder.uri(completions_url)
-            } else {
-                request_builder.uri(http_client.build_zed_llm_url("/completions", &[])?.as_ref())
-            };
+            let request_builder = http_client::Request::builder()
+                .method(Method::POST)
+                .uri(http_client.build_zed_llm_url("/completions", &[])?.as_ref());
             let request_builder = if let Some(app_version) = app_version {
                 request_builder.header(ZED_VERSION_HEADER_NAME, app_version.to_string())
             } else {
@@ -593,13 +592,6 @@ impl CloudLanguageModel {
             } else if status == StatusCode::FORBIDDEN
                 && response
                     .headers()
-                    .get(MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME)
-                    .is_some()
-            {
-                return Err(anyhow!(MaxMonthlySpendReachedError));
-            } else if status == StatusCode::FORBIDDEN
-                && response
-                    .headers()
                     .get(SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME)
                     .is_some()
             {
@@ -615,7 +607,7 @@ impl CloudLanguageModel {
                         .and_then(|plan| zed_llm_client::Plan::from_str(plan).ok())
                     {
                         let plan = match plan {
-                            zed_llm_client::Plan::Free => Plan::Free,
+                            zed_llm_client::Plan::ZedFree => Plan::Free,
                             zed_llm_client::Plan::ZedPro => Plan::ZedPro,
                             zed_llm_client::Plan::ZedProTrial => Plan::ZedProTrial,
                         };
@@ -623,7 +615,7 @@ impl CloudLanguageModel {
                     }
                 }
 
-                return Err(anyhow!("Forbidden"));
+                anyhow::bail!("Forbidden");
             } else if status.as_u16() >= 500 && status.as_u16() < 600 {
                 // If we encounter an error in the 500 range, retry after a delay.
                 // We've seen at least these in the wild from API providers:
@@ -634,10 +626,10 @@ impl CloudLanguageModel {
                 if retries_remaining == 0 {
                     let mut body = String::new();
                     response.body_mut().read_to_string(&mut body).await?;
-                    return Err(anyhow!(
+                    anyhow::bail!(
                         "cloud language model completion failed after {} retries with status {status}: {body}",
                         Self::MAX_RETRIES
-                    ));
+                    );
                 }
 
                 Timer::after(retry_delay).await;
@@ -684,6 +676,14 @@ impl LanguageModel for CloudLanguageModel {
             CloudModel::Anthropic(_) => true,
             CloudModel::Google(_) => true,
             CloudModel::OpenAi(_) => true,
+        }
+    }
+
+    fn supports_images(&self) -> bool {
+        match self.model {
+            CloudModel::Anthropic(_) => true,
+            CloudModel::Google(_) => true,
+            CloudModel::OpenAi(_) => false,
         }
     }
 
@@ -743,17 +743,6 @@ impl LanguageModel for CloudLanguageModel {
                     let http_client = &client.http_client();
                     let token = llm_api_token.acquire(&client).await?;
 
-                    let request_builder = http_client::Request::builder().method(Method::POST);
-                    let request_builder =
-                        if let Ok(completions_url) = std::env::var("ZED_COUNT_TOKENS_URL") {
-                            request_builder.uri(completions_url)
-                        } else {
-                            request_builder.uri(
-                                http_client
-                                    .build_zed_llm_url("/count_tokens", &[])?
-                                    .as_ref(),
-                            )
-                        };
                     let request_body = CountTokensBody {
                         provider: zed_llm_client::LanguageModelProvider::Google,
                         model: model_id,
@@ -761,7 +750,13 @@ impl LanguageModel for CloudLanguageModel {
                             generate_content_request,
                         })?,
                     };
-                    let request = request_builder
+                    let request = http_client::Request::builder()
+                        .method(Method::POST)
+                        .uri(
+                            http_client
+                                .build_zed_llm_url("/count_tokens", &[])?
+                                .as_ref(),
+                        )
                         .header("Content-Type", "application/json")
                         .header("Authorization", format!("Bearer {token}"))
                         .body(serde_json::to_string(&request_body)?.into())?;

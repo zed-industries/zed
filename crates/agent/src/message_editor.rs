@@ -8,6 +8,7 @@ use crate::ui::{
     AnimatedLabel, MaxModeTooltip,
     preview::{AgentPreview, UsageCallout},
 };
+use assistant_context_editor::language_model_selector::ToggleModelSelector;
 use assistant_settings::{AssistantSettings, CompletionMode};
 use buffer_diff::BufferDiff;
 use client::UserStore;
@@ -30,7 +31,6 @@ use language_model::{
     ConfiguredModel, LanguageModelRequestMessage, MessageContent, RequestUsage,
     ZED_CLOUD_PROVIDER_ID,
 };
-use language_model_selector::ToggleModelSelector;
 use multi_buffer;
 use project::Project;
 use prompt_store::PromptStore;
@@ -200,7 +200,13 @@ impl MessageEditor {
         });
 
         let profile_selector = cx.new(|cx| {
-            ProfileSelector::new(thread.clone(), thread_store, editor.focus_handle(cx), cx)
+            ProfileSelector::new(
+                fs,
+                thread.clone(),
+                thread_store,
+                editor.focus_handle(cx),
+                cx,
+            )
         });
 
         Self {
@@ -395,7 +401,7 @@ impl MessageEditor {
     fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
         if self.context_picker_menu_handle.is_deployed() {
             cx.propagate();
-        } else {
+        } else if self.context_strip.read(cx).has_context_items(cx) {
             self.context_strip.focus_handle(cx).focus(window);
         }
     }
@@ -1079,11 +1085,11 @@ impl MessageEditor {
         let plan = user_store
             .current_plan()
             .map(|plan| match plan {
-                Plan::Free => zed_llm_client::Plan::Free,
+                Plan::Free => zed_llm_client::Plan::ZedFree,
                 Plan::ZedPro => zed_llm_client::Plan::ZedPro,
                 Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
             })
-            .unwrap_or(zed_llm_client::Plan::Free);
+            .unwrap_or(zed_llm_client::Plan::ZedFree);
         let usage = self.thread.read(cx).last_usage().or_else(|| {
             maybe!({
                 let amount = user_store.model_request_usage_amount()?;

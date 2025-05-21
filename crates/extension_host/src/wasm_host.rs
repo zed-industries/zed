@@ -4,9 +4,9 @@ use crate::ExtensionManifest;
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
 use extension::{
-    CodeLabel, Command, Completion, ContextServerConfiguration, ExtensionHostProxy,
-    KeyValueStoreDelegate, ProjectDelegate, SlashCommand, SlashCommandArgumentCompletion,
-    SlashCommandOutput, Symbol, WorktreeDelegate,
+    CodeLabel, Command, Completion, ContextServerConfiguration, DebugAdapterBinary,
+    DebugTaskDefinition, ExtensionHostProxy, KeyValueStoreDelegate, ProjectDelegate, SlashCommand,
+    SlashCommandArgumentCompletion, SlashCommandOutput, Symbol, WorktreeDelegate,
 };
 use fs::{Fs, normalize_path};
 use futures::future::LocalBoxFuture;
@@ -22,15 +22,18 @@ use gpui::{App, AsyncApp, BackgroundExecutor, Task};
 use http_client::HttpClient;
 use language::LanguageName;
 use lsp::LanguageServerName;
+use moka::sync::Cache;
 use node_runtime::NodeRuntime;
 use release_channel::ReleaseChannel;
 use semantic_version::SemanticVersion;
+use std::borrow::Cow;
+use std::sync::LazyLock;
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, OnceLock},
+    sync::Arc,
 };
 use wasmtime::{
-    Engine, Store,
+    CacheStore, Engine, Store,
     component::{Component, ResourceTable},
 };
 use wasmtime_wasi::{self as wasi, WasiView};
@@ -374,6 +377,27 @@ impl extension::Extension for WasmExtension {
         })
         .await
     }
+    async fn get_dap_binary(
+        &self,
+        dap_name: Arc<str>,
+        config: DebugTaskDefinition,
+        user_installed_path: Option<PathBuf>,
+        worktree: Arc<dyn WorktreeDelegate>,
+    ) -> Result<DebugAdapterBinary> {
+        self.call(|extension, store| {
+            async move {
+                let resource = store.data_mut().table().push(worktree)?;
+                let dap_binary = extension
+                    .call_get_dap_binary(store, dap_name, config, user_installed_path, resource)
+                    .await?
+                    .map_err(|err| anyhow!("{err:?}"))?;
+                let dap_binary = dap_binary.try_into()?;
+                Ok(dap_binary)
+            }
+            .boxed()
+        })
+        .await
+    }
 }
 
 pub struct WasmState {
@@ -390,16 +414,23 @@ type ExtensionCall = Box<
 >;
 
 fn wasm_engine() -> wasmtime::Engine {
-    static WASM_ENGINE: OnceLock<wasmtime::Engine> = OnceLock::new();
+    static WASM_ENGINE: LazyLock<wasmtime::Engine> = LazyLock::new(|| {
+        let mut config = wasmtime::Config::new();
+        config.wasm_component_model(true);
+        config.async_support(true);
+        config
+            .enable_incremental_compilation(cache_store())
+            .unwrap();
+        wasmtime::Engine::new(&config).unwrap()
+    });
 
-    WASM_ENGINE
-        .get_or_init(|| {
-            let mut config = wasmtime::Config::new();
-            config.wasm_component_model(true);
-            config.async_support(true);
-            wasmtime::Engine::new(&config).unwrap()
-        })
-        .clone()
+    WASM_ENGINE.clone()
+}
+
+fn cache_store() -> Arc<IncrementalCompilationCache> {
+    static CACHE_STORE: LazyLock<Arc<IncrementalCompilationCache>> =
+        LazyLock::new(|| Arc::new(IncrementalCompilationCache::new()));
+    CACHE_STORE.clone()
 }
 
 impl WasmHost {
@@ -512,11 +543,11 @@ impl WasmHost {
     pub fn writeable_path_from_extension(&self, id: &Arc<str>, path: &Path) -> Result<PathBuf> {
         let extension_work_dir = self.work_dir.join(id.as_ref());
         let path = normalize_path(&extension_work_dir.join(path));
-        if path.starts_with(&extension_work_dir) {
-            Ok(path)
-        } else {
-            Err(anyhow!("cannot write to path {}", path.display()))
-        }
+        anyhow::ensure!(
+            path.starts_with(&extension_work_dir),
+            "cannot write to path {path:?}",
+        );
+        Ok(path)
     }
 }
 
@@ -548,7 +579,7 @@ pub fn parse_wasm_extension_version(
     //
     // By parsing the entirety of the Wasm bytes before we return, we're able to detect this problem
     // earlier as an `Err` rather than as a panic.
-    version.ok_or_else(|| anyhow!("extension {} has no zed:api-version section", extension_id))
+    version.with_context(|| format!("extension {extension_id} has no zed:api-version section"))
 }
 
 fn parse_wasm_extension_version_custom_section(data: &[u8]) -> Option<SemanticVersion> {
@@ -644,5 +675,135 @@ impl wasi::WasiView for WasmState {
 
     fn ctx(&mut self) -> &mut wasi::WasiCtx {
         &mut self.ctx
+    }
+}
+
+/// Wrapper around a mini-moka bounded cache for storing incremental compilation artifacts.
+/// Since wasm modules have many similar elements, this can save us a lot of work at the
+/// cost of a small memory footprint. However, we don't want this to be unbounded, so we use
+/// a LFU/LRU cache to evict less used cache entries.
+#[derive(Debug)]
+struct IncrementalCompilationCache {
+    cache: Cache<Vec<u8>, Vec<u8>>,
+}
+
+impl IncrementalCompilationCache {
+    fn new() -> Self {
+        let cache = Cache::builder()
+            // Cap this at 32 MB for now. Our extensions turn into roughly 512kb in the cache,
+            // which means we could store 64 completely novel extensions in the cache, but in
+            // practice we will more than that, which is more than enough for our use case.
+            .max_capacity(32 * 1024 * 1024)
+            .weigher(|k: &Vec<u8>, v: &Vec<u8>| (k.len() + v.len()).try_into().unwrap_or(u32::MAX))
+            .build();
+        Self { cache }
+    }
+}
+
+impl CacheStore for IncrementalCompilationCache {
+    fn get(&self, key: &[u8]) -> Option<Cow<[u8]>> {
+        self.cache.get(key).map(|v| v.into())
+    }
+
+    fn insert(&self, key: &[u8], value: Vec<u8>) -> bool {
+        self.cache.insert(key.to_vec(), value);
+        true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use extension::{
+        ExtensionCapability, ExtensionLibraryKind, LanguageServerManifestEntry, LibManifestEntry,
+        SchemaVersion,
+        extension_builder::{CompileExtensionOptions, ExtensionBuilder},
+    };
+    use gpui::TestAppContext;
+    use reqwest_client::ReqwestClient;
+
+    use super::*;
+
+    #[gpui::test]
+    fn test_cache_size_for_test_extension(cx: &TestAppContext) {
+        let cache_store = cache_store();
+        let engine = wasm_engine();
+        let wasm_bytes = wasm_bytes(cx, &mut manifest());
+
+        Component::new(&engine, wasm_bytes).unwrap();
+
+        cache_store.cache.run_pending_tasks();
+        let size: usize = cache_store
+            .cache
+            .iter()
+            .map(|(k, v)| k.len() + v.len())
+            .sum();
+        // If this assertion fails, it means extensions got larger and we may want to
+        // reconsider our cache size.
+        assert!(size < 512 * 1024);
+    }
+
+    fn wasm_bytes(cx: &TestAppContext, manifest: &mut ExtensionManifest) -> Vec<u8> {
+        let extension_builder = extension_builder();
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("extensions/test-extension");
+        cx.executor()
+            .block(extension_builder.compile_extension(
+                &path,
+                manifest,
+                CompileExtensionOptions { release: true },
+            ))
+            .unwrap();
+        std::fs::read(path.join("extension.wasm")).unwrap()
+    }
+
+    fn extension_builder() -> ExtensionBuilder {
+        let user_agent = format!(
+            "Zed Extension CLI/{} ({}; {})",
+            env!("CARGO_PKG_VERSION"),
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        );
+        let http_client = Arc::new(ReqwestClient::user_agent(&user_agent).unwrap());
+        // Local dir so that we don't have to download it on every run
+        let build_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("benches/.build");
+        ExtensionBuilder::new(http_client, build_dir)
+    }
+
+    fn manifest() -> ExtensionManifest {
+        ExtensionManifest {
+            id: "test-extension".into(),
+            name: "Test Extension".into(),
+            version: "0.1.0".into(),
+            schema_version: SchemaVersion(1),
+            description: Some("An extension for use in tests.".into()),
+            authors: Vec::new(),
+            repository: None,
+            themes: Default::default(),
+            icon_themes: Vec::new(),
+            lib: LibManifestEntry {
+                kind: Some(ExtensionLibraryKind::Rust),
+                version: Some(SemanticVersion::new(0, 1, 0)),
+            },
+            languages: Vec::new(),
+            grammars: BTreeMap::default(),
+            language_servers: [("gleam".into(), LanguageServerManifestEntry::default())]
+                .into_iter()
+                .collect(),
+            context_servers: BTreeMap::default(),
+            slash_commands: BTreeMap::default(),
+            indexed_docs_providers: BTreeMap::default(),
+            snippets: None,
+            capabilities: vec![ExtensionCapability::ProcessExec {
+                command: "echo".into(),
+                args: vec!["hello!".into()],
+            }],
+            debug_adapters: Vec::new(),
+        }
     }
 }

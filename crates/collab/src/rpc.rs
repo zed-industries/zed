@@ -1,7 +1,9 @@
 mod connection_pool;
 
+use crate::api::billing::find_or_create_billing_customer;
 use crate::api::{CloudflareIpCountryHeader, SystemIdHeader};
 use crate::db::billing_subscription::SubscriptionKind;
+use crate::llm::db::LlmDatabase;
 use crate::llm::{AGENT_EXTENDED_TRIAL_FEATURE_FLAG, LlmTokenClaims};
 use crate::{
     AppState, Error, Result, auth,
@@ -67,7 +69,7 @@ use std::{
     time::{Duration, Instant},
 };
 use time::OffsetDateTime;
-use tokio::sync::{MutexGuard, Semaphore, watch};
+use tokio::sync::{Semaphore, watch};
 use tower::ServiceBuilder;
 use tracing::{
     Instrument,
@@ -164,42 +166,6 @@ impl Session {
             Principal::User(user) => user.admin,
             Principal::Impersonated { .. } => true,
         }
-    }
-
-    pub async fn has_llm_subscription(
-        &self,
-        db: &MutexGuard<'_, DbHandle>,
-    ) -> anyhow::Result<bool> {
-        if self.is_staff() {
-            return Ok(true);
-        }
-
-        let user_id = self.user_id();
-
-        Ok(db.has_active_billing_subscription(user_id).await?)
-    }
-
-    pub async fn current_plan(&self, db: &MutexGuard<'_, DbHandle>) -> anyhow::Result<proto::Plan> {
-        if self.is_staff() {
-            return Ok(proto::Plan::ZedPro);
-        }
-
-        let user_id = self.user_id();
-
-        let subscription = db.get_active_billing_subscription(user_id).await?;
-        let subscription_kind = subscription.and_then(|subscription| subscription.kind);
-
-        let plan = if let Some(subscription_kind) = subscription_kind {
-            match subscription_kind {
-                SubscriptionKind::ZedPro => proto::Plan::ZedPro,
-                SubscriptionKind::ZedProTrial => proto::Plan::ZedProTrial,
-                SubscriptionKind::ZedFree => proto::Plan::Free,
-            }
-        } else {
-            proto::Plan::Free
-        };
-
-        Ok(plan)
     }
 
     fn user_id(&self) -> UserId {
@@ -698,7 +664,7 @@ impl Server {
                     Err(error) => {
                         let proto_err = match &error {
                             Error::Internal(err) => err.to_proto(),
-                            _ => ErrorCode::Internal.message(format!("{}", error)).to_proto(),
+                            _ => ErrorCode::Internal.message(format!("{error}")).to_proto(),
                         };
                         peer.respond_with_error(receipt, proto_err)?;
                         Err(error)
@@ -966,6 +932,32 @@ impl Server {
         Ok(())
     }
 
+    pub async fn update_plan_for_user(self: &Arc<Self>, user_id: UserId) -> Result<()> {
+        let user = self
+            .app_state
+            .db
+            .get_user_by_id(user_id)
+            .await?
+            .context("user not found")?;
+
+        let update_user_plan = make_update_user_plan_message(
+            &self.app_state.db,
+            self.app_state.llm_db.clone(),
+            user_id,
+            user.admin,
+        )
+        .await?;
+
+        let pool = self.connection_pool.lock();
+        for connection_id in pool.user_connection_ids(user_id) {
+            self.peer
+                .send(connection_id, update_user_plan.clone())
+                .trace_err();
+        }
+
+        Ok(())
+    }
+
     pub async fn refresh_llm_tokens_for_user(self: &Arc<Self>, user_id: UserId) {
         let pool = self.connection_pool.lock();
         for connection_id in pool.user_connection_ids(user_id) {
@@ -1177,7 +1169,7 @@ pub async fn handle_metrics(Extension(server): Extension<Arc<Server>>) -> Result
     let metric_families = prometheus::gather();
     let encoded_metrics = encoder
         .encode_to_string(&metric_families)
-        .map_err(|err| anyhow!("{}", err))?;
+        .map_err(|err| anyhow!("{err}"))?;
     Ok(encoded_metrics)
 }
 
@@ -1693,7 +1685,7 @@ async fn decline_call(message: proto::DeclineCall, session: Session) -> Result<(
             .await
             .decline_call(Some(room_id), session.user_id())
             .await?
-            .ok_or_else(|| anyhow!("failed to decline call"))?;
+            .context("declining call")?;
         room_updated(&room, &session.peer);
     }
 
@@ -1723,9 +1715,7 @@ async fn update_participant_location(
     session: Session,
 ) -> Result<()> {
     let room_id = RoomId::from_proto(request.room_id);
-    let location = request
-        .location
-        .ok_or_else(|| anyhow!("invalid location"))?;
+    let location = request.location.context("invalid location")?;
 
     let db = session.db().await;
     let room = db
@@ -2254,7 +2244,7 @@ async fn create_buffer_for_peer(
             session.connection_id,
         )
         .await?;
-    let peer_id = request.peer_id.ok_or_else(|| anyhow!("invalid peer id"))?;
+    let peer_id = request.peer_id.context("invalid peer id")?;
     session
         .peer
         .forward_send(session.connection_id, peer_id.into(), request)?;
@@ -2385,10 +2375,7 @@ async fn follow(
 ) -> Result<()> {
     let room_id = RoomId::from_proto(request.room_id);
     let project_id = request.project_id.map(ProjectId::from_proto);
-    let leader_id = request
-        .leader_id
-        .ok_or_else(|| anyhow!("invalid leader id"))?
-        .into();
+    let leader_id = request.leader_id.context("invalid leader id")?.into();
     let follower_id = session.connection_id;
 
     session
@@ -2419,10 +2406,7 @@ async fn follow(
 async fn unfollow(request: proto::Unfollow, session: Session) -> Result<()> {
     let room_id = RoomId::from_proto(request.room_id);
     let project_id = request.project_id.map(ProjectId::from_proto);
-    let leader_id = request
-        .leader_id
-        .ok_or_else(|| anyhow!("invalid leader id"))?
-        .into();
+    let leader_id = request.leader_id.context("invalid leader id")?.into();
     let follower_id = session.connection_id;
 
     session
@@ -2701,21 +2685,43 @@ fn should_auto_subscribe_to_channels(version: ZedVersion) -> bool {
     version.0.minor() < 139
 }
 
-async fn update_user_plan(user_id: UserId, session: &Session) -> Result<()> {
-    let db = session.db().await;
+async fn current_plan(db: &Arc<Database>, user_id: UserId, is_staff: bool) -> Result<proto::Plan> {
+    if is_staff {
+        return Ok(proto::Plan::ZedPro);
+    }
 
+    let subscription = db.get_active_billing_subscription(user_id).await?;
+    let subscription_kind = subscription.and_then(|subscription| subscription.kind);
+
+    let plan = if let Some(subscription_kind) = subscription_kind {
+        match subscription_kind {
+            SubscriptionKind::ZedPro => proto::Plan::ZedPro,
+            SubscriptionKind::ZedProTrial => proto::Plan::ZedProTrial,
+            SubscriptionKind::ZedFree => proto::Plan::Free,
+        }
+    } else {
+        proto::Plan::Free
+    };
+
+    Ok(plan)
+}
+
+async fn make_update_user_plan_message(
+    db: &Arc<Database>,
+    llm_db: Option<Arc<LlmDatabase>>,
+    user_id: UserId,
+    is_staff: bool,
+) -> Result<proto::UpdateUserPlan> {
     let feature_flags = db.get_user_flags(user_id).await?;
-    let plan = session.current_plan(&db).await?;
+    let plan = current_plan(db, user_id, is_staff).await?;
     let billing_customer = db.get_billing_customer_by_user_id(user_id).await?;
     let billing_preferences = db.get_billing_preferences(user_id).await?;
 
-    let (subscription_period, usage) = if let Some(llm_db) = session.app_state.llm_db.clone() {
+    let (subscription_period, usage) = if let Some(llm_db) = llm_db {
         let subscription = db.get_active_billing_subscription(user_id).await?;
 
-        let subscription_period = crate::db::billing_subscription::Model::current_period(
-            subscription,
-            session.is_staff(),
-        );
+        let subscription_period =
+            crate::db::billing_subscription::Model::current_period(subscription, is_staff);
 
         let usage = if let Some((period_start_at, period_end_at)) = subscription_period {
             llm_db
@@ -2730,92 +2736,92 @@ async fn update_user_plan(user_id: UserId, session: &Session) -> Result<()> {
         (None, None)
     };
 
-    session
-        .peer
-        .send(
-            session.connection_id,
-            proto::UpdateUserPlan {
-                plan: plan.into(),
-                trial_started_at: billing_customer
-                    .and_then(|billing_customer| billing_customer.trial_started_at)
-                    .map(|trial_started_at| trial_started_at.and_utc().timestamp() as u64),
-                is_usage_based_billing_enabled: if session.is_staff() {
-                    Some(true)
-                } else {
-                    billing_preferences
-                        .map(|preferences| preferences.model_request_overages_enabled)
-                },
-                subscription_period: subscription_period.map(|(started_at, ended_at)| {
-                    proto::SubscriptionPeriod {
-                        started_at: started_at.timestamp() as u64,
-                        ended_at: ended_at.timestamp() as u64,
-                    }
-                }),
-                usage: usage.map(|usage| {
-                    let plan = match plan {
-                        proto::Plan::Free => zed_llm_client::Plan::Free,
-                        proto::Plan::ZedPro => zed_llm_client::Plan::ZedPro,
-                        proto::Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
+    Ok(proto::UpdateUserPlan {
+        plan: plan.into(),
+        trial_started_at: billing_customer
+            .and_then(|billing_customer| billing_customer.trial_started_at)
+            .map(|trial_started_at| trial_started_at.and_utc().timestamp() as u64),
+        is_usage_based_billing_enabled: if is_staff {
+            Some(true)
+        } else {
+            billing_preferences.map(|preferences| preferences.model_request_overages_enabled)
+        },
+        subscription_period: subscription_period.map(|(started_at, ended_at)| {
+            proto::SubscriptionPeriod {
+                started_at: started_at.timestamp() as u64,
+                ended_at: ended_at.timestamp() as u64,
+            }
+        }),
+        usage: usage.map(|usage| {
+            let plan = match plan {
+                proto::Plan::Free => zed_llm_client::Plan::ZedFree,
+                proto::Plan::ZedPro => zed_llm_client::Plan::ZedPro,
+                proto::Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
+            };
+
+            let model_requests_limit = match plan.model_requests_limit() {
+                zed_llm_client::UsageLimit::Limited(limit) => {
+                    let limit = if plan == zed_llm_client::Plan::ZedProTrial
+                        && feature_flags
+                            .iter()
+                            .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG)
+                    {
+                        1_000
+                    } else {
+                        limit
                     };
 
-                    let model_requests_limit = match plan.model_requests_limit() {
-                        zed_llm_client::UsageLimit::Limited(limit) => {
-                            let limit = if plan == zed_llm_client::Plan::ZedProTrial
-                                && feature_flags
-                                    .iter()
-                                    .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG)
-                            {
-                                1_000
-                            } else {
-                                limit
-                            };
+                    zed_llm_client::UsageLimit::Limited(limit)
+                }
+                zed_llm_client::UsageLimit::Unlimited => zed_llm_client::UsageLimit::Unlimited,
+            };
 
-                            zed_llm_client::UsageLimit::Limited(limit)
+            proto::SubscriptionUsage {
+                model_requests_usage_amount: usage.model_requests as u32,
+                model_requests_usage_limit: Some(proto::UsageLimit {
+                    variant: Some(match model_requests_limit {
+                        zed_llm_client::UsageLimit::Limited(limit) => {
+                            proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
+                                limit: limit as u32,
+                            })
                         }
                         zed_llm_client::UsageLimit::Unlimited => {
-                            zed_llm_client::UsageLimit::Unlimited
+                            proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
                         }
-                    };
-
-                    proto::SubscriptionUsage {
-                        model_requests_usage_amount: usage.model_requests as u32,
-                        model_requests_usage_limit: Some(proto::UsageLimit {
-                            variant: Some(match model_requests_limit {
-                                zed_llm_client::UsageLimit::Limited(limit) => {
-                                    proto::usage_limit::Variant::Limited(
-                                        proto::usage_limit::Limited {
-                                            limit: limit as u32,
-                                        },
-                                    )
-                                }
-                                zed_llm_client::UsageLimit::Unlimited => {
-                                    proto::usage_limit::Variant::Unlimited(
-                                        proto::usage_limit::Unlimited {},
-                                    )
-                                }
-                            }),
-                        }),
-                        edit_predictions_usage_amount: usage.edit_predictions as u32,
-                        edit_predictions_usage_limit: Some(proto::UsageLimit {
-                            variant: Some(match plan.edit_predictions_limit() {
-                                zed_llm_client::UsageLimit::Limited(limit) => {
-                                    proto::usage_limit::Variant::Limited(
-                                        proto::usage_limit::Limited {
-                                            limit: limit as u32,
-                                        },
-                                    )
-                                }
-                                zed_llm_client::UsageLimit::Unlimited => {
-                                    proto::usage_limit::Variant::Unlimited(
-                                        proto::usage_limit::Unlimited {},
-                                    )
-                                }
-                            }),
-                        }),
-                    }
+                    }),
                 }),
-            },
-        )
+                edit_predictions_usage_amount: usage.edit_predictions as u32,
+                edit_predictions_usage_limit: Some(proto::UsageLimit {
+                    variant: Some(match plan.edit_predictions_limit() {
+                        zed_llm_client::UsageLimit::Limited(limit) => {
+                            proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
+                                limit: limit as u32,
+                            })
+                        }
+                        zed_llm_client::UsageLimit::Unlimited => {
+                            proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
+                        }
+                    }),
+                }),
+            }
+        }),
+    })
+}
+
+async fn update_user_plan(user_id: UserId, session: &Session) -> Result<()> {
+    let db = session.db().await;
+
+    let update_user_plan = make_update_user_plan_message(
+        &db.0,
+        session.app_state.llm_db.clone(),
+        user_id,
+        session.is_staff(),
+    )
+    .await?;
+
+    session
+        .peer
+        .send(session.connection_id, update_user_plan)
         .trace_err();
 
     Ok(())
@@ -3344,9 +3350,7 @@ async fn join_channel_internal(
     };
 
     channel_updated(
-        &joined_room
-            .channel
-            .ok_or_else(|| anyhow!("channel not returned"))?,
+        &joined_room.channel.context("channel not returned")?,
         &joined_room.room,
         &session.peer,
         &*session.connection_pool().await,
@@ -3554,9 +3558,7 @@ async fn send_channel_message(
     // TODO: adjust mentions if body is trimmed
 
     let timestamp = OffsetDateTime::now_utc();
-    let nonce = request
-        .nonce
-        .ok_or_else(|| anyhow!("nonce can't be blank"))?;
+    let nonce = request.nonce.context("nonce can't be blank")?;
 
     let channel_id = ChannelId::from_proto(request.channel_id);
     let CreatedChannelMessage {
@@ -3696,10 +3698,7 @@ async fn update_channel_message(
         )
         .await?;
 
-    let nonce = request
-        .nonce
-        .clone()
-        .ok_or_else(|| anyhow!("nonce can't be blank"))?;
+    let nonce = request.nonce.clone().context("nonce can't be blank")?;
 
     let message = proto::ChannelMessage {
         sender_id: session.user_id().to_proto(),
@@ -3804,14 +3803,12 @@ async fn get_supermaven_api_key(
         return Err(anyhow!("supermaven not enabled for this account"))?;
     }
 
-    let email = session
-        .email()
-        .ok_or_else(|| anyhow!("user must have an email"))?;
+    let email = session.email().context("user must have an email")?;
 
     let supermaven_admin_api = session
         .supermaven_client
         .as_ref()
-        .ok_or_else(|| anyhow!("supermaven not configured"))?;
+        .context("supermaven not configured")?;
 
     let result = supermaven_admin_api
         .try_get_or_create_user(CreateExternalUserRequest { id: user_id, email })
@@ -3959,7 +3956,7 @@ async fn get_private_user_info(
     let user = db
         .get_user_by_id(session.user_id())
         .await?
-        .ok_or_else(|| anyhow!("user not found"))?;
+        .context("user not found")?;
     let flags = db.get_user_flags(session.user_id()).await?;
 
     response.send(proto::GetPrivateUserInfoResponse {
@@ -4000,24 +3997,71 @@ async fn get_llm_api_token(
     let db = session.db().await;
 
     let flags = db.get_user_flags(session.user_id()).await?;
-    let has_language_models_feature_flag = flags.iter().any(|flag| flag == "language-models");
-
-    if !session.is_staff() && !has_language_models_feature_flag {
-        Err(anyhow!("permission denied"))?
-    }
 
     let user_id = session.user_id();
     let user = db
         .get_user_by_id(user_id)
         .await?
-        .ok_or_else(|| anyhow!("user {} not found", user_id))?;
+        .with_context(|| format!("user {user_id} not found"))?;
 
     if user.accepted_tos_at.is_none() {
         Err(anyhow!("terms of service not accepted"))?
     }
 
-    let has_legacy_llm_subscription = session.has_llm_subscription(&db).await?;
-    let billing_subscription = db.get_active_billing_subscription(user.id).await?;
+    let stripe_client = session
+        .app_state
+        .stripe_client
+        .as_ref()
+        .context("failed to retrieve Stripe client")?;
+
+    let stripe_billing = session
+        .app_state
+        .stripe_billing
+        .as_ref()
+        .context("failed to retrieve Stripe billing object")?;
+
+    let billing_customer =
+        if let Some(billing_customer) = db.get_billing_customer_by_user_id(user.id).await? {
+            billing_customer
+        } else {
+            let customer_id = stripe_billing
+                .find_or_create_customer_by_email(user.email_address.as_deref())
+                .await?;
+
+            find_or_create_billing_customer(
+                &session.app_state,
+                &stripe_client,
+                stripe::Expandable::Id(customer_id),
+            )
+            .await?
+            .context("billing customer not found")?
+        };
+
+    let billing_subscription =
+        if let Some(billing_subscription) = db.get_active_billing_subscription(user.id).await? {
+            billing_subscription
+        } else {
+            let stripe_customer_id = billing_customer
+                .stripe_customer_id
+                .parse::<stripe::CustomerId>()
+                .context("failed to parse Stripe customer ID from database")?;
+
+            let stripe_subscription = stripe_billing
+                .subscribe_to_zed_free(stripe_customer_id)
+                .await?;
+
+            db.create_billing_subscription(&db::CreateBillingSubscriptionParams {
+                billing_customer_id: billing_customer.id,
+                kind: Some(SubscriptionKind::ZedFree),
+                stripe_subscription_id: stripe_subscription.id.to_string(),
+                stripe_subscription_status: stripe_subscription.status.into(),
+                stripe_cancellation_reason: None,
+                stripe_current_period_start: Some(stripe_subscription.current_period_start),
+                stripe_current_period_end: Some(stripe_subscription.current_period_end),
+            })
+            .await?
+        };
+
     let billing_preferences = db.get_billing_preferences(user.id).await?;
 
     let token = LlmTokenClaims::create(
@@ -4025,7 +4069,6 @@ async fn get_llm_api_token(
         session.is_staff(),
         billing_preferences,
         &flags,
-        has_legacy_llm_subscription,
         billing_subscription,
         session.system_id.clone(),
         &session.app_state.config,

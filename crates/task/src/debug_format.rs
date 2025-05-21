@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use collections::FxHashMap;
 use gpui::SharedString;
 use schemars::{JsonSchema, r#gen::SchemaSettings};
@@ -93,6 +93,17 @@ pub struct LaunchRequest {
     pub env: FxHashMap<String, String>,
 }
 
+impl LaunchRequest {
+    pub fn env_json(&self) -> serde_json::Value {
+        serde_json::Value::Object(
+            self.env
+                .iter()
+                .map(|(k, v)| (k.clone(), v.to_owned().into()))
+                .collect::<serde_json::Map<String, serde_json::Value>>(),
+        )
+    }
+}
+
 /// Represents the type that will determine which request to call on the debug adapter
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "lowercase", untagged)]
@@ -136,9 +147,7 @@ impl DebugRequest {
     }
 
     pub fn from_proto(val: proto::DebugRequest) -> Result<DebugRequest> {
-        let request = val
-            .request
-            .ok_or_else(|| anyhow::anyhow!("Missing debug request"))?;
+        let request = val.request.context("Missing debug request")?;
         match request {
             proto::debug_request::Request::DebugLaunchRequest(proto::DebugLaunchRequest {
                 program,
@@ -175,7 +184,6 @@ impl From<AttachRequest> for DebugRequest {
 
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(untagged)]
-#[allow(clippy::large_enum_variant)]
 pub enum BuildTaskDefinition {
     ByName(SharedString),
     Template {

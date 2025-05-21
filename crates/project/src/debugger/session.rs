@@ -1,3 +1,5 @@
+use crate::debugger::breakpoint_store::BreakpointSessionState;
+
 use super::breakpoint_store::{
     BreakpointStore, BreakpointStoreEvent, BreakpointUpdatedReason, SourceBreakpoint,
 };
@@ -10,7 +12,7 @@ use super::dap_command::{
     TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
 };
 use super::dap_store::DapStore;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet, IndexMap, IndexSet};
 use dap::adapters::{DebugAdapterBinary, DebugAdapterName};
 use dap::messages::Response;
@@ -218,25 +220,55 @@ impl LocalMode {
         breakpoint_store: &Entity<BreakpointStore>,
         cx: &mut App,
     ) -> Task<()> {
-        let breakpoints = breakpoint_store
-            .read_with(cx, |store, cx| store.breakpoints_from_path(&abs_path, cx))
+        let breakpoints =
+            breakpoint_store
+                .read_with(cx, |store, cx| {
+                    store.source_breakpoints_from_path(&abs_path, cx)
+                })
+                .into_iter()
+                .filter(|bp| bp.state.is_enabled())
+                .chain(self.tmp_breakpoint.iter().filter_map(|breakpoint| {
+                    breakpoint.path.eq(&abs_path).then(|| breakpoint.clone())
+                }))
+                .map(Into::into)
+                .collect();
+
+        let raw_breakpoints = breakpoint_store
+            .read(cx)
+            .breakpoints_from_path(&abs_path)
             .into_iter()
-            .filter(|bp| bp.state.is_enabled())
-            .chain(self.tmp_breakpoint.clone())
-            .map(Into::into)
-            .collect();
+            .filter(|bp| bp.bp.state.is_enabled())
+            .collect::<Vec<_>>();
 
         let task = self.request(dap_command::SetBreakpoints {
             source: client_source(&abs_path),
             source_modified: Some(matches!(reason, BreakpointUpdatedReason::FileSaved)),
             breakpoints,
         });
-
-        cx.background_spawn(async move {
-            match task.await {
-                Ok(_) => {}
-                Err(err) => log::warn!("Set breakpoints request failed for path: {}", err),
+        let session_id = self.client.id();
+        let breakpoint_store = breakpoint_store.downgrade();
+        cx.spawn(async move |cx| match cx.background_spawn(task).await {
+            Ok(breakpoints) => {
+                let breakpoints =
+                    breakpoints
+                        .into_iter()
+                        .zip(raw_breakpoints)
+                        .filter_map(|(dap_bp, zed_bp)| {
+                            Some((
+                                zed_bp,
+                                BreakpointSessionState {
+                                    id: dap_bp.id?,
+                                    verified: dap_bp.verified,
+                                },
+                            ))
+                        });
+                breakpoint_store
+                    .update(cx, |this, _| {
+                        this.mark_breakpoints_verified(session_id, &abs_path, breakpoints);
+                    })
+                    .ok();
             }
+            Err(err) => log::warn!("Set breakpoints request failed for path: {}", err),
         })
     }
 
@@ -271,8 +303,11 @@ impl LocalMode {
         cx: &App,
     ) -> Task<HashMap<Arc<Path>, anyhow::Error>> {
         let mut breakpoint_tasks = Vec::new();
-        let breakpoints = breakpoint_store.read_with(cx, |store, cx| store.all_breakpoints(cx));
-
+        let breakpoints =
+            breakpoint_store.read_with(cx, |store, cx| store.all_source_breakpoints(cx));
+        let mut raw_breakpoints = breakpoint_store.read_with(cx, |this, _| this.all_breakpoints());
+        debug_assert_eq!(raw_breakpoints.len(), breakpoints.len());
+        let session_id = self.client.id();
         for (path, breakpoints) in breakpoints {
             let breakpoints = if ignore_breakpoints {
                 vec![]
@@ -284,14 +319,46 @@ impl LocalMode {
                     .collect()
             };
 
-            breakpoint_tasks.push(
-                self.request(dap_command::SetBreakpoints {
+            let raw_breakpoints = raw_breakpoints
+                .remove(&path)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|bp| bp.bp.state.is_enabled());
+            let error_path = path.clone();
+            let send_request = self
+                .request(dap_command::SetBreakpoints {
                     source: client_source(&path),
                     source_modified: Some(false),
                     breakpoints,
                 })
-                .map(|result| result.map_err(|e| (path, e))),
-            );
+                .map(|result| result.map_err(move |e| (error_path, e)));
+
+            let task = cx.spawn({
+                let breakpoint_store = breakpoint_store.downgrade();
+                async move |cx| {
+                    let breakpoints = cx.background_spawn(send_request).await?;
+
+                    let breakpoints = breakpoints.into_iter().zip(raw_breakpoints).filter_map(
+                        |(dap_bp, zed_bp)| {
+                            Some((
+                                zed_bp,
+                                BreakpointSessionState {
+                                    id: dap_bp.id?,
+                                    verified: dap_bp.verified,
+                                },
+                            ))
+                        },
+                    );
+                    breakpoint_store
+                        .update(cx, |this, _| {
+                            this.mark_breakpoints_verified(session_id, &path, breakpoints);
+                        })
+                        .ok();
+
+                    Ok(())
+                }
+            });
+            breakpoint_tasks.push(task);
         }
 
         cx.background_spawn(async move {
@@ -420,8 +487,7 @@ impl Mode {
         match self {
             Mode::Running(debug_adapter_client) => debug_adapter_client.request(request),
             Mode::Building => Task::ready(Err(anyhow!(
-                "no adapter running to send request: {:?}",
-                request
+                "no adapter running to send request: {request:?}"
             ))),
         }
     }
@@ -1172,8 +1238,7 @@ impl Session {
                 self.clear_active_debug_line(cx);
             }
             Events::Terminated(_) => {
-                self.is_session_terminated = true;
-                self.clear_active_debug_line(cx);
+                self.shutdown(cx).detach();
             }
             Events::Thread(event) => {
                 let thread_id = ThreadId(event.thread_id);
@@ -1205,7 +1270,9 @@ impl Session {
                 self.output_token.0 += 1;
                 cx.notify();
             }
-            Events::Breakpoint(_) => {}
+            Events::Breakpoint(event) => self.breakpoint_store.update(cx, |store, _| {
+                store.update_session_breakpoint(self.session_id(), event.reason, event.breakpoint);
+            }),
             Events::Module(event) => {
                 match event.reason {
                     dap::ModuleEventReason::New => {
@@ -1668,7 +1735,7 @@ impl Session {
             anyhow::Ok(
                 task.await
                     .map(|response| response.targets)
-                    .ok_or_else(|| anyhow!("failed to fetch completions"))?,
+                    .context("failed to fetch completions")?,
             )
         })
     }

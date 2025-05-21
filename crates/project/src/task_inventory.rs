@@ -10,6 +10,7 @@ use std::{
 
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
+use dap::DapRegistry;
 use gpui::{App, AppContext as _, Entity, SharedString, Task};
 use itertools::Itertools;
 use language::{
@@ -33,6 +34,7 @@ use crate::{task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
 #[derive(Debug, Default)]
 pub struct Inventory {
     last_scheduled_tasks: VecDeque<(TaskSourceKind, ResolvedTask)>,
+    last_scheduled_scenarios: VecDeque<DebugScenario>,
     templates_from_settings: InventoryFor<TaskTemplate>,
     scenarios_from_settings: InventoryFor<DebugScenario>,
 }
@@ -63,30 +65,28 @@ struct InventoryFor<T> {
 impl<T: InventoryContents> InventoryFor<T> {
     fn worktree_scenarios(
         &self,
-        worktree: Option<WorktreeId>,
+        worktree: WorktreeId,
     ) -> impl '_ + Iterator<Item = (TaskSourceKind, T)> {
-        worktree.into_iter().flat_map(|worktree| {
-            self.worktree
-                .get(&worktree)
-                .into_iter()
-                .flatten()
-                .flat_map(|(directory, templates)| {
-                    templates.iter().map(move |template| (directory, template))
-                })
-                .map(move |(directory, template)| {
-                    (
-                        TaskSourceKind::Worktree {
-                            id: worktree,
-                            directory_in_worktree: directory.to_path_buf(),
-                            id_base: Cow::Owned(format!(
-                                "local worktree {} from directory {directory:?}",
-                                T::LABEL
-                            )),
-                        },
-                        template.clone(),
-                    )
-                })
-        })
+        self.worktree
+            .get(&worktree)
+            .into_iter()
+            .flatten()
+            .flat_map(|(directory, templates)| {
+                templates.iter().map(move |template| (directory, template))
+            })
+            .map(move |(directory, template)| {
+                (
+                    TaskSourceKind::Worktree {
+                        id: worktree,
+                        directory_in_worktree: directory.to_path_buf(),
+                        id_base: Cow::Owned(format!(
+                            "local worktree {} from directory {directory:?}",
+                            T::LABEL
+                        )),
+                    },
+                    template.clone(),
+                )
+            })
     }
 
     fn global_scenarios(&self) -> impl '_ + Iterator<Item = (TaskSourceKind, T)> {
@@ -168,6 +168,13 @@ impl TaskContexts {
             .and_then(|(_, location, _)| location.as_ref())
     }
 
+    pub fn file(&self, cx: &App) -> Option<Arc<dyn File>> {
+        self.active_item_context
+            .as_ref()
+            .and_then(|(_, location, _)| location.as_ref())
+            .and_then(|location| location.buffer.read(cx).file().cloned())
+    }
+
     pub fn worktree(&self) -> Option<WorktreeId> {
         self.active_item_context
             .as_ref()
@@ -214,16 +221,69 @@ impl Inventory {
         cx.new(|_| Self::default())
     }
 
+    pub fn scenario_scheduled(&mut self, scenario: DebugScenario) {
+        self.last_scheduled_scenarios
+            .retain(|s| s.label != scenario.label);
+        self.last_scheduled_scenarios.push_back(scenario);
+        if self.last_scheduled_scenarios.len() > 5_000 {
+            self.last_scheduled_scenarios.pop_front();
+        }
+    }
+
     pub fn list_debug_scenarios(
         &self,
-        worktrees: impl Iterator<Item = WorktreeId>,
-    ) -> Vec<(TaskSourceKind, DebugScenario)> {
-        let global_scenarios = self.global_debug_scenarios_from_settings();
+        task_contexts: &TaskContexts,
+        cx: &mut App,
+    ) -> (Vec<DebugScenario>, Vec<(TaskSourceKind, DebugScenario)>) {
+        let mut scenarios = Vec::new();
 
-        worktrees
-            .flat_map(|tree_id| self.worktree_scenarios_from_settings(Some(tree_id)))
-            .chain(global_scenarios)
-            .collect()
+        if let Some(worktree_id) = task_contexts
+            .active_worktree_context
+            .iter()
+            .chain(task_contexts.other_worktree_contexts.iter())
+            .map(|context| context.0)
+            .next()
+        {
+            scenarios.extend(self.worktree_scenarios_from_settings(worktree_id));
+        }
+        scenarios.extend(self.global_debug_scenarios_from_settings());
+
+        let (_, new) = self.used_and_current_resolved_tasks(task_contexts, cx);
+        if let Some(location) = task_contexts.location() {
+            let file = location.buffer.read(cx).file();
+            let language = location.buffer.read(cx).language();
+            let language_name = language.as_ref().map(|l| l.name());
+            let adapter = language_settings(language_name, file, cx)
+                .debuggers
+                .first()
+                .map(SharedString::from)
+                .or_else(|| {
+                    language.and_then(|l| l.config().debuggers.first().map(SharedString::from))
+                });
+            if let Some(adapter) = adapter {
+                for (kind, task) in new {
+                    if let Some(scenario) =
+                        DapRegistry::global(cx)
+                            .locators()
+                            .values()
+                            .find_map(|locator| {
+                                locator.create_scenario(
+                                    &task.original_task().clone(),
+                                    &task.display_label(),
+                                    adapter.clone().into(),
+                                )
+                            })
+                    {
+                        scenarios.push((kind, scenario));
+                    }
+                }
+            }
+        }
+
+        (
+            self.last_scheduled_scenarios.iter().cloned().collect(),
+            scenarios,
+        )
     }
 
     pub fn task_template_by_label(
@@ -262,7 +322,9 @@ impl Inventory {
         cx: &App,
     ) -> Vec<(TaskSourceKind, TaskTemplate)> {
         let global_tasks = self.global_templates_from_settings();
-        let worktree_tasks = self.worktree_templates_from_settings(worktree);
+        let worktree_tasks = worktree
+            .into_iter()
+            .flat_map(|worktree| self.worktree_templates_from_settings(worktree));
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
             name: language.name().into(),
         });
@@ -354,8 +416,9 @@ impl Inventory {
             .into_iter()
             .flat_map(|tasks| tasks.0.into_iter())
             .flat_map(|task| Some((task_source_kind.clone()?, task)));
-        let worktree_tasks = self
-            .worktree_templates_from_settings(worktree)
+        let worktree_tasks = worktree
+            .into_iter()
+            .flat_map(|worktree| self.worktree_templates_from_settings(worktree))
             .chain(language_tasks)
             .chain(global_tasks);
 
@@ -471,14 +534,14 @@ impl Inventory {
 
     fn worktree_scenarios_from_settings(
         &self,
-        worktree: Option<WorktreeId>,
+        worktree: WorktreeId,
     ) -> impl '_ + Iterator<Item = (TaskSourceKind, DebugScenario)> {
         self.scenarios_from_settings.worktree_scenarios(worktree)
     }
 
     fn worktree_templates_from_settings(
         &self,
-        worktree: Option<WorktreeId>,
+        worktree: WorktreeId,
     ) -> impl '_ + Iterator<Item = (TaskSourceKind, TaskTemplate)> {
         self.templates_from_settings.worktree_scenarios(worktree)
     }

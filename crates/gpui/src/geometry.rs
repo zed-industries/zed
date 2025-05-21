@@ -1388,6 +1388,44 @@ where
             && point.y <= self.origin.y.clone() + self.size.height.clone()
     }
 
+    /// Checks if this bounds is completely contained within another bounds.
+    ///
+    /// This method determines whether the current bounds is entirely enclosed by the given bounds.
+    /// A bounds is considered to be contained within another if its origin (top-left corner) and
+    /// its bottom-right corner are both contained within the other bounds.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - A reference to another `Bounds` that might contain this bounds.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if this bounds is completely inside the other bounds, `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use gpui::{Bounds, Point, Size};
+    /// let outer_bounds = Bounds {
+    ///     origin: Point { x: 0, y: 0 },
+    ///     size: Size { width: 20, height: 20 },
+    /// };
+    /// let inner_bounds = Bounds {
+    ///     origin: Point { x: 5, y: 5 },
+    ///     size: Size { width: 10, height: 10 },
+    /// };
+    /// let overlapping_bounds = Bounds {
+    ///     origin: Point { x: 15, y: 15 },
+    ///     size: Size { width: 10, height: 10 },
+    /// };
+    ///
+    /// assert!(inner_bounds.is_contained_within(&outer_bounds));
+    /// assert!(!overlapping_bounds.is_contained_within(&outer_bounds));
+    /// ```
+    pub fn is_contained_within(&self, other: &Self) -> bool {
+        other.contains(&self.origin) && other.contains(&self.bottom_right())
+    }
+
     /// Applies a function to the origin and size of the bounds, producing a new `Bounds<U>`.
     ///
     /// This method allows for converting a `Bounds<T>` to a `Bounds<U>` by specifying a closure

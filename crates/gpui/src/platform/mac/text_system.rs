@@ -194,7 +194,7 @@ impl MacTextSystemState {
                         core_graphics::data_provider::CGDataProvider::from_slice(embedded_font)
                     };
                     let font = core_graphics::font::CGFont::from_data_provider(data_provider)
-                        .map_err(|_| anyhow!("Could not load an embedded font."))?;
+                        .map_err(|()| anyhow!("Could not load an embedded font."))?;
                     let font = font_kit::loaders::core_text::Font::from_core_graphics_font(font);
                     Ok(Handle::from_native(&font))
                 }
@@ -348,7 +348,7 @@ impl MacTextSystemState {
         glyph_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
         if glyph_bounds.size.width.0 == 0 || glyph_bounds.size.height.0 == 0 {
-            Err(anyhow!("glyph bounds are empty"))
+            anyhow::bail!("glyph bounds are empty");
         } else {
             // Add an extra pixel when the subpixel variant isn't zero to make room for anti-aliasing.
             let mut bitmap_size = glyph_bounds.size;
@@ -480,7 +480,7 @@ impl MacTextSystemState {
             };
             let font_id = self.id_for_native_font(font);
 
-            let mut glyphs = SmallVec::new();
+            let mut glyphs = Vec::with_capacity(run.glyph_count().try_into().unwrap_or(0));
             for ((glyph_id, position), glyph_utf16_ix) in run
                 .glyphs()
                 .iter()

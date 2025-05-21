@@ -143,7 +143,7 @@ impl BufferSearchBar {
         };
 
         let mut editor_style = EditorStyle {
-            background: cx.theme().colors().editor_background,
+            background: cx.theme().colors().toolbar_background,
             local_player: cx.theme().players().local(),
             text: text_style,
             ..EditorStyle::default()
@@ -1460,7 +1460,6 @@ impl BufferSearchBar {
                             self.select_next_match(&SelectNextMatch, window, cx);
                         }
                         should_propagate = false;
-                        self.focus_editor(&FocusEditor, window, cx);
                     }
                 }
             }
@@ -2788,6 +2787,7 @@ mod tests {
         let (_editor, search_bar, cx) = init_test(cx);
         update_search_settings(
             SearchSettings {
+                button: true,
                 whole_word: false,
                 case_sensitive: false,
                 include_ignored: false,
@@ -2853,6 +2853,7 @@ mod tests {
 
         update_search_settings(
             SearchSettings {
+                button: true,
                 whole_word: false,
                 case_sensitive: true,
                 include_ignored: false,

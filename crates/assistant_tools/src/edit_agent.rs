@@ -20,9 +20,11 @@ use language_model::{
     LanguageModelToolChoice, MessageContent, Role,
 };
 use project::{AgentLocation, Project};
-use serde::Serialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::{cmp, iter, mem, ops::Range, path::PathBuf, sync::Arc, task::Poll};
 use streaming_diff::{CharOperation, StreamingDiff};
+use util::debug_panic;
 
 #[derive(Serialize)]
 struct CreateFilePromptTemplate {
@@ -50,10 +52,10 @@ pub enum EditAgentOutputEvent {
     OldTextNotFound(SharedString),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditAgentOutput {
-    pub _raw_edits: String,
-    pub _parser_metrics: EditParserMetrics,
+    pub raw_edits: String,
+    pub parser_metrics: EditParserMetrics,
 }
 
 #[derive(Clone)]
@@ -186,8 +188,8 @@ impl EditAgent {
         }
 
         Ok(EditAgentOutput {
-            _raw_edits: raw_edits,
-            _parser_metrics: EditParserMetrics::default(),
+            raw_edits,
+            parser_metrics: EditParserMetrics::default(),
         })
     }
 
@@ -426,8 +428,8 @@ impl EditAgent {
                 }
             }
             Ok(EditAgentOutput {
-                _raw_edits: raw_edits,
-                _parser_metrics: parser.finish(),
+                raw_edits,
+                parser_metrics: parser.finish(),
             })
         });
         (output, rx)
@@ -542,6 +544,11 @@ impl EditAgent {
                 if last_message.content.is_empty() {
                     conversation.messages.pop();
                 }
+            } else {
+                debug_panic!(
+                    "Last message must be an Assistant tool calling! Got {:?}",
+                    last_message.content
+                );
             }
         }
 
