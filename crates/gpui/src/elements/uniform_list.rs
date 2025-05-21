@@ -7,12 +7,11 @@
 use crate::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, Context, Element, ElementId, Entity,
     GlobalElementId, Hitbox, InspectorElementId, InteractiveElement, Interactivity, IntoElement,
-    IsZero, LayoutId, ListSizingBehavior, Pixels, Render, ScrollHandle, Size, StyleRefinement,
-    Styled, Window, point, size,
+    IsZero, LayoutId, ListSizingBehavior, Overflow, Pixels, Render, ScrollHandle, Size,
+    StyleRefinement, Styled, Window, point, size,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
-use taffy::style::Overflow;
 
 use super::ListHorizontalSizingBehavior;
 

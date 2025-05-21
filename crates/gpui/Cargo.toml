@@ -119,7 +119,7 @@ smallvec.workspace = true
 smol.workspace = true
 strum.workspace = true
 sum_tree.workspace = true
-taffy = { version = "0.4.3", features = ["serde"] }
+taffy = "0.4.3"
 thiserror.workspace = true
 util.workspace = true
 uuid.workspace = true

@@ -9,14 +9,13 @@
 
 use crate::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges, Element, EntityId,
-    FocusHandle, GlobalElementId, Hitbox, InspectorElementId, IntoElement, Pixels, Point,
+    FocusHandle, GlobalElementId, Hitbox, InspectorElementId, IntoElement, Overflow, Pixels, Point,
     ScrollWheelEvent, Size, Style, StyleRefinement, Styled, Window, point, px, size,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
 use std::{cell::RefCell, ops::Range, rc::Rc};
 use sum_tree::{Bias, SumTree};
-use taffy::style::Overflow;
 
 /// Construct a new list element
 pub fn list(state: ListState) -> List {

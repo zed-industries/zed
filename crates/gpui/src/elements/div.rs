@@ -20,7 +20,7 @@ use crate::{
     DispatchPhase, EdgesRefinement, Element, ElementId, Entity, FocusHandle, Global,
     GlobalElementId, Hitbox, HitboxId, Hsla, InspectorElementId, IntoElement, IsZero, KeyContext,
     KeyDownEvent, KeyUpEvent, LayoutId, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollWheelEvent,
+    MouseMoveEvent, MouseUpEvent, Overflow, ParentElement, Pixels, Point, Render, ScrollWheelEvent,
     SharedString, Size, Style, StyleRefinement, Styled, Task, TooltipId, Visibility, Window, fill,
     point, px, size,
 };
@@ -39,7 +39,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use taffy::style::Overflow;
 use util::ResultExt;
 
 use super::ImageCacheProvider;
