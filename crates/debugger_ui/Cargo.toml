@@ -30,6 +30,7 @@ test-support = [
 anyhow.workspace = true
 client.workspace = true
 collections.workspace = true
+constcat.workspace = true
 command_palette_hooks.workspace = true
 dap.workspace = true
 dap_adapters = { workspace = true, optional = true }

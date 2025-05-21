@@ -1175,25 +1175,23 @@ impl PickerDelegate for DebugScenarioDelegate {
 }
 
 fn resolve_paths(program: String, path: String) -> (String, String) {
-    let program = if let Some(program) = program.strip_prefix('~') {
+    let sep = std::path::MAIN_SEPARATOR;
+    let home = constcat!("~", sep);
+    let program = if let Some(program) = program.strip_prefix(home) {
         paths::home_dir()
             .join(program)
             .to_string_lossy()
             .to_string()
-    } else if !program.starts_with(std::path::MAIN_SEPARATOR) {
-        format!(
-            "$ZED_WORKTREE_ROOT{}{}",
-            std::path::MAIN_SEPARATOR,
-            &program
-        )
+    } else if !program.starts_with(sep) {
+        format!("$ZED_WORKTREE_ROOT{}{}", sep, &program)
     } else {
         program
     };
 
-    let path = if let Some(path) = path.strip_prefix('~') {
+    let path = if let Some(path) = path.strip_prefix(home) {
         paths::home_dir().join(path).to_string_lossy().to_string()
-    } else if !path.starts_with(std::path::MAIN_SEPARATOR) {
-        format!("$ZED_WORKTREE_ROOT{}{}", std::path::MAIN_SEPARATOR, &path)
+    } else if !path.starts_with(sep) {
+        format!("$ZED_WORKTREE_ROOT{}{}", sep, &path)
     } else {
         path
     };
@@ -1212,17 +1210,20 @@ mod tests {
         let worktree_root = "$ZED_WORKTREE_ROOT";
         let sep = std::path::MAIN_SEPARATOR;
         let home = home_dir().to_string_lossy().to_string();
-        for ((program, path), expected) in [
+        assert_eq!(
+            resolve_paths("bin".to_owned(), "".to_owned()),
             (
-                ("bin", ""),
-                (
-                    format!("${worktree_root}${sep}bin"),
-                    format!("${worktree_root}"),
-                ),
+                format!("{worktree_root}{sep}bin"),
+                format!("{worktree_root}{sep}"),
             ),
-            (("~", "~"), (home.clone(), home.clone())),
-        ] {
-            assert_eq!(resolve_paths(program.to_owned(), path.to_owned()), expected);
-        }
+        );
+        assert_eq!(
+            (resolve_paths("~/blah".to_owned(), "~".to_owned())),
+            (format!("{}{sep}blah", home.clone()), home.clone()),
+        );
+        assert_eq!(
+            resolve_paths("/foo".to_owned(), "/bar".to_owned()),
+            (format!("/foo"), format!("/bar"),),
+        );
     }
 }
