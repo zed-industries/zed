@@ -17,6 +17,7 @@
       "f4": "debugger::Start",
       "f5": "debugger::Continue",
       "shift-f5": "debugger::Stop",
+      "shift-cmd-f5": "debugger::Restart",
       "f6": "debugger::Pause",
       "f7": "debugger::StepOver",
       "f11": "debugger::StepInto",
