@@ -134,7 +134,6 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                     let mut paths = delegate.fs().read_dir(&adapter_path).await?;
                     paths.next().await.context("No adapter found")??
                 };
-            let lldb_binaries_dir = version_path.join("extension").join("lldb").join("bin");
             let adapter_dir = version_path.join("extension").join("adapter");
             let path = adapter_dir.join("codelldb").to_string_lossy().to_string();
             // todo("windows")
@@ -149,6 +148,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                 .await
                 .with_context(|| format!("Settings executable permissions to {path:?}"))?;
 
+                let lldb_binaries_dir = version_path.join("extension").join("lldb").join("bin");
                 let mut lldb_binaries =
                     fs::read_dir(&lldb_binaries_dir).await.with_context(|| {
                         format!("reading lldb binaries dir contents {lldb_binaries_dir:?}")

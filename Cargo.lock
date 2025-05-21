@@ -19096,6 +19096,7 @@ dependencies = [
  "aho-corasick",
  "anstream",
  "arrayvec",
+ "async-compression",
  "async-std",
  "async-tungstenite",
  "aws-config",
