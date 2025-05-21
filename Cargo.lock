@@ -2814,6 +2814,7 @@ dependencies = [
  "anyhow",
  "async-recursion 0.3.2",
  "async-tungstenite",
+ "base64 0.22.1",
  "chrono",
  "clock",
  "cocoa 0.26.0",
@@ -2825,6 +2826,7 @@ dependencies = [
  "gpui_tokio",
  "http_client",
  "http_client_tls",
+ "httparse",
  "log",
  "parking_lot",
  "paths",
@@ -2832,6 +2834,7 @@ dependencies = [
  "rand 0.8.5",
  "release_channel",
  "rpc",
+ "rustls-pki-types",
  "schemars",
  "serde",
  "serde_json",
@@ -2845,6 +2848,8 @@ dependencies = [
  "time",
  "tiny_http",
  "tokio",
+ "tokio-native-tls",
+ "tokio-rustls 0.26.2",
  "tokio-socks",
  "url",
  "util",
@@ -13578,11 +13583,12 @@ dependencies = [
 
 [[package]]
 name = "rustls-pki-types"
-version = "1.11.0"
+version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "917ce264624a4b4db1c364dcc35bfca9ded014d0a958cd47ad3e960e988ea51c"
+checksum = "229a4a4c221013e7e1f1a043678c5cc39fe5171437c88fb47151a21e6f5b5c79"
 dependencies = [
  "web-time",
+ "zeroize",
 ]
 
 [[package]]
