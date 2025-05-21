@@ -1526,20 +1526,6 @@ impl RunningState {
                 window,
                 cx,
             );
-            this.add_item(
-                Box::new(SubView::new(
-                    module_list.focus_handle(cx),
-                    module_list.clone().into(),
-                    DebuggerPaneItem::Modules,
-                    None,
-                    cx,
-                )),
-                false,
-                false,
-                None,
-                window,
-                cx,
-            );
 
             this.add_item(
                 Box::new(SubView::new(
