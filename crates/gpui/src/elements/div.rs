@@ -26,6 +26,7 @@ use crate::{
 };
 use collections::HashMap;
 use refineable::Refineable;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
@@ -1193,7 +1194,7 @@ pub struct DivFrameState {
 }
 
 /// todo!("document")
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 pub struct DivInspectorState {
     /// todo!("document")
     pub base_style: Box<StyleRefinement>,

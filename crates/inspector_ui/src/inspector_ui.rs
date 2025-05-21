@@ -109,6 +109,7 @@ impl DivInspector {
         json_text: String,
         cx: &mut AsyncWindowContext,
     ) -> DivInspector {
+        // todo! Make a new project instead of needing the current window to be a workspace.
         let project = cx
             .update(|window, cx| {
                 let workspace = window.root::<Workspace>().flatten();
@@ -133,7 +134,7 @@ impl DivInspector {
             .unwrap();
         let project_path = ProjectPath {
             worktree_id,
-            path: Path::new("zed-style-inspector.json").into(),
+            path: Path::new("zed-div-inspector.json").into(),
         };
 
         let style_buffer = project
@@ -143,17 +144,14 @@ impl DivInspector {
             .unwrap()
             .1;
 
+        project
+            .update(cx, |project, cx| {
+                project.register_buffer_with_language_servers(&style_buffer, cx)
+            })
+            .log_err();
+
         let style_editor = cx
             .new_window_entity(|window, cx| {
-                /*
-                let buffer = cx.new(|cx| {
-                    let mut buffer = Buffer::local(json_text, cx);
-                    // todO!
-                    // buffer.file_updated(new_file, cx);
-                    buffer.set_language(json_language.clone().now_or_never().flatten(), cx);
-                    buffer
-                });
-                */
                 style_buffer.update(cx, |style_buffer, cx| style_buffer.set_text(json_text, cx));
                 let multi_buffer = cx.new(|cx| MultiBuffer::singleton(style_buffer, cx));
                 let mut editor =

@@ -4,12 +4,17 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
-use gpui::{App, AsyncApp};
+use gpui::{App, AsyncApp, DivInspectorState};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use language::{LanguageRegistry, LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::{ContextProviderWithTasks, Fs, lsp_store::language_server_settings};
+use schemars::{
+    JsonSchema,
+    r#gen::SchemaSettings,
+    schema::{ObjectValidation, Schema, SchemaObject},
+};
 use serde_json::{Value, json};
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::{
@@ -90,6 +95,7 @@ impl JsonLspAdapter {
         let snippets_schema = snippet_provider::format::VsSnippetsFile::generate_json_schema();
         let tsconfig_schema = serde_json::Value::from_str(TSCONFIG_SCHEMA).unwrap();
         let package_json_schema = serde_json::Value::from_str(PACKAGE_JSON_SCHEMA).unwrap();
+        let div_inspector_schema = generate_div_inspector_schema();
 
         // This can be viewed via `dev: open language server logs` -> `json-language-server` ->
         // `Server Info`
@@ -147,6 +153,12 @@ impl JsonLspAdapter {
                         "schema": debug_schema,
 
                     },
+                    {
+                        "fileMatch": [
+                            "zed-div-inspector.json"
+                        ],
+                        "schema": div_inspector_schema,
+                    }
                 ]
             }
         })
@@ -165,6 +177,15 @@ impl JsonLspAdapter {
         writer.replace(config.clone());
         return Ok(config);
     }
+}
+
+fn generate_div_inspector_schema() -> serde_json_lenient::Value {
+    let schema = SchemaSettings::draft07()
+        .with(|settings| settings.option_add_null_type = false)
+        .into_generator()
+        .into_root_schema_for::<DivInspectorState>();
+
+    serde_json_lenient::to_value(schema).unwrap()
 }
 
 #[async_trait(?Send)]
@@ -340,6 +361,7 @@ async fn get_cached_server_binary(
     .log_err()
 }
 
+// todo! is this really correct in all cases? Should have a better name
 #[inline]
 fn schema_file_match(path: &Path) -> String {
     path.strip_prefix(path.parent().unwrap().parent().unwrap())
