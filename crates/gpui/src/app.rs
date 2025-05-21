@@ -30,16 +30,17 @@ use smallvec::SmallVec;
 pub use test_context::*;
 use util::{ResultExt, debug_panic};
 
+#[cfg(any(feature = "inspector", debug_assertions))]
+use crate::InspectorElementRegistry;
 use crate::{
     Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Asset,
     AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
-    EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, InspectorElementId,
-    InspectorElementRegistry, IntoElement, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId,
-    Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, Point, PromptBuilder, PromptHandle, PromptLevel, Render, RenderImage,
-    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
-    WindowInvalidator,
+    EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
+    Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
+    PlatformDisplay, PlatformKeyboardLayout, Point, PromptBuilder, PromptHandle, PromptLevel,
+    Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString,
+    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance,
+    WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -272,6 +273,7 @@ pub struct App {
     pub(crate) window_invalidators_by_entity:
         FxHashMap<EntityId, FxHashMap<WindowId, WindowInvalidator>>,
     pub(crate) tracked_entities: FxHashMap<WindowId, FxHashSet<EntityId>>,
+    #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) inspector_element_registry: InspectorElementRegistry,
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
@@ -337,6 +339,7 @@ impl App {
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
                 prompt_builder: Some(PromptBuilder::Default),
+                #[cfg(any(feature = "inspector", debug_assertions))]
                 inspector_element_registry: InspectorElementRegistry::default(),
                 quitting: false,
 
@@ -1663,9 +1666,10 @@ impl App {
     }
 
     /// Registers a renderer for the given inspector state.
-    pub fn register_inspector_element<T: 'static, R: IntoElement>(
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub fn register_inspector_element<T: 'static, R: crate::IntoElement>(
         &mut self,
-        f: impl 'static + Fn(InspectorElementId, &T, &mut Window, &mut App) -> R,
+        f: impl 'static + Fn(crate::InspectorElementId, &T, &mut Window, &mut App) -> R,
     ) {
         self.inspector_element_registry.register(f);
     }

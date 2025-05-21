@@ -1,10 +1,12 @@
+#[cfg(any(feature = "inspector", debug_assertions))]
+use crate::Inspector;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Context,
     Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener, DispatchNodeId,
     DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, FontId,
-    Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, Inspector, InspectorElementId,
-    IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
+    Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, InspectorElementId, IsZero,
+    KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
     LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render,
@@ -37,7 +39,6 @@ use std::{
     marker::PhantomData,
     mem,
     ops::{DerefMut, Range},
-    panic,
     rc::Rc,
     sync::{
         Arc, Weak,
@@ -498,14 +499,21 @@ pub(crate) struct DeferredDraw {
     paint_range: Range<PaintIndex>,
 }
 
+#[cfg(any(feature = "inspector", debug_assertions))]
 #[derive(Default)]
 pub(crate) struct FrameInspectorState {
-    pub(crate) next_element_instance_ids:
-        FxHashMap<(SmallVec<[ElementId; 32]>, &'static panic::Location<'static>), usize>,
+    pub(crate) next_element_instance_ids: FxHashMap<
+        (
+            SmallVec<[ElementId; 32]>,
+            &'static std::panic::Location<'static>,
+        ),
+        usize,
+    >,
     pub(crate) element_states:
         hashbrown::HashMap<InspectorElementId, FxHashMap<TypeId, Box<dyn Any>>>,
 }
 
+#[cfg(any(feature = "inspector", debug_assertions))]
 impl FrameInspectorState {
     fn clear(&mut self) {
         self.next_element_instance_ids.clear();
@@ -515,7 +523,7 @@ impl FrameInspectorState {
     pub(crate) fn build_inspector_element_id(
         &mut self,
         element_id: &SmallVec<[ElementId; 32]>,
-        location: &'static panic::Location<'static>,
+        location: &'static std::panic::Location<'static>,
     ) -> InspectorElementId {
         // todo!(avoid cloning when not needed, extract a function in the window)
         let key = (element_id.clone(), location);
@@ -535,6 +543,7 @@ pub(crate) struct Frame {
     pub(crate) window_active: bool,
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
     accessed_element_states: Vec<(GlobalElementId, TypeId)>,
+    #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) inspector_state: FrameInspectorState,
     pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
     pub(crate) dispatch_tree: DispatchTree,
@@ -575,6 +584,7 @@ impl Frame {
             window_active: false,
             element_states: FxHashMap::default(),
             accessed_element_states: Vec::new(),
+            #[cfg(any(feature = "inspector", debug_assertions))]
             inspector_state: FrameInspectorState::default(),
             mouse_listeners: Vec::new(),
             dispatch_tree,
@@ -593,7 +603,6 @@ impl Frame {
     pub(crate) fn clear(&mut self) {
         self.element_states.clear();
         self.accessed_element_states.clear();
-        self.inspector_state.clear();
         self.mouse_listeners.clear();
         self.dispatch_tree.clear();
         self.scene.clear();
@@ -603,6 +612,11 @@ impl Frame {
         self.hitboxes.clear();
         self.deferred_draws.clear();
         self.focus = None;
+
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        {
+            self.inspector_state.clear();
+        }
     }
 
     pub(crate) fn hit_test(&self, position: Point<Pixels>) -> HitTest {
@@ -644,6 +658,7 @@ enum WindowMode {
     /// A normal window.
     Normal,
     /// A window in inspector mode.
+    #[cfg(any(feature = "inspector", debug_assertions))]
     Inspector(Entity<Inspector>),
 }
 
@@ -1505,6 +1520,7 @@ impl Window {
     }
 
     /// Toggles the inspector mode on this window.
+    #[cfg(any(feature = "inspector", debug_assertions))]
     pub fn toggle_inspector(&mut self, cx: &mut App) {
         match self.mode {
             WindowMode::Normal => {
@@ -1516,10 +1532,15 @@ impl Window {
 
     /// Returns true if the window is in inspector mode.
     pub fn is_inspecting(&self) -> bool {
-        matches!(self.mode, WindowMode::Inspector(_))
+        match self.mode {
+            WindowMode::Normal => false,
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            WindowMode::Inspector(_) => true,
+        }
     }
 
     /// Sets the given [`InspectorElementId`] as the currently inspected element.
+    #[cfg(any(feature = "inspector", debug_assertions))]
     pub fn inspect_element(&mut self, id: Option<InspectorElementId>, cx: &mut App) {
         if let WindowMode::Inspector(inspector) = &self.mode {
             inspector.update(cx, |inspector, cx| inspector.select(id, cx))
@@ -1527,6 +1548,7 @@ impl Window {
     }
 
     /// Returns the id of the currently inspected element, if any.
+    #[cfg(any(feature = "inspector", debug_assertions))]
     pub fn inspected_element_id<'a>(&self, cx: &'a App) -> Option<&'a InspectorElementId> {
         if let WindowMode::Inspector(inspector) = &self.mode {
             inspector.read(cx).active_element_id()
@@ -1574,47 +1596,56 @@ impl Window {
     /// todo!("document")
     pub fn with_inspector_state<T: 'static, R>(
         &mut self,
-        inspector_id: Option<&InspectorElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         f: impl FnOnce(&mut Option<T>, &mut Self) -> R,
     ) -> R {
-        self.invalidator.debug_assert_paint_or_prepaint();
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        {
+            self.invalidator.debug_assert_paint_or_prepaint();
 
-        if let Some(inspector_id) = inspector_id {
-            let type_id = TypeId::of::<T>();
+            if let Some(inspector_id) = _inspector_id {
+                let type_id = TypeId::of::<T>();
 
-            let mut inspector_state = self
-                .next_frame
-                .inspector_state
-                .element_states
-                .get_mut(inspector_id)
-                .and_then(|state| state.remove(&type_id))
-                .or_else(|| {
-                    self.rendered_frame
-                        .inspector_state
-                        .element_states
-                        .get_mut(inspector_id)
-                        .and_then(|state| state.remove(&type_id))
-                })
-                .map(|state| *state.downcast().unwrap());
-
-            let result = f(&mut inspector_state, self);
-
-            if let Some(inspector_state) = inspector_state {
-                self.next_frame
+                let mut inspector_state = self
+                    .next_frame
                     .inspector_state
                     .element_states
-                    .entry_ref(inspector_id)
-                    .or_default()
-                    .insert(type_id, Box::new(inspector_state));
-            }
+                    .get_mut(inspector_id)
+                    .and_then(|state| state.remove(&type_id))
+                    .or_else(|| {
+                        self.rendered_frame
+                            .inspector_state
+                            .element_states
+                            .get_mut(inspector_id)
+                            .and_then(|state| state.remove(&type_id))
+                    })
+                    .map(|state| *state.downcast().unwrap());
 
-            result
-        } else {
+                let result = f(&mut inspector_state, self);
+
+                if let Some(inspector_state) = inspector_state {
+                    self.next_frame
+                        .inspector_state
+                        .element_states
+                        .entry_ref(inspector_id)
+                        .or_default()
+                        .insert(type_id, Box::new(inspector_state));
+                }
+
+                result
+            } else {
+                f(&mut None, self)
+            }
+        }
+
+        #[cfg(not(any(feature = "inspector", debug_assertions)))]
+        {
             f(&mut None, self)
         }
     }
 
     /// todo!()
+    #[cfg(any(feature = "inspector", debug_assertions))]
     pub fn update_inspector_state<T: 'static, R>(
         &mut self,
         inspector_id: &InspectorElementId,
@@ -1821,12 +1852,13 @@ impl Window {
         self.invalidator.set_phase(DrawPhase::Prepaint);
         self.tooltip_bounds.take();
 
-        let inspector_width: Pixels = rems(30.0).to_pixels(self.rem_size());
+        let _inspector_width: Pixels = rems(30.0).to_pixels(self.rem_size());
         let root_size = match &self.mode {
             WindowMode::Normal => self.viewport_size,
+            #[cfg(any(feature = "inspector", debug_assertions))]
             WindowMode::Inspector(_) => {
                 let mut size = self.viewport_size;
-                size.width = (size.width - inspector_width).max(px(0.0));
+                size.width = (size.width - _inspector_width).max(px(0.0));
                 size
             }
         };
@@ -1834,7 +1866,16 @@ impl Window {
         // Layout all root elements.
         let mut root_element = self.root.as_ref().unwrap().clone().into_any();
         root_element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
-        let inspector_element = self.prepaint_inspector(inspector_width, cx);
+
+        let _inspector_element: Option<AnyElement>;
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        {
+            _inspector_element = self.prepaint_inspector(_inspector_width, cx);
+        }
+        #[cfg(not(any(feature = "inspector", debug_assertions)))]
+        {
+            _inspector_element = None;
+        }
 
         let mut sorted_deferred_draws =
             (0..self.next_frame.deferred_draws.len()).collect::<SmallVec<[_; 8]>>();
@@ -1864,7 +1905,11 @@ impl Window {
         // Now actually paint the elements.
         self.invalidator.set_phase(DrawPhase::Paint);
         root_element.paint(self, cx);
-        self.paint_inspector(inspector_element, cx);
+
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        {
+            self.paint_inspector(_inspector_element, cx);
+        }
 
         self.paint_deferred_draws(&sorted_deferred_draws, cx);
 
@@ -2010,6 +2055,7 @@ impl Window {
         self.element_id_stack.clear();
     }
 
+    #[cfg(any(feature = "inspector", debug_assertions))]
     fn prepaint_inspector(&mut self, inspector_width: Pixels, cx: &mut App) -> Option<AnyElement> {
         let mode = mem::replace(&mut self.mode, WindowMode::Normal);
         match mode {
@@ -2028,6 +2074,7 @@ impl Window {
         }
     }
 
+    #[cfg(any(feature = "inspector", debug_assertions))]
     fn paint_inspector(&mut self, mut inspector_element: Option<AnyElement>, cx: &mut App) {
         let Some(mut inspector_element) = inspector_element else {
             return;

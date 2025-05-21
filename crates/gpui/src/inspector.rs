@@ -1,51 +1,44 @@
-use collections::FxHashMap;
-use smallvec::SmallVec;
-
-use crate::{
-    AnyElement, App, Context, GlobalElementId, InteractiveElement, IntoElement, ParentElement,
-    Render, Styled, Window, div,
-};
-use std::{
-    any::{Any, TypeId},
-    fmt::{self, Display},
-    panic,
-};
+use std::fmt::{self, Display};
 
 /// A unique identifier for an element that can be debugged.
-#[cfg(debug_assertions)]
 #[derive(Debug, Eq, PartialEq, Hash)]
 pub struct InspectorElementId {
-    pub(crate) global_id: GlobalElementId,
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub(crate) global_id: crate::GlobalElementId,
     /// Source location where this element was constructed.
-    pub source: &'static panic::Location<'static>,
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub source: &'static std::panic::Location<'static>,
+    #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) instance_id: usize,
 }
 
-#[cfg(debug_assertions)]
 impl Clone for InspectorElementId {
     fn clone(&self) -> Self {
-        Self {
-            global_id: GlobalElementId(self.global_id.0.clone()),
-            source: self.source,
-            instance_id: self.instance_id,
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        {
+            Self {
+                global_id: crate::GlobalElementId(self.global_id.0.clone()),
+                source: self.source,
+                instance_id: self.instance_id,
+            }
+        }
+
+        #[cfg(not(any(feature = "inspector", debug_assertions)))]
+        {
+            Self {}
         }
     }
 }
 
-#[cfg(debug_assertions)]
 impl Into<InspectorElementId> for &InspectorElementId {
     fn into(self) -> InspectorElementId {
         self.clone()
     }
 }
 
-#[cfg(not(debug_assertions))]
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
-pub struct InspectorElementId;
-
 impl Display for InspectorElementId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        #[cfg(debug_assertions)]
+        #[cfg(any(feature = "inspector", debug_assertions))]
         {
             for (i, element_id) in self.global_id.0.iter().enumerate() {
                 if i > 0 {
@@ -56,112 +49,127 @@ impl Display for InspectorElementId {
             write!(f, ":{}[{}]", self.source, self.instance_id)?;
         }
 
-        #[cfg(not(debug_assertions))]
+        #[cfg(not(any(feature = "inspector", debug_assertions)))]
         {
-            unimplemented!()
+            write!(f, "<InspectorElementId only used in debug builds>")?;
         }
 
         Ok(())
     }
 }
 
-pub(crate) struct Inspector {
-    active_element_id: Option<InspectorElementId>,
-}
+#[cfg(any(feature = "inspector", debug_assertions))]
+pub(crate) use conditional::*;
 
-impl Inspector {
-    pub fn new() -> Self {
-        Self {
-            active_element_id: None,
+#[cfg(any(feature = "inspector", debug_assertions))]
+mod conditional {
+    use super::*;
+    use crate::{
+        AnyElement, App, Context, InteractiveElement, IntoElement, ParentElement, Render, Styled,
+        Window, div,
+    };
+    use collections::FxHashMap;
+    use smallvec::SmallVec;
+    use std::any::{Any, TypeId};
+
+    pub struct Inspector {
+        active_element_id: Option<InspectorElementId>,
+    }
+
+    impl Inspector {
+        pub fn new() -> Self {
+            Self {
+                active_element_id: None,
+            }
         }
-    }
 
-    pub fn select(&mut self, id: Option<InspectorElementId>, cx: &mut Context<Self>) {
-        self.active_element_id = id;
-        cx.notify();
-    }
+        pub fn select(&mut self, id: Option<InspectorElementId>, cx: &mut Context<Self>) {
+            self.active_element_id = id;
+            cx.notify();
+        }
 
-    pub fn active_element_id(&self) -> Option<&InspectorElementId> {
-        self.active_element_id.as_ref()
-    }
+        pub fn active_element_id(&self) -> Option<&InspectorElementId> {
+            self.active_element_id.as_ref()
+        }
 
-    fn render_elements(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> SmallVec<[AnyElement; 1]> {
-        let mut elements = SmallVec::new();
-        if let Some(inspected_element_id) = self.active_element_id.take() {
-            if let Some(states_by_type_id) = window
-                .next_frame
-                .inspector_state
-                .element_states
-                .remove(&inspected_element_id)
-            {
-                for (type_id, state) in &states_by_type_id {
-                    if let Some(render_inspector) = cx
-                        .inspector_element_registry
-                        .renderers_by_type_id
-                        .remove(&type_id)
-                    {
-                        let mut element = (render_inspector)(
-                            inspected_element_id.clone(),
-                            state.as_ref(),
-                            window,
-                            cx,
-                        );
-                        elements.push(element);
-                        cx.inspector_element_registry
-                            .renderers_by_type_id
-                            .insert(*type_id, render_inspector);
-                    }
-                }
-
-                window
+        fn render_elements(
+            &mut self,
+            window: &mut Window,
+            cx: &mut Context<Self>,
+        ) -> SmallVec<[AnyElement; 1]> {
+            let mut elements = SmallVec::new();
+            if let Some(inspected_element_id) = self.active_element_id.take() {
+                if let Some(states_by_type_id) = window
                     .next_frame
                     .inspector_state
                     .element_states
-                    .insert(inspected_element_id.clone(), states_by_type_id);
+                    .remove(&inspected_element_id)
+                {
+                    for (type_id, state) in &states_by_type_id {
+                        if let Some(render_inspector) = cx
+                            .inspector_element_registry
+                            .renderers_by_type_id
+                            .remove(&type_id)
+                        {
+                            let mut element = (render_inspector)(
+                                inspected_element_id.clone(),
+                                state.as_ref(),
+                                window,
+                                cx,
+                            );
+                            elements.push(element);
+                            cx.inspector_element_registry
+                                .renderers_by_type_id
+                                .insert(*type_id, render_inspector);
+                        }
+                    }
+
+                    window
+                        .next_frame
+                        .inspector_state
+                        .element_states
+                        .insert(inspected_element_id.clone(), states_by_type_id);
+                }
+
+                self.active_element_id = Some(inspected_element_id);
             }
 
-            self.active_element_id = Some(inspected_element_id);
+            elements
         }
-
-        elements
     }
-}
 
-impl Render for Inspector {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div().flex().flex_col().size_full().items_end().child(
-            div()
-                .flex()
-                .flex_col()
-                .occlude()
-                .children(self.render_elements(window, cx)),
-        )
+    impl Render for Inspector {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div().flex().flex_col().size_full().items_end().child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .occlude()
+                    .children(self.render_elements(window, cx)),
+            )
+        }
     }
-}
 
-#[derive(Default)]
-pub(crate) struct InspectorElementRegistry {
-    renderers_by_type_id: FxHashMap<
-        TypeId,
-        Box<dyn Fn(InspectorElementId, &dyn Any, &mut Window, &mut App) -> AnyElement>,
-    >,
-}
+    #[derive(Default)]
+    pub struct InspectorElementRegistry {
+        renderers_by_type_id: FxHashMap<
+            TypeId,
+            Box<dyn Fn(InspectorElementId, &dyn Any, &mut Window, &mut App) -> AnyElement>,
+        >,
+    }
 
-impl InspectorElementRegistry {
-    pub fn register<T: 'static, R: IntoElement>(
-        &mut self,
-        f: impl 'static + Fn(InspectorElementId, &T, &mut Window, &mut App) -> R,
-    ) {
-        self.renderers_by_type_id.insert(
-            TypeId::of::<T>(),
-            Box::new(move |id, value, window, cx| {
-                let value = value.downcast_ref().unwrap();
-                f(id, value, window, cx).into_any_element()
-            }),
-        );
+    impl InspectorElementRegistry {
+        pub fn register<T: 'static, R: IntoElement>(
+            &mut self,
+            f: impl 'static + Fn(InspectorElementId, &T, &mut Window, &mut App) -> R,
+        ) {
+            self.renderers_by_type_id.insert(
+                TypeId::of::<T>(),
+                Box::new(move |id, value, window, cx| {
+                    let value = value.downcast_ref().unwrap();
+                    f(id, value, window, cx).into_any_element()
+                }),
+            );
+        }
     }
 }

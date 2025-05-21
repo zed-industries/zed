@@ -21,7 +21,7 @@ use crate::{
     InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Overflow,
     ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
-    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, fill, point, px, size,
+    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, point, px, size,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -1196,6 +1196,7 @@ pub struct DivFrameState {
 #[derive(Serialize, Deserialize, JsonSchema)]
 pub struct DivInspectorState {
     /// todo!("document")
+    #[cfg(any(feature = "inspector", debug_assertions))]
     pub base_style: Box<StyleRefinement>,
 }
 
@@ -1447,13 +1448,17 @@ impl Interactivity {
     ) -> LayoutId {
         window.with_inspector_state(
             inspector_id,
-            |inspector_state: &mut Option<DivInspectorState>, window| {
-                // todo! This seems inefficient to do for every single div. Load DivInspectorState
-                // on demand?
-                let inspector_state = inspector_state.get_or_insert_with(|| DivInspectorState {
-                    base_style: self.base_style.clone(),
-                });
-                self.base_style.refine(&inspector_state.base_style);
+            |_inspector_state: &mut Option<DivInspectorState>, window| {
+                #[cfg(any(feature = "inspector", debug_assertions))]
+                {
+                    // todo! This seems inefficient to do for every single div. Load DivInspectorState
+                    // on demand?
+                    let inspector_state =
+                        _inspector_state.get_or_insert_with(|| DivInspectorState {
+                            base_style: self.base_style.clone(),
+                        });
+                    self.base_style.refine(&inspector_state.base_style);
+                }
 
                 window.with_optional_element_state::<InteractiveElementState, _>(
                     global_id,
@@ -1646,7 +1651,7 @@ impl Interactivity {
     pub fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        inspector_id: Option<&InspectorElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         hitbox: Option<&Hitbox>,
         window: &mut Window,
@@ -1714,10 +1719,11 @@ impl Interactivity {
                                     self.paint_keyboard_listeners(window, cx);
                                     f(&style, window, cx);
 
-                                    if let Some(hitbox) = hitbox {
-                                        if let Some(inspector_id) = inspector_id {
+                                    if let Some(_hitbox) = hitbox {
+                                        #[cfg(any(feature = "inspector", debug_assertions))]
+                                        if let Some(inspector_id) = _inspector_id {
                                             self.paint_inspector_info(
-                                                hitbox,
+                                                _hitbox,
                                                 inspector_id.clone(),
                                                 window,
                                                 cx,
@@ -1739,6 +1745,7 @@ impl Interactivity {
         );
     }
 
+    #[cfg(any(feature = "inspector", debug_assertions))]
     fn paint_inspector_info(
         &self,
         hitbox: &Hitbox,
@@ -1751,7 +1758,7 @@ impl Interactivity {
         }
 
         if window.inspected_element_id(cx) == Some(&inspector_id) || hitbox.is_top_hit(window) {
-            window.paint_quad(fill(hitbox.bounds, crate::rgba(0x61afef4d)));
+            window.paint_quad(crate::fill(hitbox.bounds, crate::rgba(0x61afef4d)));
         }
 
         window.on_mouse_event({

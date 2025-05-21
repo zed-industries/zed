@@ -332,12 +332,20 @@ impl<E: Element> Drawable<E> {
                     GlobalElementId(window.element_id_stack.clone())
                 });
 
-                let inspector_id = self.element.source().map(|source| {
-                    window
-                        .next_frame
-                        .inspector_state
-                        .build_inspector_element_id(&window.element_id_stack, source)
-                });
+                let inspector_id;
+                #[cfg(any(feature = "inspector", debug_assertions))]
+                {
+                    inspector_id = self.element.source().map(|source| {
+                        window
+                            .next_frame
+                            .inspector_state
+                            .build_inspector_element_id(&window.element_id_stack, source)
+                    });
+                }
+                #[cfg(not(any(feature = "inspector", debug_assertions)))]
+                {
+                    inspector_id = None;
+                }
 
                 let (layout_id, request_layout) = self.element.request_layout(
                     global_id.as_ref(),
