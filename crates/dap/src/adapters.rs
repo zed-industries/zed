@@ -12,7 +12,6 @@ use language::{LanguageName, LanguageToolchainStore};
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
 use settings::WorktreeId;
-use smol::{self, fs::File};
 use std::{
     borrow::Borrow,
     ffi::OsStr,
@@ -358,13 +357,8 @@ pub async fn download_adapter_from_github(
             archive.unpack(&version_path).await?;
         }
         DownloadedFileType::Zip | DownloadedFileType::Vsix => {
-            let zip_path = version_path.with_extension("zip");
-
-            let mut file = File::create(&zip_path).await?;
-            futures::io::copy(response.body_mut(), &mut file).await?;
-
             // we cannot check the status as some adapter include files with names that trigger `Illegal byte sequence`
-            extract_zip(&version_path, file).await?;
+            extract_zip(&version_path, BufReader::new(response.body_mut())).await?;
 
             util::fs::remove_matching(&adapter_path, |entry| {
                 entry
