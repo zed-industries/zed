@@ -12,7 +12,7 @@ use language::{LanguageName, LanguageToolchainStore};
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
 use settings::WorktreeId;
-use smol::{self, fs::File};
+use smol::fs::File;
 use std::{
     borrow::Borrow,
     ffi::OsStr,
@@ -23,6 +23,7 @@ use std::{
     sync::Arc,
 };
 use task::{AttachRequest, DebugRequest, DebugScenario, LaunchRequest, TcpArgumentsTemplate};
+use util::archive::extract_zip;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DapStatus {
@@ -358,17 +359,13 @@ pub async fn download_adapter_from_github(
         }
         DownloadedFileType::Zip | DownloadedFileType::Vsix => {
             let zip_path = version_path.with_extension("zip");
-
             let mut file = File::create(&zip_path).await?;
             futures::io::copy(response.body_mut(), &mut file).await?;
-
-            // we cannot check the status as some adapter include files with names that trigger `Illegal byte sequence`
-            util::command::new_smol_command("unzip")
-                .arg(&zip_path)
-                .arg("-d")
-                .arg(&version_path)
-                .output()
-                .await?;
+            let file = File::open(&zip_path).await?;
+            extract_zip(&version_path, BufReader::new(file))
+                .await
+                // we cannot check the status as some adapter include files with names that trigger `Illegal byte sequence`
+                .ok();
 
             util::fs::remove_matching(&adapter_path, |entry| {
                 entry

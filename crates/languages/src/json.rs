@@ -26,7 +26,7 @@ use std::{
     sync::Arc,
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
-use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
+use util::{ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into};
 
 const SERVER_PATH: &str =
     "node_modules/vscode-langservers-extracted/bin/vscode-json-language-server";
@@ -429,7 +429,7 @@ impl LspAdapter for NodeVersionAdapter {
                 .await
                 .context("downloading release")?;
             if version.url.ends_with(".zip") {
-                node_runtime::extract_zip(
+                extract_zip(
                     &destination_container_path,
                     BufReader::new(response.body_mut()),
                 )

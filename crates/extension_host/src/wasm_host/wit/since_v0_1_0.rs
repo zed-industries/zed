@@ -15,6 +15,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
+use util::archive::extract_zip;
 use util::maybe;
 use wasmtime::component::{Linker, Resource};
 
@@ -543,9 +544,9 @@ impl ExtensionImports for WasmState {
                 }
                 DownloadedFileType::Zip => {
                     futures::pin_mut!(body);
-                    node_runtime::extract_zip(&destination_path, body)
+                    extract_zip(&destination_path, body)
                         .await
-                        .with_context(|| format!("failed to unzip {} archive", path.display()))?;
+                        .with_context(|| format!("unzipping {path:?} archive"))?;
                 }
             }
 

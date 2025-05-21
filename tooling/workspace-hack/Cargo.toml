@@ -19,6 +19,7 @@ ahash = { version = "0.8", features = ["serde"] }
 aho-corasick = { version = "1" }
 anstream = { version = "0.6" }
 arrayvec = { version = "0.7", features = ["serde"] }
+async-compression = { version = "0.4", default-features = false, features = ["deflate", "deflate64", "futures-io", "gzip"] }
 async-std = { version = "1", features = ["attributes", "unstable"] }
 async-tungstenite = { version = "0.29", features = ["tokio-rustls-manual-roots"] }
 aws-config = { version = "1", features = ["behavior-version-latest"] }
@@ -145,6 +146,7 @@ ahash = { version = "0.8", features = ["serde"] }
 aho-corasick = { version = "1" }
 anstream = { version = "0.6" }
 arrayvec = { version = "0.7", features = ["serde"] }
+async-compression = { version = "0.4", default-features = false, features = ["deflate", "deflate64", "futures-io", "gzip"] }
 async-std = { version = "1", features = ["attributes", "unstable"] }
 async-tungstenite = { version = "0.29", features = ["tokio-rustls-manual-roots"] }
 aws-config = { version = "1", features = ["behavior-version-latest"] }
