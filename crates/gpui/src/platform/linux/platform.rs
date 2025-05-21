@@ -759,9 +759,33 @@ impl crate::Keystroke {
             Keysym::XF86_New => "new".to_owned(),
             Keysym::XF86_Open => "open".to_owned(),
             Keysym::XF86_Save => "save".to_owned(),
+            Keysym::F1 => "f1".to_owned(),
+            Keysym::F2 => "f2".to_owned(),
+            Keysym::F3 => "f3".to_owned(),
+            Keysym::F4 => "f4".to_owned(),
+            Keysym::F5 => "f5".to_owned(),
+            Keysym::F6 => "f6".to_owned(),
+            Keysym::F7 => "f7".to_owned(),
+            Keysym::F8 => "f8".to_owned(),
+            Keysym::F9 => "f9".to_owned(),
+            Keysym::F10 => "f10".to_owned(),
+            Keysym::F11 => "f11".to_owned(),
+            Keysym::F12 => "f12".to_owned(),
+            Keysym::F13 => "f13".to_owned(),
+            Keysym::F14 => "f14".to_owned(),
+            Keysym::F15 => "f15".to_owned(),
+            Keysym::F16 => "f16".to_owned(),
+            Keysym::F17 => "f17".to_owned(),
+            Keysym::F18 => "f18".to_owned(),
+            Keysym::F19 => "f19".to_owned(),
+            Keysym::F20 => "f20".to_owned(),
+            Keysym::F21 => "f21".to_owned(),
+            Keysym::F22 => "f22".to_owned(),
+            Keysym::F23 => "f23".to_owned(),
+            Keysym::F24 => "f24".to_owned(),
             _ => keyboard_state
                 .mapper
-                .get_key(keycode, modifiers.shift)
+                .get_key(keycode, &mut modifiers)
                 .unwrap_or_else(|| {
                     let name = xkb::keysym_get_name(key_sym).to_lowercase();
                     if key_sym.is_keypad_key() {
@@ -771,15 +795,6 @@ impl crate::Keystroke {
                     }
                 }),
         };
-
-        if modifiers.shift {
-            // we only include the shift for upper-case letters by convention,
-            // so don't include for numbers and symbols, but do include for
-            // tab/enter, etc.
-            if key.chars().count() == 1 && key.to_lowercase() == key.to_uppercase() {
-                modifiers.shift = false;
-            }
-        }
 
         // Ignore control characters (and DEL) for the purposes of key_char
         let key_char = (!key_utf8.is_empty() && !key_utf8.chars().next().unwrap().is_control())
