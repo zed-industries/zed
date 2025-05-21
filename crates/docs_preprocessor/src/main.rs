@@ -17,6 +17,8 @@ static KEYMAP_LINUX: LazyLock<KeymapFile> = LazyLock::new(|| {
     load_keymap("keymaps/default-linux.json").expect("Failed to load Linux keymap")
 });
 
+static ALL_ACTIONS: LazyLock<Vec<ActionDef>> = LazyLock::new(|| dump_all_gpui_actions());
+
 pub fn make_app() -> Command {
     Command::new("zed-docs-preprocessor")
         .about("Preprocesses Zed Docs content to provide rich action & keybinding support and more")
@@ -29,8 +31,9 @@ pub fn make_app() -> Command {
 
 fn main() -> Result<()> {
     let matches = make_app().get_matches();
+    // call a zed:: function so everything in `zed` crate is linked and
+    // all actions in the actual app are registered
     zed::stdout_is_a_pty();
-    dump_all_gpui_actions();
 
     if let Some(sub_args) = matches.subcommand_matches("supports") {
         handle_supports(sub_args);
@@ -41,37 +44,6 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn dump_all_gpui_actions() {
-    #[derive(Debug, serde::Serialize)]
-    struct ActionDef {
-        name: &'static str,
-        human_name: String,
-        aliases: &'static [&'static str],
-    }
-    let mut actions = gpui::generate_list_of_all_registered_actions()
-        .into_iter()
-        .map(|action| ActionDef {
-            name: action.name,
-            human_name: command_palette::humanize_action_name(action.name),
-            aliases: action.aliases,
-        })
-        .collect::<Vec<ActionDef>>();
-
-    actions.sort_by_key(|a| a.name);
-
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open("/Users/neb/Zed/actions-gen.json")
-        .unwrap();
-    io::Write::write(
-        &mut file,
-        serde_json::to_string_pretty(&actions).unwrap().as_bytes(),
-    )
-    .unwrap();
-}
-
 fn handle_preprocessing() -> Result<()> {
     let mut stdin = io::stdin();
     let mut input = String::new();
@@ -79,8 +51,14 @@ fn handle_preprocessing() -> Result<()> {
 
     let (_ctx, mut book) = CmdPreprocessor::parse_input(input.as_bytes())?;
 
-    template_keybinding(&mut book);
-    template_action(&mut book);
+    let keybindings_ok = template_and_validate_keybindings(&mut book);
+    let actions_ok = template_and_validate_actions(&mut book);
+
+    if !keybindings_ok || !actions_ok {
+        return Err(anyhow::anyhow!(
+            "Some actions referenced in docs do not exist"
+        ));
+    }
 
     serde_json::to_writer(io::stdout(), &book)?;
 
@@ -99,13 +77,19 @@ fn handle_supports(sub_args: &ArgMatches) -> ! {
     }
 }
 
-fn template_keybinding(book: &mut Book) {
+fn template_and_validate_keybindings(book: &mut Book) -> bool {
     let regex = Regex::new(r"\{#kb (.*?)\}").unwrap();
+    let mut ok = false;
 
     for_each_chapter_mut(book, |chapter| {
         chapter.content = regex
             .replace_all(&chapter.content, |caps: &regex::Captures| {
                 let action = caps[1].trim();
+                if !find_action_by_name(action).is_some() {
+                    eprintln!("Action not found: {}", action);
+                    ok = false;
+                    return String::new();
+                }
                 let macos_binding = find_binding("macos", action).unwrap_or_default();
                 let linux_binding = find_binding("linux", action).unwrap_or_default();
 
@@ -117,35 +101,33 @@ fn template_keybinding(book: &mut Book) {
             })
             .into_owned()
     });
+    return ok;
 }
 
-fn template_action(book: &mut Book) {
+fn template_and_validate_actions(book: &mut Book) -> bool {
     let regex = Regex::new(r"\{#action (.*?)\}").unwrap();
-
+    let mut ok = true;
     for_each_chapter_mut(book, |chapter| {
         chapter.content = regex
             .replace_all(&chapter.content, |caps: &regex::Captures| {
                 let name = caps[1].trim();
-
-                let formatted_name = name
-                    .chars()
-                    .enumerate()
-                    .map(|(i, c)| {
-                        if i > 0 && c.is_uppercase() {
-                            format!(" {}", c.to_lowercase())
-                        } else {
-                            c.to_string()
-                        }
-                    })
-                    .collect::<String>()
-                    .trim()
-                    .to_string()
-                    .replace("::", ":");
-
-                format!("<code class=\"hljs\">{}</code>", formatted_name)
+                let Some(action) = find_action_by_name(name) else {
+                    eprintln!("Action not found: {}", name);
+                    ok = false;
+                    return String::new();
+                };
+                format!("<code class=\"hljs\">{}</code>", &action.human_name)
             })
             .into_owned()
     });
+    return ok;
+}
+
+fn find_action_by_name(name: &str) -> Option<&ActionDef> {
+    ALL_ACTIONS
+        .binary_search_by(|action| action.name.cmp(name))
+        .ok()
+        .map(|index| &ALL_ACTIONS[index])
 }
 
 fn find_binding(os: &str, action: &str) -> Option<String> {
@@ -212,4 +194,37 @@ where
         };
         func(chapter);
     });
+}
+
+#[derive(Debug, serde::Serialize)]
+struct ActionDef {
+    name: &'static str,
+    human_name: String,
+    aliases: &'static [&'static str],
+}
+
+fn dump_all_gpui_actions() -> Vec<ActionDef> {
+    let mut actions = gpui::generate_list_of_all_registered_actions()
+        .into_iter()
+        .map(|action| ActionDef {
+            name: action.name,
+            human_name: command_palette::humanize_action_name(action.name),
+            aliases: action.aliases,
+        })
+        .collect::<Vec<ActionDef>>();
+
+    actions.sort_by_key(|a| a.name);
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open("/Users/neb/Zed/actions-gen.json")
+        .unwrap();
+    io::Write::write(
+        &mut file,
+        serde_json::to_string_pretty(&actions).unwrap().as_bytes(),
+    )
+    .unwrap();
+    return actions;
 }
