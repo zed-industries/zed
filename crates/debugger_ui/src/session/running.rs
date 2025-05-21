@@ -519,7 +519,7 @@ impl Focusable for DebugTerminal {
 }
 
 impl RunningState {
-    // todo!() move this to util and make it so you pass a closure to it that converts a string
+    // todo(debugger) move this to util and make it so you pass a closure to it that converts a string
     pub(crate) fn substitute_variables_in_config(
         config: &mut serde_json::Value,
         context: &TaskContext,

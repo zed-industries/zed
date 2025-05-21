@@ -11,7 +11,6 @@ pub use http_client::{HttpClient, github::latest_github_release};
 use language::{LanguageName, LanguageToolchainStore};
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use settings::WorktreeId;
 use smol::{self, fs::File};
 use std::{
