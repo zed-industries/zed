@@ -1077,6 +1077,7 @@ fn create_msaa_texture(
 
     let texture_descriptor = metal::TextureDescriptor::new();
     texture_descriptor.set_texture_type(metal::MTLTextureType::D2Multisample);
+    // NOTE: Using `MTLStorageMode::Private` provides better performance, and some MacBooks can only create MSAA textures in private video memory.
     texture_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
     texture_descriptor.set_width(width);
     texture_descriptor.set_height(height);
