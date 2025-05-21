@@ -1,5 +1,5 @@
 #[cfg(any(feature = "wayland", feature = "x11"))]
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use xkbcommon::xkb::Keycode;
 
@@ -37,6 +37,7 @@ impl LinuxKeyboardMapper {
     pub(crate) fn new(xkb_state: &xkbcommon::xkb::State) -> Self {
         let mut code_to_key = HashMap::default();
         let mut code_to_shifted_key = HashMap::default();
+        let mut inserted = HashSet::default();
 
         let keymap = xkb_state.get_keymap();
         let mut shifted_state = xkbcommon::xkb::State::new(&keymap);
@@ -48,10 +49,12 @@ impl LinuxKeyboardMapper {
             let keycode = Keycode::new(scan_code);
             let key = xkb_state.key_get_utf8(keycode);
             code_to_key.insert(keycode, key.clone());
+            inserted.insert(key);
 
             let shifted_key = shifted_state.key_get_utf8(keycode);
             code_to_shifted_key.insert(keycode, shifted_key);
         }
+        insert_letters_if_missing(&inserted, &mut code_to_key);
 
         Self {
             code_to_key,
@@ -104,6 +107,48 @@ fn is_alphabetic_key(keycode: Keycode) -> bool {
         | 0x001d // y
         | 0x0034 // z
     )
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+macro_rules! insert_letters_if_missing_internal {
+    ($inserted:expr, $code_to_key:expr, $code:expr, $key:literal) => {
+        if !$inserted.contains($key) {
+            $code_to_key.insert($code, $key.to_string());
+        }
+    };
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+fn insert_letters_if_missing(
+    inserted: &HashSet<String>,
+    code_to_key: &mut HashMap<Keycode, String>,
+) {
+    insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x0026), "a");
+    insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x0038), "b");
+    insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x0036), "c");
+    insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x0028), "d");
+    insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x001a), "e");
+    insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x0029), "f");
+    insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x002a), "g");
+    insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x002b), "h");
+    insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x001f), "i");
+    insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x002c), "j");
+    insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x002d), "k");
+    insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x002e), "l");
+    insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x003a), "m");
+    insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x0039), "n");
+    insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x0020), "o");
+    insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x0021), "p");
+    insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x0018), "q");
+    insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x001b), "r");
+    insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x0027), "s");
+    insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x001c), "t");
+    insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x001e), "u");
+    insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x0037), "v");
+    insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x0019), "w");
+    insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x0035), "x");
+    insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x001d), "y");
+    insert_letters_if_missing_internal!(inserted, code_to_key, Keycode::new(0x0034), "z");
 }
 
 // All typeable scan codes for the standard US keyboard layout, ANSI104

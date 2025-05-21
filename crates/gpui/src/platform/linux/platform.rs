@@ -730,6 +730,7 @@ impl crate::Keystroke {
         mut modifiers: crate::Modifiers,
         keycode: Keycode,
     ) -> Self {
+        let key_utf32 = keyboard_state.state.key_get_utf32(keycode);
         let key_utf8 = keyboard_state.state.key_get_utf8(keycode);
         let key_sym = keyboard_state.state.key_get_one_sym(keycode);
 
@@ -797,8 +798,8 @@ impl crate::Keystroke {
         };
 
         // Ignore control characters (and DEL) for the purposes of key_char
-        let key_char = (!key_utf8.is_empty() && !key_utf8.chars().next().unwrap().is_control())
-            .then_some(key_utf8);
+        let key_char =
+            (key_utf32 >= 32 && key_utf32 != 127 && !key_utf8.is_empty()).then_some(key_utf8);
 
         Self {
             modifiers,
