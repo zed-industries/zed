@@ -14,9 +14,10 @@ pub struct Svg {
 }
 
 /// Create a new SVG element.
+#[track_caller]
 pub fn svg() -> Svg {
     Svg {
-        interactivity: Interactivity::default(),
+        interactivity: Interactivity::new(),
         transformation: None,
         path: None,
     }
@@ -45,8 +46,8 @@ impl Element for Svg {
         self.interactivity.element_id.clone()
     }
 
-    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
-        None
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        self.interactivity.source_location()
     }
 
     fn request_layout(
@@ -69,7 +70,7 @@ impl Element for Svg {
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
+        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -77,6 +78,7 @@ impl Element for Svg {
     ) -> Option<Hitbox> {
         self.interactivity.prepaint(
             global_id,
+            inspector_id,
             bounds,
             bounds.size,
             window,

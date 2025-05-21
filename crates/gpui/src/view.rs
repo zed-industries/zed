@@ -33,7 +33,7 @@ impl<V: Render> Element for Entity<V> {
         Some(ElementId::View(self.entity_id()))
     }
 
-    fn source(&self) -> Option<&'static std::panic::Location<'static>> {
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
         None
     }
 
@@ -154,7 +154,7 @@ impl Element for AnyView {
         Some(ElementId::View(self.entity_id()))
     }
 
-    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
         None
     }
 

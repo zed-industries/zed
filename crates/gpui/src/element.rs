@@ -60,8 +60,11 @@ pub trait Element: 'static + IntoElement {
     /// frames. This id must be unique among children of the first containing element with an id.
     fn id(&self) -> Option<ElementId>;
 
-    /// todo!()
-    fn source(&self) -> Option<&'static panic::Location<'static>>;
+    /// Source location where this element was constructed. If this returns `None` then it will not
+    /// be accessible in the inspector.
+    ///
+    /// todo! Document transparent elements
+    fn source_location(&self) -> Option<&'static panic::Location<'static>>;
 
     /// Before an element can be painted, we need to know where it's going to be and how big it is.
     /// Use this method to request a layout from Taffy and initialize the element's state.
@@ -200,7 +203,7 @@ impl<C: RenderOnce> Element for Component<C> {
         None
     }
 
-    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
         #[cfg(debug_assertions)]
         return Some(self.source);
 
@@ -335,7 +338,7 @@ impl<E: Element> Drawable<E> {
                 let inspector_id;
                 #[cfg(any(feature = "inspector", debug_assertions))]
                 {
-                    inspector_id = self.element.source().map(|source| {
+                    inspector_id = self.element.source_location().map(|source| {
                         window
                             .next_frame
                             .inspector_state
@@ -635,7 +638,7 @@ impl Element for AnyElement {
         None
     }
 
-    fn source(&self) -> Option<&'static panic::Location<'static>> {
+    fn source_location(&self) -> Option<&'static panic::Location<'static>> {
         None
     }
 
@@ -707,7 +710,7 @@ impl Element for Empty {
         None
     }
 
-    fn source(&self) -> Option<&'static panic::Location<'static>> {
+    fn source_location(&self) -> Option<&'static panic::Location<'static>> {
         None
     }
 

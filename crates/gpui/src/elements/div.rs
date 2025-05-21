@@ -82,6 +82,35 @@ impl<T: 'static> DragMoveEvent<T> {
 }
 
 impl Interactivity {
+    /// Create an `Interactivity`, capturing the caller location in debug mode.
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    #[track_caller]
+    pub fn new() -> Interactivity {
+        Interactivity {
+            source_location: Some(core::panic::Location::caller()),
+            ..Default::default()
+        }
+    }
+
+    /// Create an `Interactivity`, capturing the caller location in debug mode.
+    #[cfg(not(any(feature = "inspector", debug_assertions)))]
+    pub fn new() -> Interactivity {
+        Interactivity::default()
+    }
+
+    /// Gets the source location of construction. Returns `None` when not in debug mode.
+    pub fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        {
+            self.source_location
+        }
+
+        #[cfg(not(any(feature = "inspector", debug_assertions)))]
+        {
+            None
+        }
+    }
+
     /// Bind the given callback to the mouse down event for the given mouse button, during the bubble phase
     /// The imperative API equivalent of [`InteractiveElement::on_mouse_down`]
     ///
@@ -1137,17 +1166,8 @@ pub(crate) type ActionListener =
 /// Construct a new [`Div`] element
 #[track_caller]
 pub fn div() -> Div {
-    #[cfg(debug_assertions)]
-    let interactivity = Interactivity {
-        location: Some(core::panic::Location::caller()),
-        ..Default::default()
-    };
-
-    #[cfg(not(debug_assertions))]
-    let interactivity = Interactivity::default();
-
     Div {
-        interactivity,
+        interactivity: Interactivity::new(),
         children: SmallVec::default(),
         prepaint_listener: None,
         image_cache: None,
@@ -1223,12 +1243,8 @@ impl Element for Div {
         self.interactivity.element_id.clone()
     }
 
-    fn source(&self) -> Option<&'static std::panic::Location<'static>> {
-        #[cfg(debug_assertions)]
-        return self.interactivity.location;
-
-        #[cfg(not(debug_assertions))]
-        None
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        self.interactivity.source_location()
     }
 
     fn request_layout(
@@ -1269,7 +1285,7 @@ impl Element for Div {
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
+        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -1315,6 +1331,7 @@ impl Element for Div {
 
         self.interactivity.prepaint(
             global_id,
+            inspector_id,
             bounds,
             content_size,
             window,
@@ -1427,7 +1444,7 @@ pub struct Interactivity {
     pub(crate) occlude_mouse: bool,
 
     #[cfg(debug_assertions)]
-    pub(crate) location: Option<&'static core::panic::Location<'static>>,
+    pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
 
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_selector: Option<String>,
@@ -1444,20 +1461,15 @@ impl Interactivity {
         f: impl FnOnce(Style, &mut Window, &mut App) -> LayoutId,
     ) -> LayoutId {
         #[cfg(any(feature = "inspector", debug_assertions))]
-        {
-            window.with_inspector_state(
-                inspector_id,
-                |inspector_state: &mut Option<DivInspectorState>, _window| {
-                    // todo! This seems inefficient to do for every single div. Load DivInspectorState
-                    // on demand?
-                    let inspector_state =
-                        inspector_state.get_or_insert_with(|| DivInspectorState {
-                            base_style: self.base_style.clone(),
-                        });
-                    self.base_style.refine(&inspector_state.base_style);
-                },
-            );
-        }
+        window.with_inspector_state(
+            inspector_id,
+            |inspector_state: &mut Option<DivInspectorState>, _window| {
+                let inspector_state = inspector_state.get_or_insert_with(|| DivInspectorState {
+                    base_style: self.base_style.clone(),
+                });
+                self.base_style.refine(&inspector_state.base_style);
+            },
+        );
 
         window.with_optional_element_state::<InteractiveElementState, _>(
             global_id,
@@ -1518,6 +1530,7 @@ impl Interactivity {
     pub fn prepaint<R>(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         content_size: Size<Pixels>,
         window: &mut Window,
@@ -1807,7 +1820,7 @@ impl Interactivity {
                         origin: hitbox.origin,
                         size: text.size(FONT_SIZE),
                     };
-                    if self.location.is_some()
+                    if self.source_location.is_some()
                         && text_bounds.contains(&window.mouse_position())
                         && window.modifiers().secondary()
                     {
@@ -1838,7 +1851,7 @@ impl Interactivity {
 
                         window.on_mouse_event({
                             let hitbox = hitbox.clone();
-                            let location = self.location.unwrap();
+                            let location = self.source_location.unwrap();
                             move |e: &crate::MouseDownEvent, phase, window, cx| {
                                 if text_bounds.contains(&e.position)
                                     && phase.capture()
@@ -2801,8 +2814,8 @@ where
         self.element.id()
     }
 
-    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
-        self.element.source()
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        self.element.source_location()
     }
 
     fn request_layout(
@@ -2913,8 +2926,8 @@ where
         self.element.id()
     }
 
-    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
-        self.element.source()
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        self.element.source_location()
     }
 
     fn request_layout(

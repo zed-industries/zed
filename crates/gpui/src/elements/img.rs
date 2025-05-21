@@ -194,9 +194,10 @@ pub struct Img {
 }
 
 /// Create a new image element.
+#[track_caller]
 pub fn img(source: impl Into<ImageSource>) -> Img {
     Img {
-        interactivity: Interactivity::default(),
+        interactivity: Interactivity::new(),
         source: source.into(),
         style: ImageStyle::default(),
         image_cache: None,
@@ -266,8 +267,8 @@ impl Element for Img {
         self.interactivity.element_id.clone()
     }
 
-    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
-        None
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        self.interactivity.source_location()
     }
 
     fn request_layout(
@@ -414,7 +415,7 @@ impl Element for Img {
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
+        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -422,6 +423,7 @@ impl Element for Img {
     ) -> Self::PrepaintState {
         self.interactivity.prepaint(
             global_id,
+            inspector_id,
             bounds,
             bounds.size,
             window,

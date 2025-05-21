@@ -581,7 +581,7 @@ impl Element for TerminalElement {
         self.interactivity.element_id.clone()
     }
 
-    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
         None
     }
 
@@ -621,7 +621,7 @@ impl Element for TerminalElement {
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _inspector_id: Option<&gpui::InspectorElementId>,
+        inspector_id: Option<&gpui::InspectorElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -630,6 +630,7 @@ impl Element for TerminalElement {
         let rem_size = self.rem_size(cx);
         self.interactivity.prepaint(
             global_id,
+            inspector_id,
             bounds,
             bounds.size,
             window,

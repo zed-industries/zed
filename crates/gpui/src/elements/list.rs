@@ -819,7 +819,7 @@ impl Element for List {
         None
     }
 
-    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
         None
     }
 

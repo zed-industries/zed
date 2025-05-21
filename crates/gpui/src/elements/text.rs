@@ -24,7 +24,7 @@ impl Element for &'static str {
         None
     }
 
-    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
         None
     }
 
@@ -90,7 +90,7 @@ impl Element for SharedString {
         None
     }
 
-    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
         None
     }
 
@@ -238,7 +238,7 @@ impl Element for StyledText {
         None
     }
 
-    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
         None
     }
 
@@ -698,7 +698,7 @@ impl Element for InteractiveText {
         Some(self.element_id.clone())
     }
 
-    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
         None
     }
 

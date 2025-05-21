@@ -51,11 +51,7 @@ where
         interactivity: Interactivity {
             element_id: Some(id),
             base_style: Box::new(base_style),
-
-            #[cfg(debug_assertions)]
-            location: Some(core::panic::Location::caller()),
-
-            ..Default::default()
+            ..Interactivity::new()
         },
         scroll_handle: None,
         sizing_behavior: ListSizingBehavior::default(),
@@ -165,7 +161,7 @@ impl Element for UniformList {
         self.interactivity.element_id.clone()
     }
 
-    fn source(&self) -> Option<&'static core::panic::Location<'static>> {
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
         None
     }
 
@@ -228,7 +224,7 @@ impl Element for UniformList {
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        _inspector_id: Option<&InspectorElementId>,
+        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         frame_state: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -277,6 +273,7 @@ impl Element for UniformList {
 
         self.interactivity.prepaint(
             global_id,
+            inspector_id,
             bounds,
             content_size,
             window,
