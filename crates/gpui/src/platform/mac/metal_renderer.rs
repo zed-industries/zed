@@ -4,7 +4,7 @@ use crate::{
     Path, PathVertex, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
     Surface, Underline, point, size,
 };
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use block::ConcreteBlock;
 use cocoa::{
     base::{NO, YES},
