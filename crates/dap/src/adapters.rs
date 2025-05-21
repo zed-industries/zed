@@ -1,5 +1,5 @@
 use ::fs::Fs;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
@@ -32,15 +32,17 @@ pub enum DapStatus {
     Failed { error: String },
 }
 
-#[async_trait(?Send)]
-pub trait DapDelegate {
+#[async_trait]
+pub trait DapDelegate: Send + Sync + 'static {
     fn worktree_id(&self) -> WorktreeId;
+    fn worktree_root_path(&self) -> &Path;
     fn http_client(&self) -> Arc<dyn HttpClient>;
     fn node_runtime(&self) -> NodeRuntime;
     fn toolchain_store(&self) -> Arc<dyn LanguageToolchainStore>;
     fn fs(&self) -> Arc<dyn Fs>;
     fn output_to_console(&self, msg: String);
-    fn which(&self, command: &OsStr) -> Option<PathBuf>;
+    async fn which(&self, command: &OsStr) -> Option<PathBuf>;
+    async fn read_text_file(&self, path: PathBuf) -> Result<String>;
     async fn shell_env(&self) -> collections::HashMap<String, String>;
 }
 
@@ -101,8 +103,8 @@ impl TcpArguments {
     pub fn from_proto(proto: proto::TcpHost) -> anyhow::Result<Self> {
         let host = TcpArgumentsTemplate::from_proto(proto)?;
         Ok(TcpArguments {
-            host: host.host.ok_or_else(|| anyhow!("missing host"))?,
-            port: host.port.ok_or_else(|| anyhow!("missing port"))?,
+            host: host.host.context("missing host")?,
+            port: host.port.context("missing port")?,
             timeout: host.timeout,
         })
     }
@@ -198,9 +200,7 @@ impl DebugTaskDefinition {
     }
 
     pub fn from_proto(proto: proto::DebugTaskDefinition) -> Result<Self> {
-        let request = proto
-            .request
-            .ok_or_else(|| anyhow::anyhow!("request is required"))?;
+        let request = proto.request.context("request is required")?;
         Ok(Self {
             label: proto.label.into(),
             initialize_args: proto.initialize_args.map(|v| v.into()),
@@ -344,12 +344,11 @@ pub async fn download_adapter_from_github(
         .get(&github_version.url, Default::default(), true)
         .await
         .context("Error downloading release")?;
-    if !response.status().is_success() {
-        Err(anyhow!(
-            "download failed with status {}",
-            response.status().to_string()
-        ))?;
-    }
+    anyhow::ensure!(
+        response.status().is_success(),
+        "download failed with status {}",
+        response.status().to_string()
+    );
 
     match file_type {
         DownloadedFileType::GzipTar => {
@@ -413,7 +412,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
 
     async fn get_binary(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
@@ -472,7 +471,7 @@ impl DebugAdapter for FakeAdapter {
 
     async fn get_binary(
         &self,
-        _: &dyn DapDelegate,
+        _: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         _: Option<PathBuf>,
         _: &mut AsyncApp,

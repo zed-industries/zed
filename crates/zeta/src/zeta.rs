@@ -14,7 +14,7 @@ use license_detection::LICENSE_FILES_TO_CHECK;
 pub use license_detection::is_license_eligible_for_data_collection;
 pub use rate_completion_modal::*;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use arrayvec::ArrayVec;
 use client::{Client, UserStore};
 use collections::{HashMap, HashSet, VecDeque};
@@ -788,11 +788,12 @@ and then another
                     .get(MINIMUM_REQUIRED_VERSION_HEADER_NAME)
                     .and_then(|version| SemanticVersion::from_str(version.to_str().ok()?).ok())
                 {
-                    if app_version < minimum_required_version {
-                        return Err(anyhow!(ZedUpdateRequiredError {
+                    anyhow::ensure!(
+                        app_version >= minimum_required_version,
+                        ZedUpdateRequiredError {
                             minimum_version: minimum_required_version
-                        }));
-                    }
+                        }
+                    );
                 }
 
                 if response.status().is_success() {
@@ -812,11 +813,11 @@ and then another
                 } else {
                     let mut body = String::new();
                     response.body_mut().read_to_string(&mut body).await?;
-                    return Err(anyhow!(
+                    anyhow::bail!(
                         "error predicting edits.\nStatus: {:?}\nBody: {}",
                         response.status(),
                         body
-                    ));
+                    );
                 }
             }
         }

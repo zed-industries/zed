@@ -951,7 +951,7 @@ impl SerializableItem for ComponentPreview {
         item_id: ItemId,
         window: &mut Window,
         cx: &mut App,
-    ) -> Task<gpui::Result<Entity<Self>>> {
+    ) -> Task<anyhow::Result<Entity<Self>>> {
         let deserialized_active_page =
             match COMPONENT_PREVIEW_DB.get_active_page(item_id, workspace_id) {
                 Ok(page) => {
@@ -1009,7 +1009,7 @@ impl SerializableItem for ComponentPreview {
         alive_items: Vec<ItemId>,
         _window: &mut Window,
         cx: &mut App,
-    ) -> Task<gpui::Result<()>> {
+    ) -> Task<anyhow::Result<()>> {
         delete_unloaded_items(
             alive_items,
             workspace_id,
@@ -1026,7 +1026,7 @@ impl SerializableItem for ComponentPreview {
         _closing: bool,
         _window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Task<gpui::Result<()>>> {
+    ) -> Option<Task<anyhow::Result<()>>> {
         let active_page = self.active_page_id(cx);
         let workspace_id = self.workspace_id?;
         Some(cx.background_spawn(async move {

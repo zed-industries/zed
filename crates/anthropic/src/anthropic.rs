@@ -90,7 +90,7 @@ impl Model {
         } else if id.starts_with("claude-3-haiku") {
             Ok(Self::Claude3Haiku)
         } else {
-            Err(anyhow!("invalid model id"))
+            anyhow::bail!("invalid model id {id}");
         }
     }
 
@@ -385,10 +385,10 @@ impl RateLimitInfo {
     }
 }
 
-fn get_header<'a>(key: &str, headers: &'a HeaderMap) -> Result<&'a str, anyhow::Error> {
+fn get_header<'a>(key: &str, headers: &'a HeaderMap) -> anyhow::Result<&'a str> {
     Ok(headers
         .get(key)
-        .ok_or_else(|| anyhow!("missing header `{key}`"))?
+        .with_context(|| format!("missing header `{key}`"))?
         .to_str()?)
 }
 

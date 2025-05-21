@@ -86,7 +86,6 @@ dependencies = [
  "jsonschema",
  "language",
  "language_model",
- "language_model_selector",
  "log",
  "lsp",
  "markdown",
@@ -492,6 +491,7 @@ dependencies = [
  "collections",
  "context_server",
  "editor",
+ "feature_flags",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -499,17 +499,18 @@ dependencies = [
  "indexed_docs",
  "language",
  "language_model",
- "language_model_selector",
  "languages",
  "log",
  "multi_buffer",
  "open_ai",
+ "ordered-float 2.10.1",
  "parking_lot",
  "paths",
  "picker",
  "pretty_assertions",
  "project",
  "prompt_store",
+ "proto",
  "rand 0.8.5",
  "regex",
  "rope",
@@ -546,6 +547,7 @@ dependencies = [
  "language_model",
  "lmstudio",
  "log",
+ "mistral",
  "ollama",
  "open_ai",
  "paths",
@@ -610,7 +612,6 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
- "terminal_view",
  "text",
  "toml 0.8.20",
  "ui",
@@ -687,6 +688,7 @@ dependencies = [
  "portable-pty",
  "pretty_assertions",
  "project",
+ "prompt_store",
  "rand 0.8.5",
  "regex",
  "reqwest_client",
@@ -2833,6 +2835,7 @@ dependencies = [
  "rand 0.8.5",
  "release_channel",
  "rpc",
+ "rustls-pki-types",
  "schemars",
  "serde",
  "serde_json",
@@ -2847,6 +2850,7 @@ dependencies = [
  "tiny_http",
  "tokio",
  "tokio-native-tls",
+ "tokio-rustls 0.26.2",
  "tokio-socks",
  "url",
  "util",
@@ -3633,9 +3637,12 @@ dependencies = [
  "gimli",
  "hashbrown 0.14.5",
  "log",
+ "postcard",
  "regalloc2",
  "rustc-hash 2.1.1",
  "serde",
+ "serde_derive",
+ "sha2",
  "smallvec",
  "target-lexicon 0.13.2",
 ]
@@ -4982,6 +4989,7 @@ dependencies = [
  "clap",
  "client",
  "collections",
+ "debug_adapter_extension",
  "dirs 4.0.0",
  "dotenv",
  "env_logger 0.11.8",
@@ -5012,6 +5020,7 @@ dependencies = [
  "shellexpand 2.1.2",
  "smol",
  "telemetry",
+ "terminal_view",
  "toml 0.8.20",
  "unindent",
  "util",
@@ -5137,6 +5146,7 @@ dependencies = [
  "async-trait",
  "client",
  "collections",
+ "criterion",
  "ctor",
  "dap",
  "env_logger 0.11.8",
@@ -5149,10 +5159,12 @@ dependencies = [
  "language_extension",
  "log",
  "lsp",
+ "moka",
  "node_runtime",
  "parking_lot",
  "paths",
  "project",
+ "rand 0.8.5",
  "release_channel",
  "remote",
  "reqwest_client",
@@ -5902,6 +5914,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "54614a3312934d066701a80f20f15fa3b56d67ac7722b39eea5b4c9dd1d66c94"
 dependencies = [
  "thread_local",
+]
+
+[[package]]
+name = "generator"
+version = "0.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d18470a76cb7f8ff746cf1f7470914f900252ec36bbc40b569d74b1258446827"
+dependencies = [
+ "cc",
+ "cfg-if",
+ "libc",
+ "log",
+ "rustversion",
+ "windows 0.61.1",
 ]
 
 [[package]]
@@ -7945,6 +7971,7 @@ dependencies = [
  "editor",
  "file_icons",
  "gpui",
+ "language",
  "log",
  "project",
  "schemars",
@@ -8747,25 +8774,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "language_model_selector"
-version = "0.1.0"
-dependencies = [
- "collections",
- "feature_flags",
- "futures 0.3.31",
- "fuzzy",
- "gpui",
- "language_model",
- "log",
- "ordered-float 2.10.1",
- "picker",
- "proto",
- "ui",
- "workspace-hack",
- "zed_actions",
-]
-
-[[package]]
 name = "language_models"
 version = "0.1.0"
 dependencies = [
@@ -9342,6 +9350,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "loom"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "419e0dc8046cb947daa77eb95ae174acfbddb7673b4151f56d1eed8e93fbfaca"
+dependencies = [
+ "cfg-if",
+ "generator",
+ "scoped-tls",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "loop9"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9837,6 +9858,25 @@ dependencies = [
  "serde_json",
  "strum 0.27.1",
  "workspace-hack",
+]
+
+[[package]]
+name = "moka"
+version = "0.12.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a9321642ca94a4282428e6ea4af8cc2ca4eac48ac7a6a4ea8f33f76d0ce70926"
+dependencies = [
+ "crossbeam-channel",
+ "crossbeam-epoch",
+ "crossbeam-utils",
+ "loom",
+ "parking_lot",
+ "portable-atomic",
+ "rustc_version",
+ "smallvec",
+ "tagptr",
+ "thiserror 1.0.69",
+ "uuid",
 ]
 
 [[package]]
@@ -12775,6 +12815,7 @@ dependencies = [
  "hashbrown 0.15.3",
  "log",
  "rustc-hash 2.1.1",
+ "serde",
  "smallvec",
 ]
 
@@ -12883,6 +12924,7 @@ dependencies = [
  "clock",
  "dap",
  "dap_adapters",
+ "debug_adapter_extension",
  "env_logger 0.11.8",
  "extension",
  "extension_host",
@@ -13575,11 +13617,12 @@ dependencies = [
 
 [[package]]
 name = "rustls-pki-types"
-version = "1.11.0"
+version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "917ce264624a4b4db1c364dcc35bfca9ded014d0a958cd47ad3e960e988ea51c"
+checksum = "229a4a4c221013e7e1f1a043678c5cc39fe5171437c88fb47151a21e6f5b5c79"
 dependencies = [
  "web-time",
+ "zeroize",
 ]
 
 [[package]]
@@ -15425,6 +15468,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "tagptr"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b2093cf4c8eb1e67749a6762251bc9cd836b6fc171623bd0a9d324d37af2417"
+
+[[package]]
 name = "take-until"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15607,6 +15656,7 @@ name = "terminal_view"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assistant_slash_command",
  "async-recursion 1.1.1",
  "breadcrumbs",
  "client",
@@ -15807,16 +15857,15 @@ dependencies = [
 
 [[package]]
 name = "tiktoken-rs"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44075987ee2486402f0808505dd65692163d243a337fc54363d49afac41087f6"
+checksum = "25563eeba904d770acf527e8b370fe9a5547bacd20ff84a0b6c3bc41288e5625"
 dependencies = [
  "anyhow",
- "base64 0.21.7",
+ "base64 0.22.1",
  "bstr",
  "fancy-regex 0.13.0",
  "lazy_static",
- "parking_lot",
  "regex",
  "rustc-hash 1.1.0",
 ]
@@ -17534,6 +17583,7 @@ dependencies = [
  "postcard",
  "psm",
  "pulley-interpreter",
+ "rayon",
  "rustix 0.38.44",
  "semver",
  "serde",
@@ -19119,7 +19169,9 @@ dependencies = [
  "core-foundation 0.9.4",
  "core-foundation-sys",
  "coreaudio-sys",
+ "cranelift-codegen",
  "crc32fast",
+ "crossbeam-epoch",
  "crossbeam-utils",
  "crypto-common",
  "deranged",
@@ -19195,6 +19247,7 @@ dependencies = [
  "rand 0.9.1",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
+ "regalloc2",
  "regex",
  "regex-automata 0.4.9",
  "regex-syntax 0.8.5",
@@ -19631,6 +19684,7 @@ dependencies = [
  "dap",
  "dap_adapters",
  "db",
+ "debug_adapter_extension",
  "debugger_tools",
  "debugger_ui",
  "diagnostics",

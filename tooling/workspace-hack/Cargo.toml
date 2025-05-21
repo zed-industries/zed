@@ -44,7 +44,9 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["cargo", "derive", "string", "wrap_help"] }
 clap_builder = { version = "4", default-features = false, features = ["cargo", "color", "std", "string", "suggestions", "usage", "wrap_help"] }
 concurrent-queue = { version = "2" }
+cranelift-codegen = { version = "0.116", default-features = false, features = ["host-arch", "incremental-cache", "std", "timing", "unwind"] }
 crc32fast = { version = "1" }
+crossbeam-epoch = { version = "0.9" }
 crossbeam-utils = { version = "0.8" }
 deranged = { version = "0.4", default-features = false, features = ["powerfmt", "serde", "std"] }
 digest = { version = "0.10", features = ["mac", "oid", "std"] }
@@ -95,6 +97,7 @@ prost-types = { version = "0.9" }
 rand-c38e5c1d305a1b54 = { package = "rand", version = "0.8", features = ["small_rng"] }
 rand_chacha = { version = "0.3" }
 rand_core = { version = "0.6", default-features = false, features = ["std"] }
+regalloc2 = { version = "0.11", features = ["checker", "enable-serde"] }
 regex = { version = "1" }
 regex-automata = { version = "0.4" }
 regex-syntax = { version = "0.8" }
@@ -132,8 +135,8 @@ url = { version = "2", features = ["serde"] }
 uuid = { version = "1", features = ["serde", "v4", "v5", "v7"] }
 wasm-encoder = { version = "0.221", features = ["wasmparser"] }
 wasmparser = { version = "0.221" }
-wasmtime = { version = "29", default-features = false, features = ["async", "component-model", "cranelift", "demangle", "gc-drc"] }
-wasmtime-cranelift = { version = "29", default-features = false, features = ["component-model", "gc-drc"] }
+wasmtime = { version = "29", default-features = false, features = ["async", "component-model", "cranelift", "demangle", "gc-drc", "incremental-cache", "parallel-compilation"] }
+wasmtime-cranelift = { version = "29", default-features = false, features = ["component-model", "gc-drc", "incremental-cache"] }
 wasmtime-environ = { version = "29", default-features = false, features = ["compile", "component-model", "demangle", "gc-drc"] }
 winnow = { version = "0.7", features = ["simd"] }
 
@@ -168,7 +171,9 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["cargo", "derive", "string", "wrap_help"] }
 clap_builder = { version = "4", default-features = false, features = ["cargo", "color", "std", "string", "suggestions", "usage", "wrap_help"] }
 concurrent-queue = { version = "2" }
+cranelift-codegen = { version = "0.116", default-features = false, features = ["host-arch", "incremental-cache", "std", "timing", "unwind"] }
 crc32fast = { version = "1" }
+crossbeam-epoch = { version = "0.9" }
 crossbeam-utils = { version = "0.8" }
 deranged = { version = "0.4", default-features = false, features = ["powerfmt", "serde", "std"] }
 digest = { version = "0.10", features = ["mac", "oid", "std"] }
@@ -224,6 +229,7 @@ quote = { version = "1" }
 rand-c38e5c1d305a1b54 = { package = "rand", version = "0.8", features = ["small_rng"] }
 rand_chacha = { version = "0.3" }
 rand_core = { version = "0.6", default-features = false, features = ["std"] }
+regalloc2 = { version = "0.11", features = ["checker", "enable-serde"] }
 regex = { version = "1" }
 regex-automata = { version = "0.4" }
 regex-syntax = { version = "0.8" }
@@ -267,8 +273,8 @@ url = { version = "2", features = ["serde"] }
 uuid = { version = "1", features = ["serde", "v4", "v5", "v7"] }
 wasm-encoder = { version = "0.221", features = ["wasmparser"] }
 wasmparser = { version = "0.221" }
-wasmtime = { version = "29", default-features = false, features = ["async", "component-model", "cranelift", "demangle", "gc-drc"] }
-wasmtime-cranelift = { version = "29", default-features = false, features = ["component-model", "gc-drc"] }
+wasmtime = { version = "29", default-features = false, features = ["async", "component-model", "cranelift", "demangle", "gc-drc", "incremental-cache", "parallel-compilation"] }
+wasmtime-cranelift = { version = "29", default-features = false, features = ["component-model", "gc-drc", "incremental-cache"] }
 wasmtime-environ = { version = "29", default-features = false, features = ["compile", "component-model", "demangle", "gc-drc"] }
 winnow = { version = "0.7", features = ["simd"] }
 

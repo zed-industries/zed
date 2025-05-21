@@ -80,7 +80,6 @@ members = [
     "crates/language",
     "crates/language_extension",
     "crates/language_model",
-    "crates/language_model_selector",
     "crates/language_models",
     "crates/language_selector",
     "crates/language_tools",
@@ -287,7 +286,6 @@ journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_extension = { path = "crates/language_extension" }
 language_model = { path = "crates/language_model" }
-language_model_selector = { path = "crates/language_model_selector" }
 language_models = { path = "crates/language_models" }
 language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
@@ -430,6 +428,7 @@ convert_case = "0.8.0"
 core-foundation = "0.10.0"
 core-foundation-sys = "0.8.6"
 core-video = { version = "0.4.3", features = ["metal"] }
+criterion = { version = "0.5", features = ["html_reports"] }
 ctor = "0.4.0"
 dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "be69a016ba710191b9fdded28c8b042af4b617f7" }
 dashmap = "6.0"
@@ -475,6 +474,7 @@ lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "c9c189
 markup5ever_rcdom = "0.3.0"
 metal = "0.29"
 mlua = { version = "0.10", features = ["lua54", "vendored", "async", "send"] }
+moka = { version = "0.12.10", features = ["sync"] }
 naga = { version = "25.0", features = ["wgsl-in"] }
 nanoid = "0.4"
 nbformat = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
@@ -555,7 +555,7 @@ sysinfo = "0.31.0"
 take-until = "0.2.0"
 tempfile = "3.20.0"
 thiserror = "2.0.12"
-tiktoken-rs = "0.6.0"
+tiktoken-rs = "0.7.0"
 time = { version = "0.3", features = [
     "macros",
     "parsing",
@@ -608,6 +608,8 @@ wasmtime = { version = "29", default-features = false, features = [
     "runtime",
     "cranelift",
     "component-model",
+    "incremental-cache",
+    "parallel-compilation",
 ] }
 wasmtime-wasi = "29"
 which = "6.0.0"
