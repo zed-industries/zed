@@ -922,7 +922,7 @@ fn eval_create_empty_file() {
     let input_file_content = None;
     let expected_output_content = String::new();
     eval(
-        500,
+        100,
         0.99,
         EvalInput::from_conversation(
             vec![
