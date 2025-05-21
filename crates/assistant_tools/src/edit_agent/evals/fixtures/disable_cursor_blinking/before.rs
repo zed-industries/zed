@@ -7698,7 +7698,7 @@ impl Editor {
                     .gap_1()
                     // Workaround: For some reason, there's a gap if we don't do this
                     .ml(-BORDER_WIDTH)
-                    .shadow(smallvec![gpui::BoxShadow {
+                    .shadow(vec![gpui::BoxShadow {
                         color: gpui::black().opacity(0.05),
                         offset: point(px(1.), px(1.)),
                         blur_radius: px(2.),

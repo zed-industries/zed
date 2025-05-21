@@ -14,7 +14,6 @@ use crate::{
 use collections::HashSet;
 use refineable::Refineable;
 use serde::{Deserialize, Serialize};
-use smallvec::SmallVec;
 pub use taffy::style::{
     AlignContent, AlignItems, AlignSelf, Display, FlexDirection, FlexWrap, JustifyContent,
     Overflow, Position,
@@ -256,7 +255,7 @@ pub struct Style {
     pub corner_radii: Corners<AbsoluteLength>,
 
     /// Box shadow of the element
-    pub box_shadow: SmallVec<[BoxShadow; 2]>,
+    pub box_shadow: Vec<BoxShadow>,
 
     /// The text style of this element
     pub text: TextStyleRefinement,
