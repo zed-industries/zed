@@ -1,0 +1,1347 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mis Cuentas Claras</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        /* Estilos personalizados para el toque profesional y cohesivo con el logo */
+        body {
+            font-family: 'Inter', sans-serif; /* Fuente moderna y limpia */
+            background-color: #ffffff; /* Fondo blanco */
+            color: #333333; /* Texto oscuro para máxima legibilidad en fondo claro */
+            min-height: 100vh; /* Asegurar que el body ocupe al menos la altura de la ventana */
+            padding: 1rem; /* Espaciado alrededor responsivo */
+            line-height: 1.6; /* Mejorar legibilidad del texto */
+        }
+        .container {
+            max-width: 800px; /* Ancho máximo del contenedor */
+            width: 100%; /* Asegurar que ocupe el ancho disponible */
+            margin-left: auto; /* Centrar horizontalmente */
+            margin-right: auto; /* Centrar horizontalmente */
+        }
+        .card {
+            background-color: #ffffff; /* Fondo de tarjeta blanco */
+            border-radius: 0.75rem; /* Bordes más redondeados */
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); /* Sombra más suave para tema claro */
+            border: 1px solid #e0e0e0; /* Borde sutil y claro */
+            padding: 1.5rem; /* Espaciado interno responsivo */
+            margin-bottom: 1.5rem; /* Espacio entre tarjetas */
+        }
+         @media (min-width: 640px) { /* sm breakpoint */
+            .card {
+                padding: 2rem; /* Espaciado interno incrementado en pantallas más grandes */
+            }
+             body {
+                 padding: 1.5rem;
+             }
+         }
+         .income-text {
+             color: #22c55e; /* Verde brillante para ingresos, ajustado para fondo claro */
+         }
+         .expense-text {
+             color: #ef4444; /* Rojo brillante para gastos, ajustado para fondo claro */
+         }
+         .balance-text {
+             color: #eab308; /* Amarillo/Dorado para el balance, ajustado para fondo claro */
+         }
+         .saving-goal-text {
+             color: #f97316; /* Naranja para la meta de ahorro, ajustado para fondo claro */
+         }
+         .saving-progress-positive {
+             color: #22c55e; /* Verde brillante */
+         }
+          .saving-progress-negative {
+             color: #ef4444; /* Rojo brillante */
+         }
+         /* Asegurar que los elementos de la lista se envuelvan en pantallas pequeñas */
+         .entry-details {
+             flex-grow: 1; /* Permite que los detalles crezcan */
+             word-break: break-word; /* Romper palabras largas si es necesario */
+             margin-right: 0.5rem; /* Espacio entre detalles y monto/botón */
+         }
+          .entry-amount-remove {
+              display: flex;
+              align-items: center;
+              flex-shrink: 0; /* Evitar que se encoja */
+         }
+          .category-bar-container {
+              width: 100%;
+              background-color: #e0e0e0; /* Fondo de barra más claro */
+              border-radius: 0.25rem;
+              overflow: hidden; /* Asegurar que la barra de color no se salga */
+          }
+           .category-bar {
+               height: 1rem; /* Altura de la barra */
+               /* El ancho y color se establecerá con JavaScript */
+           }
+           input[type="text"], input[type="number"], input[type="password"], select {
+               background-color: #ffffff; /* Fondo de inputs blanco */
+               border-color: #cccccc; /* Borde gris sutil */
+               color: #333333; /* Color de texto en inputs oscuro */
+               padding: 0.6rem 0.8rem; /* Espaciado interno mejorado */
+               border-radius: 0.375rem; /* Bordes más redondeados */
+               transition: border-color 0.3s ease, box-shadow 0.3s ease; /* Transición suave al enfocar */
+           }
+            input[type="text"]::placeholder, input[type="number"]::placeholder, input[type="password"]::placeholder {
+                color: #a0a0a0; /* Color de placeholder más claro */
+            }
+             input[type="text"]:focus, input[type="number"]:focus, input[type="password"]:focus, select:focus {
+                 border-color: #3b82f6; /* Borde azul brillante al enfocar */
+                 box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.5); /* Sombra azul al enfocar */
+                 outline: none; /* Eliminar el outline por defecto */
+             }
+              button {
+                  transition: background-color 0.3s ease, opacity 0.3s ease; /* Transición suave para hover */
+                   padding: 0.6rem 1.2rem; /* Espaciado interno de botones mejorado */
+                   border-radius: 0.375rem; /* Bordes más redondeados */
+                   font-weight: bold; /* Texto en negrita */
+                   min-height: 44px; /* Tamaño mínimo para facilitar el toque en móviles */
+              }
+               button:hover {
+                   opacity: 0.95; /* Ligera opacidad al pasar el ratón */
+                   background-color: #2563eb; /* Azul más oscuro al pasar el ratón */
+               }
+                .bg-blue-600 { background-color: #3b82f6; } /* Azul principal para botones */
+                .hover\:bg-blue-700:hover { background-color: #2563eb; } /* Ajustar color de hover */
+                 .bg-red-600 { background-color: #ef4444; } /* Rojo para botones de eliminar */
+                 .hover\:bg-red-700:hover { background-color: #dc2626; } /* Ajustar color de hover */
+
+
+           /* Estilos para la pantalla de acceso (oculta) */
+           #accessScreen {
+               display: none !important; /* Aseguramos que la pantalla de acceso esté oculta */
+           }
+            #mainContent {
+                display: block !important; /* Aseguramos que el contenido principal esté visible */
+            }
+            .text-white { color: #333333; } /* Ajustado a oscuro para el tema claro */
+             .text-gray-300 { color: #555555; } /* Ajustar color de etiquetas a gris oscuro */
+              .text-gray-500 { color: #777777; } /* Ajustar color de texto gris a un tono medio */
+               .text-gray-400 { color: #999999; } /* Ajustar color de texto gris claro */
+
+            /* Estilos para el contenedor del título y logo */
+            .header-container {
+                display: flex;
+                flex-direction: column; /* Apilar en móviles */
+                align-items: center;
+                justify-content: center;
+                margin-bottom: 1.5rem; /* Espacio debajo del encabezado responsivo */
+            }
+             @media (min-width: 640px) { /* sm breakpoint */
+                .header-container {
+                    flex-direction: row; /* Volver a fila en pantallas más grandes */
+                    margin-bottom: 2rem;
+                }
+             }
+             .header-container h1 {
+                 margin-bottom: 0; /* Eliminar margen inferior del título */
+                 margin-left: 0; /* Eliminar margen izquierdo en móviles */
+                 margin-top: 0.5rem; /* Espacio entre logo y título en móviles */
+                 font-size: 2.25rem; /* Tamaño de fuente más pequeño para h1 en móviles */
+                 color: #333333; /* Color de título ajustado para fondo blanco */
+             }
+              @media (min-width: 640px) { /* sm breakpoint */
+                 .header-container h1 {
+                     margin-left: 1rem; /* Espacio entre logo y título en pantallas más grandes */
+                     margin-top: 0;
+                     font-size: 2.25rem; /* Tamaño de fuente original */
+                 }
+              }
+              @media (min-width: 768px) { /* md breakpoint */
+                 .header-container h1 {
+                     font-size: 2.5rem; /* Tamaño de fuente más grande para h1 en desktop */
+                 }
+              }
+               @media (min-width: 1024px) { /* lg breakpoint */
+                 .header-container h1 {
+                     font-size: 3rem; /* Tamaño de fuente aún más grande para h1 en pantallas grandes */
+                 }
+              }
+
+             .app-logo {
+                 width: 80px; /* Tamaño del logo ajustado para móviles */
+                 height: 80px;
+                 border-radius: 0.75rem; /* Bordes redondeados para la imagen */
+                 object-fit: cover; /* Asegurar que la imagen cubra el área sin distorsionarse */
+                 /* Fondo del logo ya incluido en la URL del placeholder */
+             }
+              @media (min-width: 640px) { /* sm breakpoint */
+                 .app-logo {
+                     width: 60px; /* Tamaño del logo original en pantallas más grandes */
+                     height: 60px;
+                 }
+              }
+              .text-2xl { font-size: 1.5rem; } /* Ajustar tamaño de h2 para móviles */
+              @media (min-width: 640px) {
+                  .text-2xl { font-size: 1.875rem; } /* Tamaño original de h2 en pantallas más grandes */
+              }
+              .text-xl { font-size: 1.25rem; } /* Ajustar tamaño de texto de resumen para móviles */
+               @media (min-width: 640px) {
+                  .text-xl { font-size: 1.25rem; } /* Tamaño original de texto de resumen en pantallas más grandes */
+              }
+               .text-lg { font-size: 1.125rem; } /* Ajustar tamaño de texto de resumen para móviles */
+               @media (min-width: 640px) {
+                  .text-lg { font-size: 1.125rem; } /* Tamaño original de texto de resumen en pantallas más grandes */
+              }
+               .text-base { font-size: 1rem; } /* Ajustar tamaño de texto de etiquetas para móviles */
+
+            /* Estilos para el FAB y el menú */
+            .fab-container {
+                position: fixed;
+                bottom: 1.5rem; /* 24px */
+                right: 1.5rem; /* 24px */
+                z-index: 1000; /* Asegura que esté por encima de otros elementos */
+                display: flex;
+                flex-direction: column;
+                align-items: flex-end;
+            }
+
+            .fab-button {
+                width: 56px; /* Tamaño estándar de FAB */
+                height: 56px;
+                border-radius: 50%;
+                background-color: #3b82f6; /* Azul principal */
+                color: white;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                font-size: 1.5rem;
+                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+                cursor: pointer;
+                transition: background-color 0.3s ease, transform 0.3s ease;
+            }
+
+            .fab-button:hover {
+                background-color: #2563eb; /* Azul más oscuro al pasar el ratón */
+                transform: scale(1.05);
+            }
+
+            .fab-menu {
+                list-style: none;
+                padding: 0;
+                margin: 0;
+                background-color: #ffffff; /* Fondo blanco para el menú */
+                border-radius: 0.5rem;
+                box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+                margin-bottom: 1rem; /* Espacio entre menú y FAB */
+                opacity: 0;
+                visibility: hidden;
+                transform: translateY(10px);
+                transition: opacity 0.3s ease, visibility 0.3s ease, transform 0.3s ease;
+                min-width: 180px; /* Ancho mínimo para las opciones */
+            }
+
+            .fab-menu.active {
+                opacity: 1;
+                visibility: visible;
+                transform: translateY(0);
+            }
+
+            .fab-menu-item {
+                padding: 0.75rem 1rem;
+                color: #333333; /* Texto oscuro */
+                cursor: pointer;
+                transition: background-color 0.2s ease;
+                border-bottom: 1px solid #f0f0f0; /* Separador sutil */
+            }
+
+            .fab-menu-item:last-child {
+                border-bottom: none; /* Sin borde en el último elemento */
+            }
+
+            .fab-menu-item:hover {
+                background-color: #f0f0f0; /* Gris claro al pasar el ratón */
+            }
+    </style>
+</head>
+<body>
+
+    <div id="mainContent" class="container mx-auto">
+        <div class="header-container">
+             <img src="https://placehold.co/120x120/ffffff/333333?text=CUENTAS%0ACLARAS%0A%24" alt="Logo de Mis Cuentas Claras: Corona, billetes y el texto Cuentas Claras" class="app-logo">
+            <h1 class="text-4xl font-extrabold text-center">Mis Cuentas Claras</h1>
+        </div>
+
+
+        <div class="card" id="monthSelectorCard">
+            <h2 class="text-2xl font-bold mb-4">Seleccionar Mes</h2>
+            <select id="monthSelector" class="block w-full p-2 border rounded-md"></select>
+        </div>
+
+        <div class="card" id="monthlyCollectedAmountCard">
+            <h2 class="text-2xl font-bold mb-4">Monto Recaudado Mensual</h2>
+            <div class="flex items-center gap-4">
+                <label for="monthlyCollectedAmount" class="block text-base font-medium text-gray-300">Monto Total:</label>
+                <input type="number" id="monthlyCollectedAmount" class="mt-1 block w-full" placeholder="Ej: 2000.00" value="0">
+            </div>
+        </div>
+
+        <div class="card" id="savingGoalCard">
+            <h2 class="text-2xl font-bold mb-4">Meta de Ahorro Mensual</h2>
+            <div class="flex items-center gap-4">
+                <label for="savingGoal" class="block text-base font-medium text-gray-300">Meta de Ahorro:</label>
+                <input type="number" id="savingGoal" class="mt-1 block w-full" placeholder="Ej: 100.00" value="0">
+            </div>
+            <button id="getSavingPlanButton" class="w-full bg-blue-600 hover:bg-blue-700 text-white mt-6">Plan de Ahorro Personalizado ✨</button>
+        </div>
+
+        <div class="card" id="savingPlanSection" style="display: none;">
+            <h2 class="text-2xl font-bold mb-4">Análisis Financiero ✨</h2>
+            <div id="savingPlanContent" class="text-gray-700">
+                </div>
+            <div id="savingPlanLoading" class="text-center text-gray-500 mt-4" style="display: none;">
+                Generando plan de ahorro...
+            </div>
+        </div>
+
+        <div class="card" id="imageUploadCard">
+            <h2 class="text-2xl font-bold mb-4">Cargar Movimiento desde Imagen 📸</h2>
+            <p class="text-gray-500 mb-4">Sube una imagen (ej. un recibo) para extraer automáticamente los datos del movimiento.</p>
+            <input type="file" id="imageInput" accept="image/*" class="block w-full text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+            <button id="analyzeImageButton" class="w-full bg-blue-600 hover:bg-blue-700 text-white mt-4">Analizar Imagen</button>
+            <div id="imageAnalysisLoading" class="text-center text-gray-500 mt-4" style="display: none;">
+                Analizando imagen...
+            </div>
+            <div id="imageAnalysisResult" class="mt-4 text-gray-700" style="display: none;">
+                <p class="font-semibold mb-2">Datos extraídos (revisa y añade):</p>
+                <p>Descripción: <span id="extractedDescription" class="font-normal"></span></p>
+                <p>Monto: <span id="extractedAmount" class="font-normal"></span></p>
+                <p>Tipo: <span id="extractedType" class="font-normal"></span></p>
+                <p>Categoría: <span id="extractedCategory" class="font-normal"></span></p>
+                <button id="applyExtractedDataButton" class="w-full bg-blue-600 hover:bg-blue-700 text-white mt-4">Aplicar a Añadir Movimiento</button>
+            </div>
+        </div>
+
+        <div class="card" id="addMovementCard">
+            <h2 class="text-2xl font-bold mb-4">Añadir Nuevo Movimiento</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div>
+                    <label for="description" class="block text-base font-medium text-gray-300">Descripción:</label>
+                    <input type="text" id="description" class="mt-1 block w-full" placeholder="Ej: Alquiler, Salario, Comida">
+                </div>
+                <div>
+                    <label for="amount" class="block text-base font-medium text-gray-300">Monto:</label>
+                    <input type="number" id="amount" class="mt-1 block w-full" placeholder="Ej: 500.00">
+                </div>
+            </div>
+             <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div>
+                    <label for="type" class="block text-base font-medium text-gray-300">Tipo:</label>
+                    <select id="type" class="mt-1 block w-full">
+                        <option value="income">Ingreso</option>
+                        <option value="expense">Gasto</option>
+                    </select>
+                </div>
+                 <div class="flex flex-col">
+                    <label for="category" class="block text-base font-medium text-gray-300">Categoría:</label>
+                    <div class="flex items-center mt-1">
+                        <input type="text" id="category" class="block w-full" placeholder="Ej: Vivienda, Transporte, Alimentación">
+                        <button id="suggestCategoryButton" class="ml-2 bg-blue-600 hover:bg-blue-700 text-white py-2 px-3 rounded-md text-sm whitespace-nowrap">Sugerir Categoría ✨</button>
+                    </div>
+                    <div id="categorySuggestionLoading" class="text-center text-gray-500 text-sm mt-1" style="display: none;">
+                        Sugiriendo...
+                    </div>
+                 </div>
+            </div>
+            <button id="addEntryButton" class="w-full bg-blue-600 hover:bg-blue-700 text-white">Añadir Movimiento</button>
+        </div>
+
+        <div class="card" id="fixedMovementsCard">
+            <h2 class="text-2xl font-bold mb-4">Movimientos Fijos Mensuales 🗓️</h2>
+            <p class="text-gray-500 mb-4">Añade ingresos o gastos que se repiten cada mes.</p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div>
+                    <label for="fixedDescription" class="block text-base font-medium text-gray-300">Descripción:</label>
+                    <input type="text" id="fixedDescription" class="mt-1 block w-full" placeholder="Ej: Alquiler, Salario">
+                </div>
+                <div>
+                    <label for="fixedAmount" class="block text-base font-medium text-gray-300">Monto:</label>
+                    <input type="number" id="fixedAmount" class="mt-1 block w-full" placeholder="Ej: 700.00">
+                </div>
+            </div>
+            <div class="mb-4">
+                <label for="fixedType" class="block text-base font-medium text-gray-300">Tipo:</label>
+                <select id="fixedType" class="mt-1 block w-full">
+                    <option value="income">Ingreso</option>
+                    <option value="expense">Gasto</option>
+                </select>
+            </div>
+            <button id="addFixedEntryButton" class="w-full bg-blue-600 hover:bg-blue-700 text-white">Añadir Movimiento Fijo</button>
+
+            <div class="mt-6 pt-6 border-t border-gray-200">
+                <h3 class="text-xl font-bold mb-3">Lista de Movimientos Fijos:</h3>
+                <div id="fixedEntriesList">
+                    <p class="text-gray-500">No hay movimientos fijos registrados.</p>
+                </div>
+            </div>
+        </div>
+
+
+        <div class="card" id="monthlySummaryCard">
+            <h2 class="text-2xl font-bold mb-4">Resumen Mensual y Ahorro</h2>
+            <p class="font-bold text-lg">Total Ingresos (Incluye Monto Recaudado y Fijos): <span id="totalIncome" class="income-text">0.00</span></p>
+            <p class="font-bold text-lg">Total Gastos (Incluye Fijos): <span id="totalExpenses" class="expense-text">0.00</span></p>
+            <p class="font-bold text-xl mt-4">Balance: <span id="balance" class="balance-text">0.00</span></p>
+
+            <div class="mt-6 pt-6 border-t border-gray-200">
+                <p class="font-bold text-lg">Meta de Ahorro: <span id="savingGoalDisplay" class="saving-goal-text">0.00</span></p>
+                <p class="font-bold text-lg">Ahorro Actual: <span id="actualSaving" class="">0.00</span></p>
+                <p class="font-bold text-lg">Progreso hacia la Meta: <span id="savingProgress" class="">0.00</span></p>
+            </div>
+            <button id="getFinancialAnalysisButton" class="w-full bg-blue-600 hover:bg-blue-700 text-white mt-6">Obtener Análisis Financiero ✨</button>
+        </div>
+
+        <div class="card" id="financialAnalysisSection" style="display: none;">
+            <h2 class="text-2xl font-bold mb-4">Análisis Financiero ✨</h2>
+            <div id="financialAnalysisContent" class="text-gray-700">
+                </div>
+            <div id="financialAnalysisLoading" class="text-center text-gray-500 mt-4" style="display: none;">
+                Cargando análisis...
+            </div>
+        </div>
+
+
+        <div class="card" id="categoryBreakdownCard">
+            <h2 class="text-2xl font-bold mb-4">Desglose de Gastos por Categoría</h2>
+            <div id="categoryBreakdown">
+                 <p class="text-gray-500">Añade gastos para ver el desglose por categoría.</p>
+            </div>
+        </div>
+
+
+        <div class="card" id="entriesListCard">
+            <h2 class="text-2xl font-bold mb-4">Lista de Movimientos</h2>
+            <div id="entriesList">
+                <p class="text-gray-500">Añade movimientos para ver la lista.</p>
+            </div>
+        </div>
+
+    </div>
+
+    <div class="fab-container">
+        <ul class="fab-menu" id="fabMenu">
+            <li class="fab-menu-item" data-target="addMovementCard">Añadir Movimiento</li>
+            <li class="fab-menu-item" data-target="imageUploadCard">Cargar desde Imagen</li>
+            <li class="fab-menu-item" data-target="fixedMovementsCard">Movimientos Fijos</li>
+            <li class="fab-menu-item" data-target="monthlySummaryCard">Resumen Mensual</li>
+            <li class="fab-menu-item" data-target="savingGoalCard">Meta de Ahorro</li>
+            <li class="fab-menu-item" data-target="categoryBreakdownCard">Desglose por Categoría</li>
+            <li class="fab-menu-item" data-target="entriesListCard">Lista de Movimientos</li>
+        </ul>
+        <button class="fab-button" id="fabButton">
+            <i class="fas fa-bars"></i>
+        </button>
+    </div>
+
+
+    <script>
+        // --- JavaScript para la aplicación de cuentas ---
+
+        // Estructura para almacenar datos de todos los meses: { "YYYY-MM": { entries: [], savingGoal: 0, collectedAmount: 0 } }
+        let allMonthsData = {};
+        let currentMonthKey = ''; // Clave del mes actualmente seleccionado (formato YYYY-MM)
+
+        // Array para almacenar movimientos fijos globales
+        let fixedMovements = [];
+
+        // Claves principales para localStorage
+        const LOCAL_STORAGE_ALL_MONTHS_DATA_KEY = 'misCuentasClaras.allMonthsData';
+        const LOCAL_STORAGE_FIXED_MOVEMENTS_KEY = 'misCuentasClaras.fixedMovements';
+
+
+        // Colores para las barras de categoría (puedes añadir más colores si tienes muchas categorías)
+        const categoryColors = [
+            '#3b82f6', // blue-500
+            '#22c55e', // green-500
+            '#eab308', // yellow-500
+            '#ef4444', // red-500
+            '#a855f7', // purple-500
+            '#f97316', // orange-500
+            '#0ea5e9', // sky-500
+            '#10b981', // emerald-500
+            '#f59e0b', // amber-500
+            '#dc2626', // red-600
+             '#8b5cf6', // violet-500
+             '#fb923c', // orange-400
+        ];
+         let colorIndex = 0; // Para asignar colores cíclicamente
+
+        // --- Funciones de encriptación/desencriptación para localStorage ---
+        async function getKey() {
+            // Para pruebas: Derivar una clave de una "contraseña" fija.
+            // ADVERTENCIA: NO USAR EN PRODUCCIÓN PARA DATOS SENSIBLES.
+            // Una clave fija en el código es vulnerable a ingeniería inversa.
+            const password = 'miscuentasclaras-testing-key';
+            const enc = new TextEncoder();
+            const keyMaterial = await crypto.subtle.importKey(
+                'raw',
+                enc.encode(password),
+                { name: 'PBKDF2' },
+                false,
+                ['deriveBits', 'deriveKey']
+            );
+            const key = await crypto.subtle.deriveKey(
+                {
+                    name: 'PBKDF2',
+                    salt: enc.encode('salt-miscuentasclaras'), // Un salt fijo para este ejemplo
+                    iterations: 100000,
+                    hash: 'SHA-256',
+                },
+                keyMaterial,
+                { name: 'AES-GCM', length: 256 },
+                true,
+                ['encrypt', 'decrypt']
+            );
+            return key;
+        }
+
+        async function encryptData(data) {
+            const key = await getKey();
+            const iv = crypto.getRandomValues(new Uint8Array(12)); // Initialization Vector (IV)
+            const enc = new TextEncoder();
+            const encrypted = await crypto.subtle.encrypt(
+                { name: 'AES-GCM', iv: iv },
+                key,
+                enc.encode(JSON.stringify(data))
+            );
+
+            const ivHex = Array.from(iv).map(b => b.toString(16).padStart(2, '0')).join('');
+            const encryptedHex = Array.from(new Uint8Array(encrypted)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+            return `${ivHex}:${encryptedHex}`; // Almacenar IV y datos encriptados
+        }
+
+        async function decryptData(encryptedText) {
+            if (!encryptedText || typeof encryptedText !== 'string' || !encryptedText.includes(':')) {
+                console.warn('Datos encriptados inválidos o vacíos.');
+                return null;
+            }
+
+            const [ivHex, encryptedHex] = encryptedText.split(':');
+            const iv = new Uint8Array(ivHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+            const encrypted = new Uint8Array(encryptedHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+
+            const key = await getKey();
+            const dec = new TextDecoder();
+            try {
+                const decrypted = await crypto.subtle.decrypt(
+                    { name: 'AES-GCM', iv: iv },
+                    key,
+                    encrypted
+                );
+                return JSON.parse(dec.decode(decrypted));
+            } catch (e) {
+                console.error('Error al desencriptar datos:', e);
+                return null; // Retornar null o un valor por defecto en caso de error
+            }
+        }
+
+        // --- Función para guardar todos los datos de los meses en localStorage ---
+        async function saveData() {
+            const encrypted = await encryptData(allMonthsData);
+            localStorage.setItem(LOCAL_STORAGE_ALL_MONTHS_DATA_KEY, encrypted);
+        }
+
+         // --- Función para cargar todos los datos de los meses de localStorage ---
+        async function loadData() {
+            const savedData = localStorage.getItem(LOCAL_STORAGE_ALL_MONTHS_DATA_KEY);
+            if (savedData) {
+                allMonthsData = await decryptData(savedData) || {};
+            } else {
+                // Inicializar con datos vacíos si no hay nada guardado
+                allMonthsData = {};
+            }
+        }
+
+        // --- Función para guardar movimientos fijos en localStorage ---
+        async function saveFixedMovements() {
+            const encrypted = await encryptData(fixedMovements);
+            localStorage.setItem(LOCAL_STORAGE_FIXED_MOVEMENTS_KEY, encrypted);
+        }
+
+        // --- Función para cargar movimientos fijos de localStorage ---
+        async function loadFixedMovements() {
+            const savedFixed = localStorage.getItem(LOCAL_STORAGE_FIXED_MOVEMENTS_KEY);
+            if (savedFixed) {
+                fixedMovements = await decryptData(savedFixed) || [];
+            } else {
+                fixedMovements = [];
+            }
+        }
+
+        // --- Función para obtener el nombre del mes en español ---
+        function getMonthName(monthIndex) { // monthIndex es 0-based (0 para Enero)
+            const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+                                "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+            return monthNames[monthIndex];
+        }
+
+        // --- Función para generar las opciones del selector de mes ---
+        function populateMonthSelector() {
+            const monthSelector = document.getElementById('monthSelector');
+            monthSelector.innerHTML = ''; // Limpiar opciones anteriores
+
+            const today = new Date();
+            const currentYear = today.getFullYear();
+            const currentMonth = today.getMonth(); // 0-based
+
+            // Generar opciones para los últimos 12 meses (incluyendo el actual)
+            for (let i = 0; i < 12; i++) {
+                const date = new Date(currentYear, currentMonth - i, 1);
+                const year = date.getFullYear();
+                const month = date.getMonth(); // 0-based
+
+                // Formato de clave YYYY-MM
+                const monthKey = `${year}-${(month + 1).toString().padStart(2, '0')}`;
+                const monthName = getMonthName(month);
+
+                const option = document.createElement('option');
+                option.value = monthKey;
+                option.textContent = `${monthName} ${year}`;
+
+                monthSelector.appendChild(option);
+            }
+
+            // Seleccionar el mes actual por defecto
+            const currentMonthFormatted = `${currentYear}-${(currentMonth + 1).toString().padStart(2, '0')}`;
+            monthSelector.value = currentMonthFormatted;
+            currentMonthKey = currentMonthFormatted; // Establecer la clave del mes actual
+        }
+
+        // --- Función para cargar los datos del mes seleccionado y actualizar la UI ---
+        async function loadMonthData(monthKey) {
+            // Asegurarse de que exista una entrada para el mes si no la hay
+            if (!allMonthsData[monthKey]) {
+                allMonthsData[monthKey] = { entries: [], savingGoal: 0, collectedAmount: 0 };
+            }
+
+            // Actualizar los campos de entrada con los datos cargados
+            document.getElementById('savingGoal').value = allMonthsData[monthKey].savingGoal;
+            document.getElementById('monthlyCollectedAmount').value = allMonthsData[monthKey].collectedAmount;
+
+            // Renderizar la UI con los datos del mes cargado
+            renderEntries();
+            renderFixedMovements(); // Renderizar también los movimientos fijos
+            updateSummary();
+            renderCategoryBreakdown();
+        }
+
+
+        // Event listener para el selector de mes
+        document.getElementById('monthSelector').addEventListener('change', async function() {
+            currentMonthKey = this.value; // Actualizar la clave del mes actual
+            await loadMonthData(currentMonthKey); // Cargar y mostrar los datos del nuevo mes
+        });
+
+
+        // Event listener para el botón de añadir movimiento individual
+        document.getElementById('addEntryButton').addEventListener('click', async function() {
+            const descriptionInput = document.getElementById('description');
+            const amountInput = document.getElementById('amount');
+            const typeInput = document.getElementById('type');
+            const categoryInput = document.getElementById('category');
+
+            const description = descriptionInput.value.trim();
+            const amount = parseFloat(amountInput.value);
+            const type = typeInput.value;
+            const category = categoryInput.value.trim();
+
+            // Validar las entradas
+            if (description === '' || isNaN(amount) || amount <= 0) {
+                alert('Por favor, introduce una descripción válida y un monto positivo.');
+                return; // Detener la función si la validación falla
+            }
+
+            // Crear un nuevo objeto de movimiento
+            const newEntry = {
+                description: description,
+                amount: amount,
+                type: type,
+                category: category || 'Sin Categoría' // Categoría por defecto si no se especifica
+            };
+
+            // Añadir el nuevo movimiento al array del mes actual
+            allMonthsData[currentMonthKey].entries.push(newEntry);
+
+            // Limpiar los campos del formulario
+            descriptionInput.value = '';
+            amountInput.value = '';
+            categoryInput.value = '';
+
+            // Guardar todos los datos después de añadir un movimiento
+            await saveData();
+
+            // Actualizar la visualización de la lista, el resumen y el desglose de categorías
+            renderEntries();
+            updateSummary();
+            renderCategoryBreakdown(); // Llamar a la nueva función
+        });
+
+         // Event listener para el campo de meta de ahorro
+         document.getElementById('savingGoal').addEventListener('input', async function() {
+             let monthlySavingGoal = parseFloat(this.value) || 0;
+              // Actualizar el dato en la estructura de todos los meses
+             allMonthsData[currentMonthKey].savingGoal = monthlySavingGoal;
+              await saveData(); // Guardar todos los datos
+             updateSummary(); // Actualizar el resumen cuando cambia la meta
+         });
+
+         // Event listener para el campo de monto recaudado mensual
+         document.getElementById('monthlyCollectedAmount').addEventListener('input', async function() {
+             let monthlyCollectedAmount = parseFloat(this.value) || 0;
+              // Actualizar el dato en la estructura de todos los meses
+             allMonthsData[currentMonthKey].collectedAmount = monthlyCollectedAmount;
+              await saveData(); // Guardar todos los datos
+             updateSummary(); // Actualizar el resumen cuando cambia el monto recaudado
+         });
+
+
+        // --- Función para mostrar los movimientos en la lista ---
+        function renderEntries() {
+            const entriesListDiv = document.getElementById('entriesList');
+            entriesListDiv.innerHTML = ''; // Limpiar la lista actual
+
+            // Usar los entries del mes actual directamente
+            const currentMonthEntries = allMonthsData[currentMonthKey]?.entries || [];
+
+
+            if (currentMonthEntries.length === 0) {
+                entriesListDiv.innerHTML = '<p class="text-gray-500">Añade movimientos para ver la lista.</p>';
+                return;
+            }
+
+            // Crear elementos para cada movimiento y añadirlos a la lista
+            currentMonthEntries.forEach((entry, index) => {
+                const entryElement = document.createElement('div');
+                // Ajustar clases para mejor responsividad en la lista
+                entryElement.classList.add('border-b', 'py-3', 'flex', 'flex-col', 'sm:flex-row', 'justify-between', 'items-start', 'sm:items-center', 'border-gray-200'); /* Borde más claro para tema blanco */
+
+                const amountClass = entry.type === 'income' ? 'income-text' : 'expense-text';
+                const amountSign = entry.type === 'income' ? '+' : '-';
+
+                entryElement.innerHTML = `
+                    <div class="entry-details mb-2 sm:mb-0">
+                        <p class="font-semibold">${entry.description}</p>
+                        <p class="text-sm text-gray-500">${entry.category}</p>
+                    </div>
+                    <div class="entry-amount-remove">
+                        <span class="font-bold ${amountClass}">${amountSign}${entry.amount.toFixed(2)}</span>
+                        <button class="remove-entry ml-4 bg-red-600 hover:bg-red-700 text-white py-1 px-2 rounded-md text-xs" data-index="${index}">Eliminar</button>
+                    </div>
+                `;
+
+                // Añadir event listener al botón de eliminar ANTES de añadir al DOM
+                entryElement.querySelector('.remove-entry').addEventListener('click', function() {
+                    const indexToRemove = parseInt(this.dataset.index);
+                    removeEntry(indexToRemove);
+                });
+
+
+                entriesListDiv.appendChild(entryElement);
+            });
+        }
+
+        // --- Función para eliminar un movimiento ---
+        function removeEntry(index) {
+            // Eliminar del array del mes actual
+            allMonthsData[currentMonthKey].entries.splice(index, 1);
+
+            saveData(); // Guardar todos los datos después de eliminar
+
+            renderEntries(); // Volver a renderizar la lista
+            updateSummary(); // Actualizar el resumen
+            renderCategoryBreakdown(); // Actualizar el desglose de categorías
+        }
+
+        // --- Funciones para Movimientos Fijos ---
+        document.getElementById('addFixedEntryButton').addEventListener('click', async function() {
+            const fixedDescriptionInput = document.getElementById('fixedDescription');
+            const fixedAmountInput = document.getElementById('fixedAmount');
+            const fixedTypeInput = document.getElementById('fixedType');
+
+            const description = fixedDescriptionInput.value.trim();
+            const amount = parseFloat(fixedAmountInput.value);
+            const type = fixedTypeInput.value;
+
+            if (description === '' || isNaN(amount) || amount <= 0) {
+                alert('Por favor, introduce una descripción válida y un monto positivo para el movimiento fijo.');
+                return;
+            }
+
+            const newFixedEntry = {
+                description: description,
+                amount: amount,
+                type: type,
+                isFixed: true // Marcador para identificar movimientos fijos
+            };
+
+            fixedMovements.push(newFixedEntry);
+            await saveFixedMovements();
+
+            fixedDescriptionInput.value = '';
+            fixedAmountInput.value = '';
+
+            renderFixedMovements();
+            updateSummary();
+            renderCategoryBreakdown();
+        });
+
+        function renderFixedMovements() {
+            const fixedEntriesListDiv = document.getElementById('fixedEntriesList');
+            fixedEntriesListDiv.innerHTML = '';
+
+            if (fixedMovements.length === 0) {
+                fixedEntriesListDiv.innerHTML = '<p class="text-gray-500">No hay movimientos fijos registrados.</p>';
+                return;
+            }
+
+            fixedMovements.forEach((entry, index) => {
+                const entryElement = document.createElement('div');
+                entryElement.classList.add('border-b', 'py-3', 'flex', 'flex-col', 'sm:flex-row', 'justify-between', 'items-start', 'sm:items-center', 'border-gray-200');
+
+                const amountClass = entry.type === 'income' ? 'income-text' : 'expense-text';
+                const amountSign = entry.type === 'income' ? '+' : '-';
+
+                entryElement.innerHTML = `
+                    <div class="entry-details mb-2 sm:mb-0">
+                        <p class="font-semibold">${entry.description} <span class="text-xs text-blue-500">(Fijo)</span></p>
+                    </div>
+                    <div class="entry-amount-remove">
+                        <span class="font-bold ${amountClass}">${amountSign}${entry.amount.toFixed(2)}</span>
+                        <button class="remove-fixed-entry ml-4 bg-red-600 hover:bg-red-700 text-white py-1 px-2 rounded-md text-xs" data-index="${index}">Eliminar</button>
+                    </div>
+                `;
+
+                entryElement.querySelector('.remove-fixed-entry').addEventListener('click', function() {
+                    const indexToRemove = parseInt(this.dataset.index);
+                    removeFixedEntry(indexToRemove);
+                });
+
+                fixedEntriesListDiv.appendChild(entryElement);
+            });
+        }
+
+        function removeFixedEntry(index) {
+            fixedMovements.splice(index, 1);
+            saveFixedMovements();
+            renderFixedMovements();
+            updateSummary();
+            renderCategoryBreakdown();
+        }
+
+
+        // --- Función para actualizar el resumen de ingresos, gastos y balance (incluyendo fijos) ---
+        function updateSummary() {
+            const totalIncomeSpan = document.getElementById('totalIncome');
+            const totalExpensesSpan = document.getElementById('totalExpenses');
+            const balanceSpan = document.getElementById('balance');
+            const savingGoalDisplaySpan = document.getElementById('savingGoalDisplay');
+            const actualSavingSpan = document.getElementById('actualSaving');
+            const savingProgressSpan = document.getElementById('savingProgress');
+
+            const currentMonthData = allMonthsData[currentMonthKey] || { entries: [], savingGoal: 0, collectedAmount: 0 };
+            const currentMonthEntries = currentMonthData.entries;
+            const currentMonthSavingGoal = currentMonthData.savingGoal;
+            const currentMonthCollectedAmount = currentMonthData.collectedAmount;
+
+            let totalIncome = currentMonthCollectedAmount;
+            let totalExpenses = 0;
+
+            // Sumar movimientos del mes actual
+            currentMonthEntries.forEach(entry => {
+                if (entry.type === 'income') {
+                    totalIncome += entry.amount;
+                } else {
+                    totalExpenses += entry.amount;
+                }
+            });
+
+            // Sumar movimientos fijos
+            fixedMovements.forEach(entry => {
+                if (entry.type === 'income') {
+                    totalIncome += entry.amount;
+                } else {
+                    totalExpenses += entry.amount;
+                }
+            });
+
+            const balance = totalIncome - totalExpenses;
+            const actualSaving = Math.max(0, balance);
+            const savingProgress = actualSaving - currentMonthSavingGoal;
+
+
+            totalIncomeSpan.textContent = totalIncome.toFixed(2);
+            totalExpensesSpan.textContent = totalExpenses.toFixed(2);
+            balanceSpan.textContent = balance.toFixed(2);
+
+             if (balance < 0) {
+                 balanceSpan.classList.remove('income-text', 'balance-text');
+                 balanceSpan.classList.add('expense-text');
+             } else {
+                 balanceSpan.classList.remove('expense-text', 'balance-text');
+                 balanceSpan.classList.add('income-text');
+             }
+             if (balance === 0) {
+                  balanceSpan.classList.remove('income-text', 'expense-text');
+                  balanceSpan.classList.add('balance-text');
+             }
+
+
+            savingGoalDisplaySpan.textContent = currentMonthSavingGoal.toFixed(2);
+            actualSavingSpan.textContent = actualSaving.toFixed(2);
+            savingProgressSpan.textContent = savingProgress.toFixed(2);
+
+             if (savingProgress >= 0) {
+                 savingProgressSpan.classList.remove('saving-progress-negative');
+                 savingProgressSpan.classList.add('saving-progress-positive');
+             } else {
+                 savingProgressSpan.classList.remove('saving-progress-positive');
+                 savingProgressSpan.classList.add('saving-progress-negative');
+             }
+
+        }
+
+        // --- Función para renderizar el desglose de gastos por categoría (incluyendo fijos) ---
+        function renderCategoryBreakdown() {
+            const categoryBreakdownDiv = document.getElementById('categoryBreakdown');
+            categoryBreakdownDiv.innerHTML = '';
+
+            const currentMonthEntries = allMonthsData[currentMonthKey]?.entries || [];
+            const allEntries = [...currentMonthEntries, ...fixedMovements]; // Combinar movimientos del mes y fijos
+
+            const expenseEntries = allEntries.filter(entry => entry.type === 'expense');
+
+            if (expenseEntries.length === 0) {
+                 categoryBreakdownDiv.innerHTML = '<p class="text-gray-500">Añade gastos para ver el desglose por categoría.</p>';
+                 return;
+            }
+
+            const expensesByCategory = expenseEntries.reduce((acc, entry) => {
+                const category = entry.category || 'Sin Categoría';
+                if (!acc[category]) {
+                    acc[category] = 0;
+                }
+                acc[category] += entry.amount;
+                return acc;
+            }, {});
+
+            const totalExpenses = Object.values(expensesByCategory).reduce((sum, amount) => sum + amount, 0);
+
+             colorIndex = 0;
+
+            for (const category in expensesByCategory) {
+                const categoryTotal = expensesByCategory[category];
+                const percentage = (categoryTotal / totalExpenses) * 100;
+
+                const categoryElement = document.createElement('div');
+                categoryElement.classList.add('mb-2');
+
+                 const barColor = categoryColors[colorIndex % categoryColors.length];
+                 colorIndex++;
+
+                categoryElement.innerHTML = `
+                    <div class="flex justify-between text-sm text-gray-500">
+                        <span class="font-semibold">${category}</span>
+                        <span>${categoryTotal.toFixed(2)} (${percentage.toFixed(1)}%)</span>
+                    </div>
+                    <div class="category-bar-container mt-1">
+                        <div class="category-bar" style="width: ${percentage}%; background-color: ${barColor};"></div>
+                    </div>
+                `;
+
+                categoryBreakdownDiv.appendChild(categoryElement);
+            }
+        }
+
+        // --- Función para inicializar la aplicación ---
+        async function initializeApp() {
+            await loadData(); // Cargar datos de meses
+            await loadFixedMovements(); // Cargar movimientos fijos
+
+            populateMonthSelector();
+            await loadMonthData(currentMonthKey);
+        }
+
+        // --- Funcionalidad del LLM para Análisis Financiero ---
+        document.getElementById('getFinancialAnalysisButton').addEventListener('click', async () => {
+            const financialAnalysisSection = document.getElementById('financialAnalysisSection');
+            const financialAnalysisContent = document.getElementById('financialAnalysisContent');
+            const financialAnalysisLoading = document.getElementById('financialAnalysisLoading');
+
+            financialAnalysisSection.style.display = 'block'; // Mostrar la sección de análisis
+            financialAnalysisContent.innerHTML = ''; // Limpiar contenido anterior
+            financialAnalysisLoading.style.display = 'block'; // Mostrar indicador de carga
+
+            // Obtener los datos actuales del mes incluyendo fijos
+            const currentMonthData = allMonthsData[currentMonthKey] || { entries: [], savingGoal: 0, collectedAmount: 0 };
+            const allEntries = [...currentMonthData.entries, ...fixedMovements]; // Combinar movimientos del mes y fijos
+
+            let totalIncomeFromEntries = 0;
+            let totalExpenses = 0;
+            const expensesByCategory = {};
+
+            allEntries.forEach(entry => {
+                if (entry.type === 'income') {
+                    totalIncomeFromEntries += entry.amount;
+                } else {
+                    totalExpenses += entry.amount;
+                    const category = entry.category || 'Sin Categoría';
+                    expensesByCategory[category] = (expensesByCategory[category] || 0) + entry.amount;
+                }
+            });
+
+            const totalIncome = currentMonthData.collectedAmount + totalIncomeFromEntries;
+            const balance = totalIncome - totalExpenses;
+            const actualSaving = Math.max(0, balance);
+            const savingProgress = actualSaving - currentMonthData.savingGoal;
+
+            // Construir el prompt para el LLM
+            const prompt = `Actúa como un asesor financiero personal. Analiza la siguiente situación financiera mensual y proporciona un resumen conciso, identifica patrones de gasto y ofrece consejos prácticos y personalizados para mejorar la gestión financiera y alcanzar las metas de ahorro.
+
+            Datos financieros para el mes actual:
+            - Monto Recaudado Mensual: ${currentMonthData.collectedAmount.toFixed(2)}
+            - Total de Ingresos (incluyendo movimientos variables y fijos): ${totalIncome.toFixed(2)}
+            - Total de Gastos (incluyendo movimientos variables y fijos): ${totalExpenses.toFixed(2)}
+            - Balance: ${balance.toFixed(2)}
+            - Meta de Ahorro: ${currentMonthData.savingGoal.toFixed(2)}
+            - Ahorro Actual (Balance Positivo): ${actualSaving.toFixed(2)}
+            - Progreso hacia la Meta de Ahorro: ${savingProgress.toFixed(2)}
+
+            Desglose de Gastos por Categoría:
+            ${Object.keys(expensesByCategory).map(category => `- ${category}: ${expensesByCategory[category].toFixed(2)}`).join('\n') || '- No hay gastos por categoría.'}
+
+            Movimientos detallados (variables y fijos):
+            ${allEntries.map(entry => `- ${entry.description} (${entry.type === 'income' ? 'Ingreso' : 'Gasto'}): ${entry.type === 'income' ? '+' : '-'}${entry.amount.toFixed(2)} (Categoría: ${entry.category || 'Sin Categoría'}${entry.isFixed ? ', Fijo' : ''})`).join('\n') || '- No hay movimientos registrados.'}
+
+            Por favor, estructura tu respuesta con los siguientes encabezados:
+            ### Resumen de la Situación Financiera
+            ### Patrones de Gasto Identificados
+            ### Consejos Personalizados
+            `;
+
+            try {
+                // Aquí deberías colocar tu clave de API de Gemini si no la obtienes de un entorno seguro.
+                // ADVERTENCIA: HARDCODEAR LA CLAVE AQUÍ NO ES SEGURO PARA PRODUCCIÓN.
+                const apiKey = ""; // <--- COLOCA TU CLAVE DE API DE GEMINI AQUÍ PARA PRUEBAS LOCALES
+
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ role: "user", parts: [{ text: prompt }] }]
+                    })
+                });
+                const result = await response.json();
+
+                if (result.candidates && result.candidates.length > 0 &&
+                    result.candidates[0].content && result.candidates[0].content.parts &&
+                    result.candidates[0].content.parts.length > 0) {
+                    const text = result.candidates[0].content.parts[0].text;
+                    financialAnalysisContent.innerHTML = marked.parse(text);
+                } else {
+                    financialAnalysisContent.textContent = 'No se pudo obtener el análisis financiero. Inténtalo de nuevo más tarde.';
+                }
+            } catch (error) {
+                console.error('Error al obtener el análisis financiero:', error);
+                financialAnalysisContent.textContent = 'Ocurrió un error al conectar con el servicio de análisis. Por favor, verifica tu conexión o inténtalo de nuevo.';
+            } finally {
+                financialAnalysisLoading.style.display = 'none'; // Ocultar indicador de carga
+            }
+        });
+
+        // --- Funcionalidad del LLM para Plan de Ahorro Personalizado ---
+        document.getElementById('getSavingPlanButton').addEventListener('click', async () => {
+            const savingPlanSection = document.getElementById('savingPlanSection');
+            const savingPlanContent = document.getElementById('savingPlanContent');
+            const savingPlanLoading = document.getElementById('savingPlanLoading');
+
+            savingPlanSection.style.display = 'block'; // Mostrar la sección del plan de ahorro
+            savingPlanContent.innerHTML = ''; // Limpiar contenido anterior
+            savingPlanLoading.style.display = 'block'; // Mostrar indicador de carga
+
+            // Obtener los datos actuales del mes incluyendo fijos
+            const currentMonthData = allMonthsData[currentMonthKey] || { entries: [], savingGoal: 0, collectedAmount: 0 };
+            const allEntries = [...currentMonthData.entries, ...fixedMovements]; // Combinar movimientos del mes y fijos
+
+            let totalIncomeFromEntries = 0;
+            let totalExpenses = 0;
+            const expensesByCategory = {};
+
+            allEntries.forEach(entry => {
+                if (entry.type === 'income') {
+                    totalIncomeFromEntries += entry.amount;
+                } else {
+                    totalExpenses += entry.amount;
+                    const category = entry.category || 'Sin Categoría';
+                    expensesByCategory[category] = (expensesByCategory[category] || 0) + entry.amount;
+                }
+            });
+
+            const totalIncome = currentMonthData.collectedAmount + totalIncomeFromEntries;
+            const balance = totalIncome - totalExpenses;
+            const actualSaving = Math.max(0, balance);
+            const savingProgress = actualSaving - currentMonthData.savingGoal; // Esto es cuánto falta o cuánto se excedió
+
+            // Construir el prompt para el LLM
+            const prompt = `Actúa como un planificador financiero personal. Ayúdame a alcanzar mi meta de ahorro mensual.
+
+            Mi meta de ahorro mensual es: ${currentMonthData.savingGoal.toFixed(2)}.
+            Mi ahorro actual para este mes (balance positivo) es: ${actualSaving.toFixed(2)}.
+            Mis gastos totales este mes son: ${totalExpenses.toFixed(2)}.
+            Mi desglose de gastos por categoría es:
+            ${Object.keys(expensesByCategory).map(category => `- ${category}: ${expensesByCategory[category].toFixed(2)}`).join('\n') || '- No hay gastos por categoría registrados.'}
+
+            Basado en estos datos, por favor, dame un plan de acción detallado para alcanzar mi meta de ahorro. Incluye:
+            - Un desglose de cuánto necesito ahorrar semanalmente o diariamente para el resto del mes.
+            - Sugerencias específicas sobre cómo puedo reducir gastos en mis categorías principales (si aplica y si hay gastos significativos).
+            - Consejos generales para mantener la disciplina de ahorro y optimizar mis finanzas.
+
+            Considera que estamos a mediados de mes y necesito un plan para el resto de los días. (Asume 30 días en un mes, y que la mitad del mes ya pasó, por lo que el plan es para los 15 días restantes).
+
+            Por favor, estructura tu respuesta con los siguientes encabezados:
+            ### Plan de Ahorro para el Resto del Mes
+            ### Estrategias para Reducir Gastos
+            ### Consejos para la Disciplina
+            `;
+
+            try {
+                // Aquí deberías colocar tu clave de API de Gemini si no la obtienes de un entorno seguro.
+                // ADVERTENCIA: HARDCODEAR LA CLAVE AQUÍ NO ES SEGURO PARA PRODUCCIÓN.
+                const apiKey = ""; // <--- COLOCA TU CLAVE DE API DE GEMINI AQUÍ PARA PRUEBAS LOCALES
+
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ role: "user", parts: [{ text: prompt }] }]
+                    })
+                });
+                const result = await response.json();
+
+                if (result.candidates && result.candidates.length > 0 &&
+                    result.candidates[0].content && result.candidates[0].content.parts &&
+                    result.candidates[0].content.parts.length > 0) {
+                    const text = result.candidates[0].content.parts[0].text;
+                    savingPlanContent.innerHTML = marked.parse(text);
+                } else {
+                    savingPlanContent.textContent = 'No se pudo obtener el plan de ahorro. Inténtalo de nuevo más tarde.';
+                }
+            } catch (error) {
+                console.error('Error al obtener el plan de ahorro:', error);
+                savingPlanContent.textContent = 'Ocurrió un error al conectar con el servicio de planificación. Por favor, verifica tu conexión o inténtalo de nuevo.';
+            } finally {
+                savingPlanLoading.style.display = 'none'; // Ocultar indicador de carga
+            }
+        });
+
+
+        // --- Funcionalidad de Análisis de Imagen con LLM ---
+        document.getElementById('analyzeImageButton').addEventListener('click', async () => {
+            const imageInput = document.getElementById('imageInput');
+            const imageAnalysisLoading = document.getElementById('imageAnalysisLoading');
+            const imageAnalysisResult = document.getElementById('imageAnalysisResult');
+            const extractedDescription = document.getElementById('extractedDescription');
+            const extractedAmount = document.getElementById('extractedAmount');
+            const extractedType = document.getElementById('extractedType');
+            const extractedCategory = document.getElementById('extractedCategory');
+            const applyExtractedDataButton = document.getElementById('applyExtractedDataButton');
+
+            imageAnalysisResult.style.display = 'none'; // Ocultar resultados anteriores
+            imageAnalysisLoading.style.display = 'block'; // Mostrar indicador de carga
+
+            const file = imageInput.files[0];
+            if (!file) {
+                alert('Por favor, selecciona una imagen para analizar.');
+                imageAnalysisLoading.style.display = 'none';
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                const base64ImageData = e.target.result.split(',')[1]; // Obtener solo la parte Base64
+
+                const prompt = `Extrae los siguientes datos de esta imagen de un recibo o factura y devuélvelos en formato JSON. Si un campo no se encuentra, usa una cadena vacía.
+                Formato JSON esperado:
+                {
+                  "description": "Descripción del artículo o servicio principal",
+                  "amount": "Monto total numérico",
+                  "type": "income" o "expense",
+                  "category": "Categoría del gasto o ingreso (ej. Comida, Transporte, Servicios)"
+                }
+                Si la imagen parece ser un recibo o factura, asume que el tipo es "expense" a menos que haya un claro indicio de ingreso.
+                `;
+
+                try {
+                    // Aquí deberías colocar tu clave de API de Gemini si no la obtienes de un entorno seguro.
+                    // ADVERTENCIA: HARDCODEAR LA CLAVE AQUÍ NO ES SEGURO PARA PRODUCCIÓN.
+                    const apiKey = ""; // <--- COLOCA TU CLAVE DE API DE GEMINI AQUÍ PARA PRUEBAS LOCALES
+
+                    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [
+                                { role: "user", parts: [{ text: prompt }] },
+                                {
+                                    inlineData: {
+                                        mimeType: file.type,
+                                        data: base64ImageData
+                                    }
+                                }
+                            ],
+                            generationConfig: {
+                                responseMimeType: "application/json",
+                                responseSchema: {
+                                    type: "OBJECT",
+                                    properties: {
+                                        "description": { "type": "STRING" },
+                                        "amount": { "type": "NUMBER" },
+                                        "type": { "type": "STRING", "enum": ["income", "expense"] },
+                                        "category": { "type": "STRING" }
+                                    },
+                                    "propertyOrdering": ["description", "amount", "type", "category"]
+                                }
+                            }
+                        })
+                    });
+                    const result = await response.json();
+
+                    if (result.candidates && result.candidates.length > 0 &&
+                        result.candidates[0].content && result.candidates[0].content.parts &&
+                        result.candidates[0].content.parts.length > 0) {
+                        const jsonText = result.candidates[0].content.parts[0].text;
+                        const parsedData = JSON.parse(jsonText);
+
+                        extractedDescription.textContent = parsedData.description || 'N/A';
+                        extractedAmount.textContent = (parsedData.amount !== undefined && parsedData.amount !== null) ? parsedData.amount.toFixed(2) : 'N/A';
+                        extractedType.textContent = parsedData.type || 'N/A';
+                        extractedCategory.textContent = parsedData.category || 'N/A';
+
+                        imageAnalysisResult.style.display = 'block'; // Mostrar resultados
+
+                        // Almacenar los datos extraídos para aplicar al formulario principal
+                        applyExtractedDataButton.onclick = () => {
+                            document.getElementById('description').value = parsedData.description || '';
+                            document.getElementById('amount').value = (parsedData.amount !== undefined && parsedData.amount !== null) ? parsedData.amount : '';
+                            document.getElementById('type').value = parsedData.type || 'expense'; // Default a expense si no se extrae
+                            document.getElementById('category').value = parsedData.category || '';
+                            imageAnalysisResult.style.display = 'none'; // Ocultar resultados después de aplicar
+                            imageInput.value = ''; // Limpiar el input de archivo
+                        };
+
+                    } else {
+                        imageAnalysisResult.style.display = 'block';
+                        extractedDescription.textContent = 'No se pudieron extraer datos.';
+                        extractedAmount.textContent = '';
+                        extractedType.textContent = '';
+                        extractedCategory.textContent = '';
+                        applyExtractedDataButton.style.display = 'none'; // Ocultar botón si no hay datos
+                    }
+                } catch (error) {
+                    console.error('Error al analizar la imagen:', error);
+                    imageAnalysisResult.style.display = 'block';
+                    extractedDescription.textContent = 'Ocurrió un error al analizar la imagen.';
+                    extractedAmount.textContent = '';
+                    extractedType.textContent = '';
+                    extractedCategory.textContent = '';
+                    applyExtractedDataButton.style.display = 'none';
+                } finally {
+                    imageAnalysisLoading.style.display = 'none'; // Ocultar indicador de carga
+                }
+            };
+            reader.readAsDataURL(file); // Leer el archivo como URL de datos (Base64)
+        });
+
+        // --- Funcionalidad de Sugerencia de Categoría con LLM ---
+        document.getElementById('suggestCategoryButton').addEventListener('click', async () => {
+            const descriptionInput = document.getElementById('description');
+            const categoryInput = document.getElementById('category');
+            const categorySuggestionLoading = document.getElementById('categorySuggestionLoading');
+
+            const description = descriptionInput.value.trim();
+
+            if (description === '') {
+                alert('Por favor, introduce una descripción para sugerir una categoría.');
+                return;
+            }
+
+            categorySuggestionLoading.style.display = 'block'; // Mostrar indicador de carga
+
+            const prompt = `Dado la siguiente descripción de un movimiento financiero, sugiere la categoría más apropiada de la siguiente lista. Si ninguna categoría se ajusta bien, sugiere 'Otros'.
+            Categorías predefinidas: Vivienda, Transporte, Alimentación, Entretenimiento, Servicios, Salud, Educación, Compras, Ropa, Viajes, Ocio, Regalos, Deudas, Inversiones, Salario, Negocio, Otros.
+
+            Descripción: "${description}"
+            Categoría sugerida:`;
+
+            try {
+                // Aquí deberías colocar tu clave de API de Gemini si no la obtienes de un entorno seguro.
+                // ADVERTENCIA: HARDCODEAR LA CLAVE AQUÍ NO ES SEGURO PARA PRODUCCIÓN.
+                const apiKey = ""; // <--- COLOCA TU CLAVE DE API DE GEMINI AQUÍ PARA PRUEBAS LOCALES
+
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{ role: "user", parts: [{ text: prompt }] }]
+                    })
+                });
+                const result = await response.json();
+
+                if (result.candidates && result.candidates.length > 0 &&
+                    result.candidates[0].content && result.candidates[0].content.parts &&
+                    result.candidates[0].content.parts.length > 0) {
+                    const suggestedCategory = result.candidates[0].content.parts[0].text.trim();
+                    categoryInput.value = suggestedCategory; // Rellenar el campo de categoría con la sugerencia
+                } else {
+                    alert('No se pudo sugerir una categoría. Inténtalo de nuevo.');
+                }
+            } catch (error) {
+                console.error('Error al sugerir categoría:', error);
+                alert('Ocurrió un error al sugerir la categoría. Por favor, verifica tu conexión o inténtalo de nuevo.');
+            } finally {
+                categorySuggestionLoading.style.display = 'none'; // Ocultar indicador de carga
+            }
+        });
+
+
+        // --- Funcionalidad del FAB ---
+        const fabButton = document.getElementById('fabButton');
+        const fabMenu = document.getElementById('fabMenu');
+        const fabMenuItems = document.querySelectorAll('.fab-menu-item');
+
+        fabButton.addEventListener('click', () => {
+            fabMenu.classList.toggle('active');
+        });
+
+        fabMenuItems.forEach(item => {
+            item.addEventListener('click', async (event) => { // Marca como async porque loadMonthData y otras pueden ser async
+                const targetId = event.target.dataset.target;
+                const targetElement = document.getElementById(targetId);
+                if (targetElement) {
+                    targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    fabMenu.classList.remove('active'); // Ocultar menú después de seleccionar una opción
+                }
+            });
+        });
+
+
+        // --- Inicializar la aplicación al cargar la página ---
+        window.onload = async function() { // Marca como async
+            await initializeApp();
+        };
+
+    </script>
+    <footer>
+        <p>&copy; 2025 Mis Cuentas Claras. Todos los derechos reservados.</p>
+        <p>Desarrollado por [Tu Nombre/Empresa].</p>
+    </footer>
+</body>
+</html>
