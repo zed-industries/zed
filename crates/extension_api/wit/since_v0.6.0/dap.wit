@@ -1,6 +1,9 @@
 interface dap {
     use common.{env-vars};
 
+    /// Resolves a specified TcpArgumentsTemplate into TcpArguments
+    resolve-tcp-template: func(template: tcp-arguments-template) -> result<tcp-arguments, string>;
+
     record launch-request {
         program: string,
         cwd: option<string>,

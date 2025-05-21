@@ -47,6 +47,7 @@ use dap::{DapRegistry, client::DebugAdapterClient};
 
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
+pub use debugger::breakpoint_store::BreakpointWithPosition;
 use debugger::{
     breakpoint_store::{ActiveStackFrame, BreakpointStore},
     dap_store::{DapStore, DapStoreEvent},
@@ -2021,7 +2022,7 @@ impl Project {
             worktree.expand_all_for_entry(entry_id, cx)
         });
         Some(cx.spawn(async move |this, cx| {
-            task.ok_or_else(|| anyhow!("no task"))?.await?;
+            task.context("no task")?.await?;
             this.update(cx, |_, cx| {
                 cx.emit(Event::ExpandedAllForEntry(worktree_id, entry_id));
             })?;
@@ -2030,9 +2031,10 @@ impl Project {
     }
 
     pub fn shared(&mut self, project_id: u64, cx: &mut Context<Self>) -> Result<()> {
-        if !matches!(self.client_state, ProjectClientState::Local) {
-            return Err(anyhow!("project was already shared"));
-        }
+        anyhow::ensure!(
+            matches!(self.client_state, ProjectClientState::Local),
+            "project was already shared"
+        );
 
         self.client_subscriptions.extend([
             self.client
@@ -2150,9 +2152,10 @@ impl Project {
     }
 
     fn unshare_internal(&mut self, cx: &mut App) -> Result<()> {
-        if self.is_via_collab() {
-            return Err(anyhow!("attempted to unshare a remote project"));
-        }
+        anyhow::ensure!(
+            !self.is_via_collab(),
+            "attempted to unshare a remote project"
+        );
 
         if let ProjectClientState::Shared { remote_id, .. } = self.client_state {
             self.client_state = ProjectClientState::Local;
@@ -2188,7 +2191,7 @@ impl Project {
                 .ok();
             Ok(())
         } else {
-            Err(anyhow!("attempted to unshare an unshared project"))
+            anyhow::bail!("attempted to unshare an unshared project");
         }
     }
 
@@ -2430,7 +2433,7 @@ impl Project {
         if let Some(buffer) = self.buffer_for_id(id, cx) {
             Task::ready(Ok(buffer))
         } else if self.is_local() || self.is_via_ssh() {
-            Task::ready(Err(anyhow!("buffer {} does not exist", id)))
+            Task::ready(Err(anyhow!("buffer {id} does not exist")))
         } else if let Some(project_id) = self.remote_id() {
             let request = self.client.request(proto::OpenBufferById {
                 project_id,
@@ -2520,9 +2523,7 @@ impl Project {
         let weak_project = cx.entity().downgrade();
         cx.spawn(async move |_, cx| {
             let image_item = open_image_task.await?;
-            let project = weak_project
-                .upgrade()
-                .ok_or_else(|| anyhow!("Project dropped"))?;
+            let project = weak_project.upgrade().context("Project dropped")?;
 
             let metadata = ImageItem::load_image_metadata(image_item.clone(), project, cx).await?;
             image_item.update(cx, |image_item, cx| {
@@ -4271,7 +4272,7 @@ impl Project {
             .payload
             .collaborator
             .take()
-            .ok_or_else(|| anyhow!("empty collaborator"))?;
+            .context("empty collaborator")?;
 
         let collaborator = Collaborator::from_proto(collaborator)?;
         this.update(&mut cx, |this, cx| {
@@ -4295,16 +4296,16 @@ impl Project {
         let old_peer_id = envelope
             .payload
             .old_peer_id
-            .ok_or_else(|| anyhow!("missing old peer id"))?;
+            .context("missing old peer id")?;
         let new_peer_id = envelope
             .payload
             .new_peer_id
-            .ok_or_else(|| anyhow!("missing new peer id"))?;
+            .context("missing new peer id")?;
         this.update(&mut cx, |this, cx| {
             let collaborator = this
                 .collaborators
                 .remove(&old_peer_id)
-                .ok_or_else(|| anyhow!("received UpdateProjectCollaborator for unknown peer"))?;
+                .context("received UpdateProjectCollaborator for unknown peer")?;
             let is_host = collaborator.is_host;
             this.collaborators.insert(new_peer_id, collaborator);
 
@@ -4335,14 +4336,11 @@ impl Project {
         mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
-            let peer_id = envelope
-                .payload
-                .peer_id
-                .ok_or_else(|| anyhow!("invalid peer id"))?;
+            let peer_id = envelope.payload.peer_id.context("invalid peer id")?;
             let replica_id = this
                 .collaborators
                 .remove(&peer_id)
-                .ok_or_else(|| anyhow!("unknown peer {:?}", peer_id))?
+                .with_context(|| format!("unknown peer {peer_id:?}"))?
                 .replica_id;
             this.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.forget_shared_buffers_for(&peer_id);
@@ -4556,11 +4554,7 @@ impl Project {
     ) -> Result<proto::FindSearchCandidatesResponse> {
         let peer_id = envelope.original_sender_id()?;
         let message = envelope.payload;
-        let query = SearchQuery::from_proto(
-            message
-                .query
-                .ok_or_else(|| anyhow!("missing query field"))?,
-        )?;
+        let query = SearchQuery::from_proto(message.query.context("missing query field")?)?;
         let results = this.update(&mut cx, |this, cx| {
             this.find_search_candidate_buffers(&query, message.limit as _, cx)
         })?;
@@ -4638,13 +4632,10 @@ impl Project {
                 .file()
                 .map(|f| f.is_private())
                 .unwrap_or_default();
-            if is_private {
-                Err(anyhow!(ErrorCode::UnsharedItem))
-            } else {
-                Ok(proto::OpenBufferResponse {
-                    buffer_id: this.create_buffer_for_peer(&buffer, peer_id, cx).into(),
-                })
-            }
+            anyhow::ensure!(!is_private, ErrorCode::UnsharedItem);
+            Ok(proto::OpenBufferResponse {
+                buffer_id: this.create_buffer_for_peer(&buffer, peer_id, cx).into(),
+            })
         })?
     }
 

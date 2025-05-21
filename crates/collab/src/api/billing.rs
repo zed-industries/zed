@@ -1,4 +1,4 @@
-use anyhow::{Context, anyhow, bail};
+use anyhow::{Context as _, bail};
 use axum::{
     Extension, Json, Router,
     extract::{self, Query},
@@ -17,9 +17,8 @@ use stripe::{
     CreateBillingPortalSessionFlowDataAfterCompletionRedirect,
     CreateBillingPortalSessionFlowDataSubscriptionUpdateConfirm,
     CreateBillingPortalSessionFlowDataSubscriptionUpdateConfirmItems,
-    CreateBillingPortalSessionFlowDataType, CreateCustomer, Customer, CustomerId, EventObject,
-    EventType, Expandable, ListEvents, PaymentMethod, Subscription, SubscriptionId,
-    SubscriptionStatus,
+    CreateBillingPortalSessionFlowDataType, Customer, CustomerId, EventObject, EventType,
+    Expandable, ListEvents, PaymentMethod, Subscription, SubscriptionId, SubscriptionStatus,
 };
 use util::{ResultExt, maybe};
 
@@ -90,7 +89,7 @@ async fn get_billing_preferences(
         .db
         .get_user_by_github_user_id(params.github_user_id)
         .await?
-        .ok_or_else(|| anyhow!("user not found"))?;
+        .context("user not found")?;
 
     let billing_customer = app.db.get_billing_customer_by_user_id(user.id).await?;
     let preferences = app.db.get_billing_preferences(user.id).await?;
@@ -139,7 +138,7 @@ async fn update_billing_preferences(
         .db
         .get_user_by_github_user_id(body.github_user_id)
         .await?
-        .ok_or_else(|| anyhow!("user not found"))?;
+        .context("user not found")?;
 
     let billing_customer = app.db.get_billing_customer_by_user_id(user.id).await?;
 
@@ -242,7 +241,7 @@ async fn list_billing_subscriptions(
         .db
         .get_user_by_github_user_id(params.github_user_id)
         .await?
-        .ok_or_else(|| anyhow!("user not found"))?;
+        .context("user not found")?;
 
     let subscriptions = app.db.get_billing_subscriptions(user.id).await?;
 
@@ -308,15 +307,8 @@ async fn create_billing_subscription(
         .db
         .get_user_by_github_user_id(body.github_user_id)
         .await?
-        .ok_or_else(|| anyhow!("user not found"))?;
+        .context("user not found")?;
 
-    let Some(stripe_client) = app.stripe_client.clone() else {
-        log::error!("failed to retrieve Stripe client");
-        Err(Error::http(
-            StatusCode::NOT_IMPLEMENTED,
-            "not supported".into(),
-        ))?
-    };
     let Some(stripe_billing) = app.stripe_billing.clone() else {
         log::error!("failed to retrieve Stripe billing object");
         Err(Error::http(
@@ -351,35 +343,9 @@ async fn create_billing_subscription(
         CustomerId::from_str(&existing_customer.stripe_customer_id)
             .context("failed to parse customer ID")?
     } else {
-        let existing_customer = if let Some(email) = user.email_address.as_deref() {
-            let customers = Customer::list(
-                &stripe_client,
-                &stripe::ListCustomers {
-                    email: Some(email),
-                    ..Default::default()
-                },
-            )
-            .await?;
-
-            customers.data.first().cloned()
-        } else {
-            None
-        };
-
-        if let Some(existing_customer) = existing_customer {
-            existing_customer.id
-        } else {
-            let customer = Customer::create(
-                &stripe_client,
-                CreateCustomer {
-                    email: user.email_address.as_deref(),
-                    ..Default::default()
-                },
-            )
-            .await?;
-
-            customer.id
-        }
+        stripe_billing
+            .find_or_create_customer_by_email(user.email_address.as_deref())
+            .await?
     };
 
     let success_url = format!(
@@ -466,7 +432,7 @@ async fn manage_billing_subscription(
         .db
         .get_user_by_github_user_id(body.github_user_id)
         .await?
-        .ok_or_else(|| anyhow!("user not found"))?;
+        .context("user not found")?;
 
     let Some(stripe_client) = app.stripe_client.clone() else {
         log::error!("failed to retrieve Stripe client");
@@ -488,7 +454,7 @@ async fn manage_billing_subscription(
         .db
         .get_billing_customer_by_user_id(user.id)
         .await?
-        .ok_or_else(|| anyhow!("billing customer not found"))?;
+        .context("billing customer not found")?;
     let customer_id = CustomerId::from_str(&customer.stripe_customer_id)
         .context("failed to parse customer ID")?;
 
@@ -496,7 +462,7 @@ async fn manage_billing_subscription(
         .db
         .get_billing_subscription_by_id(body.subscription_id)
         .await?
-        .ok_or_else(|| anyhow!("subscription not found"))?;
+        .context("subscription not found")?;
     let subscription_id = SubscriptionId::from_str(&subscription.stripe_subscription_id)
         .context("failed to parse subscription ID")?;
 
@@ -593,7 +559,7 @@ async fn manage_billing_subscription(
                         None
                     }
                 })
-                .ok_or_else(|| anyhow!("No subscription item to update"))?;
+                .context("No subscription item to update")?;
 
             Some(CreateBillingPortalSessionFlowData {
                 type_: CreateBillingPortalSessionFlowDataType::SubscriptionUpdateConfirm,
@@ -687,7 +653,7 @@ async fn migrate_to_new_billing(
         .db
         .get_user_by_github_user_id(body.github_user_id)
         .await?
-        .ok_or_else(|| anyhow!("user not found"))?;
+        .context("user not found")?;
 
     let old_billing_subscriptions_by_user = app
         .db
@@ -766,13 +732,13 @@ async fn sync_billing_subscription(
         .db
         .get_user_by_github_user_id(body.github_user_id)
         .await?
-        .ok_or_else(|| anyhow!("user not found"))?;
+        .context("user not found")?;
 
     let billing_customer = app
         .db
         .get_billing_customer_by_user_id(user.id)
         .await?
-        .ok_or_else(|| anyhow!("billing customer not found"))?;
+        .context("billing customer not found")?;
     let stripe_customer_id = billing_customer
         .stripe_customer_id
         .parse::<stripe::CustomerId>()
@@ -1065,13 +1031,13 @@ async fn sync_subscription(
     let billing_customer =
         find_or_create_billing_customer(app, stripe_client, subscription.customer)
             .await?
-            .ok_or_else(|| anyhow!("billing customer not found"))?;
+            .context("billing customer not found")?;
 
     if let Some(SubscriptionKind::ZedProTrial) = subscription_kind {
         if subscription.status == SubscriptionStatus::Trialing {
             let current_period_start =
                 DateTime::from_timestamp(subscription.current_period_start, 0)
-                    .ok_or_else(|| anyhow!("No trial subscription period start"))?;
+                    .context("No trial subscription period start")?;
 
             app.db
                 .update_billing_customer(
@@ -1277,7 +1243,7 @@ async fn get_monthly_spend(
         .db
         .get_user_by_github_user_id(params.github_user_id)
         .await?
-        .ok_or_else(|| anyhow!("user not found"))?;
+        .context("user not found")?;
 
     let Some(llm_db) = app.llm_db.clone() else {
         return Err(Error::http(
@@ -1345,7 +1311,7 @@ async fn get_current_usage(
         .db
         .get_user_by_github_user_id(params.github_user_id)
         .await?
-        .ok_or_else(|| anyhow!("user not found"))?;
+        .context("user not found")?;
 
     let feature_flags = app.db.get_user_flags(user.id).await?;
     let has_extended_trial = feature_flags
@@ -1487,7 +1453,7 @@ impl From<CancellationDetailsReason> for StripeCancellationReason {
 }
 
 /// Finds or creates a billing customer using the provided customer.
-async fn find_or_create_billing_customer(
+pub async fn find_or_create_billing_customer(
     app: &Arc<AppState>,
     stripe_client: &stripe::Client,
     customer_or_id: Expandable<Customer>,

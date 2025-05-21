@@ -1,5 +1,5 @@
 use crate::schema::json_schema_for;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::AnyWindowHandle;
 use gpui::{App, Entity, Task};
@@ -86,7 +86,7 @@ impl Tool for CreateDirectoryTool {
                     project.create_entry(project_path.clone(), true, cx)
                 })?
                 .await
-                .map_err(|err| anyhow!("Unable to create directory {destination_path}: {err}"))?;
+                .with_context(|| format!("Creating directory {destination_path}"))?;
 
             Ok(format!("Created directory {destination_path}").into())
         })

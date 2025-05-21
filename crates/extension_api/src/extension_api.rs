@@ -19,6 +19,11 @@ pub use wit::{
     KeyValueStore, LanguageServerInstallationStatus, Project, Range, Worktree, download_file,
     make_file_executable,
     zed::extension::context_server::ContextServerConfiguration,
+    zed::extension::dap::{
+        DebugAdapterBinary, DebugRequest, DebugTaskDefinition, StartDebuggingRequestArguments,
+        StartDebuggingRequestArgumentsRequest, TcpArguments, TcpArgumentsTemplate,
+        resolve_tcp_template,
+    },
     zed::extension::github::{
         GithubRelease, GithubReleaseAsset, GithubReleaseOptions, github_release_by_tag_name,
         latest_github_release,
@@ -194,6 +199,7 @@ pub trait Extension: Send + Sync {
         _adapter_name: String,
         _config: DebugTaskDefinition,
         _user_provided_path: Option<String>,
+        _worktree: &Worktree,
     ) -> Result<DebugAdapterBinary, String> {
         Err("`get_dap_binary` not implemented".to_string())
     }
@@ -386,8 +392,9 @@ impl wit::Guest for Component {
         adapter_name: String,
         config: DebugTaskDefinition,
         user_installed_path: Option<String>,
-    ) -> Result<DebugAdapterBinary, String> {
-        extension().get_dap_binary(adapter_name, config, user_installed_path)
+        worktree: &Worktree,
+    ) -> Result<wit::DebugAdapterBinary, String> {
+        extension().get_dap_binary(adapter_name, config, user_installed_path, worktree)
     }
 }
 

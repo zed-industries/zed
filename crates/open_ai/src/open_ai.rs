@@ -37,7 +37,7 @@ impl TryFrom<String> for Role {
             "assistant" => Ok(Self::Assistant),
             "system" => Ok(Self::System),
             "tool" => Ok(Self::Tool),
-            _ => Err(anyhow!("invalid role '{value}'")),
+            _ => anyhow::bail!("invalid role '{value}'"),
         }
     }
 }
@@ -118,7 +118,7 @@ impl Model {
             "o3-mini" => Ok(Self::O3Mini),
             "o3" => Ok(Self::O3),
             "o4-mini" => Ok(Self::O4Mini),
-            _ => Err(anyhow!("invalid model id")),
+            invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
 
@@ -491,16 +491,15 @@ pub async fn complete(
         }
 
         match serde_json::from_str::<OpenAiResponse>(&body) {
-            Ok(response) if !response.error.message.is_empty() => Err(anyhow!(
+            Ok(response) if !response.error.message.is_empty() => anyhow::bail!(
                 "Failed to connect to OpenAI API: {}",
                 response.error.message,
-            )),
-
-            _ => Err(anyhow!(
+            ),
+            _ => anyhow::bail!(
                 "Failed to connect to OpenAI API: {} {}",
                 response.status(),
                 body,
-            )),
+            ),
         }
     }
 }
@@ -541,16 +540,15 @@ pub async fn complete_text(
         }
 
         match serde_json::from_str::<OpenAiResponse>(&body) {
-            Ok(response) if !response.error.message.is_empty() => Err(anyhow!(
+            Ok(response) if !response.error.message.is_empty() => anyhow::bail!(
                 "Failed to connect to OpenAI API: {}",
                 response.error.message,
-            )),
-
-            _ => Err(anyhow!(
+            ),
+            _ => anyhow::bail!(
                 "Failed to connect to OpenAI API: {} {}",
                 response.status(),
                 body,
-            )),
+            ),
         }
     }
 }
@@ -672,11 +670,11 @@ pub async fn stream_completion(
                 response.error.message,
             )),
 
-            _ => Err(anyhow!(
+            _ => anyhow::bail!(
                 "Failed to connect to OpenAI API: {} {}",
                 response.status(),
                 body,
-            )),
+            ),
         }
     }
 }
@@ -732,16 +730,14 @@ pub fn embed<'a>(
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
 
-        if response.status().is_success() {
-            let response: OpenAiEmbeddingResponse =
-                serde_json::from_str(&body).context("failed to parse OpenAI embedding response")?;
-            Ok(response)
-        } else {
-            Err(anyhow!(
-                "error during embedding, status: {:?}, body: {:?}",
-                response.status(),
-                body
-            ))
-        }
+        anyhow::ensure!(
+            response.status().is_success(),
+            "error during embedding, status: {:?}, body: {:?}",
+            response.status(),
+            body
+        );
+        let response: OpenAiEmbeddingResponse =
+            serde_json::from_str(&body).context("failed to parse OpenAI embedding response")?;
+        Ok(response)
     }
 }

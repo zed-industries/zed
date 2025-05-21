@@ -27,12 +27,10 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
         const UNSUPPORTED_KEYS: [&str; 4] = ["if", "then", "else", "$ref"];
 
         for key in UNSUPPORTED_KEYS {
-            if obj.contains_key(key) {
-                return Err(anyhow::anyhow!(
-                    "Schema cannot be made compatible because it contains \"{}\" ",
-                    key
-                ));
-            }
+            anyhow::ensure!(
+                !obj.contains_key(key),
+                "Schema cannot be made compatible because it contains \"{key}\""
+            );
         }
 
         const KEYS_TO_REMOVE: [&str; 5] = [

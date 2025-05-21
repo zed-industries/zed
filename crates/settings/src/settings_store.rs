@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use collections::{BTreeMap, HashMap, btree_map, hash_map};
 use ec4rs::{ConfigParser, PropertiesSource, Section};
 use fs::Fs;
@@ -635,13 +635,10 @@ impl SettingsStore {
         cx: &mut App,
     ) -> Result<()> {
         let settings: Value = parse_json_with_comments(default_settings_content)?;
-        if settings.is_object() {
-            self.raw_default_settings = settings;
-            self.recompute_values(None, cx)?;
-            Ok(())
-        } else {
-            Err(anyhow!("settings must be an object"))
-        }
+        anyhow::ensure!(settings.is_object(), "settings must be an object");
+        self.raw_default_settings = settings;
+        self.recompute_values(None, cx)?;
+        Ok(())
     }
 
     /// Sets the user settings via a JSON string.
