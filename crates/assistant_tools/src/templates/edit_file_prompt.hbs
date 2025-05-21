@@ -36,9 +36,9 @@ Rules for editing:
 - Strive to be minimal in the lines you replace in `old_text`:
   - If the lines you want to replace are unique, you MUST include just those in the `old_text`.
   - If the lines you want to replace are NOT unique, you MUST include enough context around them in `old_text` to distinguish them from other lines.
-  {{!-- The following is important for Gemini 2.5: --}}
+{{!-- The following is important for Gemini 2.5 --}}
 - Do not escape quotes, newlines, and anything else inside the `old_text`/`new_text` tags.
-- Do not end lines with the `\n` literal. Just write newline.
+- Do NOT use escape sequences like "\n" to represent newlines inside the old_text/new_text tags.
 {{!-- ---------------------- --}}
 - If you want to replace many occurrences of the same text, repeat the same `old_text`/`new_text` pair multiple times and I will apply them sequentially, one occurrence at a time.
 - When reporting multiple edits, each edit assumes the previous one has already been applied! Therefore, you must ensure `old_text` doesn't reference text that has already been modified by a previous edit.
@@ -46,6 +46,43 @@ Rules for editing:
 - Only edit the file specified in `<file_to_edit>` and NEVER include edits to other files!
 - If you open an <old_text> tag, you MUST close it using </old_text>
 - If you open an <new_text> tag, you MUST close it using </new_text>
+
+
+{{!-- This example is important for Gemini 2.5 --}}
+<example>
+<edits>
+
+<old_text>
+struct User {
+    name: String,
+    email: String,
+}
+</old_text>
+<new_text>
+struct User {
+    name: String,
+    email: String,
+    active: bool,
+}
+</new_text>
+
+<old_text>
+    let user = User {
+        name: String::from("John"),
+        email: String::from("john@example.com"),
+    };
+</old_text>
+<new_text>
+    let user = User {
+        name: String::from("John"),
+        email: String::from("john@example.com"),
+        active: true,
+    };
+</new_text>
+
+</edits>
+</example>
+
 
 <file_to_edit>
 {{path}}

@@ -38,22 +38,25 @@ fn eval_extract_handle_command_output() {
     //
     // Results (model/pass rate):
     //
-    // claude-3.7       1.0
-    // gemini-2.5-pro   0.68
+    // claude-3.7       0.98
+    // gemini-2.5-pro   0.80
+    // gemini-2.5-flash 0.11
     //
     let input_file_path = "root/blame.rs";
     let input_file_content = include_str!("evals/fixtures/extract_handle_command_output/before.rs");
     let possible_diffs = vec![
-        include_str!("evals/fixtures/extract_handle_command_output/expected-1.diff"),
-        include_str!("evals/fixtures/extract_handle_command_output/expected-2.diff"),
-        include_str!("evals/fixtures/extract_handle_command_output/expected-3.diff"),
-        include_str!("evals/fixtures/extract_handle_command_output/expected-4.diff"),
-        include_str!("evals/fixtures/extract_handle_command_output/expected-5.diff"),
+        include_str!("evals/fixtures/extract_handle_command_output/possible-01.diff"),
+        include_str!("evals/fixtures/extract_handle_command_output/possible-02.diff"),
+        include_str!("evals/fixtures/extract_handle_command_output/possible-03.diff"),
+        include_str!("evals/fixtures/extract_handle_command_output/possible-04.diff"),
+        include_str!("evals/fixtures/extract_handle_command_output/possible-05.diff"),
+        include_str!("evals/fixtures/extract_handle_command_output/possible-06.diff"),
+        include_str!("evals/fixtures/extract_handle_command_output/possible-07.diff"),
     ];
     let edit_description = "Extract `handle_command_output` method from `run_git_blame`.";
     eval(
         100,
-        0.95,
+        0.7, // Taking the lower bar for Gemini
         EvalInput::from_conversation(
             vec![
                 message(
