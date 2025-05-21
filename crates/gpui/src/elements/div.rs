@@ -2212,7 +2212,6 @@ impl Interactivity {
                     }
                     scroll_offset.y += delta_y;
                     scroll_offset.x += delta_x;
-                    cx.stop_propagation();
                     if *scroll_offset != old_scroll_offset {
                         cx.notify(current_view);
                     }
