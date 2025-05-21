@@ -1197,8 +1197,11 @@ mod tests {
         let home = home_dir().to_string_lossy().to_string();
         assert_eq!(resolve_path("bin"), format!("{worktree_root}{sep}bin"));
         assert_eq!(resolve_path(""), format!("{worktree_root}{sep}"));
-        assert_eq!(resolve_path("~/blah"), format!("{home}{sep}blah"));
+        assert_eq!(
+            resolve_path(&format!("~{sep}blah")),
+            format!("{home}{sep}blah")
+        );
         assert_eq!(resolve_path("~"), home);
-        assert_eq!(resolve_path("/foo"), "/foo".to_owned());
+        assert_eq!(resolve_path(&format!("{sep}foo")), format!("{sep}foo"));
     }
 }
