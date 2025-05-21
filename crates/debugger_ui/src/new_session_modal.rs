@@ -779,7 +779,7 @@ impl CustomMode {
     }
 
     pub(super) fn debug_request(&self, cx: &App) -> task::LaunchRequest {
-        let path = self.cwd.read(cx).text(cx);
+        let path = resolve_path(&self.cwd.read(cx).text(cx));
         if cfg!(windows) {
             return task::LaunchRequest {
                 program: self.program.read(cx).text(cx),
@@ -797,16 +797,14 @@ impl CustomMode {
             env.insert(lhs.to_string(), rhs.to_string());
         }
 
-        let program = if let Some(program) = args.next() {
+        let program = resolve_path(&if let Some(program) = args.next() {
             program
         } else {
             env = FxHashMap::default();
             command
-        };
+        });
 
         let args = args.collect::<Vec<_>>();
-
-        let (program, path) = resolve_paths(program, path);
 
         task::LaunchRequest {
             program,
@@ -1117,8 +1115,7 @@ impl PickerDelegate for DebugScenarioDelegate {
                     _ => None,
                 })
         {
-            let (program, _) = resolve_paths(launch_config.program.clone(), String::new());
-            launch_config.program = program;
+            launch_config.program = resolve_path(&launch_config.program);
         }
 
         self.debug_panel
@@ -1174,29 +1171,17 @@ impl PickerDelegate for DebugScenarioDelegate {
     }
 }
 
-fn resolve_paths(program: String, path: String) -> (String, String) {
-    let sep = std::path::MAIN_SEPARATOR;
-    let home = constcat!("~", sep);
-    let program = if let Some(program) = program.strip_prefix(home) {
-        paths::home_dir()
-            .join(program)
-            .to_string_lossy()
-            .to_string()
-    } else if !program.starts_with(sep) {
-        format!("$ZED_WORKTREE_ROOT{}{}", sep, &program)
-    } else {
-        program
-    };
-
-    let path = if let Some(path) = path.strip_prefix(home) {
-        paths::home_dir().join(path).to_string_lossy().to_string()
-    } else if !path.starts_with(sep) {
-        format!("$ZED_WORKTREE_ROOT{}{}", sep, &path)
+fn resolve_path(path: &str) -> String {
+    use std::path::MAIN_SEPARATOR;
+    let home = paths::home_dir().to_string_lossy().to_string();
+    let path = path.trim().to_owned();
+    if path.starts_with('~') {
+        path.replace('~', &home)
+    } else if !path.starts_with(MAIN_SEPARATOR) {
+        format!("$ZED_WORKTREE_ROOT{}{}", MAIN_SEPARATOR, &path)
     } else {
         path
-    };
-
-    (program, path)
+    }
 }
 
 #[cfg(test)]
@@ -1210,20 +1195,10 @@ mod tests {
         let worktree_root = "$ZED_WORKTREE_ROOT";
         let sep = std::path::MAIN_SEPARATOR;
         let home = home_dir().to_string_lossy().to_string();
-        assert_eq!(
-            resolve_paths("bin".to_owned(), "".to_owned()),
-            (
-                format!("{worktree_root}{sep}bin"),
-                format!("{worktree_root}{sep}"),
-            ),
-        );
-        assert_eq!(
-            (resolve_paths("~/blah".to_owned(), "~".to_owned())),
-            (format!("{}{sep}blah", home.clone()), home.clone()),
-        );
-        assert_eq!(
-            resolve_paths("/foo".to_owned(), "/bar".to_owned()),
-            (format!("/foo"), format!("/bar"),),
-        );
+        assert_eq!(resolve_path("bin"), format!("{worktree_root}{sep}bin"));
+        assert_eq!(resolve_path(""), format!("{worktree_root}{sep}"));
+        assert_eq!(resolve_path("~/blah"), format!("{home}{sep}blah"));
+        assert_eq!(resolve_path("~"), home);
+        assert_eq!(resolve_path("/foo"), "/foo".to_owned());
     }
 }
