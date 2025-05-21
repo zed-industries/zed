@@ -1,5 +1,7 @@
+use anyhow::Context as _;
 use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
-use gpui::AsyncApp;
+use gpui::{AsyncApp, SharedString};
+use language::LanguageName;
 use std::{collections::HashMap, ffi::OsStr, path::PathBuf};
 
 use crate::*;
@@ -19,7 +21,8 @@ impl GoDebugAdapter {
             dap::DebugRequest::Launch(launch_config) => json!({
                 "program": launch_config.program,
                 "cwd": launch_config.cwd,
-                "args": launch_config.args
+                "args": launch_config.args,
+                "env": launch_config.env_json()
             }),
         };
 
@@ -42,28 +45,29 @@ impl DebugAdapter for GoDebugAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
+    fn adapter_language_name(&self) -> Option<LanguageName> {
+        Some(SharedString::new_static("Go").into())
+    }
+
     async fn get_binary(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         _user_installed_path: Option<PathBuf>,
         _cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let delve_path = delegate
             .which(OsStr::new("dlv"))
+            .await
             .and_then(|p| p.to_str().map(|p| p.to_string()))
-            .ok_or(anyhow!("Dlv not found in path"))?;
+            .context("Dlv not found in path")?;
 
         let tcp_connection = config.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
         Ok(DebugAdapterBinary {
             command: delve_path,
-            arguments: vec![
-                "dap".into(),
-                "--listen".into(),
-                format!("{}:{}", host, port),
-            ],
+            arguments: vec!["dap".into(), "--listen".into(), format!("{host}:{port}")],
             cwd: None,
             envs: HashMap::default(),
             connection: Some(adapters::TcpArguments {

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
 use gpui::{App, Context, Entity, EntityId, Global, Subscription, Task, prelude::*};
@@ -125,7 +125,7 @@ impl ReplStore {
         cx.spawn(async move |this, cx| {
             let kernel_specifications = kernel_specifications
                 .await
-                .map_err(|e| anyhow::anyhow!("Failed to get python kernelspecs: {:?}", e))?;
+                .context("getting python kernelspecs")?;
 
             this.update(cx, |this, cx| {
                 this.kernel_specifications_for_worktree

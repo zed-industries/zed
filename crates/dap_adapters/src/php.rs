@@ -1,6 +1,8 @@
 use adapters::latest_github_release;
+use anyhow::Context as _;
 use dap::adapters::{DebugTaskDefinition, TcpArguments};
-use gpui::AsyncApp;
+use gpui::{AsyncApp, SharedString};
+use language::LanguageName;
 use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 use util::ResultExt;
 
@@ -29,6 +31,7 @@ impl PhpDebugAdapter {
                     "program": launch_config.program,
                     "cwd": launch_config.cwd,
                     "args": launch_config.args,
+                    "env": launch_config.env_json(),
                     "stopOnEntry": config.stop_on_entry.unwrap_or_default(),
                 }),
                 request: config.request.to_dap(),
@@ -38,7 +41,7 @@ impl PhpDebugAdapter {
 
     async fn fetch_latest_adapter_version(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
     ) -> Result<AdapterVersion> {
         let release = latest_github_release(
             &format!("{}/{}", "xdebug", Self::ADAPTER_PACKAGE_NAME),
@@ -56,7 +59,7 @@ impl PhpDebugAdapter {
                 .assets
                 .iter()
                 .find(|asset| asset.name == asset_name)
-                .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?
+                .with_context(|| format!("no asset found matching {asset_name:?}"))?
                 .browser_download_url
                 .clone(),
         })
@@ -64,7 +67,7 @@ impl PhpDebugAdapter {
 
     async fn get_installed_binary(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         _: &mut AsyncApp,
@@ -80,7 +83,7 @@ impl PhpDebugAdapter {
                 file_name.starts_with(&file_name_prefix)
             })
             .await
-            .ok_or_else(|| anyhow!("Couldn't find PHP dap directory"))?
+            .context("Couldn't find PHP dap directory")?
         };
 
         let tcp_connection = config.tcp_connection.clone().unwrap_or_default();
@@ -118,9 +121,13 @@ impl DebugAdapter for PhpDebugAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
+    fn adapter_language_name(&self) -> Option<LanguageName> {
+        Some(SharedString::new_static("PHP").into())
+    }
+
     async fn get_binary(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
@@ -132,7 +139,7 @@ impl DebugAdapter for PhpDebugAdapter {
                     self.name(),
                     version,
                     adapters::DownloadedFileType::Vsix,
-                    delegate,
+                    delegate.as_ref(),
                 )
                 .await?;
             }

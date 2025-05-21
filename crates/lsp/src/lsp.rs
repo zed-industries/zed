@@ -352,7 +352,7 @@ impl LanguageServer {
         let stdout = server.stdout.take().unwrap();
         let stderr = server.stderr.take().unwrap();
         let root_uri = Url::from_file_path(&working_dir)
-            .map_err(|_| anyhow!("{} is not a valid URI", working_dir.display()))?;
+            .map_err(|()| anyhow!("{working_dir:?} is not a valid URI"))?;
         let server = Self::new_internal(
             server_id,
             server_name,
@@ -1131,8 +1131,6 @@ impl LanguageServer {
     where
         T::Result: 'static + Send,
         T: request::Request,
-        // TODO kb
-        // <T as lsp_types::request::Request>::Result: ConnectionResult,
     {
         let id = next_id.fetch_add(1, SeqCst);
         let message = serde_json::to_string(&Request {

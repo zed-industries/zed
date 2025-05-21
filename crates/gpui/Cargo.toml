@@ -258,6 +258,10 @@ name = "input"
 path = "examples/input.rs"
 
 [[example]]
+name = "on_window_close_quit"
+path = "examples/on_window_close_quit.rs"
+
+[[example]]
 name = "opacity"
 path = "examples/opacity.rs"
 
@@ -278,6 +282,10 @@ name = "svg"
 path = "examples/svg/svg.rs"
 
 [[example]]
+name = "text"
+path = "examples/text.rs"
+
+[[example]]
 name = "text_wrapper"
 path = "examples/text_wrapper.rs"
 
@@ -288,7 +296,3 @@ path = "examples/uniform_list.rs"
 [[example]]
 name = "window_shadow"
 path = "examples/window_shadow.rs"
-
-[[example]]
-name = "on_window_close_quit"
-path = "examples/on_window_close_quit.rs"

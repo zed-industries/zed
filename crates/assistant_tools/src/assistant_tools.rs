@@ -42,7 +42,7 @@ use crate::list_directory_tool::ListDirectoryTool;
 use crate::now_tool::NowTool;
 use crate::thinking_tool::ThinkingTool;
 
-pub use edit_file_tool::EditFileToolInput;
+pub use edit_file_tool::{EditFileMode, EditFileToolInput};
 pub use find_path_tool::FindPathToolInput;
 pub use open_tool::OpenTool;
 pub use read_file_tool::{ReadFileTool, ReadFileToolInput};

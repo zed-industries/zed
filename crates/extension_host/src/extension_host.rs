@@ -14,9 +14,10 @@ use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
 pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
-    ExtensionContextServerProxy, ExtensionEvents, ExtensionGrammarProxy, ExtensionHostProxy,
-    ExtensionIndexedDocsProviderProxy, ExtensionLanguageProxy, ExtensionLanguageServerProxy,
-    ExtensionSlashCommandProxy, ExtensionSnippetProxy, ExtensionThemeProxy,
+    ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy, ExtensionEvents,
+    ExtensionGrammarProxy, ExtensionHostProxy, ExtensionIndexedDocsProviderProxy,
+    ExtensionLanguageProxy, ExtensionLanguageServerProxy, ExtensionSlashCommandProxy,
+    ExtensionSnippetProxy, ExtensionThemeProxy,
 };
 use fs::{Fs, RemoveOptions};
 use futures::{
@@ -716,7 +717,7 @@ impl ExtensionStore {
             let mut response = http_client
                 .get(url.as_ref(), Default::default(), true)
                 .await
-                .map_err(|err| anyhow!("error downloading extension: {}", err))?;
+                .context("downloading extension")?;
 
             fs.remove_dir(
                 &extension_dir,
@@ -1328,6 +1329,11 @@ impl ExtensionStore {
                         this.proxy
                             .register_indexed_docs_provider(extension.clone(), provider_id.clone());
                     }
+
+                    for debug_adapter in &manifest.debug_adapters {
+                        this.proxy
+                            .register_debug_adapter(extension.clone(), debug_adapter.clone());
+                    }
                 }
 
                 this.wasm_extensions.extend(wasm_extensions);
@@ -1409,7 +1415,7 @@ impl ExtensionStore {
         let is_dev = fs
             .metadata(&extension_dir)
             .await?
-            .ok_or_else(|| anyhow!("directory does not exist"))?
+            .context("directory does not exist")?
             .is_symlink;
 
         if let Ok(mut language_paths) = fs.read_dir(&extension_dir.join("languages")).await {

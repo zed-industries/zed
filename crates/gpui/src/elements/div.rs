@@ -1559,32 +1559,20 @@ impl Interactivity {
     ) -> Point<Pixels> {
         if let Some(scroll_offset) = self.scroll_offset.as_ref() {
             let mut scroll_to_bottom = false;
-            if let Some(scroll_handle) = &self.tracked_scroll_handle {
-                let mut state = scroll_handle.0.borrow_mut();
-                state.overflow = style.overflow;
-                scroll_to_bottom = mem::take(&mut state.scroll_to_bottom);
+            let mut tracked_scroll_handle = self
+                .tracked_scroll_handle
+                .as_ref()
+                .map(|handle| handle.0.borrow_mut());
+            if let Some(mut scroll_handle_state) = tracked_scroll_handle.as_deref_mut() {
+                scroll_handle_state.overflow = style.overflow;
+                scroll_to_bottom = mem::take(&mut scroll_handle_state.scroll_to_bottom);
             }
 
             let rem_size = window.rem_size();
-            let padding_size = size(
-                style
-                    .padding
-                    .left
-                    .to_pixels(bounds.size.width.into(), rem_size)
-                    + style
-                        .padding
-                        .right
-                        .to_pixels(bounds.size.width.into(), rem_size),
-                style
-                    .padding
-                    .top
-                    .to_pixels(bounds.size.height.into(), rem_size)
-                    + style
-                        .padding
-                        .bottom
-                        .to_pixels(bounds.size.height.into(), rem_size),
-            );
-            let scroll_max = (self.content_size + padding_size - bounds.size).max(&Size::default());
+            let padding = style.padding.to_pixels(bounds.size.into(), rem_size);
+            let padding_size = size(padding.left + padding.right, padding.top + padding.bottom);
+            let padded_content_size = self.content_size + padding_size;
+            let scroll_max = (padded_content_size - bounds.size).max(&Size::default());
             // Clamp scroll offset in case scroll max is smaller now (e.g., if children
             // were removed or the bounds became larger).
             let mut scroll_offset = scroll_offset.borrow_mut();
@@ -1594,6 +1582,10 @@ impl Interactivity {
                 scroll_offset.y = -scroll_max.height;
             } else {
                 scroll_offset.y = scroll_offset.y.clamp(-scroll_max.height, px(0.));
+            }
+
+            if let Some(mut scroll_handle_state) = tracked_scroll_handle {
+                scroll_handle_state.padded_content_size = padded_content_size;
             }
 
             *scroll_offset
@@ -2913,6 +2905,7 @@ impl ScrollAnchor {
 struct ScrollHandleState {
     offset: Rc<RefCell<Point<Pixels>>>,
     bounds: Bounds<Pixels>,
+    padded_content_size: Size<Pixels>,
     child_bounds: Vec<Bounds<Pixels>>,
     scroll_to_bottom: bool,
     overflow: Point<Overflow>,
@@ -2973,6 +2966,11 @@ impl ScrollHandle {
     /// Get the bounds for a specific child.
     pub fn bounds_for_item(&self, ix: usize) -> Option<Bounds<Pixels>> {
         self.0.borrow().child_bounds.get(ix).cloned()
+    }
+
+    /// Get the size of the content with padding of the container.
+    pub fn padded_content_size(&self) -> Size<Pixels> {
+        self.0.borrow().padded_content_size
     }
 
     /// scroll_to_item scrolls the minimal amount to ensure that the child is
