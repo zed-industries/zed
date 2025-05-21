@@ -69,7 +69,6 @@ use super::{
     window::{ImeInput, WaylandWindowStatePtr},
 };
 
-use crate::platform::{PlatformWindow, blade::BladeContext};
 use crate::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, DOUBLE_CLICK_INTERVAL, DevicePixels, DisplayId,
     FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon,
@@ -91,6 +90,10 @@ use crate::{
         },
         xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
     },
+};
+use crate::{
+    platform::{PlatformWindow, blade::BladeContext},
+    underlying_dead_key,
 };
 
 /// Used to convert evdev scancode to xkb scancode
@@ -1310,7 +1313,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                                 xkb::Status::Composing => {
                                     keystroke.key_char = None;
                                     state.pre_edit_text =
-                                        compose.utf8().or(Keystroke::underlying_dead_key(keysym));
+                                        compose.utf8().or(underlying_dead_key(keysym));
                                     let pre_edit =
                                         state.pre_edit_text.clone().unwrap_or(String::default());
                                     drop(state);
@@ -1327,7 +1330,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                                 }
                                 xkb::Status::Cancelled => {
                                     let pre_edit = state.pre_edit_text.take();
-                                    let new_pre_edit = Keystroke::underlying_dead_key(keysym);
+                                    let new_pre_edit = underlying_dead_key(keysym);
                                     state.pre_edit_text = new_pre_edit.clone();
                                     drop(state);
                                     if let Some(pre_edit) = pre_edit {

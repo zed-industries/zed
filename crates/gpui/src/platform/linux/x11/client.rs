@@ -2,6 +2,7 @@ use crate::{
     linux::KeyboardState,
     platform::{xcb_flush, Capslock},
     scap_screen_capture::scap_screen_sources,
+    underlying_dead_key,
 };
 use core::str;
 use std::{
@@ -1066,9 +1067,8 @@ impl X11Client {
                             }
                             xkbc::Status::Composing => {
                                 keystroke.key_char = None;
-                                state.pre_edit_text = compose_state
-                                    .utf8()
-                                    .or(crate::Keystroke::underlying_dead_key(keysym));
+                                state.pre_edit_text =
+                                    compose_state.utf8().or(underlying_dead_key(keysym));
                                 let pre_edit =
                                     state.pre_edit_text.clone().unwrap_or(String::default());
                                 drop(state);
@@ -1083,7 +1083,7 @@ impl X11Client {
                                 if let Some(pre_edit) = pre_edit {
                                     window.handle_ime_commit(pre_edit);
                                 }
-                                if let Some(current_key) = Keystroke::underlying_dead_key(keysym) {
+                                if let Some(current_key) = underlying_dead_key(keysym) {
                                     window.handle_ime_preedit(current_key);
                                 }
                                 state = self.0.borrow_mut();
