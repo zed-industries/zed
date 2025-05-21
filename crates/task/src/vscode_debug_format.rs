@@ -36,7 +36,7 @@ struct VsCodeDebugTaskDefinition {
     #[serde(default)]
     stop_on_entry: Option<bool>,
     #[serde(flatten)]
-    other_attributes: HashMap<String, serde_json_lenient::Value>,
+    other_attributes: serde_json::Value,
 }
 
 impl VsCodeDebugTaskDefinition {
@@ -53,8 +53,7 @@ impl VsCodeDebugTaskDefinition {
                 host: None,
                 timeout: None,
             }),
-            // todo!(debugger)
-            config: serde_json::Value::Null,
+            config: self.other_attributes,
         };
         Ok(definition)
     }
@@ -141,8 +140,7 @@ mod tests {
                 label: "Debug my JS app".into(),
                 adapter: "JavaScript".into(),
                 config: json!({
-                    "request": "launch",
-                    "stop_on_entry": true
+                    "showDevDebugOutput": false,
                 }),
                 tcp_connection: Some(TcpArgumentsTemplate {
                     port: Some(17),

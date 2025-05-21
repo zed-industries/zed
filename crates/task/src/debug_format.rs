@@ -254,21 +254,8 @@ impl DebugTaskFile {
 
 #[cfg(test)]
 mod tests {
-    use crate::{DebugRequest, DebugScenario, LaunchRequest};
+    use crate::DebugScenario;
     use serde_json::json;
-
-    #[test]
-    fn test_can_deserialize_non_attach_task() {
-        let deserialized: DebugRequest =
-            serde_json::from_str(r#"{"program": "cafebabe"}"#).unwrap();
-        assert_eq!(
-            deserialized,
-            DebugRequest::Launch(LaunchRequest {
-                program: "cafebabe".to_owned(),
-                ..Default::default()
-            })
-        );
-    }
 
     #[test]
     fn test_empty_scenario_has_none_request() {
@@ -298,7 +285,7 @@ mod tests {
         let deserialized: DebugScenario = serde_json::from_str(json).unwrap();
 
         assert_eq!(
-            json!({ "request": "launch", "program": "target/debug/myapp", "args": "--test" }),
+            json!({ "request": "launch", "program": "target/debug/myapp", "args": ["--test"] }),
             deserialized.config
         );
         assert_eq!("CodeLLDB", deserialized.adapter.as_ref());
@@ -311,7 +298,7 @@ mod tests {
             "label": "Attach to process",
             "adapter": "CodeLLDB",
             "process_id": 1234,
-            "request": "attach",
+            "request": "attach"
         }"#;
 
         let deserialized: DebugScenario = serde_json::from_str(json).unwrap();

@@ -179,9 +179,8 @@ impl DebugAdapter for GoDebugAdapter {
                 "default": "debug"
             },
             "mode": {
-                "enum": ["auto", "debug", "test", "exec", "replay", "core"],
+                "enum": [ "debug", "test", "exec", "replay", "core"],
                 "description": "Debug mode for launch configuration.",
-                "default": "auto"
             },
             "traceDirPath": {
                 "type": "string",

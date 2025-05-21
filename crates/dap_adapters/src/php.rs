@@ -103,7 +103,189 @@ impl PhpDebugAdapter {
 #[async_trait(?Send)]
 impl DebugAdapter for PhpDebugAdapter {
     fn dap_schema(&self) -> serde_json::Value {
-        todo!()
+        json!({
+            "properties": {
+                "request": {
+                    "type": "string",
+                    "enum": ["launch"],
+                    "description": "The request type for the PHP debug adapter, always \"launch\"",
+                    "default": "launch"
+                },
+                "hostname": {
+                    "type": "string",
+                    "description": "The address to bind to when listening for Xdebug (default: all IPv6 connections if available, else all IPv4 connections) or Unix Domain socket (prefix with unix://) or Windows Pipe (\\\\?\\pipe\\name) - cannot be combined with port"
+                },
+                "port": {
+                    "type": "integer",
+                    "description": "The port on which to listen for Xdebug (default: 9003). If port is set to 0 a random port is chosen by the system and a placeholder ${port} is replaced with the chosen port in env and runtimeArgs.",
+                    "default": 9003
+                },
+                "program": {
+                    "type": "string",
+                    "description": "The PHP script to debug (typically a path to a file)",
+                    "default": "${file}"
+                },
+                "cwd": {
+                    "type": "string",
+                    "description": "Working directory for the debugged program"
+                },
+                "args": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Command line arguments to pass to the program"
+                },
+                "env": {
+                    "type": "object",
+                    "description": "Environment variables to pass to the program",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "stopOnEntry": {
+                    "type": "boolean",
+                    "description": "Whether to break at the beginning of the script",
+                    "default": false
+                },
+                "pathMappings": {
+                    "type": "array",
+                    "description": "A list of server paths mapping to the local source paths on your machine for remote host debugging",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "serverPath": {
+                                "type": "string",
+                                "description": "Path on the server"
+                            },
+                            "localPath": {
+                                "type": "string",
+                                "description": "Corresponding path on the local machine"
+                            }
+                        },
+                        "required": ["serverPath", "localPath"]
+                    }
+                },
+                "log": {
+                    "type": "boolean",
+                    "description": "Whether to log all communication between editor and the adapter to the debug console",
+                    "default": false
+                },
+                "ignore": {
+                    "type": "array",
+                    "description": "An array of glob patterns that errors should be ignored from (for example **/vendor/**/*.php)",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "ignoreExceptions": {
+                    "type": "array",
+                    "description": "An array of exception class names that should be ignored (for example BaseException, \\NS1\\Exception, \\*\\Exception or \\**\\Exception*)",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "skipFiles": {
+                    "type": "array",
+                    "description": "An array of glob patterns to skip when debugging. Star patterns and negations are allowed.",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "skipEntryPaths": {
+                    "type": "array",
+                    "description": "An array of glob patterns to immediately detach from and ignore for debugging if the entry script matches",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "maxConnections": {
+                    "type": "integer",
+                    "description": "Accept only this number of parallel debugging sessions. Additional connections will be dropped.",
+                    "default": 1
+                },
+                "proxy": {
+                    "type": "object",
+                    "description": "DBGp Proxy settings",
+                    "properties": {
+                        "enable": {
+                            "type": "boolean",
+                            "description": "To enable proxy registration",
+                            "default": false
+                        },
+                        "host": {
+                            "type": "string",
+                            "description": "The address of the proxy. Supports host name, IP address, or Unix domain socket.",
+                            "default": "127.0.0.1"
+                        },
+                        "port": {
+                            "type": "integer",
+                            "description": "The port where the adapter will register with the proxy",
+                            "default": 9001
+                        },
+                        "key": {
+                            "type": "string",
+                            "description": "A unique key that allows the proxy to match requests to your editor",
+                            "default": "vsc"
+                        },
+                        "timeout": {
+                            "type": "integer",
+                            "description": "The number of milliseconds to wait before giving up on the connection to proxy",
+                            "default": 3000
+                        },
+                        "allowMultipleSessions": {
+                            "type": "boolean",
+                            "description": "If the proxy should forward multiple sessions/connections at the same time or not",
+                            "default": true
+                        }
+                    }
+                },
+                "xdebugSettings": {
+                    "type": "object",
+                    "description": "Allows you to override Xdebug's remote debugging settings to fine tune Xdebug to your needs",
+                    "properties": {
+                        "max_children": {
+                            "type": "integer",
+                            "description": "Max number of array or object children to initially retrieve"
+                        },
+                        "max_data": {
+                            "type": "integer",
+                            "description": "Max amount of variable data to initially retrieve"
+                        },
+                        "max_depth": {
+                            "type": "integer",
+                            "description": "Maximum depth that the debugger engine may return when sending arrays, hashes or object structures to the IDE"
+                        },
+                        "show_hidden": {
+                            "type": "integer",
+                            "description": "Whether to show detailed internal information on properties (e.g. private members of classes). Zero means hidden members are not shown.",
+                            "enum": [0, 1]
+                        },
+                        "breakpoint_include_return_value": {
+                            "type": "boolean",
+                            "description": "Determines whether to enable an additional \"return from function\" debugging step, allowing inspection of the return value when a function call returns"
+                        }
+                    }
+                },
+                "xdebugCloudToken": {
+                    "type": "string",
+                    "description": "Instead of listening locally, open a connection and register with Xdebug Cloud and accept debugging sessions on that connection"
+                },
+                "stream": {
+                    "type": "object",
+                    "description": "Allows to influence DBGp streams. Xdebug only supports stdout",
+                    "properties": {
+                        "stdout": {
+                            "type": "integer",
+                            "description": "Redirect stdout stream: 0 (disable), 1 (copy), 2 (redirect)",
+                            "enum": [0, 1, 2],
+                            "default": 0
+                        }
+                    }
+                }
+            },
+            "required": ["request", "program"]
+        })
     }
 
     fn name(&self) -> DebugAdapterName {

@@ -33,7 +33,7 @@ impl DebugAdapter for ExtensionDapAdapter {
     }
 
     fn dap_schema(&self) -> serde_json::Value {
-        todo!()
+        serde_json::Value::Null
     }
 
     async fn get_binary(
