@@ -393,6 +393,20 @@ impl extension::Extension for WasmExtension {
         })
         .await
     }
+
+    async fn dap_schema(&self) -> Result<serde_json::Value> {
+        self.call(|extension, store| {
+            async move {
+                extension
+                    .call_dap_schema(store)
+                    .await
+                    .and_then(|schema| serde_json::to_value(schema).map_err(|err| err.to_string()))
+                    .map_err(|err| anyhow!(err.to_string()))
+            }
+            .boxed()
+        })
+        .await
+    }
 }
 
 pub struct WasmState {

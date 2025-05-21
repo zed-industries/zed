@@ -197,6 +197,10 @@ pub trait Extension: Send + Sync {
     ) -> Result<DebugAdapterBinary, String> {
         Err("`get_dap_binary` not implemented".to_string())
     }
+
+    fn dap_schema(&mut self) -> Result<serde_json::Value, String> {
+        Err("`dap_schema` not implemented".to_string())
+    }
 }
 
 /// Registers the provided type as a Zed extension.
@@ -390,8 +394,8 @@ impl wit::Guest for Component {
         extension().get_dap_binary(adapter_name, config, user_installed_path)
     }
 
-    fn dap_schema() -> String {
-        todo!()
+    fn dap_schema() -> Result<String, String> {
+        extension().dap_schema().map(|schema| schema.to_string())
     }
 }
 

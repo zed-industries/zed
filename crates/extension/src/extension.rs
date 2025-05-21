@@ -142,6 +142,8 @@ pub trait Extension: Send + Sync + 'static {
         config: DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
     ) -> Result<DebugAdapterBinary>;
+
+    async fn dap_schema(&self) -> Result<serde_json::Value>;
 }
 
 pub fn parse_wasm_extension_version(

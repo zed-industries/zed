@@ -160,5 +160,5 @@ world extension {
     /// Returns a configured debug adapter binary for a given debug task.
     export get-dap-binary: func(adapter-name: string, config: debug-task-definition, user-installed-path: option<string>) -> result<debug-adapter-binary, string>;
     /// Get a debug adapter's configuration schema
-    export dap-schema: func() -> string;
+    export dap-schema: func() -> result<string, string>;
 }
