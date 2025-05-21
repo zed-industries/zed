@@ -107,7 +107,7 @@ pub fn run(
         let kernel_specification = store
             .read(cx)
             .active_kernelspec(project_path.worktree_id, Some(language.clone()), cx)
-            .ok_or_else(|| anyhow::anyhow!("No kernel found for language: {}", language.name()))?;
+            .with_context(|| format!("No kernel found for language: {}", language.name()))?;
 
         let fs = store.read(cx).fs().clone();
 

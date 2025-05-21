@@ -1212,12 +1212,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(workspace) = self
-            .workspace
-            .upgrade()
-            .ok_or_else(|| anyhow!("workspace dropped"))
-            .log_err()
-        else {
+        let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
 

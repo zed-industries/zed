@@ -138,6 +138,7 @@ fn manifest() -> ExtensionManifest {
             command: "echo".into(),
             args: vec!["hello!".into()],
         }],
+        debug_adapters: Default::default(),
     }
 }
 

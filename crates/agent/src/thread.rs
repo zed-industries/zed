@@ -24,7 +24,7 @@ use language_model::{
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
     LanguageModelToolResultContent, LanguageModelToolUseId, MessageContent,
     ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role, SelectedModel,
-    StopReason, TokenUsage,
+    StopReason, TokenUsage, WrappedTextContent,
 };
 use postage::stream::Stream as _;
 use project::Project;
@@ -881,7 +881,10 @@ impl Thread {
 
     pub fn output_for_tool(&self, id: &LanguageModelToolUseId) -> Option<&Arc<str>> {
         match &self.tool_use.tool_result(id)?.content {
-            LanguageModelToolResultContent::Text(str) => Some(str),
+            LanguageModelToolResultContent::Text(text)
+            | LanguageModelToolResultContent::WrappedText(WrappedTextContent { text, .. }) => {
+                Some(text)
+            }
             LanguageModelToolResultContent::Image(_) => {
                 // TODO: We should display image
                 None
@@ -1627,7 +1630,7 @@ impl Thread {
                                         CompletionRequestStatus::Failed {
                                             code, message, request_id
                                         } => {
-                                            return Err(anyhow!("completion request failed. request_id: {request_id}, code: {code}, message: {message}"));
+                                            anyhow::bail!("completion request failed. request_id: {request_id}, code: {code}, message: {message}");
                                         }
                                         CompletionRequestStatus::UsageUpdated {
                                             amount, limit
@@ -2515,8 +2518,12 @@ impl Thread {
 
                 writeln!(markdown, "**\n")?;
                 match &tool_result.content {
-                    LanguageModelToolResultContent::Text(str) => {
-                        writeln!(markdown, "{}", str)?;
+                    LanguageModelToolResultContent::Text(text)
+                    | LanguageModelToolResultContent::WrappedText(WrappedTextContent {
+                        text,
+                        ..
+                    }) => {
+                        writeln!(markdown, "{text}")?;
                     }
                     LanguageModelToolResultContent::Image(image) => {
                         writeln!(markdown, "![Image](data:base64,{})", image.source)?;

@@ -1,4 +1,4 @@
-use anyhow::ensure;
+use anyhow::{Context as _, ensure};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
@@ -883,11 +883,11 @@ impl PyLspAdapter {
     async fn ensure_venv(delegate: &dyn LspAdapterDelegate) -> Result<Arc<Path>> {
         let python_path = Self::find_base_python(delegate)
             .await
-            .ok_or_else(|| anyhow!("Could not find Python installation for PyLSP"))?;
+            .context("Could not find Python installation for PyLSP")?;
         let work_dir = delegate
             .language_server_download_dir(&Self::SERVER_NAME)
             .await
-            .ok_or_else(|| anyhow!("Could not get working directory for PyLSP"))?;
+            .context("Could not get working directory for PyLSP")?;
         let mut path = PathBuf::from(work_dir.as_ref());
         path.push("pylsp-venv");
         if !path.exists() {
