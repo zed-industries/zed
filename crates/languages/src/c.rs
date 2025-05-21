@@ -85,8 +85,18 @@ impl super::LspAdapter for CLspAdapter {
             );
             extract_zip(&container_dir, BufReader::new(response.body_mut()))
                 .await
-                .context("unzipping clangd archive")?;
+                .with_context(|| format!("unzipping clangd archive to {container_dir:?}"))?;
             remove_matching(&container_dir, |entry| entry != version_dir).await;
+
+            // todo("windows")
+            #[cfg(not(windows))]
+            {
+                fs::set_permissions(
+                    &binary_path,
+                    <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
+                )
+                .await?;
+            }
         }
 
         Ok(LanguageServerBinary {
