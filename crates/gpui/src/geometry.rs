@@ -6,6 +6,10 @@ use anyhow::{Context as _, anyhow};
 use core::fmt::Debug;
 use derive_more::{Add, AddAssign, Div, DivAssign, Mul, Neg, Sub, SubAssign};
 use refineable::Refineable;
+use schemars::{
+    JsonSchema, SchemaGenerator,
+    schema::{InstanceType, Schema, SchemaObject},
+};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{
     cmp::{self, PartialOrd},
@@ -72,9 +76,10 @@ pub trait Along {
     Eq,
     Serialize,
     Deserialize,
+    JsonSchema,
     Hash,
 )]
-#[refineable(Debug, Serialize, Deserialize)]
+#[refineable(Debug, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
 pub struct Point<T: Default + Clone + Debug> {
     /// The x coordinate of the point.
@@ -381,7 +386,7 @@ impl<T: Clone + Default + Debug> Clone for Point<T> {
 /// This struct is generic over the type `T`, which can be any type that implements `Clone`, `Default`, and `Debug`.
 /// It is commonly used to specify dimensions for elements in a UI, such as a window or element.
 #[derive(Refineable, Default, Clone, Copy, PartialEq, Div, Hash, Serialize, Deserialize)]
-#[refineable(Debug, Serialize, Deserialize)]
+#[refineable(Debug, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
 pub struct Size<T: Clone + Default + Debug> {
     /// The width component of the size.
@@ -1610,7 +1615,7 @@ impl<T: Clone + Debug + Copy + Default> Copy for Bounds<T> {}
 /// assert_eq!(edges.left, 40.0);
 /// ```
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
-#[refineable(Debug, Serialize, Deserialize)]
+#[refineable(Debug, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
 pub struct Edges<T: Clone + Default + Debug> {
     /// The size of the top edge.
@@ -2087,7 +2092,7 @@ impl Corner {
 ///
 /// Each field represents the size of the corner on one side of the box: `top_left`, `top_right`, `bottom_right`, and `bottom_left`.
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
-#[refineable(Debug, Serialize, Deserialize)]
+#[refineable(Debug, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
 pub struct Corners<T: Clone + Default + Debug> {
     /// The value associated with the top left corner.
@@ -2471,6 +2476,7 @@ impl From<Percentage> for Radians {
     PartialEq,
     Serialize,
     Deserialize,
+    JsonSchema,
 )]
 #[repr(transparent)]
 pub struct Pixels(pub f32);
@@ -3152,6 +3158,17 @@ impl TryFrom<&'_ str> for AbsoluteLength {
     }
 }
 
+// todo! Regex restrict
+impl JsonSchema for AbsoluteLength {
+    fn schema_name() -> String {
+        String::schema_name()
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        String::json_schema(generator)
+    }
+}
+
 impl<'de> Deserialize<'de> for AbsoluteLength {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct StringVisitor;
@@ -3270,6 +3287,17 @@ impl TryFrom<&'_ str> for DefiniteLength {
     }
 }
 
+// todo! Regex restrict
+impl JsonSchema for DefiniteLength {
+    fn schema_name() -> String {
+        String::schema_name()
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        String::json_schema(generator)
+    }
+}
+
 impl<'de> Deserialize<'de> for DefiniteLength {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct StringVisitor;
@@ -3362,6 +3390,17 @@ impl TryFrom<&'_ str> for Length {
                 "invalid Length '{value}', expected {EXPECTED_LENGTH}"
             ))
         }
+    }
+}
+
+// todo! Regex restrict
+impl JsonSchema for Length {
+    fn schema_name() -> String {
+        String::schema_name()
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        String::json_schema(generator)
     }
 }
 

@@ -143,7 +143,7 @@ impl ObjectFit {
 /// todo! Many of the types this references just had `Serialize` / `Deserialize` directly added,
 /// should refine the format.
 #[derive(Clone, Refineable, Debug)]
-#[refineable(Debug, Serialize, Deserialize)]
+#[refineable(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Style {
     /// What layout strategy should be used?
     pub display: Display,
@@ -279,7 +279,7 @@ impl Styled for StyleRefinement {
 }
 
 /// The value of the visibility property, similar to the CSS property `visibility`
-#[derive(Default, Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Default, Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum Visibility {
     /// The element should be drawn as normal.
     #[default]
@@ -289,7 +289,7 @@ pub enum Visibility {
 }
 
 /// The possible values of the box-shadow property
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct BoxShadow {
     /// What color should the shadow have?
     pub color: Hsla,
@@ -302,7 +302,7 @@ pub struct BoxShadow {
 }
 
 /// How to handle whitespace in text
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum WhiteSpace {
     /// Normal line wrapping when text overflows the width of the element
     #[default]
@@ -312,7 +312,7 @@ pub enum WhiteSpace {
 }
 
 /// How to truncate text that overflows the width of the element
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum TextOverflow {
     /// Truncate the text when it doesn't fit, and represent this truncation by displaying the
     /// provided string.
@@ -320,7 +320,7 @@ pub enum TextOverflow {
 }
 
 /// How to align text within the element
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum TextAlign {
     /// Align the text to the left of the element
     #[default]
@@ -335,7 +335,7 @@ pub enum TextAlign {
 
 /// The properties that can be used to style text in GPUI
 #[derive(Refineable, Clone, Debug, PartialEq)]
-#[refineable(Debug, Serialize, Deserialize)]
+#[refineable(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct TextStyle {
     /// The color of the text
     pub color: Hsla,
@@ -770,8 +770,9 @@ impl Default for Style {
 }
 
 /// The properties that can be applied to an underline.
-#[derive(Refineable, Copy, Clone, Default, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[refineable(Debug, Serialize, Deserialize)]
+#[derive(
+    Refineable, Copy, Clone, Default, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema,
+)]
 pub struct UnderlineStyle {
     /// The thickness of the underline.
     pub thickness: Pixels,
@@ -784,7 +785,9 @@ pub struct UnderlineStyle {
 }
 
 /// The properties that can be applied to a strikethrough.
-#[derive(Refineable, Copy, Clone, Default, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Refineable, Copy, Clone, Default, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema,
+)]
 pub struct StrikethroughStyle {
     /// The thickness of the strikethrough.
     pub thickness: Pixels,
@@ -794,7 +797,7 @@ pub struct StrikethroughStyle {
 }
 
 /// The kinds of fill that can be applied to a shape.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub enum Fill {
     /// A solid color fill.
     Color(Background),

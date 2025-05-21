@@ -1,6 +1,7 @@
 // todo("windows"): remove
 #![cfg_attr(windows, allow(dead_code))]
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -508,7 +509,7 @@ impl From<Shadow> for Primitive {
 }
 
 /// The style of a border.
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
 pub enum BorderStyle {
     /// A solid border.

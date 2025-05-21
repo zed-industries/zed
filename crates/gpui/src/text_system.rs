@@ -583,7 +583,7 @@ impl DerefMut for LineWrapperHandle {
 
 /// The degree of blackness or stroke thickness of a font. This value ranges from 100.0 to 900.0,
 /// with 400.0 as normal.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Deserialize, Serialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Serialize, Deserialize, JsonSchema)]
 pub struct FontWeight(pub f32);
 
 impl Default for FontWeight {
@@ -636,8 +636,7 @@ impl FontWeight {
 }
 
 /// Allows italic or oblique faces to be selected.
-#[derive(Clone, Copy, Eq, PartialEq, Debug, Hash, Default)]
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Copy, Eq, PartialEq, Debug, Hash, Default, Serialize, Deserialize, JsonSchema)]
 pub enum FontStyle {
     /// A face that is neither italic not obliqued.
     #[default]
