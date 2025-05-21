@@ -1211,7 +1211,7 @@ pub struct DivFrameState {
 }
 
 /// todo!("document")
-pub struct DivInspectorState {
+pub struct InteractivityInspectorState {
     /// todo!("document")
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub base_style: Box<StyleRefinement>,
@@ -1463,10 +1463,11 @@ impl Interactivity {
         #[cfg(any(feature = "inspector", debug_assertions))]
         window.with_inspector_state(
             inspector_id,
-            |inspector_state: &mut Option<DivInspectorState>, _window| {
-                let inspector_state = inspector_state.get_or_insert_with(|| DivInspectorState {
-                    base_style: self.base_style.clone(),
-                });
+            |inspector_state: &mut Option<InteractivityInspectorState>, _window| {
+                let inspector_state =
+                    inspector_state.get_or_insert_with(|| InteractivityInspectorState {
+                        base_style: self.base_style.clone(),
+                    });
                 self.base_style.refine(&inspector_state.base_style);
             },
         );

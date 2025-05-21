@@ -2,13 +2,13 @@ use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
 
-use crate::InspectorOptions;
+use crate::inspector::InspectorOptions;
 use anyhow::{Context as _, anyhow};
 use editor::{Editor, EditorEvent, EditorMode, MultiBuffer};
 use futures::{FutureExt as _, future::Shared};
 use gpui::{
-    App, AsyncWindowContext, DivInspectorState, Entity, InspectorElementId, IntoElement, Task,
-    Window,
+    App, AsyncWindowContext, Entity, InspectorElementId, InteractivityInspectorState, IntoElement,
+    Task, Window,
 };
 use language::language_settings::SoftWrap;
 use project::ProjectPath;
@@ -18,21 +18,21 @@ use util::ResultExt as _;
 use util::command::new_smol_command;
 use workspace::Workspace;
 
-pub(crate) struct DivInspectorLoadState {
+pub(crate) struct InteractivityInspectorLoadState {
     id: Rc<InspectorElementId>,
-    task: Shared<Task<DivInspector>>,
+    task: Shared<Task<InteractivityInspector>>,
 }
 
 #[derive(Clone)]
-struct DivInspector {
+struct InteractivityInspector {
     style_editor: Entity<Editor>,
 }
 
 pub(crate) fn render_or_load(
     inspector_options: Entity<InspectorOptions>,
-    load_state: &Rc<RefCell<Option<DivInspectorLoadState>>>,
+    load_state: &Rc<RefCell<Option<InteractivityInspectorLoadState>>>,
     id: InspectorElementId,
-    state: &DivInspectorState,
+    state: &InteractivityInspectorState,
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement + use<> {
@@ -40,8 +40,8 @@ pub(crate) fn render_or_load(
     let mut start_load = true;
     if let Some(load_state) = &*load_state {
         if load_state.id.as_ref() == &id {
-            if let Some(last_div_inspector) = load_state.task.clone().now_or_never() {
-                return last_div_inspector
+            if let Some(last_inspector) = load_state.task.clone().now_or_never() {
+                return last_inspector
                     .render(&load_state.id.as_ref(), inspector_options, cx)
                     .into_any_element();
             } else {
@@ -54,11 +54,11 @@ pub(crate) fn render_or_load(
         // todo! Better error handling
         let base_style_json = serde_json::to_string_pretty(&state.base_style).unwrap();
         let id = Rc::new(id);
-        *load_state = Some(DivInspectorLoadState {
+        *load_state = Some(InteractivityInspectorLoadState {
             id: id.clone(),
             task: window
                 .spawn(cx, async move |cx| {
-                    DivInspector::load(inspector_options, &id, base_style_json, cx).await
+                    InteractivityInspector::load(inspector_options, &id, base_style_json, cx).await
                 })
                 .shared(),
         });
@@ -67,14 +67,14 @@ pub(crate) fn render_or_load(
     return Label::new("Loading...").into_any_element();
 }
 
-impl DivInspector {
+impl InteractivityInspector {
     // todo! no unwraps / maybe no log_err
     async fn load(
         inspector_options: Entity<InspectorOptions>,
         id: &InspectorElementId,
         base_style_json: String,
         cx: &mut AsyncWindowContext,
-    ) -> DivInspector {
+    ) -> InteractivityInspector {
         // todo! Make a new project instead of needing the current window to be a workspace.
         let project = cx
             .update(|window, cx| {
@@ -149,7 +149,7 @@ impl DivInspector {
                                 else {
                                     return;
                                 };
-                                window.update_inspector_state::<DivInspectorState, _>(
+                                window.update_inspector_state::<InteractivityInspectorState, _>(
                                     &id,
                                     |state, _window| {
                                         if let Some(state) = state.as_mut() {
@@ -175,7 +175,7 @@ impl DivInspector {
             })
             .log_err();
 
-        return DivInspector { style_editor };
+        return InteractivityInspector { style_editor };
     }
 
     fn render(

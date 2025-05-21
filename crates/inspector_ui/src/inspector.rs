@@ -35,7 +35,7 @@ pub fn init(cx: &mut App) {
 
     let load_state = Rc::new(RefCell::new(None));
     cx.register_inspector_element(move |id, state, window, cx| {
-        crate::div_inspector::render_or_load(
+        crate::interactivity_inspector::render_or_load(
             inspector_options.clone(),
             &load_state,
             id,
