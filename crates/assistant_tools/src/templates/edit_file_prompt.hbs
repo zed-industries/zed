@@ -27,25 +27,20 @@ NEW TEXT 3 HERE
 </edits>
 ```
 
-Rules for editing:
+# File Editing Instructions
 
-- `old_text` represents lines in the input file that will be replaced with `new_text`.
-- `old_text` MUST exactly match the existing file content, character for character, including indentation.
-- `old_text` MUST NEVER come from the outline, but from actual lines in the file.
-- `old_text` cannot be empty.
-- Strive to be minimal in the lines you replace in `old_text`:
-  - If the lines you want to replace are unique, you MUST include just those in the `old_text`.
-  - If the lines you want to replace are NOT unique, you MUST include enough context around them in `old_text` to distinguish them from other lines.
-{{!-- The following is important for Gemini 2.5 --}}
-- Do not escape quotes, newlines, and anything else inside the `old_text`/`new_text` tags.
-- Do NOT use escape sequences like "\n" to represent newlines inside the old_text/new_text tags.
-{{!-- ---------------------- --}}
-- If you want to replace many occurrences of the same text, repeat the same `old_text`/`new_text` pair multiple times and I will apply them sequentially, one occurrence at a time.
-- When reporting multiple edits, each edit assumes the previous one has already been applied! Therefore, you must ensure `old_text` doesn't reference text that has already been modified by a previous edit.
-- Don't explain the edits, just report them.
-- Only edit the file specified in `<file_to_edit>` and NEVER include edits to other files!
-- If you open an <old_text> tag, you MUST close it using </old_text>
-- If you open an <new_text> tag, you MUST close it using </new_text>
+- Use `<old_text>` and `<new_text>` tags to replace content
+- `<old_text>` must exactly match existing file content, including indentation
+- `<old_text>` must come from the actual file, not an outline
+- `<old_text>` cannot be empty
+- Be minimal with replacements:
+  - For unique lines, include only those lines
+  - For non-unique lines, include enough context to identify them
+- Do not escape quotes, newlines, or other characters within tags
+- For multiple occurrences, repeat the same tag pair for each instance
+- Edits are sequential - each assumes previous edits are already applied
+- Only edit the specified file
+- Always close all tags properly
 
 
 {{!-- This example is important for Gemini 2.5 --}}

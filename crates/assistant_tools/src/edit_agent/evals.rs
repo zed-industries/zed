@@ -38,9 +38,10 @@ fn eval_extract_handle_command_output() {
     //
     // Results (model/pass rate):
     //
-    // claude-3.7       0.98
-    // gemini-2.5-pro   0.80
+    // claude-3.7       0.96 -> 0.98 -> 0.98
+    // gemini-2.5-pro   0.35 -> 0.80 -> 0.86
     // gemini-2.5-flash 0.11
+    // gpt-4.1          0.81         -> 1.00
     //
     let input_file_path = "root/blame.rs";
     let input_file_content = include_str!("evals/fixtures/extract_handle_command_output/before.rs");
