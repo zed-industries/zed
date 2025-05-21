@@ -191,6 +191,29 @@ jobs:
         with:
           config: ./typos.toml
 
+  check_docs:
+    timeout-minutes: 60
+    name: Check docs
+    needs: [job_spec]
+    if: github.repository_owner == 'zed-industries'
+    runs-on:
+      - buildjet-8vcpu-ubuntu-2204
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          clean: false
+
+      - name: Configure CI
+        run: |
+          mkdir -p ./../.cargo
+          cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+
+      - name: Build docs
+        uses: ./.github/actions/build_docs
+        with:
+          working-directory: ${{ env.ZED_WORKSPACE }}
+
   macos_tests:
     timeout-minutes: 60
     name: (macOS) Run Clippy and tests

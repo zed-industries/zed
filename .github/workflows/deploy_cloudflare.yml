@@ -17,24 +17,13 @@ jobs:
         with:
           clean: false
 
-      - name: Setup mdBook
-        uses: peaceiris/actions-mdbook@ee69d230fe19748b7abf22df32acaa93833fad08 # v2
-        with:
-          mdbook-version: "0.4.37"
-
       - name: Set up default .cargo/config.toml
         run: cp ./.cargo/collab-config.toml ./.cargo/config.toml
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install libxkbcommon-dev libxkbcommon-x11-dev
-
-      - name: Build book
-        run: |
-          set -euo pipefail
-          mkdir -p target/deploy
-          mdbook build ./docs --dest-dir=../target/deploy/docs/
+      - name: Build Docs
+        uses: ./.github/actions/build_docs
+        with:
+          working-directory: ${{ env.ZED_WORKSPACE }}
 
       - name: Deploy Docs
         uses: cloudflare/wrangler-action@da0e0dfe58b7a431659754fdf3f186c529afbe65 # v3
