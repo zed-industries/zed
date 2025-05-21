@@ -14,7 +14,7 @@ use license_detection::LICENSE_FILES_TO_CHECK;
 pub use license_detection::is_license_eligible_for_data_collection;
 pub use rate_completion_modal::*;
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use arrayvec::ArrayVec;
 use client::{Client, UserStore};
 use collections::{HashMap, HashSet, VecDeque};
