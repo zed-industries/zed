@@ -5,8 +5,8 @@ use assistant_settings::AssistantSettings;
 use editor::actions::{
     AddSelectionAbove, AddSelectionBelow, DuplicateLineDown, GoToDiagnostic, GoToHunk,
     GoToPreviousDiagnostic, GoToPreviousHunk, MoveLineDown, MoveLineUp, SelectAll,
-    SelectLargerSyntaxNode, SelectNext, SelectSmallerSyntaxNode, ToggleDiagnostics, ToggleGoToLine,
-    ToggleInlineDiagnostics,
+    SelectLargerSyntaxNode, SelectNext, SelectSmallerSyntaxNode, ToggleCodeActions,
+    ToggleDiagnostics, ToggleGoToLine, ToggleInlineDiagnostics,
 };
 use editor::{Editor, EditorSettings};
 use gpui::{
@@ -138,6 +138,18 @@ impl Render for QuickActionBar {
             "Inline Assist",
             move |_, window, cx| {
                 window.dispatch_action(Box::new(InlineAssist::default()), cx);
+            },
+        );
+
+        let code_action_button = QuickActionBarButton::new(
+            "toggle code actions",
+            IconName::Bolt,
+            false,
+            Box::new(ToggleCodeActions::default()),
+            focus_handle.clone(),
+            "Code Actions",
+            move |_, window, cx| {
+                window.dispatch_action(Box::new(ToggleCodeActions::default()), cx);
             },
         );
 
@@ -487,6 +499,9 @@ impl Render for QuickActionBar {
                     && AssistantSettings::get_global(cx).button,
                 |bar| bar.child(assistant_button),
             )
+            .when(EditorSettings::get_global(cx).toolbar.code_actions, |bar| {
+                bar.child(code_action_button)
+            })
             .children(editor_selections_dropdown)
             .child(editor_settings_dropdown)
     }
