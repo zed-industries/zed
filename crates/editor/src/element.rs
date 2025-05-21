@@ -30,6 +30,7 @@ use crate::{
     mouse_context_menu::{self, MenuPosition},
     scroll::{ActiveScrollbarState, ScrollbarThumbState, scroll_amount::ScrollAmount},
 };
+
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use collections::{BTreeMap, HashMap};
 use feature_flags::{DebuggerFeatureFlag, FeatureFlagAppExt};
@@ -43,12 +44,12 @@ use gpui::{
     Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
     Bounds, ClickEvent, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase, Edges,
     Element, ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox, Hsla,
-    InteractiveElement, IntoElement, IsZero, Keystroke, Length, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
-    ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement,
-    Style, Styled, TextRun, TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill,
-    linear_color_stop, linear_gradient, outline, point, px, quad, relative, size, solid_background,
-    transparent_black,
+    InteractiveElement, IntoElement, IsZero, Keystroke, Length, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels,
+    ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString, Size,
+    StatefulInteractiveElement, Style, Styled, TextRun, TextStyleRefinement, WeakEntity, Window,
+    anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
+    relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::language_settings::{
@@ -62,7 +63,7 @@ use multi_buffer::{
 
 use project::{
     ProjectPath,
-    debugger::breakpoint_store::Breakpoint,
+    debugger::breakpoint_store::{Breakpoint, BreakpointEditAction, BreakpointState},
     project_settings::{GitGutterSetting, GitHunkStyleSetting, ProjectSettings},
 };
 use settings::Settings;
@@ -81,7 +82,9 @@ use std::{
 use sum_tree::Bias;
 use text::BufferId;
 use theme::{ActiveTheme, Appearance, BufferLineHeight, PlayerColor};
-use ui::{ButtonLike, KeyBinding, POPOVER_Y_PADDING, Tooltip, h_flex, prelude::*};
+use ui::{
+    ButtonLike, KeyBinding, POPOVER_Y_PADDING, Tooltip, Vector, VectorName, h_flex, prelude::*,
+};
 use unicode_segmentation::UnicodeSegmentation;
 use util::{RangeExt, ResultExt, debug_panic};
 use workspace::{CollaboratorId, Workspace, item::Item, notifications::NotifyTaskExt};
@@ -2351,7 +2354,16 @@ impl EditorElement {
                         return None;
                     }
 
-                    let button = editor.render_breakpoint(text_anchor, display_row, row, &bp, cx);
+                    let button = self.render_breakpoint(
+                        editor,
+                        snapshot,
+                        text_anchor,
+                        display_row,
+                        row,
+                        &bp,
+                        window,
+                        cx,
+                    );
 
                     let button = prepaint_gutter_button(
                         button,
@@ -2368,6 +2380,236 @@ impl EditorElement {
                 })
                 .collect_vec()
         })
+    }
+
+    fn render_breakpoint(
+        &self,
+        editor: &Editor,
+        snapshot: &EditorSnapshot,
+        position: Anchor,
+        row: DisplayRow,
+        multibuffer_row: MultiBufferRow,
+        breakpoint: &Breakpoint,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let disabled = breakpoint.is_disabled();
+        let line_number = multibuffer_row.0 + 1;
+        let font_size = self.style.text.font_size;
+
+        // Is it a breakpoint that shows up when hovering over gutter?
+        let (is_phantom, collides_with_existing) = editor.gutter_breakpoint_indicator.0.map_or(
+            (false, false),
+            |PhantomBreakpointIndicator {
+                 is_active,
+                 display_row,
+                 collides_with_existing_breakpoint,
+             }| {
+                (
+                    is_active && display_row == row,
+                    collides_with_existing_breakpoint,
+                )
+            },
+        );
+
+        let (color, icon) = {
+            let icon = match (&breakpoint.message.is_some(), disabled) {
+                (false, false) => ui::IconName::DebugBreakpoint,
+                (true, false) => ui::IconName::DebugLogBreakpoint,
+                (false, true) => ui::IconName::DebugDisabledBreakpoint,
+                (true, true) => ui::IconName::DebugDisabledLogBreakpoint,
+            };
+
+            let color = if is_phantom {
+                Color::Hint
+            } else {
+                Color::Debugger
+            };
+
+            (color, icon)
+        };
+
+        let breakpoint = Arc::from(breakpoint.clone());
+
+        let alt_as_text = gpui::Keystroke {
+            modifiers: Modifiers::secondary_key(),
+            ..Default::default()
+        };
+        let primary_action_text = if breakpoint.is_disabled() {
+            "enable"
+        } else if is_phantom && !collides_with_existing {
+            "set"
+        } else {
+            "unset"
+        };
+        let mut primary_text = format!("Click to {primary_action_text}");
+        if collides_with_existing && !breakpoint.is_disabled() {
+            use std::fmt::Write;
+            write!(primary_text, ", {alt_as_text}-click to disable").ok();
+        }
+        let primary_text = SharedString::from(primary_text);
+        let focus_handle = editor.focus_handle.clone();
+
+        let id = ElementId::Name(format!("breakpoint_indicator_{}", multibuffer_row.0).into());
+        let editor_text = self.style.text.clone();
+        let editor_font_size = editor_text.font_size;
+        let line_height: Pixels = self
+            .style
+            .text
+            .clone()
+            .line_height
+            .to_pixels(editor_font_size, window.rem_size());
+
+        let longest_line_width = self.max_line_number_width(snapshot, window, cx);
+        let indicator_width = longest_line_width + px(62.);
+
+        // let opacity = if self.reachable { 0.5 } else { 0.85 };
+        let opacity = 0.5;
+
+        let bg = if matches!(breakpoint.state, BreakpointState::Enabled) {
+            cx.theme().status().info
+        } else {
+            cx.theme()
+                .status()
+                .info
+                .alpha(1.0)
+                .blend(cx.theme().colors().editor_background.alpha(opacity))
+        };
+
+        let vector_width = rems_from_px(line_height.0);
+        let right_adjustment = indicator_width - vector_width.to_pixels(window.rem_size()) / 2.0;
+        let middle_segment = indicator_width - vector_width.to_pixels(window.rem_size());
+
+        div()
+            .id(id)
+            .child(
+                div()
+                    .flex()
+                    .h(line_height)
+                    .w(indicator_width)
+                    .items_center()
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left(px(12.0))
+                            .h(line_height)
+                            .child(
+                                Vector::square(
+                                    VectorName::BreakpointFlagStart,
+                                    rems_from_px(line_height.0),
+                                )
+                                .color(Color::Custom(bg)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .w(middle_segment)
+                            .ml(vector_width / 1.5)
+                            .h(line_height)
+                            .bg(bg),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left(rems_from_px(right_adjustment.0))
+                            .h(line_height)
+                            .child(
+                                Vector::square(
+                                    VectorName::BreakpointFlagEnd,
+                                    rems_from_px(line_height.0),
+                                )
+                                .color(Color::Custom(bg)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .mr(px(-2.))
+                            .text_right()
+                            .text_color(cx.theme().colors().text)
+                            .text_size(font_size)
+                            .line_height(line_height)
+                            .child(line_number.to_string()),
+                    ),
+            )
+            .on_click({
+                let editor = self.editor.downgrade();
+                let breakpoint = breakpoint.clone();
+                move |event, window, cx| {
+                    let edit_action = if event.modifiers().platform || breakpoint.is_disabled() {
+                        BreakpointEditAction::InvertState
+                    } else {
+                        BreakpointEditAction::Toggle
+                    };
+                    let Some(editor) = editor.upgrade() else {
+                        return;
+                    };
+                    window.focus(&editor.focus_handle(cx));
+                    editor.update(cx, |editor, cx| {
+                        editor.edit_breakpoint_at_anchor(
+                            position,
+                            breakpoint.as_ref().clone(),
+                            edit_action,
+                            cx,
+                        );
+                    });
+                }
+            })
+            // .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
+            //     editor.set_breakpoint_context_menu(
+            //         row,
+            //         Some(position),
+            //         event.down.position,
+            //         window,
+            //         cx,
+            //     );
+            // }))
+            .into_any_element()
+        // IconButton::new(("breakpoint_indicator", row.0 as usize), icon)
+        //     .icon_size(IconSize::XSmall)
+        //     .size(ui::ButtonSize::None)
+        //     .icon_color(color)
+        //     .style(ButtonStyle::Transparent)
+        // .on_click(cx.listener({
+        //     let breakpoint = breakpoint.clone();
+
+        //     move |editor, event: &ClickEvent, window, cx| {
+        //         let edit_action = if event.modifiers().platform || breakpoint.is_disabled() {
+        //             BreakpointEditAction::InvertState
+        //         } else {
+        //             BreakpointEditAction::Toggle
+        //         };
+
+        //         window.focus(&editor.focus_handle(cx));
+        //         editor.edit_breakpoint_at_anchor(
+        //             position,
+        //             breakpoint.as_ref().clone(),
+        //             edit_action,
+        //             cx,
+        //         );
+        //     }
+        // }))
+        // .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
+        //     editor.set_breakpoint_context_menu(
+        //         row,
+        //         Some(position),
+        //         event.down.position,
+        //         window,
+        //         cx,
+        //     );
+        // }))
+        // .tooltip(move |window, cx| {
+        //     Tooltip::with_meta_in(
+        //         primary_text.clone(),
+        //         None,
+        //         "Right-click for more options",
+        //         &focus_handle,
+        //         window,
+        //         cx,
+        //     )
+        // })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -6156,7 +6398,8 @@ impl EditorElement {
         layout.width
     }
 
-    fn max_line_number_width(
+    /// Get the width of the longest line number in the current editor in Pixels
+    pub(crate) fn max_line_number_width(
         &self,
         snapshot: &EditorSnapshot,
         window: &mut Window,
