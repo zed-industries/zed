@@ -675,6 +675,7 @@ pub enum SessionEvent {
         request: RunInTerminalRequestArguments,
         sender: mpsc::Sender<Result<u32>>,
     },
+    ConsoleOutput,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1269,6 +1270,7 @@ impl Session {
 
                 self.output.push_back(event);
                 self.output_token.0 += 1;
+                cx.emit(SessionEvent::ConsoleOutput);
                 cx.notify();
             }
             Events::Breakpoint(event) => self.breakpoint_store.update(cx, |store, _| {

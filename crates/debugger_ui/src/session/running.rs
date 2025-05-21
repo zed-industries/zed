@@ -632,6 +632,7 @@ impl RunningState {
                 &loaded_source_list,
                 &console,
                 &breakpoint_list,
+                &debug_terminal,
                 dock_axis,
                 &mut pane_close_subscriptions,
                 window,
@@ -1468,10 +1469,11 @@ impl RunningState {
         workspace: &WeakEntity<Workspace>,
         stack_frame_list: &Entity<StackFrameList>,
         variable_list: &Entity<VariableList>,
-        module_list: &Entity<ModuleList>,
+        _module_list: &Entity<ModuleList>,
         loaded_source_list: &Entity<LoadedSourceList>,
         console: &Entity<Console>,
         breakpoints: &Entity<BreakpointList>,
+        debug_terminal: &Entity<DebugTerminal>,
         dock_axis: Axis,
         subscriptions: &mut HashMap<EntityId, Subscription>,
         window: &mut Window,
@@ -1549,7 +1551,7 @@ impl RunningState {
             let weak_console = console.downgrade();
             this.add_item(
                 Box::new(SubView::new(
-                    this.focus_handle(cx),
+                    console.focus_handle(cx),
                     console.clone().into(),
                     DebuggerPaneItem::Console,
                     Some(Box::new(move |cx| {
@@ -1560,6 +1562,21 @@ impl RunningState {
                     cx,
                 )),
                 true,
+                false,
+                None,
+                window,
+                cx,
+            );
+
+            this.add_item(
+                Box::new(SubView::new(
+                    debug_terminal.focus_handle(cx),
+                    debug_terminal.clone().into(),
+                    DebuggerPaneItem::Terminal,
+                    None,
+                    cx,
+                )),
+                false,
                 false,
                 None,
                 window,
