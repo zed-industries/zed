@@ -215,16 +215,5 @@ fn dump_all_gpui_actions() -> Vec<ActionDef> {
 
     actions.sort_by_key(|a| a.name);
 
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open("/Users/neb/Zed/actions-gen.json")
-        .unwrap();
-    io::Write::write(
-        &mut file,
-        serde_json::to_string_pretty(&actions).unwrap().as_bytes(),
-    )
-    .unwrap();
     return actions;
 }
