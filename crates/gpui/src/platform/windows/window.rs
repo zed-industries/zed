@@ -43,6 +43,7 @@ pub struct WindowsWindowState {
     pub callbacks: Callbacks,
     pub input_handler: Option<PlatformInputHandler>,
     pub last_reported_modifiers: Option<Modifiers>,
+    pub suppress_next_char_msg: bool,
     pub system_key_handled: bool,
     pub hovered: bool,
 
@@ -102,6 +103,7 @@ impl WindowsWindowState {
         let callbacks = Callbacks::default();
         let input_handler = None;
         let last_reported_modifiers = None;
+        let suppress_next_char_msg = false;
         let system_key_handled = false;
         let hovered = false;
         let click_state = ClickState::new();
@@ -121,6 +123,7 @@ impl WindowsWindowState {
             callbacks,
             input_handler,
             last_reported_modifiers,
+            suppress_next_char_msg,
             system_key_handled,
             hovered,
             renderer,

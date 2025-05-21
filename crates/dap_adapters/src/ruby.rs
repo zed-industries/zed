@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use async_trait::async_trait;
 use dap::{
     DebugRequest, StartDebuggingRequestArguments,
@@ -10,6 +10,7 @@ use gpui::{AsyncApp, SharedString};
 use language::LanguageName;
 use serde_json::json;
 use std::path::PathBuf;
+use std::sync::Arc;
 use task::{DebugScenario, ZedDebugConfig};
 use util::command::new_smol_command;
 
@@ -213,16 +214,16 @@ impl DebugAdapter for RubyDebugAdapter {
 
     async fn get_binary(
         &self,
-        delegate: &dyn DapDelegate,
-        definition: DebugTaskDefinition,
+        delegate: &Arc<dyn DapDelegate>,
+        definition: &DebugTaskDefinition,
         _user_installed_path: Option<PathBuf>,
         _cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
         let mut rdbg_path = adapter_path.join("rdbg");
         if !delegate.fs().is_file(&rdbg_path).await {
-            match delegate.which("rdbg".as_ref()) {
-                Some(path) => rdbg_path = path.clone(),
+            match delegate.which("rdbg".as_ref()).await {
+                Some(path) => rdbg_path = path,
                 None => {
                     delegate.output_to_console(
                         "rdbg not found on path, trying `gem install debug`".to_string(),
@@ -235,12 +236,11 @@ impl DebugAdapter for RubyDebugAdapter {
                         .arg("debug")
                         .output()
                         .await?;
-                    if !output.status.success() {
-                        return Err(anyhow!(
-                            "Failed to install rdbg:\n{}",
-                            String::from_utf8_lossy(&output.stderr).to_string()
-                        ));
-                    }
+                    anyhow::ensure!(
+                        output.status.success(),
+                        "Failed to install rdbg:\n{}",
+                        String::from_utf8_lossy(&output.stderr).to_string()
+                    );
                 }
             }
         }

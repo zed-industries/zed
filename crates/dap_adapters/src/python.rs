@@ -1,4 +1,5 @@
 use crate::*;
+use anyhow::{Context as _, anyhow};
 use dap::{
     DebugRequest, StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
     adapters::DebugTaskDefinition,
@@ -32,26 +33,26 @@ impl PythonDebugAdapter {
     }
     async fn fetch_latest_adapter_version(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
     ) -> Result<AdapterVersion> {
         let github_repo = GithubRepo {
             repo_name: Self::ADAPTER_PACKAGE_NAME.into(),
             repo_owner: "microsoft".into(),
         };
 
-        adapters::fetch_latest_adapter_version_from_github(github_repo, delegate).await
+        adapters::fetch_latest_adapter_version_from_github(github_repo, delegate.as_ref()).await
     }
 
     async fn install_binary(
         &self,
         version: AdapterVersion,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
     ) -> Result<()> {
         let version_path = adapters::download_adapter_from_github(
             self.name(),
             version,
             adapters::DownloadedFileType::Zip,
-            delegate,
+            delegate.as_ref(),
         )
         .await?;
 
@@ -73,7 +74,7 @@ impl PythonDebugAdapter {
 
     async fn get_installed_binary(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
@@ -92,7 +93,7 @@ impl PythonDebugAdapter {
                 file_name.starts_with(&file_name_prefix)
             })
             .await
-            .ok_or_else(|| anyhow!("Debugpy directory not found"))?
+            .context("Debugpy directory not found")?
         };
 
         let toolchain = delegate
@@ -108,18 +109,22 @@ impl PythonDebugAdapter {
         let python_path = if let Some(toolchain) = toolchain {
             Some(toolchain.path.to_string())
         } else {
-            BINARY_NAMES
-                .iter()
-                .filter_map(|cmd| {
-                    delegate
-                        .which(OsStr::new(cmd))
-                        .map(|path| path.to_string_lossy().to_string())
-                })
-                .find(|_| true)
+            let mut name = None;
+
+            for cmd in BINARY_NAMES {
+                name = delegate
+                    .which(OsStr::new(cmd))
+                    .await
+                    .map(|path| path.to_string_lossy().to_string());
+                if name.is_some() {
+                    break;
+                }
+            }
+            name
         };
 
         Ok(DebugAdapterBinary {
-            command: python_path.ok_or(anyhow!("failed to find binary path for python"))?,
+            command: python_path.context("failed to find binary path for Python")?,
             arguments: vec![
                 debugpy_dir
                     .join(Self::ADAPTER_PATH)
@@ -194,13 +199,9 @@ impl DebugAdapter for PythonDebugAdapter {
         &self,
         config: &serde_json::Value,
     ) -> Result<StartDebuggingRequestArgumentsRequest> {
-        let map = config
-            .as_object()
-            .ok_or_else(|| anyhow!("Config isn't an object"))?;
+        let map = config.as_object().context("Config isn't an object")?;
 
-        let request_variant = map["request"]
-            .as_str()
-            .ok_or_else(|| anyhow!("request is not valid"))?;
+        let request_variant = map["request"].as_str().context("request is not valid")?;
 
         match request_variant {
             "launch" => Ok(StartDebuggingRequestArgumentsRequest::Launch),
@@ -544,8 +545,8 @@ impl DebugAdapter for PythonDebugAdapter {
 
     async fn get_binary(
         &self,
-        delegate: &dyn DapDelegate,
-        config: DebugTaskDefinition,
+        delegate: &Arc<dyn DapDelegate>,
+        config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {

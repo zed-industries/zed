@@ -1,4 +1,3 @@
-use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
 use strum::EnumIter;
 
@@ -107,7 +106,7 @@ impl Model {
         } else if id.starts_with("claude-3-7-sonnet-thinking") {
             Ok(Self::Claude3_7SonnetThinking)
         } else {
-            Err(anyhow!("invalid model id"))
+            anyhow::bail!("invalid model id {id}");
         }
     }
 
@@ -294,7 +293,7 @@ impl Model {
         }
     }
 
-    pub fn cross_region_inference_id(&self, region: &str) -> Result<String, anyhow::Error> {
+    pub fn cross_region_inference_id(&self, region: &str) -> anyhow::Result<String> {
         let region_group = if region.starts_with("us-gov-") {
             "us-gov"
         } else if region.starts_with("us-") {
@@ -307,8 +306,7 @@ impl Model {
             // Canada and South America regions - default to US profiles
             "us"
         } else {
-            // Unknown region
-            return Err(anyhow!("Unsupported Region"));
+            anyhow::bail!("Unsupported Region {region}");
         };
 
         let model_id = self.id();

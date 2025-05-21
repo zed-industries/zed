@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use client::{Client, TelemetrySettings};
 use db::RELEASE_CHANNEL;
 use db::kvp::KEY_VALUE_STORE;
@@ -40,12 +40,21 @@ struct UpdateRequestBody {
 }
 
 #[derive(Clone, PartialEq, Eq)]
+pub enum VersionCheckType {
+    Sha(String),
+    Semantic(SemanticVersion),
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub enum AutoUpdateStatus {
     Idle,
     Checking,
     Downloading,
     Installing,
-    Updated { binary_path: PathBuf },
+    Updated {
+        binary_path: PathBuf,
+        version: VersionCheckType,
+    },
     Errored,
 }
 
@@ -62,7 +71,7 @@ pub struct AutoUpdater {
     pending_poll: Option<Task<Option<()>>>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Clone, Debug)]
 pub struct JsonRelease {
     pub version: String,
     pub url: String,
@@ -307,7 +316,7 @@ impl AutoUpdater {
     }
 
     pub fn poll(&mut self, cx: &mut Context<Self>) {
-        if self.pending_poll.is_some() || self.status.is_updated() {
+        if self.pending_poll.is_some() {
             return;
         }
 
@@ -358,7 +367,7 @@ impl AutoUpdater {
             cx.default_global::<GlobalAutoUpdate>()
                 .0
                 .clone()
-                .ok_or_else(|| anyhow!("auto-update not initialized"))
+                .context("auto-update not initialized")
         })??;
 
         let release = Self::get_release(
@@ -402,7 +411,7 @@ impl AutoUpdater {
             cx.default_global::<GlobalAutoUpdate>()
                 .0
                 .clone()
-                .ok_or_else(|| anyhow!("auto-update not initialized"))
+                .context("auto-update not initialized")
         })??;
 
         let release = Self::get_release(
@@ -456,12 +465,11 @@ impl AutoUpdater {
             let mut body = Vec::new();
             response.body_mut().read_to_end(&mut body).await?;
 
-            if !response.status().is_success() {
-                return Err(anyhow!(
-                    "failed to fetch release: {:?}",
-                    String::from_utf8_lossy(&body),
-                ));
-            }
+            anyhow::ensure!(
+                response.status().is_success(),
+                "failed to fetch release: {:?}",
+                String::from_utf8_lossy(&body),
+            );
 
             serde_json::from_slice(body.as_slice()).with_context(|| {
                 format!(
@@ -483,36 +491,63 @@ impl AutoUpdater {
         Self::get_release(this, asset, os, arch, None, release_channel, cx).await
     }
 
+    fn installed_update_version(&self) -> Option<VersionCheckType> {
+        match &self.status {
+            AutoUpdateStatus::Updated { version, .. } => Some(version.clone()),
+            _ => None,
+        }
+    }
+
     async fn update(this: Entity<Self>, mut cx: AsyncApp) -> Result<()> {
-        let (client, current_version, release_channel) = this.update(&mut cx, |this, cx| {
-            this.status = AutoUpdateStatus::Checking;
-            cx.notify();
-            (
-                this.http_client.clone(),
-                this.current_version,
-                ReleaseChannel::try_global(cx),
-            )
-        })?;
+        let (client, current_version, installed_update_version, release_channel) =
+            this.update(&mut cx, |this, cx| {
+                this.status = AutoUpdateStatus::Checking;
+                cx.notify();
+                (
+                    this.http_client.clone(),
+                    this.current_version,
+                    this.installed_update_version(),
+                    ReleaseChannel::try_global(cx),
+                )
+            })?;
 
         let release =
             Self::get_latest_release(&this, "zed", OS, ARCH, release_channel, &mut cx).await?;
 
-        let should_download = match *RELEASE_CHANNEL {
-            ReleaseChannel::Nightly => cx
-                .update(|cx| AppCommitSha::try_global(cx).map(|sha| release.version != sha.0))
-                .ok()
-                .flatten()
-                .unwrap_or(true),
-            _ => release.version.parse::<SemanticVersion>()? > current_version,
+        let update_version_to_install = match *RELEASE_CHANNEL {
+            ReleaseChannel::Nightly => {
+                let should_download = cx
+                    .update(|cx| AppCommitSha::try_global(cx).map(|sha| release.version != sha.0))
+                    .ok()
+                    .flatten()
+                    .unwrap_or(true);
+
+                should_download.then(|| VersionCheckType::Sha(release.version.clone()))
+            }
+            _ => {
+                let installed_version =
+                    installed_update_version.unwrap_or(VersionCheckType::Semantic(current_version));
+                match installed_version {
+                    VersionCheckType::Sha(_) => {
+                        log::warn!("Unexpected SHA-based version in non-nightly build");
+                        Some(installed_version)
+                    }
+                    VersionCheckType::Semantic(semantic_comparison_version) => {
+                        let latest_release_version = release.version.parse::<SemanticVersion>()?;
+                        let should_download = latest_release_version > semantic_comparison_version;
+                        should_download.then(|| VersionCheckType::Semantic(latest_release_version))
+                    }
+                }
+            }
         };
 
-        if !should_download {
+        let Some(update_version) = update_version_to_install else {
             this.update(&mut cx, |this, cx| {
                 this.status = AutoUpdateStatus::Idle;
                 cx.notify();
             })?;
             return Ok(());
-        }
+        };
 
         this.update(&mut cx, |this, cx| {
             this.status = AutoUpdateStatus::Downloading;
@@ -521,10 +556,10 @@ impl AutoUpdater {
 
         let installer_dir = InstallerDir::new().await?;
         let filename = match OS {
-            "macos" => Ok("Zed.dmg"),
+            "macos" => anyhow::Ok("Zed.dmg"),
             "linux" => Ok("zed.tar.gz"),
             "windows" => Ok("ZedUpdateInstaller.exe"),
-            _ => Err(anyhow!("not supported: {:?}", OS)),
+            unsupported_os => anyhow::bail!("not supported: {unsupported_os}"),
         }?;
 
         #[cfg(not(target_os = "windows"))]
@@ -534,7 +569,7 @@ impl AutoUpdater {
         );
 
         let downloaded_asset = installer_dir.path().join(filename);
-        download_release(&downloaded_asset, release, client, &cx).await?;
+        download_release(&downloaded_asset, release.clone(), client, &cx).await?;
 
         this.update(&mut cx, |this, cx| {
             this.status = AutoUpdateStatus::Installing;
@@ -545,13 +580,16 @@ impl AutoUpdater {
             "macos" => install_release_macos(&installer_dir, downloaded_asset, &cx).await,
             "linux" => install_release_linux(&installer_dir, downloaded_asset, &cx).await,
             "windows" => install_release_windows(downloaded_asset).await,
-            _ => Err(anyhow!("not supported: {:?}", OS)),
+            unsupported_os => anyhow::bail!("not supported: {unsupported_os}"),
         }?;
 
         this.update(&mut cx, |this, cx| {
             this.set_should_show_update_notification(true, cx)
                 .detach_and_log_err(cx);
-            this.status = AutoUpdateStatus::Updated { binary_path };
+            this.status = AutoUpdateStatus::Updated {
+                binary_path,
+                version: update_version,
+            };
             cx.notify();
         })?;
 
@@ -601,12 +639,11 @@ async fn download_remote_server_binary(
     let request_body = AsyncBody::from(serde_json::to_string(&update_request_body)?);
 
     let mut response = client.get(&release.url, request_body, true).await?;
-    if !response.status().is_success() {
-        return Err(anyhow!(
-            "failed to download remote server release: {:?}",
-            response.status()
-        ));
-    }
+    anyhow::ensure!(
+        response.status().is_success(),
+        "failed to download remote server release: {:?}",
+        response.status()
+    );
     smol::io::copy(response.body_mut(), &mut temp_file).await?;
     smol::fs::rename(&temp, &target_path).await?;
 
@@ -753,7 +790,7 @@ async fn install_release_macos(
     let running_app_path = cx.update(|cx| cx.app_path())??;
     let running_app_filename = running_app_path
         .file_name()
-        .ok_or_else(|| anyhow!("invalid running app path"))?;
+        .with_context(|| format!("invalid running app path {running_app_path:?}"))?;
 
     let mount_path = temp_dir.path().join("Zed");
     let mut mounted_app_path: OsString = mount_path.join(running_app_filename).into();

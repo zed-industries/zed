@@ -9,7 +9,6 @@ use std::{
     usize,
 };
 
-use anyhow::Result;
 use dap::{DapRegistry, DebugRequest, adapters::DebugAdapterName};
 use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -251,7 +250,7 @@ impl NewSessionModal {
                 cx.emit(DismissEvent);
             })
             .ok();
-            Result::<_, anyhow::Error>::Ok(())
+            anyhow::Ok(())
         })
         .detach_and_log_err(cx);
     }

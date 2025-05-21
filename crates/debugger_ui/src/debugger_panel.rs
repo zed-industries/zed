@@ -7,7 +7,7 @@ use crate::{
     ShowStackTrace, StepBack, StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints,
     persistence,
 };
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use command_palette_hooks::CommandPaletteFilter;
 use dap::StartDebuggingRequestArguments;
 use dap::adapters::DebugAdapterName;
@@ -69,21 +69,44 @@ pub struct DebugPanel {
 }
 
 impl DebugPanel {
-    pub fn new(workspace: &Workspace, cx: &mut Context<Workspace>) -> Entity<Self> {
+    pub fn new(
+        workspace: &Workspace,
+        _window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Entity<Self> {
         cx.new(|cx| {
             let project = workspace.project().clone();
+            let focus_handle = cx.focus_handle();
 
             Self {
                 size: px(300.),
                 sessions: vec![],
                 active_session: None,
-                focus_handle: cx.focus_handle(),
+                focus_handle,
                 project,
                 workspace: workspace.weak_handle(),
                 context_menu: None,
                 fs: workspace.app_state().fs.clone(),
             }
         })
+    }
+
+    pub(crate) fn focus_active_item(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(session) = self.active_session.clone() else {
+            return;
+        };
+        let Some(active_pane) = session
+            .read(cx)
+            .running_state()
+            .read(cx)
+            .active_pane()
+            .cloned()
+        else {
+            return;
+        };
+        active_pane.update(cx, |pane, cx| {
+            pane.focus_active_item(window, cx);
+        });
     }
 
     pub(crate) fn sessions(&self) -> Vec<Entity<DebugSession>> {
@@ -180,8 +203,8 @@ impl DebugPanel {
         cx: &mut AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(async move |cx| {
-            workspace.update(cx, |workspace, cx| {
-                let debug_panel = DebugPanel::new(workspace, cx);
+            workspace.update_in(cx, |workspace, window, cx| {
+                let debug_panel = DebugPanel::new(workspace, window, cx);
 
                 workspace.register_action(|workspace, _: &ClearAllBreakpoints, _, cx| {
                     workspace.project().read(cx).breakpoint_store().update(
@@ -997,17 +1020,13 @@ impl DebugPanel {
                     }
 
                     workspace.update(cx, |workspace, cx| {
-                        if let Some(project_path) = workspace
+                        workspace
                             .project()
                             .read(cx)
                             .project_path_for_absolute_path(&path, cx)
-                        {
-                            Ok(project_path)
-                        } else {
-                            Err(anyhow!(
-                                "Couldn't get project path for .zed/debug.json in active worktree"
-                            ))
-                        }
+                            .context(
+                                "Couldn't get project path for .zed/debug.json in active worktree",
+                            )
                     })?
                 })
             })

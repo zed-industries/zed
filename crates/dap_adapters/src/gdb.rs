@@ -1,6 +1,6 @@
 use std::{collections::HashMap, ffi::OsStr};
 
-use anyhow::{Result, bail};
+use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
 use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
@@ -154,8 +154,8 @@ impl DebugAdapter for GdbDebugAdapter {
 
     async fn get_binary(
         &self,
-        delegate: &dyn DapDelegate,
-        config: DebugTaskDefinition,
+        delegate: &Arc<dyn DapDelegate>,
+        config: &DebugTaskDefinition,
         user_installed_path: Option<std::path::PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
@@ -165,8 +165,9 @@ impl DebugAdapter for GdbDebugAdapter {
 
         let gdb_path = delegate
             .which(OsStr::new("gdb"))
+            .await
             .and_then(|p| p.to_str().map(|s| s.to_string()))
-            .ok_or(anyhow!("Could not find gdb in path"));
+            .context("Could not find gdb in path");
 
         if gdb_path.is_err() && user_setting_path.is_none() {
             bail!("Could not find gdb path or it's not installed");

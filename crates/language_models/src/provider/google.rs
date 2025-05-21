@@ -279,7 +279,7 @@ impl GoogleLanguageModel {
         };
 
         async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("Missing Google API key"))?;
+            let api_key = api_key.context("Missing Google API key")?;
             let request = google_ai::stream_generate_content(
                 http_client.as_ref(),
                 &api_url,
@@ -351,7 +351,7 @@ impl LanguageModel for GoogleLanguageModel {
         let api_url = settings.api_url.clone();
 
         async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("Missing Google API key"))?;
+            let api_key = api_key.context("Missing Google API key")?;
             let response = google_ai::count_tokens(
                 http_client.as_ref(),
                 &api_url,
@@ -426,14 +426,17 @@ pub fn into_google(
                 }
                 language_model::MessageContent::ToolResult(tool_result) => {
                     match tool_result.content {
-                        language_model::LanguageModelToolResultContent::Text(txt) => {
+                        language_model::LanguageModelToolResultContent::Text(text)
+                        | language_model::LanguageModelToolResultContent::WrappedText(
+                            language_model::WrappedTextContent { text, .. },
+                        ) => {
                             vec![Part::FunctionResponsePart(
                                 google_ai::FunctionResponsePart {
                                     function_response: google_ai::FunctionResponse {
                                         name: tool_result.tool_name.to_string(),
                                         // The API expects a valid JSON object
                                         response: serde_json::json!({
-                                            "output": txt
+                                            "output": text
                                         }),
                                     },
                                 },
@@ -628,6 +631,7 @@ impl GoogleEventMapper {
         // responds with `finish_reason: STOP`
         if wants_to_use_tool {
             self.stop_reason = StopReason::ToolUse;
+            events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
         }
         events
     }

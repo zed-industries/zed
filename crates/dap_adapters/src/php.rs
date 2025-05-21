@@ -1,9 +1,8 @@
 use adapters::latest_github_release;
+use anyhow::Context as _;
 use anyhow::bail;
-use dap::{
-    StartDebuggingRequestArguments,
-    adapters::{DebugTaskDefinition, TcpArguments},
-};
+use dap::StartDebuggingRequestArguments;
+use dap::adapters::{DebugTaskDefinition, TcpArguments};
 use gpui::{AsyncApp, SharedString};
 use language::LanguageName;
 use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
@@ -23,7 +22,7 @@ impl PhpDebugAdapter {
 
     async fn fetch_latest_adapter_version(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
     ) -> Result<AdapterVersion> {
         let release = latest_github_release(
             &format!("{}/{}", "xdebug", Self::ADAPTER_PACKAGE_NAME),
@@ -41,7 +40,7 @@ impl PhpDebugAdapter {
                 .assets
                 .iter()
                 .find(|asset| asset.name == asset_name)
-                .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?
+                .with_context(|| format!("no asset found matching {asset_name:?}"))?
                 .browser_download_url
                 .clone(),
         })
@@ -49,7 +48,7 @@ impl PhpDebugAdapter {
 
     async fn get_installed_binary(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
         task_definition: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         _: &mut AsyncApp,
@@ -65,7 +64,7 @@ impl PhpDebugAdapter {
                 file_name.starts_with(&file_name_prefix)
             })
             .await
-            .ok_or_else(|| anyhow!("Couldn't find PHP dap directory"))?
+            .context("Couldn't find PHP dap directory")?
         };
 
         let tcp_connection = task_definition.tcp_connection.clone().unwrap_or_default();
@@ -321,8 +320,8 @@ impl DebugAdapter for PhpDebugAdapter {
 
     async fn get_binary(
         &self,
-        delegate: &dyn DapDelegate,
-        config: DebugTaskDefinition,
+        delegate: &Arc<dyn DapDelegate>,
+        task_definition: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
@@ -333,13 +332,13 @@ impl DebugAdapter for PhpDebugAdapter {
                     self.name(),
                     version,
                     adapters::DownloadedFileType::Vsix,
-                    delegate,
+                    delegate.as_ref(),
                 )
                 .await?;
             }
         }
 
-        self.get_installed_binary(delegate, &config, user_installed_path, cx)
+        self.get_installed_binary(delegate, &task_definition, user_installed_path, cx)
             .await
     }
 }

@@ -74,6 +74,8 @@ members = [
     "crates/inline_completion",
     "crates/inline_completion_button",
     "crates/install_cli",
+    "crates/jj",
+    "crates/jj_ui",
     "crates/journal",
     "crates/language",
     "crates/language_extension",
@@ -279,6 +281,8 @@ indexed_docs = { path = "crates/indexed_docs" }
 inline_completion = { path = "crates/inline_completion" }
 inline_completion_button = { path = "crates/inline_completion_button" }
 install_cli = { path = "crates/install_cli" }
+jj = { path = "crates/jj" }
+jj_ui = { path = "crates/jj_ui" }
 journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_extension = { path = "crates/language_extension" }
@@ -426,6 +430,7 @@ convert_case = "0.8.0"
 core-foundation = "0.10.0"
 core-foundation-sys = "0.8.6"
 core-video = { version = "0.4.3", features = ["metal"] }
+criterion = { version = "0.5", features = ["html_reports"] }
 ctor = "0.4.0"
 dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "be69a016ba710191b9fdded28c8b042af4b617f7" }
 dashmap = "6.0"
@@ -458,6 +463,7 @@ indexmap = { version = "2.7.0", features = ["serde"] }
 indoc = "2"
 inventory = "0.3.19"
 itertools = "0.14.0"
+jj-lib = { git = "https://github.com/jj-vcs/jj", rev = "e18eb8e05efaa153fad5ef46576af145bba1807f" }
 jsonschema = "0.30.0"
 jsonwebtoken = "9.3"
 jupyter-protocol = { git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
@@ -465,7 +471,6 @@ jupyter-websocket-client = {  git = "https://github.com/ConradIrwin/runtimed" ,r
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
-linkme = "0.3.31"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "c9c189f1c5dd53c624a419ce35bc77ad6a908d18" }
 markup5ever_rcdom = "0.3.0"
@@ -549,9 +554,9 @@ syn = { version = "1.0.72", features = ["full", "extra-traits"] }
 sys-locale = "0.3.1"
 sysinfo = "0.31.0"
 take-until = "0.2.0"
-tempfile = "3.9.0"
+tempfile = "3.20.0"
 thiserror = "2.0.12"
-tiktoken-rs = "0.6.0"
+tiktoken-rs = "0.7.0"
 time = { version = "0.3", features = [
     "macros",
     "parsing",
@@ -595,6 +600,7 @@ url = "2.2"
 urlencoding = "2.1.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 walkdir = "2.3"
+wasi-preview1-component-adapter-provider = "29"
 wasm-encoder = "0.221"
 wasmparser = "0.221"
 wasmtime = { version = "29", default-features = false, features = [
@@ -603,6 +609,7 @@ wasmtime = { version = "29", default-features = false, features = [
     "runtime",
     "cranelift",
     "component-model",
+    "parallel-compilation",
 ] }
 wasmtime-wasi = "29"
 which = "6.0.0"
@@ -788,6 +795,9 @@ let_underscore_future = "allow"
 # running afoul of the borrow checker.
 too_many_arguments = "allow"
 
+# We often have large enum variants yet we rarely actually bother with splitting them up.
+large_enum_variant = "allow"
+
 [workspace.metadata.cargo-machete]
 ignored = [
     "bindgen",
@@ -795,7 +805,6 @@ ignored = [
     "prost_build",
     "serde",
     "component",
-    "linkme",
     "documented",
     "workspace-hack",
 ]

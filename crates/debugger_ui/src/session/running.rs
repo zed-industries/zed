@@ -10,7 +10,7 @@ use std::{any::Any, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 use crate::persistence::{self, DebuggerPaneItem, SerializedLayout};
 
 use super::DebugPanelItemEvent;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use breakpoint_list::BreakpointList;
 use collections::{HashMap, IndexMap};
 use console::Console;
@@ -80,6 +80,10 @@ pub struct RunningState {
 impl RunningState {
     pub(crate) fn thread_id(&self) -> Option<ThreadId> {
         self.thread_id
+    }
+
+    pub(crate) fn active_pane(&self) -> Option<&Entity<Pane>> {
+        self.active_pane.as_ref()
     }
 }
 
@@ -502,20 +506,15 @@ impl DebugTerminal {
 
 impl gpui::Render for DebugTerminal {
     fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        if let Some(terminal) = self.terminal.clone() {
-            terminal.into_any_element()
-        } else {
-            div().track_focus(&self.focus_handle).into_any_element()
-        }
+        div()
+            .size_full()
+            .track_focus(&self.focus_handle)
+            .children(self.terminal.clone())
     }
 }
 impl Focusable for DebugTerminal {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        if let Some(terminal) = self.terminal.as_ref() {
-            return terminal.focus_handle(cx);
-        } else {
-            self.focus_handle.clone()
-        }
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -850,7 +849,7 @@ impl RunningState {
                 let exit_status = terminal
                     .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
                     .await
-                    .ok_or_else(|| anyhow!("Failed to wait for completed task"))?;
+                    .context("Failed to wait for completed task")?;
 
                 if !exit_status.success() {
                     anyhow::bail!("Build failed");
@@ -868,8 +867,8 @@ impl RunningState {
                 //     tcp_connection,
                 // })
             } else if let Some((task, locator_name)) = build_output {
-                let locator_name = locator_name
-                    .ok_or_else(|| anyhow!("Could not find a valid locator for a build task"))?;
+                let locator_name =
+                    locator_name.context("Could not find a valid locator for a build task")?;
                 let request = dap_store
                     .update(cx, |this, cx| {
                         this.run_debug_locator(&locator_name, task, cx)
@@ -889,7 +888,7 @@ impl RunningState {
                     .map(|adapter| adapter.config_from_zed_format(zed_config))??;
                 config = scenario.config;
             } else {
-                return Err(anyhow!("No request or build provided"));
+                anyhow::bail!("No request or build provided");
             };
 
             Ok(DebugTaskDefinition {
@@ -1007,7 +1006,7 @@ impl RunningState {
                     .pty_info
                     .pid()
                     .map(|pid| pid.as_u32())
-                    .ok_or_else(|| anyhow!("Terminal was spawned but PID was not available"))
+                    .context("Terminal was spawned but PID was not available")
             })?
         });
 
@@ -1231,10 +1230,16 @@ impl RunningState {
         }
     }
 
-    pub(crate) fn go_to_selected_stack_frame(&self, window: &Window, cx: &mut Context<Self>) {
+    pub(crate) fn go_to_selected_stack_frame(&self, window: &mut Window, cx: &mut Context<Self>) {
         if self.thread_id.is_some() {
             self.stack_frame_list
-                .update(cx, |list, cx| list.go_to_selected_stack_frame(window, cx));
+                .update(cx, |list, cx| {
+                    let Some(stack_frame_id) = list.opened_stack_frame_id() else {
+                        return Task::ready(Ok(()));
+                    };
+                    list.go_to_stack_frame(stack_frame_id, window, cx)
+                })
+                .detach();
         }
     }
 
@@ -1251,7 +1256,7 @@ impl RunningState {
     }
 
     pub(crate) fn selected_stack_frame_id(&self, cx: &App) -> Option<dap::StackFrameId> {
-        self.stack_frame_list.read(cx).selected_stack_frame_id()
+        self.stack_frame_list.read(cx).opened_stack_frame_id()
     }
 
     pub(crate) fn stack_frame_list(&self) -> &Entity<StackFrameList> {

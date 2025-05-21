@@ -9,7 +9,9 @@ use crate::{
     environment::ProjectEnvironment,
     lsp_command::{self, *},
     lsp_store,
-    manifest_tree::{AdapterQuery, LanguageServerTree, LaunchDisposition, ManifestTree},
+    manifest_tree::{
+        AdapterQuery, LanguageServerTree, LanguageServerTreeNode, LaunchDisposition, ManifestTree,
+    },
     prettier_store::{self, PrettierStore, PrettierStoreEvent},
     project_settings::{LspSettings, ProjectSettings},
     relativize_path, resolve_path,
@@ -36,7 +38,7 @@ use http_client::HttpClient;
 use itertools::Itertools as _;
 use language::{
     Bias, BinaryStatus, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
-    DiagnosticEntry, DiagnosticSet, Diff, File as _, Language, LanguageRegistry,
+    DiagnosticEntry, DiagnosticSet, Diff, File as _, Language, LanguageName, LanguageRegistry,
     LanguageToolchainStore, LocalFile, LspAdapter, LspAdapterDelegate, Patch, PointUtf16,
     TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
     language_settings::{
@@ -73,7 +75,7 @@ use std::{
     any::Any,
     borrow::Cow,
     cell::RefCell,
-    cmp::Ordering,
+    cmp::{Ordering, Reverse},
     convert::TryInto,
     ffi::OsStr,
     iter, mem,
@@ -1032,7 +1034,7 @@ impl LocalLspStore {
             .read(cx)
             .worktree_for_id(project_path.worktree_id, cx)
         else {
-            return vec![];
+            return Vec::new();
         };
         let delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
         let root = self.lsp_tree.update(cx, |this, cx| {
@@ -1202,7 +1204,7 @@ impl LocalLspStore {
                 buffer.finalize_last_transaction();
                 let transaction_id = buffer
                     .start_transaction()
-                    .ok_or_else(|| anyhow!("transaction already open"))?;
+                    .context("transaction already open")?;
                 let transaction = buffer
                     .get_transaction(transaction_id)
                     .expect("transaction started")
@@ -1860,14 +1862,14 @@ impl LocalLspStore {
         let capabilities = &language_server.capabilities();
         let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
         if range_formatting_provider.map_or(false, |provider| provider == &OneOf::Left(false)) {
-            return Err(anyhow!(
+            anyhow::bail!(
                 "{} language server does not support range formatting",
                 language_server.name()
-            ));
+            );
         }
 
         let uri = lsp::Url::from_file_path(abs_path)
-            .map_err(|_| anyhow!("failed to convert abs path to uri"))?;
+            .map_err(|()| anyhow!("failed to convert abs path to uri"))?;
         let text_document = lsp::TextDocumentIdentifier::new(uri);
 
         let lsp_edits = {
@@ -1932,7 +1934,7 @@ impl LocalLspStore {
         zlog::info!(logger => "Formatting via LSP");
 
         let uri = lsp::Url::from_file_path(abs_path)
-            .map_err(|_| anyhow!("failed to convert abs path to uri"))?;
+            .map_err(|()| anyhow!("failed to convert abs path to uri"))?;
         let text_document = lsp::TextDocumentIdentifier::new(uri);
         let capabilities = &language_server.capabilities();
 
@@ -2024,10 +2026,7 @@ impl LocalLspStore {
             .stderr(smol::process::Stdio::piped())
             .spawn()?;
 
-        let stdin = child
-            .stdin
-            .as_mut()
-            .ok_or_else(|| anyhow!("failed to acquire stdin"))?;
+        let stdin = child.stdin.as_mut().context("failed to acquire stdin")?;
         let text = buffer
             .handle
             .update(cx, |buffer, _| buffer.as_rope().clone())?;
@@ -2037,14 +2036,13 @@ impl LocalLspStore {
         stdin.flush().await?;
 
         let output = child.output().await?;
-        if !output.status.success() {
-            return Err(anyhow!(
-                "command failed with exit code {:?}:\nstdout: {}\nstderr: {}",
-                output.status.code(),
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr),
-            ));
-        }
+        anyhow::ensure!(
+            output.status.success(),
+            "command failed with exit code {:?}:\nstdout: {}\nstderr: {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
 
         let stdout = String::from_utf8(output.stdout)?;
         Ok(Some(
@@ -2284,19 +2282,37 @@ impl LocalLspStore {
         else {
             return;
         };
-        let delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
-        let servers = self.lsp_tree.clone().update(cx, |this, cx| {
-            this.get(
-                ProjectPath { worktree_id, path },
-                AdapterQuery::Language(&language.name()),
-                delegate.clone(),
-                cx,
-            )
-            .collect::<Vec<_>>()
-        });
+        let language_name = language.name();
+        let (reused, delegate, servers) = self
+            .lsp_tree
+            .update(cx, |lsp_tree, cx| {
+                self.reuse_existing_language_server(lsp_tree, &worktree, &language_name, cx)
+            })
+            .map(|(delegate, servers)| (true, delegate, servers))
+            .unwrap_or_else(|| {
+                let delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
+                let servers = self
+                    .lsp_tree
+                    .clone()
+                    .update(cx, |language_server_tree, cx| {
+                        language_server_tree
+                            .get(
+                                ProjectPath { worktree_id, path },
+                                AdapterQuery::Language(&language.name()),
+                                delegate.clone(),
+                                cx,
+                            )
+                            .collect::<Vec<_>>()
+                    });
+                (false, delegate, servers)
+            });
         let servers = servers
             .into_iter()
             .filter_map(|server_node| {
+                if reused && server_node.server_id().is_none() {
+                    return None;
+                }
+
                 let server_id = server_node.server_id_or_init(
                     |LaunchDisposition {
                          server_name,
@@ -2435,6 +2451,63 @@ impl LocalLspStore {
         }
     }
 
+    fn reuse_existing_language_server(
+        &self,
+        server_tree: &mut LanguageServerTree,
+        worktree: &Entity<Worktree>,
+        language_name: &LanguageName,
+        cx: &mut App,
+    ) -> Option<(Arc<LocalLspAdapterDelegate>, Vec<LanguageServerTreeNode>)> {
+        if worktree.read(cx).is_visible() {
+            return None;
+        }
+
+        let worktree_store = self.worktree_store.read(cx);
+        let servers = server_tree
+            .instances
+            .iter()
+            .filter(|(worktree_id, _)| {
+                worktree_store
+                    .worktree_for_id(**worktree_id, cx)
+                    .is_some_and(|worktree| worktree.read(cx).is_visible())
+            })
+            .flat_map(|(worktree_id, servers)| {
+                servers
+                    .roots
+                    .iter()
+                    .flat_map(|(_, language_servers)| language_servers)
+                    .map(move |(_, (server_node, server_languages))| {
+                        (worktree_id, server_node, server_languages)
+                    })
+                    .filter(|(_, _, server_languages)| server_languages.contains(language_name))
+                    .map(|(worktree_id, server_node, _)| {
+                        (
+                            *worktree_id,
+                            LanguageServerTreeNode::from(Arc::downgrade(server_node)),
+                        )
+                    })
+            })
+            .fold(HashMap::default(), |mut acc, (worktree_id, server_node)| {
+                acc.entry(worktree_id)
+                    .or_insert_with(Vec::new)
+                    .push(server_node);
+                acc
+            })
+            .into_values()
+            .max_by_key(|servers| servers.len())?;
+
+        for server_node in &servers {
+            server_tree.register_reused(
+                worktree.read(cx).id(),
+                language_name.clone(),
+                server_node.clone(),
+            );
+        }
+
+        let delegate = LocalLspAdapterDelegate::from_local_lsp(self, worktree, cx);
+        Some((delegate, servers))
+    }
+
     pub(crate) fn unregister_old_buffer_from_language_servers(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -2493,9 +2566,7 @@ impl LocalLspStore {
                 // We detect this case and treat it as if the version was `None`.
                 return Ok(buffer.read(cx).text_snapshot());
             } else {
-                return Err(anyhow!(
-                    "no snapshots found for buffer {buffer_id} and server {server_id}"
-                ));
+                anyhow::bail!("no snapshots found for buffer {buffer_id} and server {server_id}");
             };
 
             let found_snapshot = snapshots
@@ -2540,7 +2611,7 @@ impl LocalLspStore {
         push_to_history: bool,
         project_transaction: &mut ProjectTransaction,
         cx: &mut AsyncApp,
-    ) -> Result<(), anyhow::Error> {
+    ) -> anyhow::Result<()> {
         for mut action in actions {
             Self::try_resolve_code_action(language_server, &mut action)
                 .await
@@ -2769,7 +2840,7 @@ impl LocalLspStore {
                     let abs_path = op
                         .uri
                         .to_file_path()
-                        .map_err(|_| anyhow!("can't convert URI to path"))?;
+                        .map_err(|()| anyhow!("can't convert URI to path"))?;
 
                     if let Some(parent_path) = abs_path.parent() {
                         fs.create_dir(parent_path).await?;
@@ -2794,11 +2865,11 @@ impl LocalLspStore {
                     let source_abs_path = op
                         .old_uri
                         .to_file_path()
-                        .map_err(|_| anyhow!("can't convert URI to path"))?;
+                        .map_err(|()| anyhow!("can't convert URI to path"))?;
                     let target_abs_path = op
                         .new_uri
                         .to_file_path()
-                        .map_err(|_| anyhow!("can't convert URI to path"))?;
+                        .map_err(|()| anyhow!("can't convert URI to path"))?;
                     fs.rename(
                         &source_abs_path,
                         &target_abs_path,
@@ -2816,7 +2887,7 @@ impl LocalLspStore {
                     let abs_path = op
                         .uri
                         .to_file_path()
-                        .map_err(|_| anyhow!("can't convert URI to path"))?;
+                        .map_err(|()| anyhow!("can't convert URI to path"))?;
                     let options = op
                         .options
                         .map(|options| fs::RemoveOptions {
@@ -2965,12 +3036,10 @@ impl LocalLspStore {
         adapter: Arc<CachedLspAdapter>,
         cx: &mut AsyncApp,
     ) -> Result<lsp::ApplyWorkspaceEditResponse> {
-        let this = this
-            .upgrade()
-            .ok_or_else(|| anyhow!("project project closed"))?;
+        let this = this.upgrade().context("project project closed")?;
         let language_server = this
             .update(cx, |this, _| this.language_server_for_id(server_id))?
-            .ok_or_else(|| anyhow!("language server not found"))?;
+            .context("language server not found")?;
         let transaction = Self::deserialize_workspace_edit(
             this.clone(),
             params.edit,
@@ -3338,7 +3407,6 @@ pub struct RemoteLspStore {
     upstream_project_id: u64,
 }
 
-#[allow(clippy::large_enum_variant)]
 pub(crate) enum LspStoreMode {
     Local(LocalLspStore),   // ssh host and collab host
     Remote(RemoteLspStore), // collab guest
@@ -4018,6 +4086,16 @@ impl LspStore {
                                 buffers_with_unknown_injections.push(handle);
                             }
                         }
+
+                        // Deprioritize the invisible worktrees so main worktrees' language servers can be started first,
+                        // and reused later in the invisible worktrees.
+                        plain_text_buffers.sort_by_key(|buffer| {
+                            Reverse(
+                                crate::File::from_dyn(buffer.read(cx).file())
+                                    .map(|file| file.worktree.read(cx).is_visible()),
+                            )
+                        });
+
                         for buffer in plain_text_buffers {
                             this.detect_language_for_buffer(&buffer, cx);
                             if let Some(local) = this.as_local_mut() {
@@ -4286,13 +4364,13 @@ impl LspStore {
                     err
                 );
                 log::warn!("{message}");
-                anyhow!(message)
+                anyhow::anyhow!(message)
             })?;
 
             let response = request
                 .response_from_lsp(
                     response,
-                    this.upgrade().ok_or_else(|| anyhow!("no app context"))?,
+                    this.upgrade().context("no app context")?,
                     buffer_handle,
                     language_server.server_id(),
                     cx.clone(),
@@ -4355,8 +4433,13 @@ impl LspStore {
                 };
 
                 let mut rebase = lsp_tree.rebase();
-                for buffer in buffer_store.read(cx).buffers().collect::<Vec<_>>() {
-                    let buffer = buffer.read(cx);
+                for buffer_handle in buffer_store.read(cx).buffers().sorted_by_key(|buffer| {
+                    Reverse(
+                        crate::File::from_dyn(buffer.read(cx).file())
+                            .map(|file| file.worktree.read(cx).is_visible()),
+                    )
+                }) {
+                    let buffer = buffer_handle.read(cx);
                     if !local.registered_buffers.contains_key(&buffer.remote_id()) {
                         continue;
                     }
@@ -4372,43 +4455,81 @@ impl LspStore {
                         else {
                             continue;
                         };
-                        let path: Arc<Path> = file
-                            .path()
-                            .parent()
-                            .map(Arc::from)
-                            .unwrap_or_else(|| file.path().clone());
-                        let worktree_path = ProjectPath { worktree_id, path };
 
-                        let Some(delegate) = adapters
-                            .entry(worktree_id)
-                            .or_insert_with(|| get_adapter(worktree_id, cx))
-                            .clone()
+                        let Some((reused, delegate, nodes)) = local
+                            .reuse_existing_language_server(
+                                rebase.server_tree(),
+                                &worktree,
+                                &language,
+                                cx,
+                            )
+                            .map(|(delegate, servers)| (true, delegate, servers))
+                            .or_else(|| {
+                                let delegate = adapters
+                                    .entry(worktree_id)
+                                    .or_insert_with(|| get_adapter(worktree_id, cx))
+                                    .clone()?;
+                                let path = file
+                                    .path()
+                                    .parent()
+                                    .map(Arc::from)
+                                    .unwrap_or_else(|| file.path().clone());
+                                let worktree_path = ProjectPath { worktree_id, path };
+
+                                let nodes = rebase.get(
+                                    worktree_path,
+                                    AdapterQuery::Language(&language),
+                                    delegate.clone(),
+                                    cx,
+                                );
+
+                                Some((false, delegate, nodes.collect()))
+                            })
                         else {
                             continue;
                         };
-                        let nodes = rebase.get(
-                            worktree_path,
-                            AdapterQuery::Language(&language),
-                            delegate.clone(),
-                            cx,
-                        );
+
                         for node in nodes {
-                            node.server_id_or_init(
-                                |LaunchDisposition {
-                                     server_name,
-                                     attach,
-                                     path,
-                                     settings,
-                                 }| match attach {
-                                    language::Attach::InstancePerRoot => {
-                                        // todo: handle instance per root proper.
-                                        if let Some(server_ids) = local
-                                            .language_server_ids
-                                            .get(&(worktree_id, server_name.clone()))
-                                        {
-                                            server_ids.iter().cloned().next().unwrap()
-                                        } else {
-                                            local.start_language_server(
+                            if !reused {
+                                node.server_id_or_init(
+                                    |LaunchDisposition {
+                                         server_name,
+                                         attach,
+                                         path,
+                                         settings,
+                                     }| match attach {
+                                        language::Attach::InstancePerRoot => {
+                                            // todo: handle instance per root proper.
+                                            if let Some(server_ids) = local
+                                                .language_server_ids
+                                                .get(&(worktree_id, server_name.clone()))
+                                            {
+                                                server_ids.iter().cloned().next().unwrap()
+                                            } else {
+                                                local.start_language_server(
+                                                    &worktree,
+                                                    delegate.clone(),
+                                                    local
+                                                        .languages
+                                                        .lsp_adapters(&language)
+                                                        .into_iter()
+                                                        .find(|adapter| {
+                                                            &adapter.name() == server_name
+                                                        })
+                                                        .expect("To find LSP adapter"),
+                                                    settings,
+                                                    cx,
+                                                )
+                                            }
+                                        }
+                                        language::Attach::Shared => {
+                                            let uri = Url::from_file_path(
+                                                worktree.read(cx).abs_path().join(&path.path),
+                                            );
+                                            let key = (worktree_id, server_name.clone());
+                                            local.language_server_ids.remove(&key);
+
+                                            let server_id = local.start_language_server(
                                                 &worktree,
                                                 delegate.clone(),
                                                 local
@@ -4419,38 +4540,19 @@ impl LspStore {
                                                     .expect("To find LSP adapter"),
                                                 settings,
                                                 cx,
-                                            )
+                                            );
+                                            if let Some(state) =
+                                                local.language_servers.get(&server_id)
+                                            {
+                                                if let Ok(uri) = uri {
+                                                    state.add_workspace_folder(uri);
+                                                };
+                                            }
+                                            server_id
                                         }
-                                    }
-                                    language::Attach::Shared => {
-                                        let uri = Url::from_file_path(
-                                            worktree.read(cx).abs_path().join(&path.path),
-                                        );
-                                        let key = (worktree_id, server_name.clone());
-                                        local.language_server_ids.remove(&key);
-
-                                        let server_id = local.start_language_server(
-                                            &worktree,
-                                            delegate.clone(),
-                                            local
-                                                .languages
-                                                .lsp_adapters(&language)
-                                                .into_iter()
-                                                .find(|adapter| &adapter.name() == server_name)
-                                                .expect("To find LSP adapter"),
-                                            settings,
-                                            cx,
-                                        );
-                                        if let Some(state) = local.language_servers.get(&server_id)
-                                        {
-                                            if let Ok(uri) = uri {
-                                                state.add_workspace_folder(uri);
-                                            };
-                                        }
-                                        server_id
-                                    }
-                                },
-                            );
+                                    },
+                                );
+                            }
                         }
                     }
                 }
@@ -4481,7 +4583,7 @@ impl LspStore {
                     .request(request)
                     .await?
                     .transaction
-                    .ok_or_else(|| anyhow!("missing transaction"))?;
+                    .context("missing transaction")?;
 
                 buffer_store
                     .update(cx, |buffer_store, cx| {
@@ -4503,7 +4605,7 @@ impl LspStore {
                 if let Some(edit) = action.lsp_action.edit() {
                     if edit.changes.is_some() || edit.document_changes.is_some() {
                         return LocalLspStore::deserialize_workspace_edit(
-                            this.upgrade().ok_or_else(|| anyhow!("no app present"))?,
+                            this.upgrade().context("no app present")?,
                             edit.clone(),
                             push_to_history,
                             lsp_adapter.clone(),
@@ -5605,7 +5707,7 @@ impl LspStore {
                 LspCommand::response_from_proto(
                     lsp_request,
                     response,
-                    project.upgrade().ok_or_else(|| anyhow!("No project"))?,
+                    project.upgrade().context("No project")?,
                     buffer_handle.clone(),
                     cx.clone(),
                 )
@@ -6365,26 +6467,30 @@ impl LspStore {
         let Some(local) = self.as_local_mut() else {
             return;
         };
-        let worktree_id = worktree.read(cx).id();
-        let path = ProjectPath {
-            worktree_id,
-            path: Arc::from("".as_ref()),
-        };
-        let delegate = LocalLspAdapterDelegate::from_local_lsp(local, &worktree, cx);
-        local.lsp_tree.update(cx, |this, cx| {
-            for node in this.get(
-                path,
-                AdapterQuery::Adapter(&language_server_name),
-                delegate,
-                cx,
-            ) {
-                node.server_id_or_init(|disposition| {
-                    assert_eq!(disposition.server_name, &language_server_name);
 
-                    language_server_id
-                });
-            }
-        });
+        let worktree_id = worktree.read(cx).id();
+        if worktree.read(cx).is_visible() {
+            let path = ProjectPath {
+                worktree_id,
+                path: Arc::from("".as_ref()),
+            };
+            let delegate = LocalLspAdapterDelegate::from_local_lsp(local, &worktree, cx);
+            local.lsp_tree.update(cx, |language_server_tree, cx| {
+                for node in language_server_tree.get(
+                    path,
+                    AdapterQuery::Adapter(&language_server_name),
+                    delegate,
+                    cx,
+                ) {
+                    node.server_id_or_init(|disposition| {
+                        assert_eq!(disposition.server_name, &language_server_name);
+
+                        language_server_id
+                    });
+                }
+            });
+        }
+
         local
             .language_server_ids
             .entry((worktree_id, language_server_name))
@@ -6411,7 +6517,7 @@ impl LspStore {
         mut diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         filter: F,
         cx: &mut Context<Self>,
-    ) -> Result<(), anyhow::Error> {
+    ) -> anyhow::Result<()> {
         let Some((worktree, relative_path)) =
             self.worktree_store.read(cx).find_worktree(&abs_path, cx)
         else {
@@ -6616,7 +6722,7 @@ impl LspStore {
 
             let abs_path = abs_path
                 .to_file_path()
-                .map_err(|_| anyhow!("can't convert URI to path"))?;
+                .map_err(|()| anyhow!("can't convert URI to path"))?;
             let p = abs_path.clone();
             let yarn_worktree = lsp_store
                 .update(cx, move |lsp_store, cx| match lsp_store.as_local() {
@@ -6980,12 +7086,8 @@ impl LspStore {
         mut cx: AsyncApp,
     ) -> Result<proto::ApplyCodeActionResponse> {
         let sender_id = envelope.original_sender_id().unwrap_or_default();
-        let action = Self::deserialize_code_action(
-            envelope
-                .payload
-                .action
-                .ok_or_else(|| anyhow!("invalid action"))?,
-        )?;
+        let action =
+            Self::deserialize_code_action(envelope.payload.action.context("invalid action")?)?;
         let apply_code_action = this.update(&mut cx, |this, cx| {
             let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
             let buffer = this.buffer_store.read(cx).get_existing(buffer_id)?;
@@ -7084,7 +7186,7 @@ impl LspStore {
                         )
                     })
             })?
-            .ok_or_else(|| anyhow!("worktree not found"))?;
+            .context("worktree not found")?;
         let (old_abs_path, new_abs_path) = {
             let root_path = worktree.update(&mut cx, |this, _| this.abs_path())?;
             let new_path = PathBuf::from_proto(envelope.payload.new_path.clone());
@@ -7174,10 +7276,7 @@ impl LspStore {
         envelope: TypedEnvelope<proto::StartLanguageServer>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        let server = envelope
-            .payload
-            .server
-            .ok_or_else(|| anyhow!("invalid server"))?;
+        let server = envelope.payload.server.context("invalid server")?;
 
         this.update(&mut cx, |this, cx| {
             let server_id = LanguageServerId(server.id as usize);
@@ -7208,11 +7307,7 @@ impl LspStore {
         this.update(&mut cx, |this, cx| {
             let language_server_id = LanguageServerId(envelope.payload.language_server_id as usize);
 
-            match envelope
-                .payload
-                .variant
-                .ok_or_else(|| anyhow!("invalid variant"))?
-            {
+            match envelope.payload.variant.context("invalid variant")? {
                 proto::update_language_server::Variant::WorkStart(payload) => {
                     this.on_lsp_work_start(
                         language_server_id,
@@ -7789,11 +7884,11 @@ impl LspStore {
         let completion = this
             .read_with(&cx, |this, cx| {
                 let id = LanguageServerId(envelope.payload.language_server_id as usize);
-                let Some(server) = this.language_server_for_id(id) else {
-                    return Err(anyhow!("No language server {id}"));
-                };
+                let server = this
+                    .language_server_for_id(id)
+                    .with_context(|| format!("No language server {id}"))?;
 
-                Ok(cx.background_spawn(async move {
+                anyhow::Ok(cx.background_spawn(async move {
                     let can_resolve = server
                         .capabilities()
                         .completion_provider
@@ -7880,8 +7975,8 @@ impl LspStore {
                 .payload
                 .position
                 .and_then(deserialize_anchor)
-                .ok_or_else(|| anyhow!("invalid position"))?;
-            Ok::<_, anyhow::Error>(this.apply_on_type_formatting(
+                .context("invalid position")?;
+            anyhow::Ok(this.apply_on_type_formatting(
                 buffer,
                 position,
                 envelope.payload.trigger.clone(),
@@ -8000,18 +8095,12 @@ impl LspStore {
         mut cx: AsyncApp,
     ) -> Result<proto::OpenBufferForSymbolResponse> {
         let peer_id = envelope.original_sender_id().unwrap_or_default();
-        let symbol = envelope
-            .payload
-            .symbol
-            .ok_or_else(|| anyhow!("invalid symbol"))?;
+        let symbol = envelope.payload.symbol.context("invalid symbol")?;
         let symbol = Self::deserialize_symbol(symbol)?;
         let symbol = this.update(&mut cx, |this, _| {
             let signature = this.symbol_signature(&symbol.path);
-            if signature == symbol.signature {
-                Ok(symbol)
-            } else {
-                Err(anyhow!("invalid symbol signature"))
-            }
+            anyhow::ensure!(signature == symbol.signature, "invalid symbol signature");
+            Ok(symbol)
         })??;
         let buffer = this
             .update(&mut cx, |this, cx| {
@@ -8154,10 +8243,7 @@ impl LspStore {
             let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
             let buffer = this.buffer_store.read(cx).get_existing(buffer_id)?;
             let completion = Self::deserialize_completion(
-                envelope
-                    .payload
-                    .completion
-                    .ok_or_else(|| anyhow!("invalid completion"))?,
+                envelope.payload.completion.context("invalid completion")?,
             )?;
             anyhow::Ok((buffer, completion))
         })??;
@@ -8251,10 +8337,7 @@ impl LspStore {
                     let ranges = match &target {
                         LspFormatTarget::Buffers => None,
                         LspFormatTarget::Ranges(ranges) => {
-                            let Some(ranges) = ranges.get(&id) else {
-                                return Err(anyhow!("No format ranges provided for buffer"));
-                            };
-                            Some(ranges.clone())
+                            Some(ranges.get(&id).context("No format ranges provided for buffer")?.clone())
                         }
                     };
 
@@ -8384,17 +8467,20 @@ impl LspStore {
                 buffers.insert(this.buffer_store.read(cx).get_existing(buffer_id)?);
             }
             let kind = match envelope.payload.kind.as_str() {
-                "" => Ok(CodeActionKind::EMPTY),
-                "quickfix" => Ok(CodeActionKind::QUICKFIX),
-                "refactor" => Ok(CodeActionKind::REFACTOR),
-                "refactor.extract" => Ok(CodeActionKind::REFACTOR_EXTRACT),
-                "refactor.inline" => Ok(CodeActionKind::REFACTOR_INLINE),
-                "refactor.rewrite" => Ok(CodeActionKind::REFACTOR_REWRITE),
-                "source" => Ok(CodeActionKind::SOURCE),
-                "source.organizeImports" => Ok(CodeActionKind::SOURCE_ORGANIZE_IMPORTS),
-                "source.fixAll" => Ok(CodeActionKind::SOURCE_FIX_ALL),
-                _ => Err(anyhow!("Invalid code action kind")),
-            }?;
+                "" => CodeActionKind::EMPTY,
+                "quickfix" => CodeActionKind::QUICKFIX,
+                "refactor" => CodeActionKind::REFACTOR,
+                "refactor.extract" => CodeActionKind::REFACTOR_EXTRACT,
+                "refactor.inline" => CodeActionKind::REFACTOR_INLINE,
+                "refactor.rewrite" => CodeActionKind::REFACTOR_REWRITE,
+                "source" => CodeActionKind::SOURCE,
+                "source.organizeImports" => CodeActionKind::SOURCE_ORGANIZE_IMPORTS,
+                "source.fixAll" => CodeActionKind::SOURCE_FIX_ALL,
+                _ => anyhow::bail!(
+                    "Invalid code action kind {}",
+                    envelope.payload.kind.as_str()
+                ),
+            };
             anyhow::Ok(this.apply_code_action_kind(buffers, kind, false, cx))
         })??;
 
@@ -8664,7 +8750,7 @@ impl LspStore {
         let abs_path = params
             .uri
             .to_file_path()
-            .map_err(|_| anyhow!("URI is not a file"))?;
+            .map_err(|()| anyhow!("URI is not a file"))?;
         let mut diagnostics = Vec::default();
         let mut primary_diagnostic_group_ids = HashMap::default();
         let mut sources_by_group_id = HashMap::default();
@@ -8691,9 +8777,10 @@ impl LspStore {
                     })
                 });
 
-            let is_unnecessary = diagnostic.tags.as_ref().map_or(false, |tags| {
-                tags.iter().any(|tag| *tag == DiagnosticTag::UNNECESSARY)
-            });
+            let is_unnecessary = diagnostic
+                .tags
+                .as_ref()
+                .map_or(false, |tags| tags.contains(&DiagnosticTag::UNNECESSARY));
 
             if is_supporting {
                 supporting_diagnostics.insert(
@@ -9205,12 +9292,8 @@ impl LspStore {
             path: Arc::<Path>::from_proto(serialized_symbol.path),
         };
 
-        let start = serialized_symbol
-            .start
-            .ok_or_else(|| anyhow!("invalid start"))?;
-        let end = serialized_symbol
-            .end
-            .ok_or_else(|| anyhow!("invalid end"))?;
+        let start = serialized_symbol.start.context("invalid start")?;
+        let end = serialized_symbol.end.context("invalid end")?;
         Ok(CoreSymbol {
             language_server_name: LanguageServerName(serialized_symbol.language_server_name.into()),
             source_worktree_id,
@@ -10192,15 +10275,14 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
             .output()
             .await?;
 
-        if output.status.success() {
-            return Ok(());
-        }
-        Err(anyhow!(
+        anyhow::ensure!(
+            output.status.success(),
             "{}, stdout: {:?}, stderr: {:?}",
             output.status,
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
-        ))
+        );
+        Ok(())
     }
 
     fn update_status(&self, server_name: LanguageServerName, status: language::BinaryStatus) {

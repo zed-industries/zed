@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result};
 use dap::adapters::DebugTaskDefinition;
 use dap::client::DebugAdapterClient;
 use gpui::{Entity, TestAppContext, WindowHandle};
@@ -125,7 +125,7 @@ pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
             .and_then(|panel| panel.read(cx).active_session())
             .map(|session| session.read(cx).running_state().read(cx).session())
             .cloned()
-            .ok_or_else(|| anyhow!("Failed to get active session"))
+            .context("Failed to get active session")
     })??;
 
     Ok(session)

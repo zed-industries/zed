@@ -1,7 +1,9 @@
+use anyhow::{Context as _, anyhow};
 use dap::{
     StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
     adapters::DebugTaskDefinition,
 };
+
 use gpui::{AsyncApp, SharedString};
 use language::LanguageName;
 use std::{collections::HashMap, ffi::OsStr, path::PathBuf};
@@ -285,13 +287,9 @@ impl DebugAdapter for GoDebugAdapter {
         &self,
         config: &serde_json::Value,
     ) -> Result<StartDebuggingRequestArgumentsRequest> {
-        let map = config
-            .as_object()
-            .ok_or_else(|| anyhow!("Config isn't an object"))?;
+        let map = config.as_object().context("Config isn't an object")?;
 
-        let request_variant = map["request"]
-            .as_str()
-            .ok_or_else(|| anyhow!("request is not valid"))?;
+        let request_variant = map["request"].as_str().context("request is not valid")?;
 
         match request_variant {
             "launch" => Ok(StartDebuggingRequestArgumentsRequest::Launch),
@@ -332,26 +330,23 @@ impl DebugAdapter for GoDebugAdapter {
 
     async fn get_binary(
         &self,
-        delegate: &dyn DapDelegate,
-        task_definition: DebugTaskDefinition,
+        delegate: &Arc<dyn DapDelegate>,
+        task_definition: &DebugTaskDefinition,
         _user_installed_path: Option<PathBuf>,
         _cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let delve_path = delegate
             .which(OsStr::new("dlv"))
+            .await
             .and_then(|p| p.to_str().map(|p| p.to_string()))
-            .ok_or(anyhow!("Dlv not found in path"))?;
+            .context("Dlv not found in path")?;
 
         let tcp_connection = task_definition.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
         Ok(DebugAdapterBinary {
             command: delve_path,
-            arguments: vec![
-                "dap".into(),
-                "--listen".into(),
-                format!("{}:{}", host, port),
-            ],
+            arguments: vec!["dap".into(), "--listen".into(), format!("{host}:{port}")],
             cwd: None,
             envs: HashMap::default(),
             connection: Some(adapters::TcpArguments {

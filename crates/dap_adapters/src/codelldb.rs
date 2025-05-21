@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 
-use anyhow::Result;
+use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use dap::{
     StartDebuggingRequestArgumentsRequest,
@@ -31,7 +31,7 @@ impl CodeLldbDebugAdapter {
 
         configuration
             .as_object_mut()
-            .ok_or_else(|| anyhow!("CodeLLDB is not a valid json object"))?
+            .context("CodeLLDB is not a valid json object")?
             .insert(
                 "name".into(),
                 Value::String(String::from(task_definition.label.as_ref())),
@@ -47,7 +47,7 @@ impl CodeLldbDebugAdapter {
 
     async fn fetch_latest_adapter_version(
         &self,
-        delegate: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
     ) -> Result<AdapterVersion> {
         let release =
             latest_github_release("vadimcn/codelldb", true, false, delegate.http_client()).await?;
@@ -55,22 +55,16 @@ impl CodeLldbDebugAdapter {
         let arch = match std::env::consts::ARCH {
             "aarch64" => "arm64",
             "x86_64" => "x64",
-            _ => {
-                return Err(anyhow!(
-                    "unsupported architecture {}",
-                    std::env::consts::ARCH
-                ));
+            unsupported => {
+                anyhow::bail!("unsupported architecture {unsupported}");
             }
         };
         let platform = match std::env::consts::OS {
             "macos" => "darwin",
             "linux" => "linux",
             "windows" => "win32",
-            _ => {
-                return Err(anyhow!(
-                    "unsupported operating system {}",
-                    std::env::consts::OS
-                ));
+            unsupported => {
+                anyhow::bail!("unsupported operating system {unsupported}");
             }
         };
         let asset_name = format!("codelldb-{platform}-{arch}.vsix");
@@ -80,7 +74,7 @@ impl CodeLldbDebugAdapter {
                 .assets
                 .iter()
                 .find(|asset| asset.name == asset_name)
-                .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?
+                .with_context(|| format!("no asset found matching {asset_name:?}"))?
                 .browser_download_url
                 .clone(),
         };
@@ -377,8 +371,8 @@ impl DebugAdapter for CodeLldbDebugAdapter {
 
     async fn get_binary(
         &self,
-        delegate: &dyn DapDelegate,
-        config: DebugTaskDefinition,
+        delegate: &Arc<dyn DapDelegate>,
+        config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
@@ -395,7 +389,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                         self.name(),
                         version.clone(),
                         adapters::DownloadedFileType::Vsix,
-                        delegate,
+                        delegate.as_ref(),
                     )
                     .await?;
                     let version_path =
@@ -404,10 +398,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                     version_path
                 } else {
                     let mut paths = delegate.fs().read_dir(&adapter_path).await?;
-                    paths
-                        .next()
-                        .await
-                        .ok_or_else(|| anyhow!("No adapter found"))??
+                    paths.next().await.context("No adapter found")??
                 };
             let adapter_dir = version_path.join("extension").join("adapter");
             let path = adapter_dir.join("codelldb").to_string_lossy().to_string();

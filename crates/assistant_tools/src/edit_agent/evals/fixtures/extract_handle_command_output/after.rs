@@ -80,7 +80,7 @@ async fn run_git_blame(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| anyhow!("Failed to start git blame process: {}", e))?;
+        .context("starting git blame process")?;
 
     let stdin = child
         .stdin
@@ -92,10 +92,7 @@ async fn run_git_blame(
     }
     stdin.flush().await?;
 
-    let output = child
-        .output()
-        .await
-        .map_err(|e| anyhow!("Failed to read git blame output: {}", e))?;
+    let output = child.output().await.context("reading git blame output")?;
 
     handle_command_output(output)
 }
@@ -107,7 +104,7 @@ fn handle_command_output(output: std::process::Output) -> Result<String> {
         if trimmed == GIT_BLAME_NO_COMMIT_ERROR || trimmed.contains(GIT_BLAME_NO_PATH) {
             return Ok(String::new());
         }
-        return Err(anyhow!("git blame process failed: {}", stderr));
+        anyhow::bail!("git blame process failed: {stderr}");
     }
 
     Ok(String::from_utf8(output.stdout)?)
@@ -148,21 +145,21 @@ impl BlameEntry {
         let sha = parts
             .next()
             .and_then(|line| line.parse::<Oid>().ok())
-            .ok_or_else(|| anyhow!("failed to parse sha"))?;
+            .with_context(|| format!("parsing sha from {line}"))?;
 
         let original_line_number = parts
             .next()
             .and_then(|line| line.parse::<u32>().ok())
-            .ok_or_else(|| anyhow!("Failed to parse original line number"))?;
+            .with_context(|| format!("parsing original line number from {line}"))?;
         let final_line_number = parts
             .next()
             .and_then(|line| line.parse::<u32>().ok())
-            .ok_or_else(|| anyhow!("Failed to parse final line number"))?;
+            .with_context(|| format!("parsing final line number from {line}"))?;
 
         let line_count = parts
             .next()
             .and_then(|line| line.parse::<u32>().ok())
-            .ok_or_else(|| anyhow!("Failed to parse final line number"))?;
+            .with_context(|| format!("parsing line count from {line}"))?;
 
         let start_line = final_line_number.saturating_sub(1);
         let end_line = start_line + line_count;

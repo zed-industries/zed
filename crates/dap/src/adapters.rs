@@ -15,7 +15,13 @@ use serde_json::json;
 use settings::WorktreeId;
 use smol::{self, fs::File};
 use std::{
-    borrow::Borrow, ffi::OsStr, fmt::Debug, net::Ipv4Addr, ops::Deref, path::PathBuf, sync::Arc,
+    borrow::Borrow,
+    ffi::OsStr,
+    fmt::Debug,
+    net::Ipv4Addr,
+    ops::Deref,
+    path::{Path, PathBuf},
+    sync::Arc,
 };
 use task::{DebugScenario, TcpArgumentsTemplate, ZedDebugConfig};
 
@@ -27,15 +33,17 @@ pub enum DapStatus {
     Failed { error: String },
 }
 
-#[async_trait(?Send)]
-pub trait DapDelegate {
+#[async_trait]
+pub trait DapDelegate: Send + Sync + 'static {
     fn worktree_id(&self) -> WorktreeId;
+    fn worktree_root_path(&self) -> &Path;
     fn http_client(&self) -> Arc<dyn HttpClient>;
     fn node_runtime(&self) -> NodeRuntime;
     fn toolchain_store(&self) -> Arc<dyn LanguageToolchainStore>;
     fn fs(&self) -> Arc<dyn Fs>;
     fn output_to_console(&self, msg: String);
-    fn which(&self, command: &OsStr) -> Option<PathBuf>;
+    async fn which(&self, command: &OsStr) -> Option<PathBuf>;
+    async fn read_text_file(&self, path: PathBuf) -> Result<String>;
     async fn shell_env(&self) -> collections::HashMap<String, String>;
 }
 
@@ -96,8 +104,8 @@ impl TcpArguments {
     pub fn from_proto(proto: proto::TcpHost) -> anyhow::Result<Self> {
         let host = TcpArgumentsTemplate::from_proto(proto)?;
         Ok(TcpArguments {
-            host: host.host.ok_or_else(|| anyhow!("missing host"))?,
-            port: host.port.ok_or_else(|| anyhow!("missing port"))?,
+            host: host.host.context("missing host")?,
+            port: host.port.context("missing port")?,
             timeout: host.timeout,
         })
     }
@@ -284,12 +292,11 @@ pub async fn download_adapter_from_github(
         .get(&github_version.url, Default::default(), true)
         .await
         .context("Error downloading release")?;
-    if !response.status().is_success() {
-        Err(anyhow!(
-            "download failed with status {}",
-            response.status().to_string()
-        ))?;
-    }
+    anyhow::ensure!(
+        response.status().is_success(),
+        "download failed with status {}",
+        response.status().to_string()
+    );
 
     match file_type {
         DownloadedFileType::GzipTar => {
@@ -355,8 +362,8 @@ pub trait DebugAdapter: 'static + Send + Sync {
 
     async fn get_binary(
         &self,
-        delegate: &dyn DapDelegate,
-        config: DebugTaskDefinition,
+        delegate: &Arc<dyn DapDelegate>,
+        config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary>;
@@ -370,9 +377,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
         &self,
         config: &serde_json::Value,
     ) -> Result<StartDebuggingRequestArgumentsRequest> {
-        let map = config
-            .as_object()
-            .ok_or_else(|| anyhow!("Config isn't an object"))?;
+        let map = config.as_object().context("Config isn't an object")?;
 
         let request_variant = map["request"]
             .as_str()
@@ -470,8 +475,8 @@ impl DebugAdapter for FakeAdapter {
 
     async fn get_binary(
         &self,
-        _: &dyn DapDelegate,
-        config: DebugTaskDefinition,
+        _: &Arc<dyn DapDelegate>,
+        config: &DebugTaskDefinition,
         _: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {

@@ -49,10 +49,6 @@ impl DapRegistry {
     pub fn add_adapter(&self, adapter: Arc<dyn DebugAdapter>) {
         let name = adapter.name();
         let _previous_value = self.0.write().adapters.insert(name, adapter);
-        debug_assert!(
-            _previous_value.is_none(),
-            "Attempted to insert a new debug adapter when one is already registered"
-        );
     }
 
     pub fn adapter_language(&self, adapter_name: &str) -> Option<LanguageName> {
