@@ -710,14 +710,14 @@ pub(super) fn log_cursor_icon_warning(message: impl std::fmt::Display) {
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
-struct KeyboardState {
-    state: xkb::State,
-    mapper: LinuxKeyboardMapper,
+pub(crate) struct KeyboardState {
+    pub(crate) state: xkb::State,
+    pub(crate) mapper: LinuxKeyboardMapper,
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
 impl KeyboardState {
-    fn new(state: xkb::State) -> Self {
+    pub(crate) fn new(state: xkb::State) -> Self {
         let mapper = LinuxKeyboardMapper::new(&state);
         Self { state, mapper }
     }
