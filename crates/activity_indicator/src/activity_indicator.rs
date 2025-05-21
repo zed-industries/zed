@@ -485,7 +485,7 @@ impl ActivityIndicator {
                         this.dismiss_error_message(&DismissErrorMessage, window, cx)
                     })),
                 }),
-                AutoUpdateStatus::Updated { binary_path, .. } => Some(Content {
+                AutoUpdateStatus::Updated { binary_path } => Some(Content {
                     icon: None,
                     message: "Click to restart and update Zed".to_string(),
                     on_click: Some(Arc::new({
