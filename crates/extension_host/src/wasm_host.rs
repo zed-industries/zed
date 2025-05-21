@@ -533,11 +533,11 @@ impl WasmHost {
     pub fn writeable_path_from_extension(&self, id: &Arc<str>, path: &Path) -> Result<PathBuf> {
         let extension_work_dir = self.work_dir.join(id.as_ref());
         let path = normalize_path(&extension_work_dir.join(path));
-        if path.starts_with(&extension_work_dir) {
-            Ok(path)
-        } else {
-            Err(anyhow!("cannot write to path {}", path.display()))
-        }
+        anyhow::ensure!(
+            path.starts_with(&extension_work_dir),
+            "cannot write to path {path:?}",
+        );
+        Ok(path)
     }
 }
 
@@ -569,7 +569,7 @@ pub fn parse_wasm_extension_version(
     //
     // By parsing the entirety of the Wasm bytes before we return, we're able to detect this problem
     // earlier as an `Err` rather than as a panic.
-    version.ok_or_else(|| anyhow!("extension {} has no zed:api-version section", extension_id))
+    version.with_context(|| format!("extension {extension_id} has no zed:api-version section"))
 }
 
 fn parse_wasm_extension_version_custom_section(data: &[u8]) -> Option<SemanticVersion> {

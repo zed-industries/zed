@@ -1,7 +1,7 @@
 //! Module for managing breakpoints in a project.
 //!
 //! Breakpoints are separate from a session because they're not associated with any particular debug session. They can also be set up without a session running.
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result};
 pub use breakpoints_in_file::{BreakpointSessionState, BreakpointWithPosition};
 use breakpoints_in_file::{BreakpointsInFile, StatefulBreakpoint};
 use collections::{BTreeMap, HashMap};
@@ -219,7 +219,7 @@ impl BreakpointStore {
             })
             .ok()
             .flatten()
-            .ok_or_else(|| anyhow!("Invalid project path"))?
+            .context("Invalid project path")?
             .await?;
 
         breakpoints.update(&mut cx, move |this, cx| {
@@ -272,25 +272,25 @@ impl BreakpointStore {
             .update(&mut cx, |this, cx| {
                 this.project_path_for_absolute_path(message.payload.path.as_ref(), cx)
             })?
-            .ok_or_else(|| anyhow!("Could not resolve provided abs path"))?;
+            .context("Could not resolve provided abs path")?;
         let buffer = this
             .update(&mut cx, |this, cx| {
                 this.buffer_store().read(cx).get_by_path(&path, cx)
             })?
-            .ok_or_else(|| anyhow!("Could not find buffer for a given path"))?;
+            .context("Could not find buffer for a given path")?;
         let breakpoint = message
             .payload
             .breakpoint
-            .ok_or_else(|| anyhow!("Breakpoint not present in RPC payload"))?;
+            .context("Breakpoint not present in RPC payload")?;
         let position = language::proto::deserialize_anchor(
             breakpoint
                 .position
                 .clone()
-                .ok_or_else(|| anyhow!("Anchor not present in RPC payload"))?,
+                .context("Anchor not present in RPC payload")?,
         )
-        .ok_or_else(|| anyhow!("Anchor deserialization failed"))?;
-        let breakpoint = Breakpoint::from_proto(breakpoint)
-            .ok_or_else(|| anyhow!("Could not deserialize breakpoint"))?;
+        .context("Anchor deserialization failed")?;
+        let breakpoint =
+            Breakpoint::from_proto(breakpoint).context("Could not deserialize breakpoint")?;
 
         breakpoints.update(&mut cx, |this, cx| {
             this.toggle_breakpoint(

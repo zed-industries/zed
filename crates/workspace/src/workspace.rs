@@ -1296,7 +1296,7 @@ impl Workspace {
     ) -> Task<
         anyhow::Result<(
             WindowHandle<Workspace>,
-            Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
+            Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>,
         )>,
     > {
         let project_handle = Project::local(
@@ -2187,7 +2187,7 @@ impl Workspace {
                 }
 
                 *keystrokes.borrow_mut() = Default::default();
-                Err(anyhow!("over 100 keystrokes passed to send_keystrokes"))
+                anyhow::bail!("over 100 keystrokes passed to send_keystrokes");
             })
             .detach_and_log_err(cx);
     }
@@ -2324,7 +2324,7 @@ impl Workspace {
         pane: Option<WeakEntity<Pane>>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>> {
+    ) -> Task<Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>> {
         log::info!("open paths {abs_paths:?}");
 
         let fs = self.app_state.fs.clone();
@@ -3076,7 +3076,7 @@ impl Workspace {
         focus_item: bool,
         window: &mut Window,
         cx: &mut App,
-    ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
+    ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         self.open_path_preview(path, pane, focus_item, false, true, window, cx)
     }
 
@@ -3089,7 +3089,7 @@ impl Workspace {
         activate: bool,
         window: &mut Window,
         cx: &mut App,
-    ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
+    ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         let pane = pane.unwrap_or_else(|| {
             self.last_active_center_pane.clone().unwrap_or_else(|| {
                 self.panes
@@ -3127,7 +3127,7 @@ impl Workspace {
         path: impl Into<ProjectPath>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
+    ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         self.split_path_preview(path, false, None, window, cx)
     }
 
@@ -3138,7 +3138,7 @@ impl Workspace {
         split_direction: Option<SplitDirection>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
+    ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         let pane = self.last_active_center_pane.clone().unwrap_or_else(|| {
             self.panes
                 .first()
@@ -3178,7 +3178,7 @@ impl Workspace {
                     ))
                 })
             })
-            .map(|option| option.ok_or_else(|| anyhow!("pane was dropped")))?
+            .map(|option| option.context("pane was dropped"))?
         })
     }
 
@@ -3938,12 +3938,12 @@ impl Workspace {
                         let state = this
                             .follower_states
                             .get_mut(&leader_id)
-                            .ok_or_else(|| anyhow!("following interrupted"))?;
+                            .context("following interrupted")?;
                         state.active_view_id = response
                             .active_view
                             .as_ref()
                             .and_then(|view| ViewId::from_proto(view.id.clone()?).ok());
-                        Ok::<_, anyhow::Error>(())
+                        anyhow::Ok(())
                     })??;
                     if let Some(view) = response.active_view {
                         Self::add_view_from_leader(this.clone(), leader_peer_id, &view, cx).await?;
@@ -4286,7 +4286,7 @@ impl Workspace {
         update: proto::UpdateFollowers,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
-        match update.variant.ok_or_else(|| anyhow!("invalid update"))? {
+        match update.variant.context("invalid update")? {
             proto::update_followers::Variant::CreateView(view) => {
                 let view_id = ViewId::from_proto(view.id.clone().context("invalid view id")?)?;
                 let should_add_view = this.update(cx, |this, _| {
@@ -4328,12 +4328,8 @@ impl Workspace {
                 }
             }
             proto::update_followers::Variant::UpdateView(update_view) => {
-                let variant = update_view
-                    .variant
-                    .ok_or_else(|| anyhow!("missing update view variant"))?;
-                let id = update_view
-                    .id
-                    .ok_or_else(|| anyhow!("missing update view id"))?;
+                let variant = update_view.variant.context("missing update view variant")?;
+                let id = update_view.id.context("missing update view id")?;
                 let mut tasks = Vec::new();
                 this.update_in(cx, |this, window, cx| {
                     let project = this.project.clone();
@@ -4368,7 +4364,7 @@ impl Workspace {
         let this = this.upgrade().context("workspace dropped")?;
 
         let Some(id) = view.id.clone() else {
-            return Err(anyhow!("no id for view"));
+            anyhow::bail!("no id for view");
         };
         let id = ViewId::from_proto(id)?;
         let panel_id = view.panel_id.and_then(proto::PanelId::from_i32);
@@ -4395,18 +4391,16 @@ impl Workspace {
             existing_item
         } else {
             let variant = view.variant.clone();
-            if variant.is_none() {
-                Err(anyhow!("missing view variant"))?;
-            }
+            anyhow::ensure!(variant.is_some(), "missing view variant");
 
             let task = cx.update(|window, cx| {
                 FollowableViewRegistry::from_state_proto(this.clone(), id, variant, window, cx)
             })?;
 
             let Some(task) = task else {
-                return Err(anyhow!(
+                anyhow::bail!(
                     "failed to construct view from leader (maybe from a different version of zed?)"
-                ));
+                );
             };
 
             let mut new_item = task.await?;
@@ -5099,7 +5093,7 @@ impl Workspace {
     ) -> Result<()> {
         self.serializable_items_tx
             .unbounded_send(item)
-            .map_err(|err| anyhow!("failed to send serializable item over channel: {}", err))
+            .map_err(|err| anyhow!("failed to send serializable item over channel: {err}"))
     }
 
     pub(crate) fn load_workspace(
@@ -6298,7 +6292,7 @@ impl ViewId {
             creator: message
                 .creator
                 .map(CollaboratorId::PeerId)
-                .ok_or_else(|| anyhow!("creator is missing"))?,
+                .context("creator is missing")?,
             id: message.id,
         })
     }
@@ -6440,7 +6434,7 @@ async fn join_channel_internal(
     // this loop will terminate within client::CONNECTION_TIMEOUT seconds.
     'outer: loop {
         let Some(status) = client_status.recv().await else {
-            return Err(anyhow!("error connecting"));
+            anyhow::bail!("error connecting");
         };
 
         match status {
@@ -6662,7 +6656,7 @@ pub fn open_paths(
 ) -> Task<
     anyhow::Result<(
         WindowHandle<Workspace>,
-        Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
+        Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>,
     )>,
 > {
     let abs_paths = abs_paths.to_vec();
@@ -6824,7 +6818,7 @@ pub fn create_and_open_local_file(
             .await;
 
         let item = items.pop().flatten();
-        item.ok_or_else(|| anyhow!("path {path:?} is not a file"))?
+        item.with_context(|| format!("path {path:?} is not a file"))?
     })
 }
 
@@ -6945,9 +6939,7 @@ async fn open_ssh_project_inner(
     }
 
     if project_paths_to_open.is_empty() {
-        return Err(project_path_errors
-            .pop()
-            .unwrap_or_else(|| anyhow!("no paths given")));
+        return Err(project_path_errors.pop().context("no paths given")?);
     }
 
     cx.update_window(window.into(), |_, window, cx| {
@@ -7053,7 +7045,7 @@ pub fn join_in_room_project(
             let active_call = cx.update(|cx| ActiveCall::global(cx))?;
             let room = active_call
                 .read_with(cx, |call, _| call.room().cloned())?
-                .ok_or_else(|| anyhow!("not in a call"))?;
+                .context("not in a call")?;
             let project = room
                 .update(cx, |room, cx| {
                     room.join_project(
@@ -9351,7 +9343,7 @@ mod tests {
                 _project: &Entity<Project>,
                 path: &ProjectPath,
                 cx: &mut App,
-            ) -> Option<Task<gpui::Result<Entity<Self>>>> {
+            ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
                 if path.path.extension().unwrap() == "png" {
                     Some(cx.spawn(async move |cx| cx.new(|_| TestPngItem {})))
                 } else {
@@ -9426,7 +9418,7 @@ mod tests {
                 _project: &Entity<Project>,
                 path: &ProjectPath,
                 cx: &mut App,
-            ) -> Option<Task<gpui::Result<Entity<Self>>>> {
+            ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
                 if path.path.extension().unwrap() == "ipynb" {
                     Some(cx.spawn(async move |cx| cx.new(|_| TestIpynbItem {})))
                 } else {

@@ -3,6 +3,7 @@ use std::{
     hash::{Hash, Hasher},
 };
 
+use anyhow::Context as _;
 use uuid::Uuid;
 use wayland_backend::client::ObjectId;
 
@@ -28,11 +29,11 @@ impl PlatformDisplay for WaylandDisplay {
     }
 
     fn uuid(&self) -> anyhow::Result<Uuid> {
-        if let Some(name) = &self.name {
-            Ok(Uuid::new_v5(&Uuid::NAMESPACE_DNS, name.as_bytes()))
-        } else {
-            Err(anyhow::anyhow!("Wayland display does not have a name"))
-        }
+        let name = self
+            .name
+            .as_ref()
+            .context("Wayland display does not have a name")?;
+        Ok(Uuid::new_v5(&Uuid::NAMESPACE_DNS, name.as_bytes()))
     }
 
     fn bounds(&self) -> Bounds<Pixels> {

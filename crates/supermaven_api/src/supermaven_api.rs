@@ -91,7 +91,7 @@ impl SupermavenAdminApi {
             if error.message == "User not found" {
                 return Ok(None);
             } else {
-                return Err(anyhow!("Supermaven API error: {}", error.message));
+                anyhow::bail!("Supermaven API error: {}", error.message);
             }
         } else if response.status().is_server_error() {
             let error: SupermavenApiError = serde_json::from_slice(&body)?;
@@ -155,7 +155,7 @@ impl SupermavenAdminApi {
             if error.message == "User not found" {
                 return Ok(());
             } else {
-                return Err(anyhow!("Supermaven API error: {}", error.message));
+                anyhow::bail!("Supermaven API error: {}", error.message);
             }
         } else if response.status().is_server_error() {
             let error: SupermavenApiError = serde_json::from_slice(&body)?;
@@ -204,7 +204,7 @@ pub async fn latest_release(
     if response.status().is_client_error() || response.status().is_server_error() {
         let body_str = std::str::from_utf8(&body)?;
         let error: SupermavenApiError = serde_json::from_str(body_str)?;
-        return Err(anyhow!("Supermaven API error: {}", error.message));
+        anyhow::bail!("Supermaven API error: {}", error.message);
     }
 
     serde_json::from_slice::<SupermavenDownloadResponse>(&body)
@@ -239,13 +239,13 @@ pub async fn get_supermaven_agent_path(client: Arc<dyn HttpClient>) -> Result<Pa
         "macos" => "darwin",
         "windows" => "windows",
         "linux" => "linux",
-        _ => return Err(anyhow!("unsupported platform")),
+        unsupported => anyhow::bail!("unsupported platform {unsupported}"),
     };
 
     let arch = match std::env::consts::ARCH {
         "x86_64" => "amd64",
         "aarch64" => "arm64",
-        _ => return Err(anyhow!("unsupported architecture")),
+        unsupported => anyhow::bail!("unsupported architecture {unsupported}"),
     };
 
     let download_info = latest_release(client.clone(), platform, arch).await?;
