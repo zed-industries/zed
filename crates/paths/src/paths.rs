@@ -426,14 +426,6 @@ pub fn global_ssh_config_file() -> &'static Path {
     Path::new("/etc/ssh/ssh_config")
 }
 
-pub fn user_ssh_config_file() -> PathBuf {
-    home_dir().join(".ssh/config")
-}
-
-pub fn global_ssh_config_file() -> &'static Path {
-    Path::new("/etc/ssh/ssh_config")
-}
-
 /// Returns the path to the vscode user settings file.
 /// Note: This returns the `Default` profile settings file.
 pub fn vscode_settings_file() -> &'static PathBuf {
