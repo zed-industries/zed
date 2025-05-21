@@ -17,7 +17,7 @@ static KEYMAP_LINUX: LazyLock<KeymapFile> = LazyLock::new(|| {
     load_keymap("keymaps/default-linux.json").expect("Failed to load Linux keymap")
 });
 
-static ALL_ACTIONS: LazyLock<Vec<ActionDef>> = LazyLock::new(|| dump_all_gpui_actions());
+static ALL_ACTIONS: LazyLock<Vec<ActionDef>> = LazyLock::new(dump_all_gpui_actions);
 
 pub fn make_app() -> Command {
     Command::new("zed-docs-preprocessor")
@@ -85,7 +85,7 @@ fn template_and_validate_keybindings(book: &mut Book) -> bool {
         chapter.content = regex
             .replace_all(&chapter.content, |caps: &regex::Captures| {
                 let action = caps[1].trim();
-                if !find_action_by_name(action).is_some() {
+                if find_action_by_name(action).is_none() {
                     eprintln!("Action not found: {}", action);
                     ok = false;
                     return String::new();
