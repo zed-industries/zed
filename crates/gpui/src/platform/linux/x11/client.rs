@@ -982,7 +982,7 @@ impl X11Client {
                 state.xkb = xkb_state;
                 drop(state);
                 self.handle_keyboard_layout_change();
-                state.keyboard_mapper = LinuxKeyboardMapper::new();
+                state.keyboard_mapper = LinuxKeyboardMapper::new(None);
                 let layout_idx = state.xkb.serialize_layout(STATE_LAYOUT_EFFECTIVE);
                 let layout = LinuxKeyboardLayout::new(
                     state

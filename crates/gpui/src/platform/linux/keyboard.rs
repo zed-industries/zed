@@ -49,7 +49,7 @@ pub(crate) struct LinuxKeyboardMapper {
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
 impl LinuxKeyboardMapper {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(group: Option<u32>) -> Self {
         let _ = XCB_CONNECTION
             .xkb_use_extension(XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION)
             .unwrap()
@@ -57,7 +57,7 @@ impl LinuxKeyboardMapper {
             .unwrap();
         let xkb_context = xkbcommon::xkb::Context::new(xkbcommon::xkb::CONTEXT_NO_FLAGS);
         let xkb_device_id = xkbcommon::xkb::x11::get_core_keyboard_device_id(&*XCB_CONNECTION);
-        let xkb_state = {
+        let mut xkb_state = {
             let xkb_keymap = xkbcommon::xkb::x11::keymap_new_from_device(
                 &xkb_context,
                 &*XCB_CONNECTION,
@@ -77,6 +77,11 @@ impl LinuxKeyboardMapper {
         let shift_mod = keymap.mod_get_index(xkbcommon::xkb::MOD_NAME_SHIFT);
         let shift_mask = 1 << shift_mod;
         shifted_state.update_mask(shift_mask, 0, 0, 0, 0, 0);
+
+        if let Some(group) = group {
+            xkb_state.update_mask(0, 0, 0, 0, 0, group);
+            shifted_state.update_mask(0, 0, 0, 0, 0, group);
+        }
 
         for scan_code in LinuxScanCodes::iter() {
             let keycode = Keycode::new(scan_code as u32);
@@ -445,7 +450,7 @@ mod tests {
 
     #[test]
     fn test_us_layout_mapper() {
-        let mapper = LinuxKeyboardMapper::new();
+        let mapper = LinuxKeyboardMapper::new(None);
         for scan_code in super::LinuxScanCodes::iter() {
             if scan_code == LinuxScanCodes::IntlBackslash || scan_code == LinuxScanCodes::IntlRo {
                 continue;
