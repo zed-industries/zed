@@ -16,6 +16,12 @@ pub enum BedrockModelMode {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
     // Anthropic models (already included)
+    #[serde(rename = "claude-4-sonnet", alias = "claude-4-sonnet-latest")]
+    Claude4Sonnet,
+    Claude4SonnetThinking,
+    #[serde(rename = "claude-4-opus", alias = "claude-4-opus-latest")]
+    Claude4Opus,
+    Claude4OpusThinking,
     #[default]
     #[serde(rename = "claude-3-5-sonnet-v2", alias = "claude-3-5-sonnet-latest")]
     Claude3_5SonnetV2,
@@ -113,6 +119,12 @@ impl Model {
 
     pub fn id(&self) -> &str {
         match self {
+            Model::Claude4Sonnet | Model::Claude4SonnetThinking => {
+                "anthropic.claude-sonnet-4-20250514-v1:0"
+            }
+            Model::Claude4Opus | Model::Claude4OpusThinking => {
+                "anthropic.claude-opus-4-20250514-v1:0"
+            }
             Model::Claude3_5SonnetV2 => "anthropic.claude-3-5-sonnet-20241022-v2:0",
             Model::Claude3_5Sonnet => "anthropic.claude-3-5-sonnet-20240620-v1:0",
             Model::Claude3Opus => "anthropic.claude-3-opus-20240229-v1:0",
@@ -164,6 +176,10 @@ impl Model {
 
     pub fn display_name(&self) -> &str {
         match self {
+            Self::Claude4Sonnet => "Claude 4 Sonnet",
+            Self::Claude4SonnetThinking => "Claude 4 Sonnet Thinking",
+            Self::Claude4Opus => "Claude 4 Opus",
+            Self::Claude4OpusThinking => "Claude 4 Opus Thinking",
             Self::Claude3_5SonnetV2 => "Claude 3.5 Sonnet v2",
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
             Self::Claude3Opus => "Claude 3 Opus",
@@ -220,7 +236,9 @@ impl Model {
             | Self::Claude3Opus
             | Self::Claude3Sonnet
             | Self::Claude3_5Haiku
-            | Self::Claude3_7Sonnet => 200_000,
+            | Self::Claude3_7Sonnet
+            | Self::Claude4Sonnet
+            | Self::Claude4Opus => 200_000,
             Self::AmazonNovaPremier => 1_000_000,
             Self::PalmyraWriterX5 => 1_000_000,
             Self::PalmyraWriterX4 => 128_000,
@@ -232,7 +250,12 @@ impl Model {
     pub fn max_output_tokens(&self) -> u32 {
         match self {
             Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3_5Haiku => 4_096,
-            Self::Claude3_7Sonnet | Self::Claude3_7SonnetThinking => 128_000,
+            Self::Claude3_7Sonnet
+            | Self::Claude3_7SonnetThinking
+            | Self::Claude4Sonnet
+            | Self::Claude4SonnetThinking
+            | Self::Claude4Opus
+            | Model::Claude4OpusThinking => 128_000,
             Self::Claude3_5SonnetV2 | Self::PalmyraWriterX4 | Self::PalmyraWriterX5 => 8_192,
             Self::Custom {
                 max_output_tokens, ..
@@ -247,7 +270,11 @@ impl Model {
             | Self::Claude3Opus
             | Self::Claude3Sonnet
             | Self::Claude3_5Haiku
-            | Self::Claude3_7Sonnet => 1.0,
+            | Self::Claude3_7Sonnet
+            | Self::Claude4Opus
+            | Self::Claude4OpusThinking
+            | Self::Claude4Sonnet
+            | Self::Claude4SonnetThinking => 1.0,
             Self::Custom {
                 default_temperature,
                 ..
@@ -265,6 +292,10 @@ impl Model {
             | Self::Claude3_5SonnetV2
             | Self::Claude3_7Sonnet
             | Self::Claude3_7SonnetThinking
+            | Self::Claude4Opus
+            | Self::Claude4OpusThinking
+            | Self::Claude4Sonnet
+            | Self::Claude4SonnetThinking
             | Self::Claude3_5Haiku => true,
 
             // Amazon Nova models (all support tool use)
@@ -288,6 +319,12 @@ impl Model {
     pub fn mode(&self) -> BedrockModelMode {
         match self {
             Model::Claude3_7SonnetThinking => BedrockModelMode::Thinking {
+                budget_tokens: Some(4096),
+            },
+            Model::Claude4SonnetThinking => BedrockModelMode::Thinking {
+                budget_tokens: Some(4096),
+            },
+            Model::Claude4OpusThinking => BedrockModelMode::Thinking {
                 budget_tokens: Some(4096),
             },
             _ => BedrockModelMode::Default,
@@ -326,6 +363,10 @@ impl Model {
             (Model::Claude3Opus, "us")
             | (Model::Claude3_5Haiku, "us")
             | (Model::Claude3_7Sonnet, "us")
+            | (Model::Claude4Sonnet, "us")
+            | (Model::Claude4Opus, "us")
+            | (Model::Claude4SonnetThinking, "us")
+            | (Model::Claude4OpusThinking, "us")
             | (Model::Claude3_7SonnetThinking, "us")
             | (Model::AmazonNovaPremier, "us")
             | (Model::MistralPixtralLarge2502V1, "us") => {
