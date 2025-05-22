@@ -280,7 +280,7 @@ impl NewSessionModal {
         })
     }
 
-    fn task_contexts<'a>(&self, cx: &App) -> Option<Arc<TaskContexts>> {
+    fn task_contexts(&self, cx: &App) -> Option<Arc<TaskContexts>> {
         self.launch_picker.read(cx).delegate.task_contexts.clone()
     }
 
