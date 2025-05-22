@@ -166,6 +166,11 @@ struct VimSave {
     pub filename: String,
 }
 
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+struct VimEdit {
+    pub filename: String,
+}
+
 actions!(vim, [VisualCommand, CountCommand, ShellCommand]);
 impl_internal_actions!(
     vim,
@@ -178,6 +183,7 @@ impl_internal_actions!(
         ShellExec,
         VimSet,
         VimSave,
+        VimEdit,
     ]
 );
 
@@ -277,6 +283,30 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                     .save_as(project, project_path, window, cx)
                     .detach_and_prompt_err("Failed to :w", window, cx, |_, _, _| None);
             }
+        });
+    });
+
+    Vim::action(editor, cx, |vim, action: &VimEdit, window, cx| {
+        vim.update_editor(window, cx, |vim, editor, window, cx| {
+            let Some(workspace) = vim.workspace(window) else {
+                return;
+            };
+            let Some(project) = editor.project.clone() else {
+                return;
+            };
+            let Some(worktree) = project.read(cx).visible_worktrees(cx).next() else {
+                return;
+            };
+            let project_path = ProjectPath {
+                worktree_id: worktree.read(cx).id(),
+                path: Arc::from(Path::new(&action.filename)),
+            };
+
+            let _ = workspace.update(cx, |workspace, cx| {
+                workspace
+                    .open_path(project_path, None, true, window, cx)
+                    .detach_and_log_err(cx);
+            });
         });
     });
 
@@ -971,7 +1001,8 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("%", ""), EndOfDocument),
         VimCommand::new(("0", ""), StartOfDocument),
         VimCommand::new(("e", "dit"), editor::actions::ReloadFile)
-            .bang(editor::actions::ReloadFile),
+            .bang(editor::actions::ReloadFile)
+            .args(|_, args| Some(VimEdit { filename: args }.boxed_clone())),
         VimCommand::new(("ex", ""), editor::actions::ReloadFile).bang(editor::actions::ReloadFile),
         VimCommand::new(("cpp", "link"), editor::actions::CopyPermalinkToLine).range(act_on_range),
         VimCommand::str(("opt", "ions"), "zed::OpenDefaultSettings"),
