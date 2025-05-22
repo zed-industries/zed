@@ -1172,15 +1172,12 @@ impl PickerDelegate for DebugScenarioDelegate {
 }
 
 fn resolve_path(path: &str) -> String {
-    use std::path::MAIN_SEPARATOR;
-    let home = paths::home_dir().to_string_lossy().to_string();
-    let path = path.trim().to_owned();
     if path.starts_with('~') {
+        let home = paths::home_dir().to_string_lossy().to_string();
+        let path = path.trim().to_owned();
         path.replace('~', &home)
-    } else if !path.starts_with(MAIN_SEPARATOR) {
-        format!("$ZED_WORKTREE_ROOT{}{}", MAIN_SEPARATOR, &path)
     } else {
-        path
+        path.to_owned()
     }
 }
 
@@ -1192,16 +1189,15 @@ mod tests {
 
     #[test]
     fn test_normalize_paths() {
-        let worktree_root = "$ZED_WORKTREE_ROOT";
         let sep = std::path::MAIN_SEPARATOR;
         let home = home_dir().to_string_lossy().to_string();
-        assert_eq!(resolve_path("bin"), format!("{worktree_root}{sep}bin"));
-        assert_eq!(resolve_path(""), format!("{worktree_root}{sep}"));
+        assert_eq!(resolve_path("bin"), format!("bin"));
+        assert_eq!(resolve_path(&format!("{sep}foo")), format!("{sep}foo"));
+        assert_eq!(resolve_path(""), format!(""));
         assert_eq!(
             resolve_path(&format!("~{sep}blah")),
             format!("{home}{sep}blah")
         );
         assert_eq!(resolve_path("~"), home);
-        assert_eq!(resolve_path(&format!("{sep}foo")), format!("{sep}foo"));
     }
 }
