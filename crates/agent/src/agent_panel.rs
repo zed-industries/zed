@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
-use markdown::Markdown;
 use serde::{Deserialize, Serialize};
 
 use anyhow::{Result, anyhow};
@@ -371,7 +370,6 @@ pub struct AgentPanel {
     zoomed: bool,
     pending_serialization: Option<Task<Result<()>>>,
     hide_trial_upsell: bool,
-    _trial_markdown: Entity<Markdown>,
 }
 
 impl AgentPanel {
@@ -676,15 +674,6 @@ impl AgentPanel {
             },
         );
 
-        let trial_markdown = cx.new(|cx| {
-            Markdown::new(
-                include_str!("trial_markdown.md").into(),
-                Some(language_registry.clone()),
-                None,
-                cx,
-            )
-        });
-
         Self {
             active_view,
             workspace,
@@ -722,7 +711,6 @@ impl AgentPanel {
             zoomed: false,
             pending_serialization: None,
             hide_trial_upsell: false,
-            _trial_markdown: trial_markdown,
         }
     }
 
