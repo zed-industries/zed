@@ -1224,7 +1224,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 };
                 let keymap_state = xkb::State::new(&keymap);
                 let keyboard_layout = LinuxKeyboardLayout::new(&keymap_state);
-                state.keymap_state = Some(xkb::State::new(&keymap));
+                state.keymap_state = Some(keymap_state);
                 state.compose_state = get_xkb_compose_state(&xkb_context);
                 update_keyboard_mapper(&mut state, keyboard_layout, 0);
                 drop(state);
@@ -1270,7 +1270,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 let old_layout =
                     keymap_state.serialize_layout(xkbcommon::xkb::STATE_LAYOUT_EFFECTIVE);
                 keymap_state.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
-                state.modifiers = Modifiers::from_xkb(&keymap_state);
+                state.modifiers = Modifiers::from_xkb(keymap_state);
                 state.capslock = Capslock::from_xkb(&keymap_state);
                 let keymap_state = state.keymap_state.as_mut().unwrap();
 
@@ -2185,16 +2185,13 @@ fn update_keyboard_mapper(
     keyboard_layout: LinuxKeyboardLayout,
     group: u32,
 ) {
-    client.keyboard_mapper =
-        if let Some(mapper) = client.keyboard_mapper_cache.get(keyboard_layout.id()) {
-            Some(mapper.clone())
-        } else {
-            let mapper = Rc::new(LinuxKeyboardMapper::new(0, 0, group));
-            client.keyboard_mapper = Some(mapper.clone());
-            client
-                .keyboard_mapper_cache
-                .insert(keyboard_layout.id().to_string(), mapper.clone());
-            Some(mapper)
-        };
+    let id = keyboard_layout.id().to_string();
+    let mapper = client
+        .keyboard_mapper_cache
+        .entry(id)
+        .or_insert(Rc::new(LinuxKeyboardMapper::new(0, 0, group)))
+        .clone();
+
+    client.keyboard_mapper = Some(mapper);
     client.keyboard_layout = Box::new(keyboard_layout);
 }

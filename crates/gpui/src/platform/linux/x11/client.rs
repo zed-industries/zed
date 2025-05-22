@@ -1072,8 +1072,7 @@ impl X11Client {
                         match compose_state.status() {
                             xkbc::Status::Composed => {
                                 state.pre_edit_text.take();
-                                let key_char = compose_state.utf8();
-                                keystroke.key_char = key_char;
+                                keystroke.key_char = compose_state.utf8();
                                 if let Some(keysym) = compose_state.keysym() {
                                     keystroke.key = xkbc::keysym_get_name(keysym);
                                 }
@@ -2311,19 +2310,17 @@ fn update_keyboard_mapper(
     latched_group: u32,
     locked_group: u32,
 ) {
-    client.keyboard_mapper =
-        if let Some(mapper) = client.keyboard_mapper_cache.get(keyboard_layout.id()) {
-            Rc::clone(mapper)
-        } else {
-            let mapper = Rc::new(LinuxKeyboardMapper::new(
-                base_group,
-                latched_group,
-                locked_group,
-            ));
-            client
-                .keyboard_mapper_cache
-                .insert(keyboard_layout.id().to_string(), Rc::clone(&mapper));
-            mapper
-        };
+    let id = keyboard_layout.id().to_string();
+    let mapper = client
+        .keyboard_mapper_cache
+        .entry(id)
+        .or_insert(Rc::new(LinuxKeyboardMapper::new(
+            base_group,
+            latched_group,
+            locked_group,
+        )))
+        .clone();
+
+    client.keyboard_mapper = mapper;
     client.keyboard_layout = Box::new(keyboard_layout);
 }
