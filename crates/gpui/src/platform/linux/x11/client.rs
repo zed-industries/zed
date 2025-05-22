@@ -426,7 +426,7 @@ impl X11Client {
             .layout_get_name(layout_idx)
             .to_string();
         let keyboard_layout = LinuxKeyboardLayout::new(layout_name.into());
-        let keyboard_mapper = LinuxKeyboardMapper::new();
+        let keyboard_mapper = LinuxKeyboardMapper::new(None);
 
         let gpu_context = BladeContext::new().context("Unable to init GPU context")?;
 
