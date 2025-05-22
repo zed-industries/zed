@@ -3155,7 +3155,7 @@ impl TryFrom<&'_ str> for AbsoluteLength {
     }
 }
 
-// todo! Regex restrict
+// TODO: Regex restrict
 impl JsonSchema for AbsoluteLength {
     fn schema_name() -> String {
         String::schema_name()
@@ -3284,7 +3284,7 @@ impl TryFrom<&'_ str> for DefiniteLength {
     }
 }
 
-// todo! Regex restrict
+// TODO: Regex restrict
 impl JsonSchema for DefiniteLength {
     fn schema_name() -> String {
         String::schema_name()
@@ -3390,7 +3390,7 @@ impl TryFrom<&'_ str> for Length {
     }
 }
 
-// todo! Regex restrict
+// TODO: Regex restrict
 impl JsonSchema for Length {
     fn schema_name() -> String {
         String::schema_name()

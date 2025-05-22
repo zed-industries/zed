@@ -1,5 +1,5 @@
 use anyhow::{Context as _, anyhow};
-use gpui::{App, Hsla, InspectorElementId, IntoElement, Window};
+use gpui::{App, InspectorElementId, IntoElement, Window};
 use std::{cell::OnceCell, path::Path, sync::Arc};
 use ui::{Label, Tooltip, prelude::*};
 use util::{ResultExt as _, command::new_smol_command};
@@ -7,9 +7,10 @@ use workspace::AppState;
 
 use crate::div_inspector::DivInspector;
 
-// todo!
+// TODO: Show bounds / size info. On hover, highlight element
 //
-// * Show bounds / size info. On hover, highlight element
+// TODO: Related to below TODO, consider not even have special handling of rendering the inspector
+// to the side - it could just be a workspace item.
 
 // TODO: Move logic of the gpui `Inspector` entity into this crate:
 //
@@ -26,11 +27,8 @@ use crate::div_inspector::DivInspector;
 // * Can get invoked when inspected element changes instead of on render. This would allow things
 // like modes where clicks or even hovers open the source code.
 //
-// * GPUI just implement what's needed to implement an inspector, since so much of the inspector
-// logic is already outside GPUI (due to access to editor / theme / ui components / etc).
-
-// TODO: Related to above TODO, it could make sense to not even have special handling of rendering
-// the inspector to the side - it could just be a workspace item.
+// * Seems cleaner to just have GPUI provide what's needed to implement an inspector. This will
+// consolidate the UX logic here.
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     // TODO: Instead toggle a global debug mode? Not all windows support the command pallete.
@@ -85,12 +83,7 @@ fn render_inspector(
     v_flex()
         .id("gpui-inspector")
         .size_full()
-        // TODO: Choose an appropriate color from the theme.
-        .bg(cx
-            .theme()
-            .colors()
-            .panel_background
-            .blend(Hsla::black().alpha(0.05)))
+        .bg(colors.panel_background)
         .text_color(colors.text)
         .font(ui_font)
         .p_2()

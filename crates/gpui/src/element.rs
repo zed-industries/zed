@@ -64,10 +64,8 @@ pub trait Element: 'static + IntoElement {
     /// frames. This id must be unique among children of the first containing element with an id.
     fn id(&self) -> Option<ElementId>;
 
-    /// Source location where this element was constructed. If this returns `None` then it will not
-    /// be accessible in the inspector.
-    ///
-    /// todo! Document transparent elements
+    /// Source location where this element was constructed, used to disambiguate elements in the
+    /// inspector and navigate to their source code.
     fn source_location(&self) -> Option<&'static panic::Location<'static>>;
 
     /// Before an element can be painted, we need to know where it's going to be and how big it is.

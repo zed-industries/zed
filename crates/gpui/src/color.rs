@@ -96,7 +96,7 @@ impl Visitor<'_> for RgbaVisitor {
     }
 }
 
-// todo! Regex restrict
+// TODO: Regex restrict
 impl JsonSchema for Rgba {
     fn schema_name() -> String {
         String::schema_name()

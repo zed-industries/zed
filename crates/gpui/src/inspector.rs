@@ -1,13 +1,13 @@
 /// A unique identifier for an element that can be debugged.
 #[derive(Debug, Eq, PartialEq, Hash)]
 pub struct InspectorElementId {
-    /// todo!
+    /// The path to the nearest ancestor element that has an ID.
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub global_id: crate::GlobalElementId,
     /// Source location where this element was constructed.
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub source_location: &'static std::panic::Location<'static>,
-    /// todo!
+    /// Disambiguates elements that have the same `(global_id, source_location)`.
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub instance_id: usize,
 }

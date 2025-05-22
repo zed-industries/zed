@@ -23,7 +23,6 @@ pub(crate) struct DivInspector {
     last_error: Option<SharedString>,
 }
 
-// todo! Remove unwraps
 impl DivInspector {
     pub fn new(
         project: Entity<Project>,

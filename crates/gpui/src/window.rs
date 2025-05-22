@@ -423,8 +423,8 @@ impl HitboxId {
         window.mouse_hit_test.0.contains(self)
     }
 
-    /// todo!("what can we name this?")
-    pub fn is_top_hit(&self, window: &Window) -> bool {
+    /// Checks if the hitbox with this id is currently the topmost hovered element.
+    pub fn is_topmost_hit(&self, window: &Window) -> bool {
         window.mouse_hit_test.0.first() == Some(self)
     }
 }
@@ -450,9 +450,9 @@ impl Hitbox {
         self.id.is_hovered(window)
     }
 
-    /// todo!("what can we name this?")
-    pub fn is_top_hit(&self, window: &Window) -> bool {
-        self.id.is_top_hit(window)
+    /// Checks if the hitbox with this id is currently the topmost hovered element.
+    pub fn is_topmost_hit(&self, window: &Window) -> bool {
+        self.id.is_topmost_hit(window)
     }
 }
 
@@ -1527,7 +1527,7 @@ impl Window {
         }
     }
 
-    /// todo!
+    /// Puts the inspector in picking mode, where elements can be clicked to select them.
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub fn start_inspector_picking(&mut self, cx: &mut App) {
         match &self.mode {

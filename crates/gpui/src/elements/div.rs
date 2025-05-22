@@ -1210,9 +1210,9 @@ pub struct DivFrameState {
     child_layout_ids: SmallVec<[LayoutId; 2]>,
 }
 
-/// todo!("document")
+/// Interactivity state displayed an manipulated in the inspector.
 pub struct DivInspectorState {
-    /// todo!("document")
+    /// The inspected element's base style.
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub base_style: Box<StyleRefinement>,
 }
@@ -1765,7 +1765,7 @@ impl Interactivity {
             return;
         }
 
-        if hitbox.is_top_hit(window) {
+        if hitbox.is_topmost_hit(window) {
             window.paint_quad(crate::fill(hitbox.bounds, crate::rgba(0x61afef4d)));
         }
 
@@ -1775,7 +1775,7 @@ impl Interactivity {
             let hitbox = hitbox.clone();
             let inspector_id = inspector_id.clone();
             move |_: &MouseDownEvent, phase, window, cx| {
-                if phase == DispatchPhase::Capture && hitbox.is_top_hit(window) {
+                if phase == DispatchPhase::Capture && hitbox.is_topmost_hit(window) {
                     window.prevent_default();
                     cx.stop_propagation();
                     window.inspector_select_element(Some((*inspector_id).clone()), cx);
@@ -1786,7 +1786,7 @@ impl Interactivity {
         window.on_mouse_event({
             let hitbox = hitbox.clone();
             move |_: &MouseMoveEvent, phase, window, cx| {
-                if phase == DispatchPhase::Capture && hitbox.is_top_hit(window) {
+                if phase == DispatchPhase::Capture && hitbox.is_topmost_hit(window) {
                     window.prevent_default();
                     cx.stop_propagation();
                     window.inspector_hover_element(Some((*inspector_id).clone()), cx);
