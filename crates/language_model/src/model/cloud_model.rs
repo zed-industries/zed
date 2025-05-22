@@ -13,7 +13,7 @@ use smol::lock::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
 use strum::EnumIter;
 use thiserror::Error;
 
-use crate::{LanguageModelAvailability, LanguageModelToolSchemaFormat};
+use crate::LanguageModelToolSchemaFormat;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "provider", rename_all = "lowercase")]
@@ -57,61 +57,6 @@ impl CloudModel {
             Self::Anthropic(model) => model.max_token_count(),
             Self::OpenAi(model) => model.max_token_count(),
             Self::Google(model) => model.max_token_count(),
-        }
-    }
-
-    /// Returns the availability of this model.
-    pub fn availability(&self) -> LanguageModelAvailability {
-        match self {
-            Self::Anthropic(model) => match model {
-                anthropic::Model::Claude3_5Sonnet
-                | anthropic::Model::Claude3_7Sonnet
-                | anthropic::Model::Claude3_7SonnetThinking
-                | anthropic::Model::ClaudeOpus4
-                | anthropic::Model::ClaudeSonnet4 => {
-                    LanguageModelAvailability::RequiresPlan(Plan::Free)
-                }
-                anthropic::Model::Claude3Opus
-                | anthropic::Model::Claude3Sonnet
-                | anthropic::Model::Claude3Haiku
-                | anthropic::Model::Claude3_5Haiku
-                | anthropic::Model::Custom { .. } => {
-                    LanguageModelAvailability::RequiresPlan(Plan::ZedPro)
-                }
-            },
-            Self::OpenAi(model) => match model {
-                open_ai::Model::ThreePointFiveTurbo
-                | open_ai::Model::Four
-                | open_ai::Model::FourTurbo
-                | open_ai::Model::FourOmni
-                | open_ai::Model::FourOmniMini
-                | open_ai::Model::FourPointOne
-                | open_ai::Model::FourPointOneMini
-                | open_ai::Model::FourPointOneNano
-                | open_ai::Model::O1Mini
-                | open_ai::Model::O1Preview
-                | open_ai::Model::O1
-                | open_ai::Model::O3Mini
-                | open_ai::Model::O3
-                | open_ai::Model::O4Mini
-                | open_ai::Model::Custom { .. } => {
-                    LanguageModelAvailability::RequiresPlan(Plan::ZedPro)
-                }
-            },
-            Self::Google(model) => match model {
-                google_ai::Model::Gemini15Pro
-                | google_ai::Model::Gemini15Flash
-                | google_ai::Model::Gemini20Pro
-                | google_ai::Model::Gemini20Flash
-                | google_ai::Model::Gemini20FlashThinking
-                | google_ai::Model::Gemini20FlashLite
-                | google_ai::Model::Gemini25ProExp0325
-                | google_ai::Model::Gemini25ProPreview0325
-                | google_ai::Model::Gemini25FlashPreview0417
-                | google_ai::Model::Custom { .. } => {
-                    LanguageModelAvailability::RequiresPlan(Plan::ZedPro)
-                }
-            },
         }
     }
 
