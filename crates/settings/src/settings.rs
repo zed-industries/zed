@@ -22,7 +22,7 @@ pub use settings_store::{
     InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation, SettingsSources,
     SettingsStore, parse_json_with_comments,
 };
-pub use vscode_import::VsCodeSettings;
+pub use vscode_import::{VsCodeSettings, VsCodeShortcuts};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);

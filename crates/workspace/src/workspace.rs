@@ -2155,7 +2155,7 @@ impl Workspace {
         let mut keystrokes: Vec<Keystroke> = action
             .0
             .split(' ')
-            .flat_map(|k| Keystroke::parse(k).log_err())
+            .flat_map(|k| Keystroke::parse(k, cx.keyboard_mapper()).log_err())
             .collect();
         keystrokes.reverse();
 
