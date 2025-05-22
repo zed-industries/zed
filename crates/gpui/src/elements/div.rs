@@ -1567,7 +1567,7 @@ impl Interactivity {
                     window.with_content_mask(
                         style.overflow_mask(bounds, window.rem_size()),
                         |window| {
-                            let hitbox = if self.should_insert_hitbox(&style, window) {
+                            let hitbox = if self.should_insert_hitbox(&style, window, cx) {
                                 Some(window.insert_hitbox(bounds, self.occlude_mouse))
                             } else {
                                 None
@@ -1584,7 +1584,7 @@ impl Interactivity {
         )
     }
 
-    fn should_insert_hitbox(&self, style: &Style, window: &Window) -> bool {
+    fn should_insert_hitbox(&self, style: &Style, window: &Window, cx: &App) -> bool {
         self.occlude_mouse
             || style.mouse_cursor.is_some()
             || self.group.is_some()
@@ -1601,7 +1601,7 @@ impl Interactivity {
             || self.drag_listener.is_some()
             || !self.drop_listeners.is_empty()
             || self.tooltip_builder.is_some()
-            || window.is_inspecting()
+            || window.is_inspector_picking(cx)
     }
 
     fn clamp_scroll_position(
@@ -1761,21 +1761,35 @@ impl Interactivity {
         window: &mut Window,
         cx: &App,
     ) {
-        if !window.is_inspecting() {
+        if !window.is_inspector_picking(cx) {
             return;
         }
 
-        if window.inspected_element_id(cx) == Some(&inspector_id) || hitbox.is_top_hit(window) {
+        if hitbox.is_top_hit(window) {
             window.paint_quad(crate::fill(hitbox.bounds, crate::rgba(0x61afef4d)));
         }
 
+        let inspector_id = Rc::new(inspector_id);
+
         window.on_mouse_event({
             let hitbox = hitbox.clone();
+            let inspector_id = inspector_id.clone();
             move |_: &MouseDownEvent, phase, window, cx| {
                 if phase == DispatchPhase::Capture && hitbox.is_top_hit(window) {
                     window.prevent_default();
                     cx.stop_propagation();
-                    window.inspect_element(Some(inspector_id.clone()), cx);
+                    window.inspector_select_element(Some((*inspector_id).clone()), cx);
+                }
+            }
+        });
+
+        window.on_mouse_event({
+            let hitbox = hitbox.clone();
+            move |_: &MouseMoveEvent, phase, window, cx| {
+                if phase == DispatchPhase::Capture && hitbox.is_top_hit(window) {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                    window.inspector_hover_element(Some((*inspector_id).clone()), cx);
                 }
             }
         });

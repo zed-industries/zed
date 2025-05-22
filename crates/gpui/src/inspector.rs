@@ -48,22 +48,40 @@ mod conditional {
 
     pub struct Inspector {
         active_element_id: Option<InspectorElementId>,
+        is_picking: bool,
     }
 
     impl Inspector {
         pub fn new() -> Self {
             Self {
                 active_element_id: None,
+                is_picking: true,
             }
         }
 
         pub fn select(&mut self, id: Option<InspectorElementId>, cx: &mut Context<Self>) {
             self.active_element_id = id;
+            self.is_picking = false;
             cx.notify();
+        }
+
+        pub fn hover(&mut self, id: Option<InspectorElementId>, cx: &mut Context<Self>) {
+            if self.is_picking {
+                self.active_element_id = id;
+                cx.notify();
+            }
         }
 
         pub fn active_element_id(&self) -> Option<&InspectorElementId> {
             self.active_element_id.as_ref()
+        }
+
+        pub fn start_picking(&mut self) {
+            self.is_picking = true;
+        }
+
+        pub fn is_picking(&self) -> bool {
+            self.is_picking
         }
 
         fn render_inspector_states(

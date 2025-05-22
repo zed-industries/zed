@@ -1530,20 +1530,41 @@ impl Window {
         }
     }
 
+    /// todo!
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub fn start_inspector_picking(&mut self, cx: &mut App) {
+        match &self.mode {
+            WindowMode::Normal => {
+                self.mode = WindowMode::Inspector(cx.new(|_| Inspector::new()));
+            }
+            WindowMode::Inspector(inspector) => {
+                inspector.update(cx, |inspector, _cx| inspector.start_picking())
+            }
+        }
+    }
+
     /// Returns true if the window is in inspector mode.
-    pub fn is_inspecting(&self) -> bool {
-        match self.mode {
+    pub fn is_inspector_picking(&self, cx: &App) -> bool {
+        match &self.mode {
             WindowMode::Normal => false,
             #[cfg(any(feature = "inspector", debug_assertions))]
-            WindowMode::Inspector(_) => true,
+            WindowMode::Inspector(inspector) => inspector.read(cx).is_picking(),
         }
     }
 
     /// Sets the given [`InspectorElementId`] as the currently inspected element.
     #[cfg(any(feature = "inspector", debug_assertions))]
-    pub fn inspect_element(&mut self, id: Option<InspectorElementId>, cx: &mut App) {
+    pub fn inspector_select_element(&mut self, id: Option<InspectorElementId>, cx: &mut App) {
         if let WindowMode::Inspector(inspector) = &self.mode {
             inspector.update(cx, |inspector, cx| inspector.select(id, cx))
+        }
+    }
+
+    /// Sets the given [`InspectorElementId`] as the currently hovered element.
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub fn inspector_hover_element(&mut self, id: Option<InspectorElementId>, cx: &mut App) {
+        if let WindowMode::Inspector(inspector) = &self.mode {
+            inspector.update(cx, |inspector, cx| inspector.hover(id, cx))
         }
     }
 

@@ -6,14 +6,12 @@ use std::{
     rc::Rc,
     sync::OnceLock,
 };
-use ui::{Label, prelude::*};
+use ui::{Label, Tooltip, prelude::*};
 use util::{ResultExt as _, command::new_smol_command};
 
 use crate::div_inspector::DivInspector;
 
 // todo!
-//
-// * Distinct "picker" mode for the inspector
 //
 // * Show bounds / size info. On hover, highlight element
 
@@ -75,7 +73,7 @@ fn render_inspector(
     v_flex()
         .id("gpui-inspector")
         .size_full()
-        .bg(cx.theme().colors().panel_background)
+        .bg(cx.theme().colors().elevated_surface_background)
         .text_color(cx.theme().colors().text)
         .font(theme::setup_ui_font(window, cx))
         .p_2()
@@ -89,20 +87,38 @@ fn render_inspector(
                 .pb_2()
                 .border_b_1()
                 .border_color(cx.theme().colors().border_variant)
-                .items_center()
-                .justify_center()
-                .child(Label::new("GPUI Inspector").size(LabelSize::Large)),
+                .child(
+                    IconButton::new("pick-mode", IconName::MagnifyingGlass)
+                        .tooltip(Tooltip::text("Start inspector pick mode"))
+                        .selected_icon_color(Color::Selected)
+                        .on_click(|_, window, cx| {
+                            window.start_inspector_picking(cx);
+                        }),
+                )
+                .when_some(inspector_element_id, |this, inspector_element_id| {
+                    let source_location = inspector_element_id.source_location;
+                    // todo! Link displayed location insead?
+                    this.child(IconButton::new("view-source", IconName::FileCode).on_click(
+                        |_, _window, cx| {
+                            cx.background_spawn(open_zed_source_location(source_location))
+                                .detach_and_log_err(cx);
+                        },
+                    ))
+                })
+                .child(
+                    h_flex()
+                        .w_full()
+                        .justify_end()
+                        .child(Label::new("GPUI Inspector").size(LabelSize::Large)),
+                ),
         )
         .when_some(inspector_element_id, |this, inspector_element_id| {
             let source_location = inspector_element_id.source_location;
             this.child(
-                Button::new("view-source", "View Source").on_click(|_, _window, cx| {
-                    cx.background_spawn(open_zed_source_location(source_location))
-                        .detach_and_log_err(cx);
-                }),
-            )
-            .child(
                 v_flex()
+                    .pb_2()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border_variant)
                     .child(
                         Label::new(inspector_element_id.global_id.to_string())
                             .size(LabelSize::Small),
