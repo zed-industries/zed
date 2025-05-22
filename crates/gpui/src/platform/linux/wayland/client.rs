@@ -1220,7 +1220,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 };
                 state.keymap_state = Some(xkb::State::new(&keymap));
                 state.compose_state = get_xkb_compose_state(&xkb_context);
-                state.keyboard_mapper = Some(LinuxKeyboardMapper::new(None));
+                state.keyboard_mapper = Some(LinuxKeyboardMapper::new(0, 0, 0));
                 drop(state);
 
                 this.handle_keyboard_layout_change();

@@ -426,7 +426,7 @@ impl X11Client {
             .layout_get_name(layout_idx)
             .to_string();
         let keyboard_layout = LinuxKeyboardLayout::new(layout_name.into());
-        let keyboard_mapper = LinuxKeyboardMapper::new(None);
+        let keyboard_mapper = LinuxKeyboardMapper::new(0, 0, 0);
 
         let gpu_context = BladeContext::new().context("Unable to init GPU context")?;
 
@@ -982,7 +982,7 @@ impl X11Client {
                 state.xkb = xkb_state;
                 drop(state);
                 self.handle_keyboard_layout_change();
-                state.keyboard_mapper = LinuxKeyboardMapper::new(None);
+                state.keyboard_mapper = LinuxKeyboardMapper::new(0, 0, 0);
                 let layout_idx = state.xkb.serialize_layout(STATE_LAYOUT_EFFECTIVE);
                 let layout = LinuxKeyboardLayout::new(
                     state
@@ -999,18 +999,21 @@ impl X11Client {
                 let mut state = self.0.borrow_mut();
                 let old_layout = state.xkb.serialize_layout(STATE_LAYOUT_EFFECTIVE);
                 let new_layout = u32::from(event.group);
+                let base_group = event.base_group as u32;
+                let latched_group = event.latched_group as u32;
+                let locked_group = event.locked_group.into();
                 state.xkb.update_mask(
                     event.base_mods.into(),
                     event.latched_mods.into(),
                     event.locked_mods.into(),
-                    event.base_group as u32,
-                    event.latched_group as u32,
-                    event.locked_group.into(),
+                    base_group,
+                    latched_group,
+                    locked_group,
                 );
                 state.previous_xkb_state = XKBStateNotiy {
-                    depressed_layout: event.base_group as u32,
-                    latched_layout: event.latched_group as u32,
-                    locked_layout: event.locked_group.into(),
+                    depressed_layout: base_group,
+                    latched_layout: latched_group,
+                    locked_layout: locked_group,
                 };
 
                 let modifiers = Modifiers::from_xkb(&state.keyboard_state.state);
