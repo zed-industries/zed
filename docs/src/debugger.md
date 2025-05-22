@@ -1,4 +1,4 @@
-# Debugger
+# Debugger (Beta)
 
 Zed uses the Debug Adapter Protocol (DAP) to provide debugging functionality across multiple programming languages.
 DAP is a standardized protocol that defines how debuggers, editors, and IDEs communicate with each other.
@@ -22,187 +22,58 @@ Zed supports a variety of debug adapters for different programming languages:
 
 - PHP (xdebug): Provides debugging and profiling capabilities for PHP applications, including remote debugging and code coverage analysis.
 
-- Custom: Allows you to configure any debug adapter that supports the Debug Adapter Protocol, enabling debugging for additional languages or specialized environments not natively supported by Zed.
+- Ruby (rdbg): Provides debugging capabilities for Ruby applications
 
 These adapters enable Zed to provide a consistent debugging experience across multiple languages while leveraging the specific features and capabilities of each debugger.
 
-## How To Get Started
+## Getting Started
 
-To start a debug session, we added few default debug configurations for each supported language that supports generic configuration options. To see all the available debug configurations, you can use the command palette `debugger: start` action, this should list all the available debug configurations.
+For basic debugging you can set up a new configuration by opening up the `New Session Modal` either by the `debugger: start` (default: f4) or clicking the plus icon at the top right of the debug panel. Once the `New Session Modal` is open you can click custom on the bottom left to open a view that allows you to create a custom debug configuration. Once you have created a configuration you can save it to your workspace's `.zed/debug.json` by clicking on the save button on the bottom left.
+
+For more advance use cases you can create debug configurations by directly editing the `.zed/debug.json` file in your project root directory. Once you fill out the adapter and label fields completions will show you the available options of the selected debug adapter.
+
+You can then use the `New Session Modal` to select a configuration then start debugging.
 
 ### Configuration
 
-To create a custom debug configuration you have to create a `.zed/debug.json` file in your project root directory. This file should contain an array of debug configurations, each with a unique label and adapter the other option are optional/required based on the adapter.
+While configuration fields are debug adapter dependent, most adapters support the follow fields.
 
 ```json
 [
   {
-    // The label for the debug configuration and used to identify the debug session inside the debug panel
+    // The label for the debug configuration and used to identify the debug session inside the debug panel & new session modal
     "label": "Example Start debugger config",
     // The debug adapter that Zed should use to debug the program
-    "adapter": "custom",
-    // Request: defaults to launch
+    "adapter": "Example adapter name",
+    // Request:
     //  - launch: Zed will launch the program if specified or shows a debug terminal with the right configuration
     //  - attach: Zed will attach to a running program to debug it or when the process_id is not specified we will show a process picker (only supported for node currently)
     "request": "launch",
-    // cwd: defaults to the current working directory of your project ($ZED_WORKTREE_ROOT)
-    // this field also supports task variables e.g. $ZED_WORKTREE_ROOT
-    "cwd": "$ZED_WORKTREE_ROOT",
     // program: The program that you want to debug
-    // this fields also support task variables e.g. $ZED_FILE
-    // Note: this field should only contain the path to the program you want to debug
+    // This field supports path resolution with ~ or . symbols
     "program": "path_to_program",
-    // initialize_args: This field should contain all the adapter specific initialization arguments that are directly send to the debug adapter
-    "initialize_args": {
-      // "stopOnEntry": true // e.g. to stop on the first line of the program (These args are DAP specific)
-    },
-    // connection: the connection that a custom debugger should use
-    "connection": "stdio",
-    // The cli command used to start the debug adapter e.g. `python3`, `node` or the adapter binary
-    "command": "path_to_cli"
+    // cwd: defaults to the current working directory of your project ($ZED_WORKTREE_ROOT)
+    "cwd": "$ZED_WORKTREE_ROOT"
   }
 ]
 ```
 
-### Using Attach [WIP]
+#### Task Variables
 
-Only javascript and lldb supports starting a debug session using attach.
-
-When using the attach request with a process ID the syntax is as follows:
-
-```json
-{
-  "label": "Attach to Process",
-  "adapter": "javascript",
-  "request": {
-    "attach": {
-      "process_id": "12345"
-    }
-  }
-}
-```
-
-Without process ID the syntax is as follows:
-
-```json
-{
-  "label": "Attach to Process",
-  "adapter": "javascript",
-  "request": {
-    "attach": {}
-  }
-}
-```
-
-#### JavaScript Configuration
-
-##### Debug Active File
-
-This configuration allows you to debug a JavaScript file in your project.
-
-```json
-{
-  "label": "JavaScript: Debug Active File",
-  "adapter": "javascript",
-  "program": "$ZED_FILE",
-  "request": "launch",
-  "cwd": "$ZED_WORKTREE_ROOT"
-}
-```
-
-##### Debug Terminal
-
-This configuration will spawn a debug terminal where you could start you program by typing `node test.js`, and the debug adapter will automatically attach to the process.
-
-```json
-{
-  "label": "JavaScript: Debug Terminal",
-  "adapter": "javascript",
-  "request": "launch",
-  "cwd": "$ZED_WORKTREE_ROOT",
-  // "program": "$ZED_FILE", // optional if you pass this in, you will see the output inside the terminal itself
-  "initialize_args": {
-    "console": "integratedTerminal"
-  }
-}
-```
-
-#### PHP Configuration
-
-##### Debug Active File
-
-This configuration allows you to debug a PHP file in your project.
-
-```json
-{
-  "label": "PHP: Debug Active File",
-  "adapter": "php",
-  "program": "$ZED_FILE",
-  "request": "launch",
-  "cwd": "$ZED_WORKTREE_ROOT"
-}
-```
-
-#### Python Configuration
-
-##### Debug Active File
-
-This configuration allows you to debug a Python file in your project.
-
-```json
-{
-  "label": "Python: Debug Active File",
-  "adapter": "python",
-  "program": "$ZED_FILE",
-  "request": "launch",
-  "cwd": "$ZED_WORKTREE_ROOT"
-}
-```
-
-#### GDB Configuration
-
-**NOTE:** This configuration is for Linux systems only & intel macbooks.
-
-##### Debug Program
-
-This configuration allows you to debug a program using GDB e.g. Zed itself.
-
-```json
-{
-  "label": "GDB: Debug program",
-  "adapter": "gdb",
-  "program": "$ZED_WORKTREE_ROOT/target/debug/zed",
-  "request": "launch",
-  "cwd": "$ZED_WORKTREE_ROOT"
-}
-```
-
-#### LLDB Configuration
-
-##### Debug Program
-
-This configuration allows you to debug a program using LLDB e.g. Zed itself.
-
-```json
-{
-  "label": "LLDB: Debug program",
-  "adapter": "lldb",
-  "program": "$ZED_WORKTREE_ROOT/target/debug/zed",
-  "request": "launch",
-  "cwd": "$ZED_WORKTREE_ROOT"
-}
-```
+All configuration fields support task variables. See [Tasks](./tasks.md)
 
 ## Breakpoints
 
 Zed currently supports these types of breakpoints
 
-- Log Breakpoints: Output a log message instead of stopping at the breakpoint when it's hit
 - Standard Breakpoints: Stop at the breakpoint when it's hit
+- Log Breakpoints: Output a log message instead of stopping at the breakpoint when it's hit
+- Conditional Breakpoints: Stop at the breakpoint when it's hit if the condition is met
+- Hit Breakpoints: Stop at the breakpoint when it's hit a certain number of times
 
-Standard breakpoints can be toggled by left clicking on the editor gutter or using the Toggle Breakpoint action. Right clicking on a breakpoint, code action symbol, or code runner symbol brings up the breakpoint context menu. That has options for toggling breakpoints and editing log breakpoints.
+Standard breakpoints can be toggled by left clicking on the editor gutter or using the Toggle Breakpoint action. Right clicking on a breakpoint, right clicking on a code runner symbol brings up the breakpoint context menu. That has options for toggling breakpoints and editing log breakpoints.
 
-Log breakpoints can also be edited/added through the edit log breakpoint action
+Other kinds of breakpoints can be toggled/edited by right clicking on the breakpoint icon in the gutter and selecting the desired option.
 
 ## Settings
 

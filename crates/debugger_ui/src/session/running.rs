@@ -7,7 +7,10 @@ pub mod variable_list;
 
 use std::{any::Any, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 
-use crate::persistence::{self, DebuggerPaneItem, SerializedLayout};
+use crate::{
+    new_session_modal::resolve_path,
+    persistence::{self, DebuggerPaneItem, SerializedLayout},
+};
 
 use super::DebugPanelItemEvent;
 use anyhow::{Context as _, Result, anyhow};
@@ -543,6 +546,32 @@ impl RunningState {
         }
     }
 
+    pub(crate) fn relativlize_paths(
+        key: Option<&str>,
+        config: &mut serde_json::Value,
+        context: &TaskContext,
+    ) {
+        match config {
+            serde_json::Value::Object(obj) => {
+                obj.iter_mut()
+                    .for_each(|(key, value)| Self::relativlize_paths(Some(key), value, context));
+            }
+            serde_json::Value::Array(array) => {
+                array
+                    .iter_mut()
+                    .for_each(|value| Self::relativlize_paths(None, value, context));
+            }
+            serde_json::Value::String(s) if key == Some("program") || key == Some("cwd") => {
+                resolve_path(s);
+
+                if let Some(substituted) = substitute_variables_in_str(&s, context) {
+                    *s = substituted;
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub(crate) fn new(
         session: Entity<Session>,
         project: Entity<Project>,
@@ -585,14 +614,25 @@ impl RunningState {
             cx.subscribe_in(&session, window, |this, _, event, window, cx| {
                 match event {
                     SessionEvent::Stopped(thread_id) => {
-                        this.workspace
+                        let panel = this
+                            .workspace
                             .update(cx, |workspace, cx| {
                                 workspace.open_panel::<crate::DebugPanel>(window, cx);
+                                workspace.panel::<crate::DebugPanel>(cx)
                             })
-                            .log_err();
+                            .log_err()
+                            .flatten();
 
                         if let Some(thread_id) = thread_id {
                             this.select_thread(*thread_id, window, cx);
+                        }
+                        if let Some(panel) = panel {
+                            let id = this.session_id;
+                            window.defer(cx, move |window, cx| {
+                                panel.update(cx, |this, cx| {
+                                    this.activate_session_by_id(id, window, cx);
+                                })
+                            })
                         }
                     }
                     SessionEvent::Threads => {
@@ -741,6 +781,7 @@ impl RunningState {
                 mut config,
                 tcp_connection,
             } = scenario;
+            Self::relativlize_paths(None, &mut config, &task_context);
             Self::substitute_variables_in_config(&mut config, &task_context);
 
             let request_type = dap_registry
@@ -886,6 +927,7 @@ impl RunningState {
                     .ok_or_else(|| anyhow!("{}: is not a valid adapter name", &adapter))
                     .map(|adapter| adapter.config_from_zed_format(zed_config))??;
                 config = scenario.config;
+                Self::substitute_variables_in_config(&mut config, &task_context);
             } else {
                 anyhow::bail!("No request or build provided");
             };

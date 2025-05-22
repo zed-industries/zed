@@ -492,10 +492,8 @@ impl AutoUpdater {
     }
 
     async fn update(this: Entity<Self>, mut cx: AsyncApp) -> Result<()> {
-        let (client, installed_version, status, release_channel) =
+        let (client, installed_version, previous_status, release_channel) =
             this.update(&mut cx, |this, cx| {
-                this.status = AutoUpdateStatus::Checking;
-                cx.notify();
                 (
                     this.http_client.clone(),
                     this.current_version,
@@ -503,6 +501,11 @@ impl AutoUpdater {
                     ReleaseChannel::try_global(cx),
                 )
             })?;
+
+        this.update(&mut cx, |this, cx| {
+            this.status = AutoUpdateStatus::Checking;
+            cx.notify();
+        })?;
 
         let fetched_release_data =
             Self::get_latest_release(&this, "zed", OS, ARCH, release_channel, &mut cx).await?;
@@ -512,16 +515,18 @@ impl AutoUpdater {
             *RELEASE_CHANNEL,
             app_commit_sha,
             installed_version,
-            status,
+            previous_status.clone(),
             fetched_version,
         )?;
 
         let Some(newer_version) = newer_version else {
             return this.update(&mut cx, |this, cx| {
-                if !matches!(this.status, AutoUpdateStatus::Updated { .. }) {
-                    this.status = AutoUpdateStatus::Idle;
-                    cx.notify();
-                }
+                let status = match previous_status {
+                    AutoUpdateStatus::Updated { .. } => previous_status,
+                    _ => AutoUpdateStatus::Idle,
+                };
+                this.status = status;
+                cx.notify();
             });
         };
 
