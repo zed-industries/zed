@@ -234,7 +234,7 @@
   //  - "info"
   //  - "hint"
   //  - null — allow all diagnostics
-  "diagnostics_max_severity": "warning",
+  "diagnostics_max_severity": "hint",
   // Whether to show wrap guides (vertical rulers) in the editor.
   // Setting this to true will show a guide at the 'preferred_line_length' value
   // if 'soft_wrap' is set to 'preferred_line_length', and will show any
