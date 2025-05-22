@@ -4030,6 +4030,7 @@ dependencies = [
  "smallvec",
  "smol",
  "task",
+ "telemetry",
  "util",
  "workspace-hack",
 ]
@@ -4669,6 +4670,7 @@ dependencies = [
  "command_palette_hooks",
  "convert_case 0.8.0",
  "ctor",
+ "dap",
  "db",
  "emojis",
  "env_logger 0.11.8",
