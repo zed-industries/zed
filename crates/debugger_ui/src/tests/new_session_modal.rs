@@ -10,7 +10,6 @@ use crate::tests::{init_test, init_test_workspace};
 
 // todo(tasks) figure out why task replacement is broken on windows
 #[gpui::test]
-#[cfg(not(windows))]
 async fn test_debug_session_substitutes_variables_and_relativizes_paths(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
