@@ -93,30 +93,8 @@ impl Model {
         Self::Claude3_5Haiku
     }
 
-    pub fn from_id(id: &str) -> anyhow::Result<Self> {
-        if id.starts_with("claude-3-5-sonnet-v2") {
-            Ok(Self::Claude3_5SonnetV2)
-        } else if id.starts_with("claude-3-opus") {
-            Ok(Self::Claude3Opus)
-        } else if id.starts_with("claude-3-sonnet") {
-            Ok(Self::Claude3Sonnet)
-        } else if id.starts_with("claude-3-5-haiku") {
-            Ok(Self::Claude3_5Haiku)
-        } else if id.starts_with("claude-3-7-sonnet") {
-            Ok(Self::Claude3_7Sonnet)
-        } else if id.starts_with("claude-3-7-sonnet-thinking") {
-            Ok(Self::Claude3_7SonnetThinking)
-        } else {
-            Err(anyhow!("invalid model id"))
-        }
-    }
-
     pub fn id(&self) -> &str {
         match self {
-            Model::Claude4Sonnet => "claude-4-sonnet",
-            Model::Claude4SonnetThinking => "claude-4-sonnet-thinking",
-            Model::Claude4Opus => "claude-4-opus",
-            Model::Claude4OpusThinking => "claude-4-opus-thinking",
             Model::Claude3_5SonnetV2 => "claude-3-5-sonnet-v2",
             Model::Claude3_5Sonnet => "claude-3-5-sonnet",
             Model::Claude3Opus => "claude-3-opus",
@@ -167,12 +145,6 @@ impl Model {
 
     pub fn request_id(&self) -> &str {
         match self {
-            Model::Claude4Sonnet | Model::Claude4SonnetThinking => {
-                "anthropic.claude-sonnet-4-20250514-v1:0"
-            }
-            Model::Claude4Opus | Model::Claude4OpusThinking => {
-                "anthropic.claude-opus-4-20250514-v1:0"
-            }
             Model::Claude3_5SonnetV2 => "anthropic.claude-3-5-sonnet-20241022-v2:0",
             Model::Claude3_5Sonnet => "anthropic.claude-3-5-sonnet-20240620-v1:0",
             Model::Claude3Opus => "anthropic.claude-3-opus-20240229-v1:0",
@@ -583,17 +555,32 @@ mod tests {
         assert_eq!(Model::Claude3_5SonnetV2.id(), "claude-3-5-sonnet-v2");
         assert_eq!(Model::AmazonNovaLite.id(), "amazon-nova-lite");
         assert_eq!(Model::DeepSeekR1.id(), "deepseek-r1");
-        assert_eq!(Model::MetaLlama38BInstructV1.id(), "meta-llama3-8b-instruct-v1");
+        assert_eq!(
+            Model::MetaLlama38BInstructV1.id(),
+            "meta-llama3-8b-instruct-v1"
+        );
 
         // Test that request_id() returns actual backend model IDs
-        assert_eq!(Model::Claude3_5SonnetV2.request_id(), "anthropic.claude-3-5-sonnet-20241022-v2:0");
+        assert_eq!(
+            Model::Claude3_5SonnetV2.request_id(),
+            "anthropic.claude-3-5-sonnet-20241022-v2:0"
+        );
         assert_eq!(Model::AmazonNovaLite.request_id(), "amazon.nova-lite-v1:0");
         assert_eq!(Model::DeepSeekR1.request_id(), "us.deepseek.r1-v1:0");
-        assert_eq!(Model::MetaLlama38BInstructV1.request_id(), "meta.llama3-8b-instruct-v1:0");
+        assert_eq!(
+            Model::MetaLlama38BInstructV1.request_id(),
+            "meta.llama3-8b-instruct-v1:0"
+        );
 
         // Test thinking models have different friendly IDs but same request IDs
         assert_eq!(Model::Claude4Sonnet.id(), "claude-4-sonnet");
-        assert_eq!(Model::Claude4SonnetThinking.id(), "claude-4-sonnet-thinking");
-        assert_eq!(Model::Claude4Sonnet.request_id(), Model::Claude4SonnetThinking.request_id());
+        assert_eq!(
+            Model::Claude4SonnetThinking.id(),
+            "claude-4-sonnet-thinking"
+        );
+        assert_eq!(
+            Model::Claude4Sonnet.request_id(),
+            Model::Claude4SonnetThinking.request_id()
+        );
     }
 }
