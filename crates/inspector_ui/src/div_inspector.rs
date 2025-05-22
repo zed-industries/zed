@@ -1,27 +1,19 @@
-use std::cell::RefCell;
-use std::path::Path;
-use std::rc::Rc;
-
 use editor::{Editor, EditorEvent, EditorMode, MultiBuffer};
-use futures::{FutureExt as _, future::Shared};
-use gpui::{
-    App, AsyncWindowContext, DivInspectorState, Entity, InspectorElementId, IntoElement, Task,
-    Window,
-};
+use gpui::{DivInspectorState, Entity, InspectorElementId, IntoElement, Window};
 use language::Buffer;
 use language::language_settings::SoftWrap;
 use project::{Project, ProjectPath};
+use std::path::Path;
 use ui::prelude::*;
 use ui::{Label, LabelSize, v_flex};
-use util::ResultExt as _;
-use workspace::Workspace;
 
 // todo! rename back to DivInspector
 pub(crate) struct DivInspector {
-    id: Option<InspectorElementId>,
     project: Entity<Project>,
+    last_id: Option<InspectorElementId>,
     style_buffer: Option<Entity<Buffer>>,
     style_editor: Option<Entity<Editor>>,
+    last_error: Option<SharedString>,
 }
 
 // todo! Remove unwraps
@@ -66,7 +58,7 @@ impl DivInspector {
                 this.update_in(cx, |this, window, cx| {
                     this.style_buffer = Some(style_buffer);
                     // TODO: Avoid clone somehow
-                    if let Some(id) = this.id.clone() {
+                    if let Some(id) = this.last_id.clone() {
                         window.update_inspector_state(&id, |state, window| {
                             if let Some(state) = state.as_ref() {
                                 this.update_inspected_element(&id, state, window, cx);
@@ -80,10 +72,11 @@ impl DivInspector {
         .detach();
 
         DivInspector {
-            id: None,
             project,
+            last_id: None,
             style_buffer: None,
             style_editor: None,
+            last_error: None,
         }
     }
 
@@ -94,14 +87,25 @@ impl DivInspector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.id.as_ref() == Some(id) {
+        if self.last_id.as_ref() == Some(id) {
             return;
         }
         let Some(style_buffer) = self.style_buffer.clone() else {
             return;
         };
+        self.last_id = Some(id.clone());
 
-        let base_style_json = serde_json::to_string_pretty(&state.base_style).unwrap();
+        let base_style_json = match serde_json::to_string_pretty(&state.base_style) {
+            Ok(base_style_json) => base_style_json,
+            Err(err) => {
+                self.style_editor = None;
+                self.last_error =
+                    Some(format!("Failed to convert base_style to JSON: {err}").into());
+                return;
+            }
+        };
+        self.last_error = None;
+
         style_buffer.update(cx, |style_buffer, cx| {
             style_buffer.set_text(base_style_json, cx)
         });
@@ -125,19 +129,13 @@ impl DivInspector {
             editor
         });
 
-        window
-            .subscribe(&style_editor, cx, {
-                let id = id.clone();
-                move |editor, event: &EditorEvent, window, cx| {
-                    match event {
-                        EditorEvent::BufferEdited => {
-                            let base_style_json = editor.read(cx).text(cx);
-                            // todo! error handling
-                            let Some(new_base_style) =
-                                serde_json_lenient::from_str(&base_style_json).log_err()
-                            else {
-                                return;
-                            };
+        cx.subscribe_in(&style_editor, window, {
+            let id = id.clone();
+            move |this, editor, event: &EditorEvent, window, cx| match event {
+                EditorEvent::BufferEdited => {
+                    let base_style_json = editor.read(cx).text(cx);
+                    match serde_json_lenient::from_str(&base_style_json) {
+                        Ok(new_base_style) => {
                             window.update_inspector_state::<DivInspectorState, _>(
                                 &id,
                                 |state, _window| {
@@ -145,15 +143,17 @@ impl DivInspector {
                                         *state.base_style = new_base_style;
                                     }
                                 },
-                            )
+                            );
+                            this.last_error = None;
                         }
-                        _ => {}
+                        Err(err) => this.last_error = Some(err.to_string().into()),
                     }
                 }
-            })
-            .detach();
+                _ => {}
+            }
+        })
+        .detach();
 
-        self.id = Some(id.clone());
         self.style_editor = Some(style_editor);
         cx.notify();
     }
@@ -164,10 +164,18 @@ impl Render for DivInspector {
         if let Some(style_editor) = self.style_editor.as_ref() {
             v_flex()
                 .size_full()
-                .bg(cx.theme().colors().panel_background)
                 .gap_2()
                 .child(Label::new("Style").size(LabelSize::Large))
                 .child(div().h_128().child(style_editor.clone()))
+                .when_some(self.last_error.as_ref(), |this, last_error| {
+                    this.child(
+                        div()
+                            .w_full()
+                            .border_1()
+                            .border_color(Color::Error.color(cx))
+                            .child(Label::new(last_error)),
+                    )
+                })
                 .into_any_element()
         } else {
             Label::new("Loading...").into_any_element()
