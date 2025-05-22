@@ -1973,14 +1973,7 @@ impl AgentPanel {
             return None;
         }
 
-        let account_too_young = self
-            .user_store
-            .read(cx)
-            .current_user()
-            .as_ref()
-            .and_then(|user| user.is_account_too_young)
-            .unwrap_or(false);
-        if account_too_young {
+        if self.user_store.read(cx).current_user_account_too_young() {
             Some(self.render_young_account_upsell(cx).into_any_element())
         } else {
             Some(self.render_trial_upsell(cx).into_any_element())

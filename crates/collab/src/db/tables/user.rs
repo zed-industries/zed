@@ -3,6 +3,9 @@ use chrono::{Duration, NaiveDateTime, Utc};
 use sea_orm::entity::prelude::*;
 use serde::Serialize;
 
+/// The minimum account age an account must have in order to use the LLM service.
+pub const MIN_ACCOUNT_AGE_FOR_LLM_USE: Duration = Duration::days(30);
+
 /// A user model.
 #[derive(Clone, Debug, Default, PartialEq, Eq, DeriveEntityModel, Serialize)]
 #[sea_orm(table_name = "users")]
@@ -58,7 +61,7 @@ impl Model {
 
     /// Returns true if the user's account is too young.
     pub fn is_account_too_young(&self) -> bool {
-        self.account_created_at() < (Utc::now() - Duration::days(30)).naive_utc()
+        Utc::now().naive_utc() - self.account_created_at() < MIN_ACCOUNT_AGE_FOR_LLM_USE
     }
 }
 

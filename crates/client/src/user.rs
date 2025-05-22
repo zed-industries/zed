@@ -753,6 +753,22 @@ impl UserStore {
         self.current_user.clone()
     }
 
+    /// Check if the current user's account is too new to use the service
+    pub fn current_user_acount_too_young(&self) -> bool {
+        // If they have paid, then we allow them to use all of the features
+        if let Some(proto::Plan::ZedPro) = self.current_plan {
+            return true;
+        }
+
+        // If we have access to the profile age, we use that
+        self.current_user
+            .borrow()
+            .as_ref()
+            .and_then(|user| user.is_account_too_young)
+            // Default to false otherwise
+            .unwrap_or(false)
+    }
+
     pub fn current_user_has_accepted_terms(&self) -> Option<bool> {
         self.accepted_tos_at
             .map(|accepted_tos_at| accepted_tos_at.is_some())
