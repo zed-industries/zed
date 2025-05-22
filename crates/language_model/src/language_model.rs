@@ -244,6 +244,10 @@ pub trait LanguageModel: Send + Sync {
         }
 
         const MAX_MODE_CAPABLE_MODELS: &[CloudModel] = &[
+            CloudModel::Anthropic(anthropic::Model::ClaudeOpus4),
+            CloudModel::Anthropic(anthropic::Model::ClaudeOpus4Thinking),
+            CloudModel::Anthropic(anthropic::Model::ClaudeSonnet4),
+            CloudModel::Anthropic(anthropic::Model::ClaudeSonnet4Thinking),
             CloudModel::Anthropic(anthropic::Model::Claude3_7Sonnet),
             CloudModel::Anthropic(anthropic::Model::Claude3_7SonnetThinking),
         ];
