@@ -399,7 +399,7 @@ impl extension::Extension for WasmExtension {
         .await
     }
 
-    async fn dap_schema(&self) -> Result<serde_json::Value> {
+    async fn get_dap_schema(&self) -> Result<serde_json::Value> {
         self.call(|extension, store| {
             async move {
                 extension
