@@ -9,9 +9,13 @@ use crate::div_inspector::DivInspector;
 
 // TODO: Show bounds / size info. On hover, highlight element
 //
+// TODO: Keep around changed element state, instead of only supporting modification of a single
+// element. Probably makes sense to surface this in the inspector UI as a list of elements that have
+// state modifications.
+//
 // TODO: Related to below TODO, consider not even have special handling of rendering the inspector
 // to the side - it could just be a workspace item.
-
+//
 // TODO: Move logic of the gpui `Inspector` entity into this crate:
 //
 // * `Inspector` trait with methods like `on_click` and `on_hover` that are given

@@ -74,11 +74,12 @@ impl DivInspector {
             this.style_buffer = Some(style_buffer);
             // TODO: Avoid clone somehow
             if let Some(id) = this.last_id.clone() {
-                window.update_inspector_state(&id, |state, window| {
-                    if let Some(state) = state.as_ref() {
-                        this.update_inspected_element(&id, state, window, cx);
-                    }
-                });
+                // todo! Avoid cloning state by making this not need `cx`.
+                let state =
+                    window.with_inspector_state(Some(&id), cx, |state, _window| state.clone());
+                if let Some(state) = state {
+                    this.update_inspected_element(&id, &state, window, cx);
+                }
             }
         })?;
 
@@ -141,13 +142,14 @@ impl DivInspector {
                     let base_style_json = editor.read(cx).text(cx);
                     match serde_json_lenient::from_str(&base_style_json) {
                         Ok(new_base_style) => {
-                            window.update_inspector_state::<DivInspectorState, _>(
-                                &id,
+                            window.with_inspector_state::<DivInspectorState, _>(
+                                Some(&id),
+                                cx,
                                 |state, _window| {
                                     if let Some(state) = state.as_mut() {
                                         *state.base_style = new_base_style;
                                     }
-                                }
+                                },
                             );
                             this.last_error = None;
                         }

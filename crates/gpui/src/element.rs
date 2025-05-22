@@ -358,8 +358,6 @@ impl<E: Element> Drawable<E> {
                             source_location: source,
                         };
                         window
-                            .next_frame
-                            .inspector_state
                             .build_inspector_element_id(path)
                     });
                 }

@@ -54,33 +54,73 @@ mod conditional {
     use std::any::{Any, TypeId};
 
     pub struct Inspector {
-        active_element_id: Option<InspectorElementId>,
+        active_element: Option<InspectedElement>,
         is_picking: bool,
+    }
+
+    struct InspectedElement {
+        id: InspectorElementId,
+        states: FxHashMap<TypeId, Box<dyn Any>>,
+    }
+
+    impl InspectedElement {
+        fn new(id: InspectorElementId) -> Self {
+            InspectedElement {
+                id,
+                states: FxHashMap::default(),
+            }
+        }
     }
 
     impl Inspector {
         pub fn new() -> Self {
             Self {
-                active_element_id: None,
+                active_element: None,
                 is_picking: true,
             }
         }
 
         pub fn select(&mut self, id: Option<InspectorElementId>, cx: &mut Context<Self>) {
-            self.active_element_id = id;
+            self.active_element = id.map(InspectedElement::new);
             self.is_picking = false;
             cx.notify();
         }
 
         pub fn hover(&mut self, id: Option<InspectorElementId>, cx: &mut Context<Self>) {
             if self.is_picking {
-                self.active_element_id = id;
+                self.active_element = id.map(InspectedElement::new);
                 cx.notify();
             }
         }
 
         pub fn active_element_id(&self) -> Option<&InspectorElementId> {
-            self.active_element_id.as_ref()
+            self.active_element.as_ref().map(|e| &e.id)
+        }
+
+        pub fn populate_active_element_state<T: 'static, R>(
+            &mut self,
+            window: &mut Window,
+            f: impl FnOnce(&mut Option<T>, &mut Window) -> R,
+        ) -> R {
+            let Some(active_element) = &mut self.active_element else {
+                return f(&mut None, window);
+            };
+
+            let type_id = TypeId::of::<T>();
+            let mut inspector_state = active_element
+                .states
+                .remove(&type_id)
+                .map(|state| *state.downcast().unwrap());
+
+            let result = f(&mut inspector_state, window);
+
+            if let Some(inspector_state) = inspector_state {
+                active_element
+                    .states
+                    .insert(type_id, Box::new(inspector_state));
+            }
+
+            result
         }
 
         pub fn start_picking(&mut self) {
@@ -97,40 +137,27 @@ mod conditional {
             cx: &mut Context<Self>,
         ) -> Vec<AnyElement> {
             let mut elements = Vec::new();
-            if let Some(inspected_element_id) = self.active_element_id.take() {
-                if let Some(states_by_type_id) = window
-                    .next_frame
-                    .inspector_state
-                    .element_states
-                    .remove(&inspected_element_id)
-                {
-                    for (type_id, state) in &states_by_type_id {
-                        if let Some(render_inspector) = cx
-                            .inspector_element_registry
+            if let Some(inspected_element) = self.active_element.take() {
+                for (type_id, state) in &inspected_element.states {
+                    if let Some(render_inspector) = cx
+                        .inspector_element_registry
+                        .renderers_by_type_id
+                        .remove(&type_id)
+                    {
+                        let mut element = (render_inspector)(
+                            inspected_element.id.clone(),
+                            state.as_ref(),
+                            window,
+                            cx,
+                        );
+                        elements.push(element);
+                        cx.inspector_element_registry
                             .renderers_by_type_id
-                            .remove(&type_id)
-                        {
-                            let mut element = (render_inspector)(
-                                inspected_element_id.clone(),
-                                state.as_ref(),
-                                window,
-                                cx,
-                            );
-                            elements.push(element);
-                            cx.inspector_element_registry
-                                .renderers_by_type_id
-                                .insert(*type_id, render_inspector);
-                        }
+                            .insert(*type_id, render_inspector);
                     }
-
-                    window
-                        .next_frame
-                        .inspector_state
-                        .element_states
-                        .insert(inspected_element_id.clone(), states_by_type_id);
                 }
 
-                self.active_element_id = Some(inspected_element_id);
+                self.active_element = Some(inspected_element);
             }
 
             elements
@@ -142,7 +169,7 @@ mod conditional {
             if let Some(inspector_renderer) = cx.inspector_renderer.take() {
                 let rendered_inspector_states = self.render_inspector_states(window, cx);
                 let result = inspector_renderer(
-                    self.active_element_id.as_ref(),
+                    self.active_element.as_ref().map(|e| &e.id),
                     rendered_inspector_states,
                     window,
                     cx,

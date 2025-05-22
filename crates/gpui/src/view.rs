@@ -101,7 +101,6 @@ impl AnyView {
     /// When using this method, the view's previous layout and paint will be recycled from the previous frame if [Context::notify] has not been called since it was rendered.
     /// The one exception is when [Window::refresh] is called, in which case caching is ignored.
     pub fn cached(mut self, style: StyleRefinement) -> Self {
-        // todo!("handle cached elements")
         self.cached_style = Some(style.into());
         self
     }

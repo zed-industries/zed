@@ -500,45 +500,11 @@ pub(crate) struct DeferredDraw {
     paint_range: Range<PaintIndex>,
 }
 
-#[cfg(any(feature = "inspector", debug_assertions))]
-#[derive(Default)]
-pub(crate) struct FrameInspectorState {
-    // hashbrown::HashMap is used as it provides an entry_ref API so there's no need to clone keys.
-    pub(crate) next_element_instance_ids: hashbrown::HashMap<InspectorElementPath, usize>,
-    pub(crate) element_states:
-        hashbrown::HashMap<InspectorElementId, FxHashMap<TypeId, Box<dyn Any>>>,
-}
-
-#[cfg(any(feature = "inspector", debug_assertions))]
-impl FrameInspectorState {
-    fn clear(&mut self) {
-        self.next_element_instance_ids.clear();
-        self.element_states.clear();
-    }
-
-    pub(crate) fn build_inspector_element_id(
-        &mut self,
-        path: InspectorElementPath,
-    ) -> InspectorElementId {
-        let instance_id = self
-            .next_element_instance_ids
-            .entry_ref(&path)
-            .and_modify(|instance_id| *instance_id += 1)
-            .or_insert(0);
-        InspectorElementId {
-            path,
-            instance_id: *instance_id,
-        }
-    }
-}
-
 pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
     pub(crate) element_states: FxHashMap<(GlobalElementId, TypeId), ElementStateBox>,
     accessed_element_states: Vec<(GlobalElementId, TypeId)>,
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    pub(crate) inspector_state: FrameInspectorState,
     pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
@@ -549,6 +515,9 @@ pub(crate) struct Frame {
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
+    // hashbrown::HashMap is used as it provides an entry_ref API so there's no need to clone keys.
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub(crate) next_element_instance_ids: hashbrown::HashMap<InspectorElementPath, usize>,
 }
 
 #[derive(Clone, Default)]
@@ -579,7 +548,7 @@ impl Frame {
             element_states: FxHashMap::default(),
             accessed_element_states: Vec::new(),
             #[cfg(any(feature = "inspector", debug_assertions))]
-            inspector_state: FrameInspectorState::default(),
+            next_element_instance_ids: hashbrown::HashMap::default(),
             mouse_listeners: Vec::new(),
             dispatch_tree,
             scene: Scene::default(),
@@ -598,7 +567,7 @@ impl Frame {
         self.element_states.clear();
         self.accessed_element_states.clear();
         #[cfg(any(feature = "inspector", debug_assertions))]
-        self.inspector_state.clear();
+        self.next_element_instance_ids.clear();
         self.mouse_listeners.clear();
         self.dispatch_tree.clear();
         self.scene.clear();
@@ -1559,16 +1528,6 @@ impl Window {
         }
     }
 
-    /// Returns the id of the currently inspected element, if any.
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    pub fn inspected_element_id<'a>(&self, cx: &'a App) -> Option<&'a InspectorElementId> {
-        if let WindowMode::Inspector(inspector) = &self.mode {
-            inspector.read(cx).active_element_id()
-        } else {
-            None
-        }
-    }
-
     /// The scale factor of the display associated with the window. For example, it could
     /// return 2.0 for a "retina" display, indicating that each logical pixel should actually
     /// be rendered as two pixels on screen.
@@ -1605,88 +1564,45 @@ impl Window {
         result
     }
 
-    /// todo!("document")
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub(crate) fn build_inspector_element_id(
+        &mut self,
+        path: InspectorElementPath,
+    ) -> InspectorElementId {
+        let next_instance_id = self
+            .next_frame
+            .next_element_instance_ids
+            .entry_ref(&path)
+            .or_insert(0);
+        let instance_id = *next_instance_id;
+        *next_instance_id += 1;
+        InspectorElementId { path, instance_id }
+    }
+
+    /// Executes the provided function with mutable access to an inspector state.
     pub fn with_inspector_state<T: 'static, R>(
         &mut self,
         _inspector_id: Option<&InspectorElementId>,
+        cx: &mut App,
         f: impl FnOnce(&mut Option<T>, &mut Self) -> R,
     ) -> R {
         #[cfg(any(feature = "inspector", debug_assertions))]
-        {
-            self.invalidator.debug_assert_paint_or_prepaint();
-
-            if let Some(inspector_id) = _inspector_id {
-                let type_id = TypeId::of::<T>();
-
-                let mut inspector_state = self
-                    .next_frame
-                    .inspector_state
-                    .element_states
-                    .get_mut(inspector_id)
-                    .and_then(|state| state.remove(&type_id))
-                    .or_else(|| {
-                        self.rendered_frame
-                            .inspector_state
-                            .element_states
-                            .get_mut(inspector_id)
-                            .and_then(|state| state.remove(&type_id))
-                    })
-                    .map(|state| *state.downcast().unwrap());
-
-                let result = f(&mut inspector_state, self);
-
-                if let Some(inspector_state) = inspector_state {
-                    self.next_frame
-                        .inspector_state
-                        .element_states
-                        .entry(inspector_id.clone())
-                        .or_default()
-                        .insert(type_id, Box::new(inspector_state));
+        if let Some(inspector_id) = _inspector_id {
+            match &self.mode {
+                WindowMode::Normal => {}
+                WindowMode::Inspector(inspector) => {
+                    let inspector = inspector.clone();
+                    let active_element_id = inspector.read(cx).active_element_id();
+                    if Some(inspector_id) == active_element_id {
+                        return inspector.update(cx, |inspector, _cx| {
+                            inspector.populate_active_element_state(self, f)
+                        });
+                    }
                 }
-
-                result
-            } else {
-                f(&mut None, self)
-            }
+            };
         }
 
-        #[cfg(not(any(feature = "inspector", debug_assertions)))]
-        {
-            f(&mut None, self)
-        }
-    }
-
-    /// todo!()
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    pub fn update_inspector_state<T: 'static, R>(
-        &mut self,
-        inspector_id: &InspectorElementId,
-        f: impl FnOnce(&mut Option<T>, &mut Self) -> R,
-    ) -> R {
-        let type_id = TypeId::of::<T>();
-
-        let mut inspector_state = self
-            .rendered_frame
-            .inspector_state
-            .element_states
-            .get_mut(inspector_id)
-            .and_then(|state| state.remove(&type_id))
-            .map(|state| *state.downcast().unwrap());
-
-        let result = f(&mut inspector_state, self);
-
-        if let Some(inspector_state) = inspector_state {
-            self.rendered_frame
-                .inspector_state
-                .element_states
-                .entry(inspector_id.clone())
-                .or_default()
-                .insert(type_id, Box::new(inspector_state));
-        }
-
-        self.refresh();
-
-        result
+        f(&mut None, self)
     }
 
     /// Executes the provided function with the specified rem size.

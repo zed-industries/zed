@@ -1211,8 +1211,13 @@ pub struct DivFrameState {
 }
 
 /// Interactivity state displayed an manipulated in the inspector.
+///
+/// todo! remove Clone impl
+#[derive(Clone)]
 pub struct DivInspectorState {
-    /// The inspected element's base style.
+    /// The inspected element's base style. This is used for both inspecting and modifying the
+    /// state. In the future it will make sense to separate the read and write, possibly tracking
+    /// the modifications.
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub base_style: Box<StyleRefinement>,
 }
@@ -1463,11 +1468,15 @@ impl Interactivity {
         #[cfg(any(feature = "inspector", debug_assertions))]
         window.with_inspector_state(
             inspector_id,
+            cx,
             |inspector_state: &mut Option<DivInspectorState>, _window| {
-                let inspector_state = inspector_state.get_or_insert_with(|| DivInspectorState {
-                    base_style: self.base_style.clone(),
-                });
-                self.base_style.refine(&inspector_state.base_style);
+                if let Some(inspector_state) = inspector_state {
+                    self.base_style = inspector_state.base_style.clone();
+                } else {
+                    *inspector_state = Some(DivInspectorState {
+                        base_style: self.base_style.clone(),
+                    })
+                }
             },
         );
 
