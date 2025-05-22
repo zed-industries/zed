@@ -284,7 +284,7 @@ pub async fn complete(
         .uri(uri)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key))
-        .header("HTTP-Referer", "zed.dev")
+        .header("HTTP-Referer", "https://zed.dev")
         .header("X-Title", "Zed Editor");
 
     let mut request_body = request;
@@ -348,7 +348,7 @@ pub async fn stream_completion(
         .uri(uri)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key))
-        .header("HTTP-Referer", "zed.dev")
+        .header("HTTP-Referer", "https://zed.dev")
         .header("X-Title", "Zed Editor");
 
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
