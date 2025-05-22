@@ -585,14 +585,25 @@ impl RunningState {
             cx.subscribe_in(&session, window, |this, _, event, window, cx| {
                 match event {
                     SessionEvent::Stopped(thread_id) => {
-                        this.workspace
+                        let panel = this
+                            .workspace
                             .update(cx, |workspace, cx| {
                                 workspace.open_panel::<crate::DebugPanel>(window, cx);
+                                workspace.panel::<crate::DebugPanel>(cx)
                             })
-                            .log_err();
+                            .log_err()
+                            .flatten();
 
                         if let Some(thread_id) = thread_id {
                             this.select_thread(*thread_id, window, cx);
+                        }
+                        if let Some(panel) = panel {
+                            let id = this.session_id;
+                            window.defer(cx, move |window, cx| {
+                                panel.update(cx, |this, cx| {
+                                    this.activate_session_by_id(id, window, cx);
+                                })
+                            })
                         }
                     }
                     SessionEvent::Threads => {

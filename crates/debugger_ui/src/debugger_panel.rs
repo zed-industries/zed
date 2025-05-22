@@ -274,6 +274,10 @@ impl DebugPanel {
             async move |this, cx| {
                 let debug_session =
                     Self::register_session(this.clone(), session.clone(), cx).await?;
+                this.update_in(cx, |this, window, cx| {
+                    this.activate_session(debug_session.clone(), window, cx);
+                })
+                .ok();
                 let definition = debug_session
                     .update_in(cx, |debug_session, window, cx| {
                         debug_session.running_state().update(cx, |running, cx| {
@@ -372,7 +376,6 @@ impl DebugPanel {
             .detach();
 
             this.sessions.push(debug_session.clone());
-            this.activate_session(debug_session.clone(), window, cx);
 
             (debug_session, this.workspace.clone())
         })?;
@@ -418,7 +421,11 @@ impl DebugPanel {
                 });
                 (session, task)
             })?;
-            Self::register_session(this, session, cx).await?;
+            let session = Self::register_session(this.clone(), session, cx).await?;
+            this.update_in(cx, |this, window, cx| {
+                this.activate_session(session, window, cx);
+            })
+            .ok();
             task.await
         })
         .detach_and_log_err(cx);
@@ -910,6 +917,21 @@ impl DebugPanel {
         }
     }
 
+    pub(crate) fn activate_session_by_id(
+        &mut self,
+        session_id: SessionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(session) = self
+            .sessions
+            .iter()
+            .find(|session| session.read(cx).session_id(cx) == session_id)
+        {
+            self.activate_session(session.clone(), window, cx);
+        }
+    }
+
     pub(crate) fn activate_session(
         &mut self,
         session_item: Entity<DebugSession>,
@@ -923,7 +945,7 @@ impl DebugPanel {
                 this.go_to_selected_stack_frame(window, cx);
             });
         });
-        self.active_session = Some(session_item.clone());
+        self.active_session = Some(session_item);
         cx.notify();
     }
 
