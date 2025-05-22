@@ -2393,7 +2393,11 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
+        use crate::gutter::breakpoint_indicator::breakpoint_indicator_path;
+        use gpui::canvas;
+
         let disabled = breakpoint.is_disabled();
+        let offset = px(40.);
         let line_number = multibuffer_row.0 + 1;
         let font_size = self.style.text.font_size;
 
@@ -2459,64 +2463,49 @@ impl EditorElement {
             .clone()
             .line_height
             .to_pixels(editor_font_size, window.rem_size());
-        let indicator_offset = px(2.);
-        let indicator_height = line_height - indicator_offset;
+        let indicator_y_offset = px(2.);
+        let indicator_height = line_height - indicator_y_offset;
 
         let longest_line_width = self.max_line_number_width(snapshot, window, cx);
-        let indicator_width = longest_line_width + px(62.);
+        let indicator_width = dbg!(longest_line_width) + px(24. + 16.);
 
-        // let opacity = if self.reachable { 0.5 } else { 0.85 };
-        let opacity = 0.24;
-
-        // let bg = if matches!(breakpoint.state, BreakpointState::Enabled) {
-        //     cx.theme().status().info
-        // } else {
-        //     cx.theme()
-        //         .status()
-        //         .info
-        //         .alpha(1.0)
-        //         .blend(cx.theme().colors().editor_background.alpha(opacity))
-        // };
-
-        let bg = cx.theme().status().info.alpha(opacity);
-
-        let vector_width = rems_from_px(indicator_height.0);
-        let right_adjustment =
-            indicator_width - vector_width.to_pixels(window.rem_size()) / 2.0 - px(6.);
-        let middle_segment = indicator_width - vector_width.to_pixels(window.rem_size());
+        // Create a foreground color for the indicator
+        let fg_color = if is_phantom {
+            cx.theme().colors().text
+        } else if disabled {
+            cx.theme().colors().text.alpha(0.5)
+        } else if breakpoint.message.is_some() {
+            // Log breakpoint
+            cx.theme().status().warning
+        } else {
+            cx.theme().status().error
+        };
 
         div()
             .id(id)
             .absolute()
-            .top(indicator_offset / 2.0)
+            .top(indicator_y_offset / 2.0)
             .left_0()
+            // .left(px(-32.))
+            .w(indicator_width)
+            .h(indicator_height)
             .child(
-                div()
-                    .flex()
-                    .h(indicator_height)
-                    .w(indicator_width)
-                    .items_center()
-                    .child(
-                        div()
-                            .w(middle_segment)
-                            .ml(vector_width / 1.5)
-                            .h(indicator_height)
-                            .rounded_lg()
-                            .bg(bg),
-                    ), // .child(
-                       //     div()
-                       //         .absolute()
-                       //         .top_0()
-                       //         .left(rems_from_px(right_adjustment.0))
-                       //         .h(indicator_height)
-                       //         .child(
-                       //             Vector::square(
-                       //                 VectorName::BreakpointFlagEnd,
-                       //                 rems_from_px(indicator_height.0),
-                       //             )
-                       //             .color(Color::Custom(bg)),
-                       //         ),
-                       // ),
+                canvas(
+                    |_bounds, _cx, _style| {},
+                    move |bounds, _cx, window, _style| {
+                        let bounds = Bounds {
+                            origin: point(bounds.origin.x + offset, bounds.origin.y),
+                            size: size(dbg!(bounds.size.width), indicator_height),
+                        };
+
+                        // Create the breakpoint indicator path
+                        let path = breakpoint_indicator_path(bounds);
+
+                        // Paint the path with the appropriate color
+                        window.paint_path(path, fg_color);
+                    },
+                )
+                .size_full(),
             )
             .on_click({
                 let editor = self.editor.downgrade();
@@ -2541,15 +2530,25 @@ impl EditorElement {
                     });
                 }
             })
-            // .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
-            //     editor.set_breakpoint_context_menu(
-            //         row,
-            //         Some(position),
-            //         event.down.position,
-            //         window,
-            //         cx,
-            //     );
-            // }))
+            .on_mouse_down(gpui::MouseButton::Right, {
+                let editor = self.editor.downgrade();
+                let position = position.clone();
+                move |event, window, cx| {
+                    let Some(editor) = editor.upgrade() else {
+                        return;
+                    };
+                    editor.update(cx, |editor, cx| {
+                        editor.set_breakpoint_context_menu(
+                            row,
+                            Some(position.clone()),
+                            event.position,
+                            window,
+                            cx,
+                        );
+                    });
+                }
+            })
+            // .tooltip(format!("{} (Right-click for more options)", primary_text))
             .into_any_element()
         // IconButton::new(("breakpoint_indicator", row.0 as usize), icon)
         //     .icon_size(IconSize::XSmall)

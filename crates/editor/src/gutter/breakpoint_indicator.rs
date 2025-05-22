@@ -5,7 +5,7 @@ use ui::{Pixels, px};
 ///
 /// Note: The indicator needs to be a minimum of MIN_WIDTH px wide.
 /// wide to draw without graphical issues, so it will ignore narrower width.
-fn breakpoint_indicator_path(bounds: Bounds<Pixels>) -> Path<Pixels> {
+pub(crate) fn breakpoint_indicator_path(bounds: Bounds<Pixels>) -> Path<Pixels> {
     // All dimensions mentioned are in pixels, based on an a
     // total shape size of 50px wide by 15px high
 
