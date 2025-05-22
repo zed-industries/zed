@@ -840,6 +840,14 @@ impl X11Client {
                         state.xkb_device_id,
                     )
                 };
+                let depressed_layout = xkb_state.serialize_layout(xkbc::STATE_LAYOUT_DEPRESSED);
+                let latched_layout = xkb_state.serialize_layout(xkbc::STATE_LAYOUT_LATCHED);
+                let locked_layout = xkb_state.serialize_layout(xkbc::ffi::XKB_STATE_LAYOUT_LOCKED);
+                state.previous_xkb_state = XKBStateNotiy {
+                    depressed_layout,
+                    latched_layout,
+                    locked_layout,
+                };
                 state.xkb = xkb_state;
             }
             Event::XkbStateNotify(event) => {
