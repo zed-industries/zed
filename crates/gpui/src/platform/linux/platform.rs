@@ -718,7 +718,7 @@ pub(crate) struct KeyboardState {
 #[cfg(any(feature = "wayland", feature = "x11"))]
 impl KeyboardState {
     pub(crate) fn new(state: xkb::State) -> Self {
-        let mapper = LinuxKeyboardMapper::new(&state);
+        let mapper = LinuxKeyboardMapper::new();
         Self { state, mapper }
     }
 }
