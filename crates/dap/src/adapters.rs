@@ -375,9 +375,10 @@ pub trait DebugAdapter: 'static + Send + Sync {
     ) -> Result<StartDebuggingRequestArgumentsRequest> {
         let map = config.as_object().context("Config isn't an object")?;
 
-        let request_variant = map["request"]
-            .as_str()
-            .ok_or_else(|| anyhow!("request is not valid"))?;
+        let request_variant = map
+            .get("request")
+            .and_then(|val| val.as_str())
+            .context("request argument is not found or invalid")?;
 
         match request_variant {
             "launch" => Ok(StartDebuggingRequestArgumentsRequest::Launch),
