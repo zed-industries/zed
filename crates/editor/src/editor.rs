@@ -7261,14 +7261,20 @@ impl Editor {
             modifiers: Modifiers::secondary_key(),
             ..Default::default()
         };
-        let primary_text = SharedString::from("Toggle breakpoint");
+        let primary_action_text = if breakpoint.is_disabled() {
+            "Enable breakpoint"
+        } else if is_phantom && !collides_with_existing {
+            "Set breakpoint"
+        } else {
+            "Unset breakpoint"
+        };
         let focus_handle = self.focus_handle.clone();
 
         let meta = if is_rejected {
             SharedString::from("No executable code is associated with this line.")
         } else if collides_with_existing && !breakpoint.is_disabled() {
             SharedString::from(format!(
-                "{alt_as_text}-click to disable, right-click for more options."
+                "{alt_as_text}-click to disable,\nright-click for more options."
             ))
         } else {
             SharedString::from("Right-click for more options.")
@@ -7311,7 +7317,7 @@ impl Editor {
             }))
             .tooltip(move |window, cx| {
                 Tooltip::with_meta_in(
-                    primary_text.clone(),
+                    primary_action_text,
                     Some(&ToggleBreakpoint),
                     meta.clone(),
                     &focus_handle,
