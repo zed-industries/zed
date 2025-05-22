@@ -5,7 +5,7 @@ mod tables;
 pub mod tests;
 
 use crate::{Error, Result, executor::Executor};
-use anyhow::anyhow;
+use anyhow::{Context as _, anyhow};
 use collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use dashmap::DashMap;
 use futures::StreamExt;
@@ -320,11 +320,9 @@ impl Database {
 
         let mut tx = Arc::new(Some(tx));
         let result = f(TransactionHandle(tx.clone())).await;
-        let Some(tx) = Arc::get_mut(&mut tx).and_then(|tx| tx.take()) else {
-            return Err(anyhow!(
-                "couldn't complete transaction because it's still in use"
-            ))?;
-        };
+        let tx = Arc::get_mut(&mut tx)
+            .and_then(|tx| tx.take())
+            .context("couldn't complete transaction because it's still in use")?;
 
         Ok((tx, result))
     }
@@ -344,11 +342,9 @@ impl Database {
 
         let mut tx = Arc::new(Some(tx));
         let result = f(TransactionHandle(tx.clone())).await;
-        let Some(tx) = Arc::get_mut(&mut tx).and_then(|tx| tx.take()) else {
-            return Err(anyhow!(
-                "couldn't complete transaction because it's still in use"
-            ))?;
-        };
+        let tx = Arc::get_mut(&mut tx)
+            .and_then(|tx| tx.take())
+            .context("couldn't complete transaction because it's still in use")?;
 
         Ok((tx, result))
     }
@@ -853,9 +849,7 @@ fn db_status_to_proto(
                 )
             }
             _ => {
-                return Err(anyhow!(
-                    "Unexpected combination of status fields: {entry:?}"
-                ));
+                anyhow::bail!("Unexpected combination of status fields: {entry:?}");
             }
         };
     Ok(proto::StatusEntry {

@@ -421,7 +421,7 @@ fn initialize_panels(
                         workspace.update_in(cx, |workspace, window, cx| {
                             workspace.add_panel(debug_panel, window, cx);
                         })?;
-                        Result::<_, anyhow::Error>::Ok(())
+                        anyhow::Ok(())
                     },
                 )
                 .detach()

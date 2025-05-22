@@ -664,7 +664,7 @@ impl Server {
                     Err(error) => {
                         let proto_err = match &error {
                             Error::Internal(err) => err.to_proto(),
-                            _ => ErrorCode::Internal.message(format!("{}", error)).to_proto(),
+                            _ => ErrorCode::Internal.message(format!("{error}")).to_proto(),
                         };
                         peer.respond_with_error(receipt, proto_err)?;
                         Err(error)
@@ -938,7 +938,7 @@ impl Server {
             .db
             .get_user_by_id(user_id)
             .await?
-            .ok_or_else(|| anyhow!("user not found"))?;
+            .context("user not found")?;
 
         let update_user_plan = make_update_user_plan_message(
             &self.app_state.db,
@@ -1169,7 +1169,7 @@ pub async fn handle_metrics(Extension(server): Extension<Arc<Server>>) -> Result
     let metric_families = prometheus::gather();
     let encoded_metrics = encoder
         .encode_to_string(&metric_families)
-        .map_err(|err| anyhow!("{}", err))?;
+        .map_err(|err| anyhow!("{err}"))?;
     Ok(encoded_metrics)
 }
 
@@ -1685,7 +1685,7 @@ async fn decline_call(message: proto::DeclineCall, session: Session) -> Result<(
             .await
             .decline_call(Some(room_id), session.user_id())
             .await?
-            .ok_or_else(|| anyhow!("failed to decline call"))?;
+            .context("declining call")?;
         room_updated(&room, &session.peer);
     }
 
@@ -1715,9 +1715,7 @@ async fn update_participant_location(
     session: Session,
 ) -> Result<()> {
     let room_id = RoomId::from_proto(request.room_id);
-    let location = request
-        .location
-        .ok_or_else(|| anyhow!("invalid location"))?;
+    let location = request.location.context("invalid location")?;
 
     let db = session.db().await;
     let room = db
@@ -2246,7 +2244,7 @@ async fn create_buffer_for_peer(
             session.connection_id,
         )
         .await?;
-    let peer_id = request.peer_id.ok_or_else(|| anyhow!("invalid peer id"))?;
+    let peer_id = request.peer_id.context("invalid peer id")?;
     session
         .peer
         .forward_send(session.connection_id, peer_id.into(), request)?;
@@ -2377,10 +2375,7 @@ async fn follow(
 ) -> Result<()> {
     let room_id = RoomId::from_proto(request.room_id);
     let project_id = request.project_id.map(ProjectId::from_proto);
-    let leader_id = request
-        .leader_id
-        .ok_or_else(|| anyhow!("invalid leader id"))?
-        .into();
+    let leader_id = request.leader_id.context("invalid leader id")?.into();
     let follower_id = session.connection_id;
 
     session
@@ -2411,10 +2406,7 @@ async fn follow(
 async fn unfollow(request: proto::Unfollow, session: Session) -> Result<()> {
     let room_id = RoomId::from_proto(request.room_id);
     let project_id = request.project_id.map(ProjectId::from_proto);
-    let leader_id = request
-        .leader_id
-        .ok_or_else(|| anyhow!("invalid leader id"))?
-        .into();
+    let leader_id = request.leader_id.context("invalid leader id")?.into();
     let follower_id = session.connection_id;
 
     session
@@ -3358,9 +3350,7 @@ async fn join_channel_internal(
     };
 
     channel_updated(
-        &joined_room
-            .channel
-            .ok_or_else(|| anyhow!("channel not returned"))?,
+        &joined_room.channel.context("channel not returned")?,
         &joined_room.room,
         &session.peer,
         &*session.connection_pool().await,
@@ -3568,9 +3558,7 @@ async fn send_channel_message(
     // TODO: adjust mentions if body is trimmed
 
     let timestamp = OffsetDateTime::now_utc();
-    let nonce = request
-        .nonce
-        .ok_or_else(|| anyhow!("nonce can't be blank"))?;
+    let nonce = request.nonce.context("nonce can't be blank")?;
 
     let channel_id = ChannelId::from_proto(request.channel_id);
     let CreatedChannelMessage {
@@ -3710,10 +3698,7 @@ async fn update_channel_message(
         )
         .await?;
 
-    let nonce = request
-        .nonce
-        .clone()
-        .ok_or_else(|| anyhow!("nonce can't be blank"))?;
+    let nonce = request.nonce.clone().context("nonce can't be blank")?;
 
     let message = proto::ChannelMessage {
         sender_id: session.user_id().to_proto(),
@@ -3818,14 +3803,12 @@ async fn get_supermaven_api_key(
         return Err(anyhow!("supermaven not enabled for this account"))?;
     }
 
-    let email = session
-        .email()
-        .ok_or_else(|| anyhow!("user must have an email"))?;
+    let email = session.email().context("user must have an email")?;
 
     let supermaven_admin_api = session
         .supermaven_client
         .as_ref()
-        .ok_or_else(|| anyhow!("supermaven not configured"))?;
+        .context("supermaven not configured")?;
 
     let result = supermaven_admin_api
         .try_get_or_create_user(CreateExternalUserRequest { id: user_id, email })
@@ -3973,7 +3956,7 @@ async fn get_private_user_info(
     let user = db
         .get_user_by_id(session.user_id())
         .await?
-        .ok_or_else(|| anyhow!("user not found"))?;
+        .context("user not found")?;
     let flags = db.get_user_flags(session.user_id()).await?;
 
     response.send(proto::GetPrivateUserInfoResponse {
@@ -4019,19 +4002,23 @@ async fn get_llm_api_token(
     let user = db
         .get_user_by_id(user_id)
         .await?
-        .ok_or_else(|| anyhow!("user {} not found", user_id))?;
+        .with_context(|| format!("user {user_id} not found"))?;
 
     if user.accepted_tos_at.is_none() {
         Err(anyhow!("terms of service not accepted"))?
     }
 
-    let Some(stripe_client) = session.app_state.stripe_client.as_ref() else {
-        Err(anyhow!("failed to retrieve Stripe client"))?
-    };
+    let stripe_client = session
+        .app_state
+        .stripe_client
+        .as_ref()
+        .context("failed to retrieve Stripe client")?;
 
-    let Some(stripe_billing) = session.app_state.stripe_billing.as_ref() else {
-        Err(anyhow!("failed to retrieve Stripe billing object"))?
-    };
+    let stripe_billing = session
+        .app_state
+        .stripe_billing
+        .as_ref()
+        .context("failed to retrieve Stripe billing object")?;
 
     let billing_customer =
         if let Some(billing_customer) = db.get_billing_customer_by_user_id(user.id).await? {
@@ -4047,7 +4034,7 @@ async fn get_llm_api_token(
                 stripe::Expandable::Id(customer_id),
             )
             .await?
-            .ok_or_else(|| anyhow!("billing customer not found"))?
+            .context("billing customer not found")?
         };
 
     let billing_subscription =

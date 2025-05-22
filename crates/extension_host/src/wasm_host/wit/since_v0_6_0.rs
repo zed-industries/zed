@@ -1,7 +1,7 @@
 use crate::wasm_host::wit::since_v0_6_0::{
     dap::{
-        AttachRequest, DebugRequest, LaunchRequest, StartDebuggingRequestArguments,
-        StartDebuggingRequestArgumentsRequest, TcpArguments, TcpArgumentsTemplate,
+        StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest, TcpArguments,
+        TcpArgumentsTemplate,
     },
     slash_command::SlashCommandOutputSection,
 };
@@ -9,7 +9,7 @@ use crate::wasm_host::wit::{CompletionKind, CompletionLabelDetails, InsertTextFo
 use crate::wasm_host::{WasmState, wit::ToWasmtimeResult};
 use ::http_client::{AsyncBody, HttpRequestExt};
 use ::settings::{Settings, WorktreeId};
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context as _, Result, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
@@ -27,7 +27,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
-use util::maybe;
+use util::{archive::extract_zip, maybe};
 use wasmtime::component::{Linker, Resource};
 
 pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 6, 0);
@@ -48,7 +48,7 @@ wasmtime::component::bindgen!({
 pub use self::zed::extension::*;
 
 mod settings {
-    include!(concat!(env!("OUT_DIR"), "/since_v0.5.0/settings.rs"));
+    include!(concat!(env!("OUT_DIR"), "/since_v0.6.0/settings.rs"));
 }
 
 pub type ExtensionWorktree = Arc<dyn WorktreeDelegate>;
@@ -75,17 +75,6 @@ impl From<Command> for extension::Command {
             command: value.command,
             args: value.args,
             env: value.env,
-        }
-    }
-}
-
-impl From<extension::LaunchRequest> for LaunchRequest {
-    fn from(value: extension::LaunchRequest) -> Self {
-        Self {
-            program: value.program,
-            cwd: value.cwd.map(|path| path.to_string_lossy().into_owned()),
-            envs: value.env.into_iter().collect(),
-            args: value.args,
         }
     }
 }
@@ -129,32 +118,14 @@ impl From<extension::TcpArgumentsTemplate> for TcpArgumentsTemplate {
         }
     }
 }
-impl From<extension::AttachRequest> for AttachRequest {
-    fn from(value: extension::AttachRequest) -> Self {
-        Self {
-            process_id: value.process_id,
-        }
-    }
-}
-impl From<extension::DebugRequest> for DebugRequest {
-    fn from(value: extension::DebugRequest) -> Self {
-        match value {
-            extension::DebugRequest::Launch(launch_request) => Self::Launch(launch_request.into()),
-            extension::DebugRequest::Attach(attach_request) => Self::Attach(attach_request.into()),
-        }
-    }
-}
 
 impl TryFrom<extension::DebugTaskDefinition> for DebugTaskDefinition {
     type Error = anyhow::Error;
     fn try_from(value: extension::DebugTaskDefinition) -> Result<Self, Self::Error> {
-        let initialize_args = value.initialize_args.map(|s| s.to_string());
         Ok(Self {
             label: value.label.to_string(),
             adapter: value.adapter.to_string(),
-            request: value.request.into(),
-            initialize_args,
-            stop_on_entry: value.stop_on_entry,
+            config: value.config.to_string(),
             tcp_connection: value.tcp_connection.map(Into::into),
         })
     }
@@ -524,7 +495,7 @@ impl From<http_client::HttpMethod> for ::http_client::Method {
 
 fn convert_request(
     extension_request: &http_client::HttpRequest,
-) -> Result<::http_client::Request<AsyncBody>, anyhow::Error> {
+) -> anyhow::Result<::http_client::Request<AsyncBody>> {
     let mut request = ::http_client::Request::builder()
         .method(::http_client::Method::from(extension_request.method))
         .uri(&extension_request.url)
@@ -548,7 +519,7 @@ fn convert_request(
 
 async fn convert_response(
     response: &mut ::http_client::Response<AsyncBody>,
-) -> Result<http_client::HttpResponse, anyhow::Error> {
+) -> anyhow::Result<http_client::HttpResponse> {
     let mut extension_response = http_client::HttpResponse {
         body: Vec::new(),
         headers: Vec::new(),
@@ -729,8 +700,29 @@ impl slash_command::Host for WasmState {}
 #[async_trait]
 impl context_server::Host for WasmState {}
 
-#[async_trait]
-impl dap::Host for WasmState {}
+impl dap::Host for WasmState {
+    async fn resolve_tcp_template(
+        &mut self,
+        template: TcpArgumentsTemplate,
+    ) -> wasmtime::Result<Result<TcpArguments, String>> {
+        maybe!(async {
+            let (host, port, timeout) =
+                ::dap::configure_tcp_connection(task::TcpArgumentsTemplate {
+                    port: template.port,
+                    host: template.host.map(Ipv4Addr::from_bits),
+                    timeout: template.timeout,
+                })
+                .await?;
+            Ok(TcpArguments {
+                port,
+                host: host.to_bits(),
+                timeout,
+            })
+        })
+        .await
+        .to_wasmtime_result()
+    }
+}
 
 impl ExtensionImports for WasmState {
     async fn get_settings(
@@ -850,14 +842,13 @@ impl ExtensionImports for WasmState {
                 .http_client
                 .get(&url, Default::default(), true)
                 .await
-                .map_err(|err| anyhow!("error downloading release: {}", err))?;
+                .context("downloading release")?;
 
-            if !response.status().is_success() {
-                Err(anyhow!(
-                    "download failed with status {}",
-                    response.status().to_string()
-                ))?;
-            }
+            anyhow::ensure!(
+                response.status().is_success(),
+                "download failed with status {}",
+                response.status().to_string()
+            );
             let body = BufReader::new(response.body_mut());
 
             match file_type {
@@ -886,9 +877,9 @@ impl ExtensionImports for WasmState {
                 }
                 DownloadedFileType::Zip => {
                     futures::pin_mut!(body);
-                    node_runtime::extract_zip(&destination_path, body)
+                    extract_zip(&destination_path, body)
                         .await
-                        .with_context(|| format!("failed to unzip {} archive", path.display()))?;
+                        .with_context(|| format!("unzipping {path:?} archive"))?;
                 }
             }
 
@@ -910,7 +901,7 @@ impl ExtensionImports for WasmState {
             use std::os::unix::fs::PermissionsExt;
 
             return fs::set_permissions(&path, Permissions::from_mode(0o755))
-                .map_err(|error| anyhow!("failed to set permissions for path {path:?}: {error}"))
+                .with_context(|| format!("setting permissions for path {path:?}"))
                 .to_wasmtime_result();
         }
 

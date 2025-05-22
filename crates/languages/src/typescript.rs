@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
@@ -19,6 +19,7 @@ use std::{
     sync::Arc,
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
+use util::archive::extract_zip;
 use util::{ResultExt, fs::remove_matching, maybe};
 
 pub(super) fn typescript_task_context() -> ContextProviderWithTasks {
@@ -315,10 +316,7 @@ async fn get_cached_ts_server_binary(
                 arguments: typescript_server_binary_arguments(&old_server_path),
             })
         } else {
-            Err(anyhow!(
-                "missing executable in directory {:?}",
-                container_dir
-            ))
+            anyhow::bail!("missing executable in directory {container_dir:?}")
         }
     })
     .await
@@ -491,7 +489,7 @@ impl LspAdapter for EsLintLspAdapter {
                 .http_client()
                 .get(&version.url, Default::default(), true)
                 .await
-                .map_err(|err| anyhow!("error downloading release: {}", err))?;
+                .context("downloading release")?;
             match Self::GITHUB_ASSET_KIND {
                 AssetKind::TarGz => {
                     let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
@@ -517,19 +515,16 @@ impl LspAdapter for EsLintLspAdapter {
                         })?;
                 }
                 AssetKind::Zip => {
-                    node_runtime::extract_zip(
-                        &destination_path,
-                        BufReader::new(response.body_mut()),
-                    )
-                    .await
-                    .with_context(|| {
-                        format!("unzipping {} to {:?}", version.url, destination_path)
-                    })?;
+                    extract_zip(&destination_path, BufReader::new(response.body_mut()))
+                        .await
+                        .with_context(|| {
+                            format!("unzipping {} to {:?}", version.url, destination_path)
+                        })?;
                 }
             }
 
             let mut dir = fs::read_dir(&destination_path).await?;
-            let first = dir.next().await.ok_or(anyhow!("missing first file"))??;
+            let first = dir.next().await.context("missing first file")??;
             let repo_root = destination_path.join("vscode-eslint");
             fs::rename(first.path(), &repo_root).await?;
 
@@ -580,9 +575,10 @@ impl LspAdapter for EsLintLspAdapter {
 
 #[cfg(target_os = "windows")]
 async fn handle_symlink(src_dir: PathBuf, dest_dir: PathBuf) -> Result<()> {
-    if fs::metadata(&src_dir).await.is_err() {
-        return Err(anyhow!("Directory {} not present.", src_dir.display()));
-    }
+    anyhow::ensure!(
+        fs::metadata(&src_dir).await.is_ok(),
+        "Directory {src_dir:?} is not present"
+    );
     if fs::metadata(&dest_dir).await.is_ok() {
         fs::remove_file(&dest_dir).await?;
     }

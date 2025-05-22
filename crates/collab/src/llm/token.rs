@@ -2,7 +2,7 @@ use crate::db::billing_subscription::SubscriptionKind;
 use crate::db::{billing_subscription, user};
 use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
 use crate::{Config, db::billing_preference};
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result};
 use chrono::{NaiveDateTime, Utc};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
@@ -49,7 +49,7 @@ impl LlmTokenClaims {
         let secret = config
             .llm_api_secret
             .as_ref()
-            .ok_or_else(|| anyhow!("no LLM API secret"))?;
+            .context("no LLM API secret")?;
 
         let plan = if is_staff {
             Plan::ZedPro
@@ -63,7 +63,7 @@ impl LlmTokenClaims {
         let subscription_period =
             billing_subscription::Model::current_period(Some(subscription), is_staff)
                 .map(|(start, end)| (start.naive_utc(), end.naive_utc()))
-                .ok_or_else(|| anyhow!("A plan is required to use Zed's hosted models or edit predictions. Visit https://zed.dev/account to get started."))?;
+                .context("A plan is required to use Zed's hosted models or edit predictions. Visit https://zed.dev/account to get started.")?;
 
         let now = Utc::now();
         let claims = Self {
@@ -112,7 +112,7 @@ impl LlmTokenClaims {
         let secret = config
             .llm_api_secret
             .as_ref()
-            .ok_or_else(|| anyhow!("no LLM API secret"))?;
+            .context("no LLM API secret")?;
 
         match jsonwebtoken::decode::<Self>(
             token,
