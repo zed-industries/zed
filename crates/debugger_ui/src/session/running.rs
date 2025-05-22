@@ -96,7 +96,7 @@ impl Render for RunningState {
             .find(|pane| pane.read(cx).is_zoomed());
 
         let active = self.panes.panes().into_iter().next();
-        let x = if let Some(ref zoomed_pane) = zoomed_pane {
+        let pane = if let Some(ref zoomed_pane) = zoomed_pane {
             zoomed_pane.update(cx, |pane, cx| pane.render(window, cx).into_any_element())
         } else if let Some(active) = active {
             self.panes
@@ -122,7 +122,7 @@ impl Render for RunningState {
             .size_full()
             .key_context("DebugSessionItem")
             .track_focus(&self.focus_handle(cx))
-            .child(h_flex().flex_1().child(x))
+            .child(h_flex().flex_1().child(pane))
     }
 }
 
@@ -652,10 +652,9 @@ impl RunningState {
                 &workspace,
                 &stack_frame_list,
                 &variable_list,
-                &module_list,
-                &loaded_source_list,
                 &console,
                 &breakpoint_list,
+                &debug_terminal,
                 dock_axis,
                 &mut pane_close_subscriptions,
                 window,
@@ -1480,10 +1479,9 @@ impl RunningState {
         workspace: &WeakEntity<Workspace>,
         stack_frame_list: &Entity<StackFrameList>,
         variable_list: &Entity<VariableList>,
-        module_list: &Entity<ModuleList>,
-        loaded_source_list: &Entity<LoadedSourceList>,
         console: &Entity<Console>,
         breakpoints: &Entity<BreakpointList>,
+        debug_terminal: &Entity<DebugTerminal>,
         dock_axis: Axis,
         subscriptions: &mut HashMap<EntityId, Subscription>,
         window: &mut Window,
@@ -1524,6 +1522,26 @@ impl RunningState {
         let center_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
 
         center_pane.update(cx, |this, cx| {
+            let weak_console = console.downgrade();
+            this.add_item(
+                Box::new(SubView::new(
+                    console.focus_handle(cx),
+                    console.clone().into(),
+                    DebuggerPaneItem::Console,
+                    Some(Box::new(move |cx| {
+                        weak_console
+                            .read_with(cx, |console, cx| console.show_indicator(cx))
+                            .unwrap_or_default()
+                    })),
+                    cx,
+                )),
+                true,
+                false,
+                None,
+                window,
+                cx,
+            );
+
             this.add_item(
                 Box::new(SubView::new(
                     variable_list.focus_handle(cx),
@@ -1538,54 +1556,20 @@ impl RunningState {
                 window,
                 cx,
             );
-            this.add_item(
-                Box::new(SubView::new(
-                    module_list.focus_handle(cx),
-                    module_list.clone().into(),
-                    DebuggerPaneItem::Modules,
-                    None,
-                    cx,
-                )),
-                false,
-                false,
-                None,
-                window,
-                cx,
-            );
-
-            this.add_item(
-                Box::new(SubView::new(
-                    loaded_source_list.focus_handle(cx),
-                    loaded_source_list.clone().into(),
-                    DebuggerPaneItem::LoadedSources,
-                    None,
-                    cx,
-                )),
-                false,
-                false,
-                None,
-                window,
-                cx,
-            );
             this.activate_item(0, false, false, window, cx);
         });
 
         let rightmost_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
         rightmost_pane.update(cx, |this, cx| {
-            let weak_console = console.downgrade();
             this.add_item(
                 Box::new(SubView::new(
-                    this.focus_handle(cx),
-                    console.clone().into(),
-                    DebuggerPaneItem::Console,
-                    Some(Box::new(move |cx| {
-                        weak_console
-                            .read_with(cx, |console, cx| console.show_indicator(cx))
-                            .unwrap_or_default()
-                    })),
+                    debug_terminal.focus_handle(cx),
+                    debug_terminal.clone().into(),
+                    DebuggerPaneItem::Terminal,
+                    None,
                     cx,
                 )),
-                true,
+                false,
                 false,
                 None,
                 window,

@@ -18,6 +18,7 @@ use language_model::{
     LanguageModelToolResultContent, LanguageModelToolUse, LanguageModelToolUseId, SelectedModel,
 };
 use project::Project;
+use prompt_store::{ModelContext, ProjectContext, PromptBuilder, WorktreeContext};
 use rand::prelude::*;
 use reqwest_client::ReqwestClient;
 use serde_json::json;
@@ -895,52 +896,24 @@ fn eval_add_overwrite_test() {
 }
 
 #[test]
-#[ignore] // until we figure out the mystery described in the comments
-// #[cfg_attr(not(feature = "eval"), ignore)]
+#[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_create_empty_file() {
     // Check that Edit Agent can create a file without writing its
     // thoughts into it. This issue is not specific to empty files, but
     // it's easier to reproduce with them.
-    //
-    // NOTE: For some mysterious reason, I could easily reproduce this
-    // issue roughly 90% of the time in actual Zed. However, once I
-    // extract the exact LLM request before the failure point and
-    // generate from that, the reproduction rate drops to 2%!
-    //
-    // Things I've tried to make sure it's not a fluke: disabling prompt
-    // caching, capturing the LLM request via a proxy server, running the
-    // prompt on Claude separately from evals. Every time it was mostly
-    // giving good outcomes, which doesn't match my actual experience in
-    // Zed.
-    //
-    // At some point I discovered that simply adding one insignificant
-    // space or a newline to the prompt suddenly results in an outcome I
-    // tried to reproduce almost perfectly.
-    //
-    // This weirdness happens even outside of the Zed code base and even
-    // when using a different subscription. The result is the same: an
-    // extra newline or space changes the model behavior significantly
-    // enough, so that the pass rate drops from 99% to 0-3%
-    //
-    // I have no explanation to this.
     //
     //
     //  Model                          | Pass rate
     // ============================================
     //
     // --------------------------------------------
-    //           Prompt version: 2025-05-19
+    //           Prompt version: 2025-05-21
     // --------------------------------------------
     //
-    //  claude-3.7-sonnet              |  0.98
-    //    + one extra space in prompt  |  0.00
-    //    + original prompt again      |  0.99
-    //    + extra newline              |  0.03
+    //  claude-3.7-sonnet              |  1.00
     //  gemini-2.5-pro-preview-03-25   |  1.00
     //  gemini-2.5-flash-preview-04-17 |  1.00
-    //    + one extra space            |  1.00
     //  gpt-4.1                        |  1.00
-    //    + one extra space            |  1.00
     //
     //
     // TODO: gpt-4.1-mini errored 38 times:
@@ -949,8 +922,8 @@ fn eval_create_empty_file() {
     let input_file_content = None;
     let expected_output_content = String::new();
     eval(
-        1,
-        1.0,
+        100,
+        0.99,
         EvalInput::from_conversation(
             vec![
                 message(User, [text("Create a second empty todo file ")]),
@@ -1442,24 +1415,59 @@ impl EditAgentTest {
             .update(cx, |project, cx| project.open_buffer(path, cx))
             .await
             .unwrap();
-        let conversation = LanguageModelRequest {
-            messages: eval.conversation,
-            tools: cx.update(|cx| {
-                ToolRegistry::default_global(cx)
-                    .tools()
-                    .into_iter()
-                    .filter_map(|tool| {
-                        let input_schema = tool
-                            .input_schema(self.agent.model.tool_input_format())
-                            .ok()?;
-                        Some(LanguageModelRequestTool {
-                            name: tool.name(),
-                            description: tool.description(),
-                            input_schema,
-                        })
+        let tools = cx.update(|cx| {
+            ToolRegistry::default_global(cx)
+                .tools()
+                .into_iter()
+                .filter_map(|tool| {
+                    let input_schema = tool
+                        .input_schema(self.agent.model.tool_input_format())
+                        .ok()?;
+                    Some(LanguageModelRequestTool {
+                        name: tool.name(),
+                        description: tool.description(),
+                        input_schema,
                     })
-                    .collect()
-            }),
+                })
+                .collect::<Vec<_>>()
+        });
+        let tool_names = tools
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect::<Vec<_>>();
+        let worktrees = vec![WorktreeContext {
+            root_name: "root".to_string(),
+            rules_file: None,
+        }];
+        let prompt_builder = PromptBuilder::new(None)?;
+        let project_context = ProjectContext::new(worktrees, Vec::default());
+        let system_prompt = prompt_builder.generate_assistant_system_prompt(
+            &project_context,
+            &ModelContext {
+                available_tools: tool_names,
+            },
+        )?;
+
+        let has_system_prompt = eval
+            .conversation
+            .first()
+            .map_or(false, |msg| msg.role == Role::System);
+        let messages = if has_system_prompt {
+            eval.conversation
+        } else {
+            [LanguageModelRequestMessage {
+                role: Role::System,
+                content: vec![MessageContent::Text(system_prompt)],
+                cache: true,
+            }]
+            .into_iter()
+            .chain(eval.conversation)
+            .collect::<Vec<_>>()
+        };
+
+        let conversation = LanguageModelRequest {
+            messages,
+            tools,
             ..Default::default()
         };
         let edit_output = if matches!(eval.edit_file_input.mode, EditFileMode::Edit) {

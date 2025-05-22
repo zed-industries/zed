@@ -3964,15 +3964,18 @@ impl Editor {
                                     .skip(num_of_whitespaces)
                                     .take(max_len_of_delimiter)
                                     .collect::<String>();
-                                let (delimiter, trimmed_len) =
-                                    delimiters.iter().find_map(|delimiter| {
-                                        let trimmed = delimiter.trim_end();
-                                        if comment_candidate.starts_with(trimmed) {
-                                            Some((delimiter, trimmed.len()))
+                                let (delimiter, trimmed_len) = delimiters
+                                    .iter()
+                                    .filter_map(|delimiter| {
+                                        let prefix = delimiter.trim_end();
+                                        if comment_candidate.starts_with(prefix) {
+                                            Some((delimiter, prefix.len()))
                                         } else {
                                             None
                                         }
-                                    })?;
+                                    })
+                                    .max_by_key(|(_, len)| *len)?;
+
                                 let cursor_is_placed_after_comment_marker =
                                     num_of_whitespaces + trimmed_len <= start_point.column as usize;
                                 if cursor_is_placed_after_comment_marker {
@@ -7263,24 +7266,22 @@ impl Editor {
             ..Default::default()
         };
         let primary_action_text = if breakpoint.is_disabled() {
-            "enable"
+            "Enable breakpoint"
         } else if is_phantom && !collides_with_existing {
-            "set"
+            "Set breakpoint"
         } else {
-            "unset"
+            "Unset breakpoint"
         };
-        let mut primary_text = format!("Click to {primary_action_text}");
-        if collides_with_existing && !breakpoint.is_disabled() {
-            use std::fmt::Write;
-            write!(primary_text, ", {alt_as_text}-click to disable").ok();
-        }
-        let primary_text = SharedString::from(primary_text);
         let focus_handle = self.focus_handle.clone();
 
         let meta = if is_rejected {
-            "No executable code is associated with this line."
+            SharedString::from("No executable code is associated with this line.")
+        } else if collides_with_existing && !breakpoint.is_disabled() {
+            SharedString::from(format!(
+                "{alt_as_text}-click to disable,\nright-click for more options."
+            ))
         } else {
-            "Right-click for more options."
+            SharedString::from("Right-click for more options.")
         };
         IconButton::new(("breakpoint_indicator", row.0 as usize), icon)
             .icon_size(IconSize::XSmall)
@@ -7319,7 +7320,14 @@ impl Editor {
                 );
             }))
             .tooltip(move |window, cx| {
-                Tooltip::with_meta_in(primary_text.clone(), None, meta, &focus_handle, window, cx)
+                Tooltip::with_meta_in(
+                    primary_action_text,
+                    Some(&ToggleBreakpoint),
+                    meta.clone(),
+                    &focus_handle,
+                    window,
+                    cx,
+                )
             })
     }
 
@@ -20236,6 +20244,7 @@ impl SemanticsProvider for Entity<Project> {
     fn inline_values(
         &self,
         buffer_handle: Entity<Buffer>,
+
         range: Range<text::Anchor>,
         cx: &mut App,
     ) -> Option<Task<anyhow::Result<Vec<InlayHint>>>> {

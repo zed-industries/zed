@@ -27,11 +27,9 @@ use crate::db::billing_subscription::{
     StripeCancellationReason, StripeSubscriptionStatus, SubscriptionKind,
 };
 use crate::llm::db::subscription_usage_meter::CompletionMode;
-use crate::llm::{
-    AGENT_EXTENDED_TRIAL_FEATURE_FLAG, DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT,
-};
+use crate::llm::{AGENT_EXTENDED_TRIAL_FEATURE_FLAG, DEFAULT_MAX_MONTHLY_SPEND};
 use crate::rpc::{ResultExt as _, Server};
-use crate::{AppState, Cents, Error, Result};
+use crate::{AppState, Error, Result};
 use crate::{db::UserId, llm::db::LlmDatabase};
 use crate::{
     db::{
@@ -64,7 +62,6 @@ pub fn router() -> Router {
             "/billing/subscriptions/sync",
             post(sync_billing_subscription),
         )
-        .route("/billing/monthly_spend", get(get_monthly_spend))
         .route("/billing/usage", get(get_current_usage))
 }
 
@@ -1224,54 +1221,6 @@ async fn handle_customer_subscription_event(
 }
 
 #[derive(Debug, Deserialize)]
-struct GetMonthlySpendParams {
-    github_user_id: i32,
-}
-
-#[derive(Debug, Serialize)]
-struct GetMonthlySpendResponse {
-    monthly_free_tier_spend_in_cents: u32,
-    monthly_free_tier_allowance_in_cents: u32,
-    monthly_spend_in_cents: u32,
-}
-
-async fn get_monthly_spend(
-    Extension(app): Extension<Arc<AppState>>,
-    Query(params): Query<GetMonthlySpendParams>,
-) -> Result<Json<GetMonthlySpendResponse>> {
-    let user = app
-        .db
-        .get_user_by_github_user_id(params.github_user_id)
-        .await?
-        .context("user not found")?;
-
-    let Some(llm_db) = app.llm_db.clone() else {
-        return Err(Error::http(
-            StatusCode::NOT_IMPLEMENTED,
-            "LLM database not available".into(),
-        ));
-    };
-
-    let free_tier = user
-        .custom_llm_monthly_allowance_in_cents
-        .map(|allowance| Cents(allowance as u32))
-        .unwrap_or(FREE_TIER_MONTHLY_SPENDING_LIMIT);
-
-    let spending_for_month = llm_db
-        .get_user_spending_for_month(user.id, Utc::now())
-        .await?;
-
-    let free_tier_spend = Cents::min(spending_for_month, free_tier);
-    let monthly_spend = spending_for_month.saturating_sub(free_tier);
-
-    Ok(Json(GetMonthlySpendResponse {
-        monthly_free_tier_spend_in_cents: free_tier_spend.0,
-        monthly_free_tier_allowance_in_cents: free_tier.0,
-        monthly_spend_in_cents: monthly_spend.0,
-    }))
-}
-
-#[derive(Debug, Deserialize)]
 struct GetCurrentUsageParams {
     github_user_id: i32,
 }
@@ -1344,15 +1293,10 @@ async fn get_current_usage(
         .get_subscription_usage_for_period(user.id, period_start_at, period_end_at)
         .await?;
 
-    let plan = usage
-        .as_ref()
-        .map(|usage| usage.plan.into())
-        .unwrap_or_else(|| {
-            subscription
-                .kind
-                .map(Into::into)
-                .unwrap_or(zed_llm_client::Plan::ZedFree)
-        });
+    let plan = subscription
+        .kind
+        .map(Into::into)
+        .unwrap_or(zed_llm_client::Plan::ZedFree);
 
     let model_requests_limit = match plan.model_requests_limit() {
         zed_llm_client::UsageLimit::Limited(limit) => {

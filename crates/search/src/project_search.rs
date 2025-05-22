@@ -324,24 +324,24 @@ impl ProjectSearch {
                     }
                 }
 
-                let excerpts = project_search
-                    .update(cx, |project_search, _| project_search.excerpts.clone())
-                    .ok()?;
-                let mut new_ranges = excerpts
-                    .update(cx, |excerpts, cx| {
-                        buffers_with_ranges
-                            .into_iter()
-                            .map(|(buffer, ranges)| {
-                                excerpts.set_anchored_excerpts_for_path(
-                                    buffer,
-                                    ranges,
-                                    editor::DEFAULT_MULTIBUFFER_CONTEXT,
-                                    cx,
-                                )
-                            })
-                            .collect::<FuturesOrdered<_>>()
+                let mut new_ranges = project_search
+                    .update(cx, |project_search, cx| {
+                        project_search.excerpts.update(cx, |excerpts, cx| {
+                            buffers_with_ranges
+                                .into_iter()
+                                .map(|(buffer, ranges)| {
+                                    excerpts.set_anchored_excerpts_for_path(
+                                        buffer,
+                                        ranges,
+                                        editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                                        cx,
+                                    )
+                                })
+                                .collect::<FuturesOrdered<_>>()
+                        })
                     })
                     .ok()?;
+
                 while let Some(new_ranges) = new_ranges.next().await {
                     project_search
                         .update(cx, |project_search, _| {
@@ -1029,6 +1029,12 @@ impl ProjectSearchView {
                 search
                     .included_files_editor
                     .update(cx, |editor, cx| editor.set_text(included_files, window, cx));
+                search.filters_enabled = true;
+            }
+            if let Some(excluded_files) = action.excluded_files.as_deref() {
+                search
+                    .excluded_files_editor
+                    .update(cx, |editor, cx| editor.set_text(excluded_files, window, cx));
                 search.filters_enabled = true;
             }
             search.focus_query_editor(window, cx)

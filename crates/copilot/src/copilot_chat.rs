@@ -581,6 +581,15 @@ async fn stream_completion(
     api_key: String,
     request: Request,
 ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
+    let is_vision_request = request.messages.last().map_or(false, |message| match message {
+        ChatMessage::User { content }
+        | ChatMessage::Assistant { content, .. }
+        | ChatMessage::Tool { content, .. } => {
+            matches!(content, ChatMessageContent::Multipart(parts) if parts.iter().any(|part| matches!(part, ChatMessagePart::Image { .. })))
+        }
+        _ => false,
+    });
+
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(COPILOT_CHAT_COMPLETION_URL)
@@ -594,7 +603,7 @@ async fn stream_completion(
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
         .header("Copilot-Integration-Id", "vscode-chat")
-        .header("Copilot-Vision-Request", "true");
+        .header("Copilot-Vision-Request", is_vision_request.to_string());
 
     let is_streaming = request.stream;
 
