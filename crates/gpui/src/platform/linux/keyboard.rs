@@ -50,6 +50,7 @@ pub(crate) struct LinuxKeyboardMapper {
 #[cfg(any(feature = "wayland", feature = "x11"))]
 impl LinuxKeyboardMapper {
     pub(crate) fn new(group: Option<u32>) -> Self {
+        let group = group.unwrap_or(0);
         let _ = XCB_CONNECTION
             .xkb_use_extension(XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION)
             .unwrap()
@@ -66,6 +67,7 @@ impl LinuxKeyboardMapper {
             );
             xkbcommon::xkb::x11::state_new_from_device(&xkb_keymap, &*XCB_CONNECTION, xkb_device_id)
         };
+        xkb_state.update_mask(0, 0, 0, 0, 0, group);
 
         let mut letters = HashMap::default();
         let mut code_to_key = HashMap::default();
@@ -76,12 +78,7 @@ impl LinuxKeyboardMapper {
         let mut shifted_state = xkbcommon::xkb::State::new(&keymap);
         let shift_mod = keymap.mod_get_index(xkbcommon::xkb::MOD_NAME_SHIFT);
         let shift_mask = 1 << shift_mod;
-        shifted_state.update_mask(shift_mask, 0, 0, 0, 0, 0);
-
-        if let Some(group) = group {
-            xkb_state.update_mask(0, 0, 0, 0, 0, group);
-            shifted_state.update_mask(0, 0, 0, 0, 0, group);
-        }
+        shifted_state.update_mask(shift_mask, 0, 0, 0, 0, group);
 
         for scan_code in LinuxScanCodes::iter() {
             let keycode = Keycode::new(scan_code as u32);
