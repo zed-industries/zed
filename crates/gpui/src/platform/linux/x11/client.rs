@@ -841,6 +841,7 @@ impl X11Client {
                     )
                 };
                 state.xkb = xkb_state;
+                println!("X11 new keyboard notify");
             }
             Event::XkbStateNotify(event) => {
                 let mut state = self.0.borrow_mut();
@@ -860,6 +861,7 @@ impl X11Client {
                     locked_layout: event.locked_group.into(),
                 };
 
+                println!("X11 xkb state notify: {:?}", event);
                 if new_layout != old_layout {
                     if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take()
                     {
