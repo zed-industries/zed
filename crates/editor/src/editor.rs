@@ -5763,32 +5763,17 @@ impl Editor {
         EditorSettings::get_global(cx).toolbar.code_actions
     }
 
-    pub fn available_code_actions(&self) -> Option<&Rc<[AvailableCodeAction]>> {
-        self.available_code_actions
-            .as_ref()
-            .map(|(_, actions)| actions)
-    }
-
-    pub fn popover_code_actions(&self) -> Option<&Rc<[AvailableCodeAction]>> {
-        self.popover_code_actions_menu
-            .as_ref()
-            .map(|menu| &menu.actions)
-    }
-
     pub fn set_popover_code_actions_menu(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<()> {
-        println!("reached 0");
+    ) -> Option<Rc<[AvailableCodeAction]>> {
         let actions = self
             .available_code_actions
             .as_ref()
             .map(|(_, actions)| actions)?;
-        println!("reached 0.5");
         let multibuffer_point = self.selections.newest::<Point>(cx).head();
         let snapshot = self.snapshot(window, cx);
-        println!("reached 1");
         let (buffer, _buffer_row) = snapshot
             .buffer_snapshot
             .buffer_line_for_row(MultiBufferRow(multibuffer_point.row))
@@ -5798,12 +5783,11 @@ impl Editor {
                     .buffer(buffer_snapshot.remote_id())
                     .map(|buffer| (buffer, range.start.row))
             })?;
-        println!("reached 2");
         self.popover_code_actions_menu = Some(PopoverCodeActionsMenu {
             actions: actions.clone(),
             buffer,
         });
-        None
+        Some(actions.clone())
     }
 
     fn refresh_code_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<()> {

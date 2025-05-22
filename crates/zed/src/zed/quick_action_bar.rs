@@ -109,7 +109,6 @@ impl Render for QuickActionBar {
             editor_value.edit_predictions_enabled_at_cursor(cx);
         let supports_minimap = editor_value.supports_minimap(cx);
         let minimap_enabled = supports_minimap && editor_value.minimap().is_some();
-        let has_code_actions = editor_value.available_code_actions().is_some();
         let code_action_enabled = editor_value.code_actions_enabled(cx);
 
         let focus_handle = editor_value.focus_handle(cx);
@@ -148,33 +147,14 @@ impl Render for QuickActionBar {
         let code_actions_dropdown = code_action_enabled.then(|| {
             let focus = editor.focus_handle(cx);
             PopoverMenu::new("editor-code-actions-dropdown")
-                .trigger_with_tooltip(
-                    IconButton::new("toggle_code_actions_icon", IconName::Bolt)
-                        .icon_size(IconSize::Small)
-                        .style(ButtonStyle::Subtle)
-                        .disabled(!has_code_actions)
-                        .toggle_state(self.toggle_code_actions_handle.is_deployed()),
-                    Tooltip::text("Code Actions"),
-                )
-                .with_handle(self.toggle_code_actions_handle.clone())
-                .anchor(Corner::TopRight)
-                .on_open({
-                    let editor_weak = editor.downgrade();
-                    Rc::new(move |window, cx| {
-                        println!("called");
-                        editor_weak
-                            .update(cx, |editor, cx| {
-                                editor.set_popover_code_actions_menu(window, cx);
-                            })
-                            .ok();
-                    })
-                })
                 .menu({
                     let editor_weak = editor.downgrade();
                     move |window, cx| {
                         let focus = focus.clone();
                         let actions = editor_weak
-                            .update(cx, |editor, _| editor.available_code_actions().cloned())
+                            .update(cx, |editor, cx| {
+                                editor.set_popover_code_actions_menu(window, cx)
+                            })
                             .ok()
                             .flatten()?;
                         let menu = ContextMenu::build(window, cx, move |menu, _, _| {
@@ -192,6 +172,15 @@ impl Render for QuickActionBar {
                         Some(menu)
                     }
                 })
+                .trigger_with_tooltip(
+                    IconButton::new("toggle_code_actions_icon", IconName::Bolt)
+                        .icon_size(IconSize::Small)
+                        .style(ButtonStyle::Subtle)
+                        .toggle_state(self.toggle_code_actions_handle.is_deployed()),
+                    Tooltip::text("Code Actions"),
+                )
+                .anchor(Corner::TopRight)
+                .with_handle(self.toggle_code_actions_handle.clone())
         });
 
         let editor_selections_dropdown = selection_menu_enabled.then(|| {
