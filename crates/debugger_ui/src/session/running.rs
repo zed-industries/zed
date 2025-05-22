@@ -543,6 +543,40 @@ impl RunningState {
         }
     }
 
+    pub(crate) fn relativlize_paths(
+        key: Option<&str>,
+        config: &mut serde_json::Value,
+        context: &TaskContext,
+    ) {
+        match config {
+            serde_json::Value::Object(obj) => {
+                obj.iter_mut()
+                    .for_each(|(key, value)| Self::relativlize_paths(Some(key), value, context));
+            }
+            serde_json::Value::Array(array) => {
+                array
+                    .iter_mut()
+                    .for_each(|value| Self::relativlize_paths(None, value, context));
+            }
+            serde_json::Value::String(s) if key == Some("program") || key == Some("cwd") => {
+                if let Some(path) = s.strip_prefix('~') {
+                    *s = format!("$ZED_WORKTREE_ROOT{}{}", std::path::MAIN_SEPARATOR, &path);
+                } else if let Some(path) =
+                    s.strip_prefix(&format!(".{}", std::path::MAIN_SEPARATOR))
+                {
+                    *s = format!("$ZED_WORKTREE_ROOT{}{}", std::path::MAIN_SEPARATOR, &path);
+                } else if !s.starts_with(std::path::MAIN_SEPARATOR) {
+                    *s = format!("$ZED_WORKTREE_ROOT{}{}", std::path::MAIN_SEPARATOR, &s);
+                };
+
+                if let Some(substituted) = substitute_variables_in_str(&s, context) {
+                    *s = substituted;
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub(crate) fn new(
         session: Entity<Session>,
         project: Entity<Project>,
@@ -741,6 +775,7 @@ impl RunningState {
                 mut config,
                 tcp_connection,
             } = scenario;
+            Self::relativlize_paths(None, &mut config, &task_context);
             Self::substitute_variables_in_config(&mut config, &task_context);
 
             let request_type = dap_registry

@@ -803,8 +803,6 @@ impl CustomMode {
 
         let args = args.collect::<Vec<_>>();
 
-        let (program, path) = resolve_paths(program, path);
-
         task::LaunchRequest {
             program,
             cwd: path.is_empty().not().then(|| PathBuf::from(path)),
@@ -1141,36 +1139,4 @@ impl PickerDelegate for DebugScenarioDelegate {
                 .child(highlighted_location.render(window, cx)),
         )
     }
-}
-
-fn resolve_paths(program: String, path: String) -> (String, String) {
-    let program = if let Some(program) = program.strip_prefix('~') {
-        format!(
-            "$ZED_WORKTREE_ROOT{}{}",
-            std::path::MAIN_SEPARATOR,
-            &program
-        )
-    } else if !program.starts_with(std::path::MAIN_SEPARATOR) {
-        format!(
-            "$ZED_WORKTREE_ROOT{}{}",
-            std::path::MAIN_SEPARATOR,
-            &program
-        )
-    } else {
-        program
-    };
-
-    let path = if path.starts_with('~') && !path.is_empty() {
-        format!(
-            "$ZED_WORKTREE_ROOT{}{}",
-            std::path::MAIN_SEPARATOR,
-            &path[1..]
-        )
-    } else if !path.starts_with(std::path::MAIN_SEPARATOR) && !path.is_empty() {
-        format!("$ZED_WORKTREE_ROOT{}{}", std::path::MAIN_SEPARATOR, &path)
-    } else {
-        path
-    };
-
-    (program, path)
 }
