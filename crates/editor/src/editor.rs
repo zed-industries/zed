@@ -5746,6 +5746,12 @@ impl Editor {
         self.refresh_code_actions(window, cx);
     }
 
+    pub fn available_code_actions(
+        &self,
+    ) -> Option<&(language::Location, Rc<[AvailableCodeAction]>)> {
+        self.available_code_actions.as_ref()
+    }
+
     fn refresh_code_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<()> {
         let newest_selection = self.selections.newest_anchor().clone();
         let newest_selection_adjusted = self.selections.newest_adjusted(cx).clone();
