@@ -86,7 +86,7 @@ impl JsDebugAdapter {
                 port.to_string(),
                 host.to_string(),
             ],
-            cwd: None,
+            cwd: Some(delegate.worktree_root_path().to_path_buf()),
             envs: HashMap::default(),
             connection: Some(adapters::TcpArguments {
                 host,

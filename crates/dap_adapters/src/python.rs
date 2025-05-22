@@ -138,7 +138,7 @@ impl PythonDebugAdapter {
                 port,
                 timeout,
             }),
-            cwd: None,
+            cwd: Some(delegate.worktree_root_path().to_path_buf()),
             envs: HashMap::default(),
             request_args: self.request_args(config)?,
         })

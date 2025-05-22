@@ -347,7 +347,7 @@ impl DebugAdapter for GoDebugAdapter {
         Ok(DebugAdapterBinary {
             command: delve_path,
             arguments: vec!["dap".into(), "--listen".into(), format!("{host}:{port}")],
-            cwd: None,
+            cwd: Some(delegate.worktree_root_path().to_path_buf()),
             envs: HashMap::default(),
             connection: Some(adapters::TcpArguments {
                 host,
