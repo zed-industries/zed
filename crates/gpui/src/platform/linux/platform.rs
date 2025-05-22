@@ -712,13 +712,14 @@ pub(super) fn log_cursor_icon_warning(message: impl std::fmt::Display) {
 #[cfg(any(feature = "wayland", feature = "x11"))]
 impl crate::Keystroke {
     pub(super) fn from_xkb(
-        keyboard_state: &State,
+        state: &State,
+        keyboard_mapper: &LinuxKeyboardMapper,
         mut modifiers: crate::Modifiers,
         keycode: Keycode,
     ) -> Self {
-        let key_utf32 = keyboard_state.key_get_utf32(keycode);
-        let key_utf8 = keyboard_state.key_get_utf8(keycode);
-        let key_sym = keyboard_state.key_get_one_sym(keycode);
+        let key_utf32 = state.key_get_utf32(keycode);
+        let key_utf8 = state.key_get_utf8(keycode);
+        let key_sym = state.key_get_one_sym(keycode);
 
         let key = match key_sym {
             Keysym::space => "space".to_owned(),
@@ -770,8 +771,7 @@ impl crate::Keystroke {
             Keysym::F22 => "f22".to_owned(),
             Keysym::F23 => "f23".to_owned(),
             Keysym::F24 => "f24".to_owned(),
-            _ => keyboard_state
-                .mapper
+            _ => keyboard_mapper
                 .get_key(keycode, &mut modifiers)
                 .unwrap_or_else(|| {
                     let name = xkb::keysym_get_name(key_sym).to_lowercase();
