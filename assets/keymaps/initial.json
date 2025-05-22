@@ -13,7 +13,7 @@
     }
   },
   {
-  "context": "Editor && vim_mode == insert && !menu",
+    "context": "Editor && vim_mode == insert && !menu",
     "bindings": {
       // "j k": "vim::SwitchToNormalMode"
     }
