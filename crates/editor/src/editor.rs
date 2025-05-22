@@ -7263,24 +7263,22 @@ impl Editor {
             ..Default::default()
         };
         let primary_action_text = if breakpoint.is_disabled() {
-            "enable"
+            "Enable breakpoint"
         } else if is_phantom && !collides_with_existing {
-            "set"
+            "Set breakpoint"
         } else {
-            "unset"
+            "Unset breakpoint"
         };
-        let mut primary_text = format!("Click to {primary_action_text}");
-        if collides_with_existing && !breakpoint.is_disabled() {
-            use std::fmt::Write;
-            write!(primary_text, ", {alt_as_text}-click to disable").ok();
-        }
-        let primary_text = SharedString::from(primary_text);
         let focus_handle = self.focus_handle.clone();
 
         let meta = if is_rejected {
-            "No executable code is associated with this line."
+            SharedString::from("No executable code is associated with this line.")
+        } else if collides_with_existing && !breakpoint.is_disabled() {
+            SharedString::from(format!(
+                "{alt_as_text}-click to disable,\nright-click for more options."
+            ))
         } else {
-            "Right-click for more options."
+            SharedString::from("Right-click for more options.")
         };
         IconButton::new(("breakpoint_indicator", row.0 as usize), icon)
             .icon_size(IconSize::XSmall)
@@ -7319,7 +7317,14 @@ impl Editor {
                 );
             }))
             .tooltip(move |window, cx| {
-                Tooltip::with_meta_in(primary_text.clone(), None, meta, &focus_handle, window, cx)
+                Tooltip::with_meta_in(
+                    primary_action_text,
+                    Some(&ToggleBreakpoint),
+                    meta.clone(),
+                    &focus_handle,
+                    window,
+                    cx,
+                )
             })
     }
 
