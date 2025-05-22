@@ -1,6 +1,6 @@
 use super::{Client, Status, TypedEnvelope, proto};
 use anyhow::{Context as _, Result, anyhow};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use collections::{HashMap, HashSet, hash_map::Entry};
 use feature_flags::FeatureFlagAppExt;
 use futures::{Future, StreamExt, channel::mpsc};
@@ -14,6 +14,9 @@ use text::ReplicaId;
 use util::{TryFutureExt as _, maybe};
 
 pub type UserId = u64;
+
+/// The minimum account age an account must have in order to use the LLM service.
+pub const MIN_ACCOUNT_AGE_FOR_LLM_USE: Duration = Duration::days(30);
 
 #[derive(
     Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
@@ -50,7 +53,7 @@ pub struct User {
     pub avatar_uri: SharedUri,
     pub name: Option<String>,
     pub email: Option<String>,
-    pub is_account_too_young: Option<bool>,
+    pub account_created_at: Option<NaiveDateTime>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -754,19 +757,22 @@ impl UserStore {
     }
 
     /// Check if the current user's account is too new to use the service
-    pub fn current_user_acount_too_young(&self) -> bool {
+    pub fn current_user_account_too_young(&self) -> bool {
         // If they have paid, then we allow them to use all of the features
         if let Some(proto::Plan::ZedPro) = self.current_plan {
             return true;
         }
-
         // If we have access to the profile age, we use that
-        self.current_user
+        if let Some(account_created_at) = self
+            .current_user
             .borrow()
             .as_ref()
-            .and_then(|user| user.is_account_too_young)
-            // Default to false otherwise
-            .unwrap_or(false)
+            .and_then(|user| user.account_created_at)
+        {
+            return Utc::now().naive_utc() - account_created_at < MIN_ACCOUNT_AGE_FOR_LLM_USE;
+        }
+        // Default to false otherwise
+        false
     }
 
     pub fn current_user_has_accepted_terms(&self) -> Option<bool> {
@@ -883,7 +889,10 @@ impl User {
             avatar_uri: message.avatar_url.into(),
             name: message.name,
             email: message.email,
-            is_account_too_young: message.is_account_too_young,
+            account_created_at: message
+                .account_created_at
+                .and_then(|timestamp| DateTime::from_timestamp(timestamp as i64, 0))
+                .map(|dt| dt.naive_utc()),
         })
     }
 }

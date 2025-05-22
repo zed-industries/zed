@@ -723,7 +723,9 @@ impl Database {
                             "https://github.com/{}.png?size=128",
                             user.github_login
                         ),
-                        is_account_too_young: Some(user.is_account_too_young()),
+                        account_created_at: Some(
+                            user.account_created_at().and_utc().timestamp() as u64
+                        ),
                         github_login: user.github_login,
                         name: user.name,
                         email: user.email_address,
