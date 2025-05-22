@@ -100,6 +100,7 @@ pub enum StopReason {
     EndTurn,
     MaxTokens,
     ToolUse,
+    Refusal,
 }
 
 #[derive(Debug, Clone, Copy)]

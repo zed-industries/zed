@@ -233,6 +233,10 @@ impl ExampleContext {
                     Ok(StopReason::MaxTokens) => {
                         tx.try_send(Err(anyhow!("Exceeded maximum tokens"))).ok();
                     }
+                    Ok(StopReason::Refusal) => {
+                        tx.try_send(Err(anyhow!("Model refused to generate content")))
+                            .ok();
+                    }
                     Err(err) => {
                         tx.try_send(Err(anyhow!(err.clone()))).ok();
                     }
