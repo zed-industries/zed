@@ -111,6 +111,38 @@ impl BreakpointList {
         })
     }
 
+    fn go_to_line_breakpoint(
+        &mut self,
+        path: Arc<Path>,
+        row: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let task = self
+            .worktree_store
+            .update(cx, |this, cx| this.find_or_create_worktree(path, false, cx));
+        cx.spawn_in(window, async move |this, cx| {
+            let (worktree, relative_path) = task.await?;
+            let worktree_id = worktree.update(cx, |this, _| this.id())?;
+            let item = this
+                .update_in(cx, |this, window, cx| {
+                    this.workspace.update(cx, |this, cx| {
+                        this.open_path((worktree_id, relative_path), None, true, window, cx)
+                    })
+                })??
+                .await?;
+            if let Some(editor) = item.downcast::<Editor>() {
+                editor
+                    .update_in(cx, |this, window, cx| {
+                        this.go_to_singleton_buffer_point(Point { row, column: 0 }, window, cx);
+                    })
+                    .ok();
+            }
+            anyhow::Ok(())
+        })
+        .detach();
+    }
+
     fn select_ix(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
         self.selected_ix = ix;
         if let Some(ix) = ix {
@@ -188,10 +220,35 @@ impl BreakpointList {
                 let path = line_breakpoint.breakpoint.path.clone();
                 let row = line_breakpoint.breakpoint.row;
                 self.toggle_line_breakpoint(path, row, cx);
+                cx.notify();
             }
-            BreakpointEntryKind::ExceptionBreakpoint(breakpoint) => {
-                //
+            BreakpointEntryKind::ExceptionBreakpoint(exception_breakpoint) => {
+                let id = exception_breakpoint.id.clone();
+                self.session.update(cx, |session, cx| {
+                    session.toggle_exception_breakpoint(&id, cx);
+                });
+                cx.notify();
             }
+        }
+    }
+
+    fn secondary_confirm(
+        &mut self,
+        _: &menu::SecondaryConfirm,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(entry) = self.selected_ix.and_then(|ix| self.breakpoints.get_mut(ix)) else {
+            return;
+        };
+
+        match &mut entry.kind {
+            BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
+                let path = line_breakpoint.breakpoint.path.clone();
+                let row = line_breakpoint.breakpoint.row;
+                self.go_to_line_breakpoint(path, row, window, cx);
+            }
+            BreakpointEntryKind::ExceptionBreakpoint(_) => {}
         }
     }
 
@@ -354,6 +411,8 @@ impl Render for BreakpointList {
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
+            .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::secondary_confirm))
             .size_full()
             .m_0p5()
             .child(self.render_list(window, cx))
@@ -436,50 +495,10 @@ impl LineBreakpoint {
                     self.dir, self.name, self.line
                 )))
                 .on_click(move |_, window, cx| {
-                    let path = path.clone();
-                    let weak = weak.clone();
-                    maybe!({
-                        let task = weak
-                            .update(cx, |this, cx| {
-                                this.worktree_store.update(cx, |this, cx| {
-                                    this.find_or_create_worktree(path, false, cx)
-                                })
-                            })
-                            .ok()?;
-                        window
-                            .spawn(cx, async move |cx| {
-                                let (worktree, relative_path) = task.await?;
-                                let worktree_id = worktree.update(cx, |this, _| this.id())?;
-                                let item = weak
-                                    .update_in(cx, |this, window, cx| {
-                                        this.workspace.update(cx, |this, cx| {
-                                            this.open_path(
-                                                (worktree_id, relative_path),
-                                                None,
-                                                true,
-                                                window,
-                                                cx,
-                                            )
-                                        })
-                                    })??
-                                    .await?;
-                                if let Some(editor) = item.downcast::<Editor>() {
-                                    editor
-                                        .update_in(cx, |this, window, cx| {
-                                            this.go_to_singleton_buffer_point(
-                                                Point { row, column: 0 },
-                                                window,
-                                                cx,
-                                            );
-                                        })
-                                        .ok();
-                                }
-                                anyhow::Ok(())
-                            })
-                            .detach();
-
-                        Some(())
-                    });
+                    weak.update(cx, |breakpoint_list, cx| {
+                        breakpoint_list.go_to_line_breakpoint(path.clone(), row, window, cx);
+                    })
+                    .ok();
                 })
                 .cursor_pointer()
                 .py_1()
