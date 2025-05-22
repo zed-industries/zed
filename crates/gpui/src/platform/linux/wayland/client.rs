@@ -217,7 +217,8 @@ pub(crate) struct WaylandClientState {
     keymap_state: Option<State>,
     compose_state: Option<xkb::compose::State>,
     keyboard_layout: Box<LinuxKeyboardLayout>,
-    keyboard_mapper: Option<LinuxKeyboardMapper>,
+    keyboard_mapper: Option<Rc<LinuxKeyboardMapper>>,
+    keyboard_mapper_cache: HashMap<String, Rc<LinuxKeyboardMapper>>,
     drag: DragState,
     click: ClickState,
     repeat: KeyRepeat,
@@ -579,6 +580,7 @@ impl WaylandClient {
             keymap_state: None,
             compose_state: None,
             keyboard_mapper: None,
+            keyboard_mapper_cache: HashMap::default(),
             keyboard_layout,
             drag: DragState {
                 data_offer: None,
@@ -1225,7 +1227,15 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 let keyboard_layout = LinuxKeyboardLayout::new(&keymap_state);
                 state.keymap_state = Some(xkb::State::new(&keymap));
                 state.compose_state = get_xkb_compose_state(&xkb_context);
-                state.keyboard_mapper = Some(LinuxKeyboardMapper::new(0, 0, 0));
+                if let Some(mapper) = state.keyboard_mapper_cache.get(keyboard_layout.id()) {
+                    state.keyboard_mapper = Some(mapper.clone());
+                } else {
+                    let mapper = Rc::new(LinuxKeyboardMapper::new(0, 0, 0));
+                    state.keyboard_mapper = Some(mapper.clone());
+                    state
+                        .keyboard_mapper_cache
+                        .insert(keyboard_layout.id().to_string(), mapper);
+                }
                 state.keyboard_layout = Box::new(keyboard_layout);
                 drop(state);
 
