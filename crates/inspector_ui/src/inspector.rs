@@ -1,21 +1,39 @@
 use anyhow::{Context as _, anyhow};
-use gpui::{App, Entity, IntoElement, Window};
-use std::{cell::RefCell, path::Path, rc::Rc};
-use ui::{CheckboxWithLabel, Label, prelude::*};
+use gpui::{App, InspectorElementId, IntoElement, Window};
+use std::{
+    cell::{OnceCell, RefCell},
+    path::Path,
+    rc::Rc,
+    sync::OnceLock,
+};
+use ui::{Label, prelude::*};
 use util::{ResultExt as _, command::new_smol_command};
+
+use crate::interactivity_inspector::InteractivityInspector;
 
 // todo!
 //
-// * Refine "Open code" - confusing that it doesn't do anything when checked. Add another way to
-// open code?
-//
 // * Distinct "picker" mode for the inspector
 //
-// * Way to open actual user code instead of ui component
+// * Show bounds / size info. On hover, highlight element
 
-// * Ability to tell gpui if it is in picker mode or not
+// TODO: Move logic of the gpui `Inspector` entity into this crate:
 //
-// * GPUI then calls the inspector on hovers / picks
+// * `Inspector` trait with methods like `on_click` and `on_hover` that are given
+// InspectorElementId.
+//
+// * Add `with_rendered_inspector_states` to `Window`. gets set on `App`.
+//
+// Motivations:
+//
+// * No need for InteractivityInspector to keep track of InspectorElementId to detect if it changes
+// to rebuild Editor.
+//
+// * Can get invoked when inspected element changes instead of on render. This would allow things
+// like modes where clicks or even hovers open the source code.
+//
+// * GPUI just implement what's needed to implement an inspector, since so much of the inspector
+// logic is already outside GPUI (due to access to editor / theme / ui components / etc).
 
 pub fn init(cx: &mut App) {
     // TODO: Instead toggle a global debug mode? Not all windows support the command pallete.
@@ -35,50 +53,23 @@ pub fn init(cx: &mut App) {
         });
     });
 
-    let inspector_options = cx.new(|_cx| InspectorOptions {
-        open_code_on_inspect: false,
-    });
+    cx.set_inspector_renderer(render_inspector);
 
-    cx.set_inspector_renderer(move |states, window, cx| {
-        render_inspector(inspector_options.clone(), states, window, cx)
-    });
-
-    /*
-    inspector_options
-        .read_with(cx, |inspector_options, cx| {
-            if inspector_options.open_code_on_inspect {
-                cx.background_spawn(open_zed_source_location(id.source))
-                    .detach_and_log_err(cx);
-            }
-        })
-        .log_err();
-    */
-
-    let load_state = Rc::new(RefCell::new(None));
+    let interactivity_inspector = OnceCell::new();
     cx.register_inspector_element(move |id, state, window, cx| {
-        crate::interactivity_inspector::render_or_load(&load_state, id, state, window, cx)
+        let interactivity_inspector = interactivity_inspector
+            .get_or_init(|| cx.new(|cx| InteractivityInspector::new(window, cx)));
+        interactivity_inspector.update(cx, |interactivity_inspector, cx| {
+            interactivity_inspector.update_inspected_element(&id, state, window, cx);
+            interactivity_inspector
+                .render(window, cx)
+                .into_any_element()
+        })
     })
 }
 
-pub(crate) struct InspectorOptions {
-    pub open_code_on_inspect: bool,
-}
-
-impl Render for InspectorOptions {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        CheckboxWithLabel::new(
-            "open-code-on-inspect",
-            Label::new("Open code"),
-            self.open_code_on_inspect.into(),
-            cx.listener(|this, selection: &ToggleState, _, _| {
-                this.open_code_on_inspect = selection.selected();
-            }),
-        )
-    }
-}
-
 fn render_inspector(
-    inspector_options: Entity<InspectorOptions>,
+    inspector_element_id: Option<&InspectorElementId>,
     rendered_inspector_states: Vec<AnyElement>,
     window: &mut Window,
     cx: &mut App,
@@ -104,7 +95,28 @@ fn render_inspector(
                 .justify_center()
                 .child(Label::new("GPUI Inspector").size(LabelSize::Large)),
         )
-        .child(inspector_options)
+        .when_some(inspector_element_id, |this, inspector_element_id| {
+            let source_location = inspector_element_id.source_location;
+            this.child(
+                Button::new("view-source", "View Source").on_click(|_, _window, cx| {
+                    cx.background_spawn(open_zed_source_location(source_location))
+                        .detach_and_log_err(cx);
+                }),
+            )
+            .child(
+                v_flex()
+                    .child(
+                        Label::new(inspector_element_id.global_id.to_string())
+                            .size(LabelSize::Small),
+                    )
+                    // todo! Make this link-styled and clickable
+                    .child(Label::new(format!("{}", source_location)).size(LabelSize::Small))
+                    .child(
+                        Label::new(format!("Instance {}", inspector_element_id.instance_id))
+                            .size(LabelSize::Small),
+                    ),
+            )
+        })
         .children(
             rendered_inspector_states
                 .into_iter()

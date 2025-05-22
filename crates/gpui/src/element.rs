@@ -38,7 +38,11 @@ use crate::{
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
-use std::{any::Any, fmt::Debug, mem, panic};
+use std::{
+    any::Any,
+    fmt::{self, Debug, Display},
+    mem, panic,
+};
 
 /// Implemented by types that participate in laying out and painting the contents of a window.
 /// Elements form a tree and are laid out according to web-based layout rules, as implemented by Taffy.
@@ -265,6 +269,18 @@ impl<C: RenderOnce> IntoElement for Component<C> {
 /// A globally unique identifier for an element, used to track state across frames.
 #[derive(Deref, DerefMut, Default, Debug, Eq, PartialEq, Hash)]
 pub struct GlobalElementId(pub(crate) SmallVec<[ElementId; 32]>);
+
+impl Display for GlobalElementId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (i, element_id) in self.0.iter().enumerate() {
+            if i > 0 {
+                write!(f, ".")?;
+            }
+            write!(f, "{}", element_id)?;
+        }
+        Ok(())
+    }
+}
 
 trait ElementObject {
     fn inner_element(&mut self) -> &mut dyn Any;

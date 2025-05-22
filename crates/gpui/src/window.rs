@@ -532,7 +532,7 @@ impl FrameInspectorState {
         *next_instance_id += 1;
         InspectorElementId {
             global_id: GlobalElementId(element_id.clone()),
-            source: location,
+            source_location: location,
             instance_id,
         }
     }

@@ -8,169 +8,171 @@ use gpui::{
     App, AsyncWindowContext, Entity, InspectorElementId, InteractivityInspectorState, IntoElement,
     Task, Window,
 };
+use language::Buffer;
 use language::language_settings::SoftWrap;
-use project::ProjectPath;
+use project::{Project, ProjectPath};
 use ui::prelude::*;
 use ui::{Label, LabelSize, v_flex};
 use util::ResultExt as _;
 use workspace::Workspace;
 
-pub(crate) struct InteractivityInspectorLoadState {
-    id: Rc<InspectorElementId>,
-    task: Shared<Task<InteractivityInspector>>,
+// todo! rename back to DivInspector
+pub(crate) struct InteractivityInspector {
+    id: Option<InspectorElementId>,
+    project: Entity<Project>,
+    style_buffer: Option<Entity<Buffer>>,
+    style_editor: Option<Entity<Editor>>,
 }
 
-#[derive(Clone)]
-struct InteractivityInspector {
-    style_editor: Entity<Editor>,
-}
-
-pub(crate) fn render_or_load(
-    load_state: &Rc<RefCell<Option<InteractivityInspectorLoadState>>>,
-    id: InspectorElementId,
-    state: &InteractivityInspectorState,
-    window: &mut Window,
-    cx: &mut App,
-) -> impl IntoElement + use<> {
-    let mut load_state = load_state.borrow_mut();
-    let mut start_load = true;
-    if let Some(load_state) = &*load_state {
-        if load_state.id.as_ref() == &id {
-            if let Some(last_inspector) = load_state.task.clone().now_or_never() {
-                return last_inspector
-                    .render(&load_state.id.as_ref(), cx)
-                    .into_any_element();
-            } else {
-                start_load = false;
-            }
-        }
-    }
-
-    if start_load {
-        // todo! Better error handling
-        let base_style_json = serde_json::to_string_pretty(&state.base_style).unwrap();
-        let id = Rc::new(id);
-        *load_state = Some(InteractivityInspectorLoadState {
-            id: id.clone(),
-            task: window
-                .spawn(cx, async move |cx| {
-                    InteractivityInspector::load(&id, base_style_json, cx).await
-                })
-                .shared(),
-        });
-    }
-
-    return Label::new("Loading...").into_any_element();
-}
-
+// todo! Remove unwraps
 impl InteractivityInspector {
-    // todo! no unwraps / maybe no log_err
-    async fn load(
-        id: &InspectorElementId,
-        base_style_json: String,
-        cx: &mut AsyncWindowContext,
-    ) -> InteractivityInspector {
-        // todo! Make a new project instead of needing the current window to be a workspace.
-        let project = cx
-            .update(|window, cx| {
-                let workspace = window.root::<Workspace>().flatten();
-                workspace.map(|workspace| workspace.read(cx).project().clone())
-            })
-            .unwrap()
-            .unwrap();
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> InteractivityInspector {
+        let workspace = window.root::<Workspace>().flatten().unwrap();
+        let project = workspace.read(cx).project().clone();
 
         let worktree_id = project
-            .read_with(cx, |project, cx| {
-                project
-                    .worktrees(cx)
-                    .filter(|worktree| {
-                        let worktree = worktree.read(cx);
-                        !worktree.is_single_file() && worktree.is_local()
-                    })
-                    .next()
-                    .unwrap()
-                    .read(cx)
-                    .id()
+            .read(cx)
+            .worktrees(cx)
+            .filter(|worktree| {
+                let worktree = worktree.read(cx);
+                !worktree.is_single_file() && worktree.is_local()
             })
-            .unwrap();
+            .next()
+            .unwrap()
+            .read(cx)
+            .id();
         let project_path = ProjectPath {
             worktree_id,
             path: Path::new("zed-inspector-style.json").into(),
         };
 
-        let style_buffer = project
-            .update(cx, |project, cx| project.open_path(project_path, cx))
-            .unwrap()
-            .await
-            .unwrap()
-            .1;
+        // Load the buffer once, so it can then be used for each editor.
+        cx.spawn_in(window, {
+            let project = project.clone();
+            async move |this, cx| {
+                // todo! Make a new project instead of needing the current window to be a workspace.
 
-        project
-            .update(cx, |project, cx| {
-                project.register_buffer_with_language_servers(&style_buffer, cx)
-            })
-            .log_err();
+                let style_buffer = project
+                    .update(cx, |project, cx| project.open_path(project_path, cx))
+                    .unwrap()
+                    .await
+                    .unwrap()
+                    .1;
 
-        let style_editor = cx
-            .new_window_entity(|window, cx| {
-                style_buffer.update(cx, |style_buffer, cx| {
-                    style_buffer.set_text(base_style_json, cx)
-                });
-                let multi_buffer = cx.new(|cx| MultiBuffer::singleton(style_buffer, cx));
-                let mut editor =
-                    Editor::new(EditorMode::full(), multi_buffer, Some(project), window, cx);
-                editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-                editor.set_show_line_numbers(false, cx);
-                editor.set_show_code_actions(false, cx);
-                editor.set_show_breakpoints(false, cx);
-                editor.set_show_git_diff_gutter(false, cx);
-                editor.set_show_runnables(false, cx);
-                editor.set_show_edit_predictions(Some(false), window, cx);
-                editor
-            })
-            .unwrap();
+                project
+                    .update(cx, |project, cx| {
+                        project.register_buffer_with_language_servers(&style_buffer, cx)
+                    })
+                    .ok();
 
-        cx.update(|window, cx| {
-            window
-                .subscribe(&style_editor, cx, {
-                    let id = id.clone();
-                    move |editor, event: &EditorEvent, window, cx| {
-                        match event {
-                            EditorEvent::BufferEdited => {
-                                let base_style_json = editor.read(cx).text(cx);
-                                // todo! error handling
-                                let Some(new_base_style) =
-                                    serde_json_lenient::from_str(&base_style_json).log_err()
-                                else {
-                                    return;
-                                };
-                                window.update_inspector_state::<InteractivityInspectorState, _>(
-                                    &id,
-                                    |state, _window| {
-                                        if let Some(state) = state.as_mut() {
-                                            *state.base_style = new_base_style;
-                                        }
-                                    },
-                                )
+                this.update_in(cx, |this, window, cx| {
+                    this.style_buffer = Some(style_buffer);
+                    // TODO: Avoid clone somehow
+                    if let Some(id) = this.id.clone() {
+                        window.update_inspector_state(&id, |state, window| {
+                            if let Some(state) = state.as_ref() {
+                                this.update_inspected_element(&id, state, window, cx)
                             }
-                            _ => {}
-                        }
+                        });
                     }
                 })
-                .detach()
+                .ok();
+            }
         })
-        .log_err();
+        .detach();
 
-        return InteractivityInspector { style_editor };
+        InteractivityInspector {
+            id: None,
+            project,
+            style_buffer: None,
+            style_editor: None,
+        }
     }
 
-    fn render(&self, id: &InspectorElementId, cx: &App) -> Div {
-        v_flex()
-            .size_full()
-            .bg(cx.theme().colors().panel_background)
-            .gap_2()
-            .child(Label::new(id.to_string()).size(LabelSize::Small))
-            .child(Label::new("Style").size(LabelSize::Large))
-            .child(div().h_128().child(self.style_editor.clone()))
+    pub fn update_inspected_element(
+        &mut self,
+        id: &InspectorElementId,
+        state: &InteractivityInspectorState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.id.as_ref() == Some(id) {
+            return;
+        }
+        let Some(style_buffer) = self.style_buffer.clone() else {
+            return;
+        };
+
+        let base_style_json = serde_json::to_string_pretty(&state.base_style).unwrap();
+        style_buffer.update(cx, |style_buffer, cx| {
+            style_buffer.set_text(base_style_json, cx)
+        });
+
+        let style_editor = cx.new(|cx| {
+            let multi_buffer = cx.new(|cx| MultiBuffer::singleton(style_buffer, cx));
+            let mut editor = Editor::new(
+                EditorMode::full(),
+                multi_buffer,
+                Some(self.project.clone()),
+                window,
+                cx,
+            );
+            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+            editor.set_show_line_numbers(false, cx);
+            editor.set_show_code_actions(false, cx);
+            editor.set_show_breakpoints(false, cx);
+            editor.set_show_git_diff_gutter(false, cx);
+            editor.set_show_runnables(false, cx);
+            editor.set_show_edit_predictions(Some(false), window, cx);
+            editor
+        });
+
+        window
+            .subscribe(&style_editor, cx, {
+                let id = id.clone();
+                move |editor, event: &EditorEvent, window, cx| {
+                    match event {
+                        EditorEvent::BufferEdited => {
+                            let base_style_json = editor.read(cx).text(cx);
+                            // todo! error handling
+                            let Some(new_base_style) =
+                                serde_json_lenient::from_str(&base_style_json).log_err()
+                            else {
+                                return;
+                            };
+                            window.update_inspector_state::<InteractivityInspectorState, _>(
+                                &id,
+                                |state, _window| {
+                                    if let Some(state) = state.as_mut() {
+                                        *state.base_style = new_base_style;
+                                    }
+                                },
+                            )
+                        }
+                        _ => {}
+                    }
+                }
+            })
+            .detach();
+
+        self.id = Some(id.clone());
+        self.style_editor = Some(style_editor);
+        cx.notify();
+    }
+}
+
+impl Render for InteractivityInspector {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(style_editor) = self.style_editor.as_ref() {
+            v_flex()
+                .size_full()
+                .bg(cx.theme().colors().panel_background)
+                .gap_2()
+                .child(Label::new("Style").size(LabelSize::Large))
+                .child(div().h_128().child(style_editor.clone()))
+                .into_any_element()
+        } else {
+            Label::new("Loading...").into_any_element()
+        }
     }
 }

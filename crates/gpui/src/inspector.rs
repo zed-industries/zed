@@ -1,15 +1,15 @@
-use std::fmt::{self, Display};
-
 /// A unique identifier for an element that can be debugged.
 #[derive(Debug, Eq, PartialEq, Hash)]
 pub struct InspectorElementId {
+    /// todo!
     #[cfg(any(feature = "inspector", debug_assertions))]
-    pub(crate) global_id: crate::GlobalElementId,
+    pub global_id: crate::GlobalElementId,
     /// Source location where this element was constructed.
     #[cfg(any(feature = "inspector", debug_assertions))]
-    pub source: &'static std::panic::Location<'static>,
+    pub source_location: &'static std::panic::Location<'static>,
+    /// todo!
     #[cfg(any(feature = "inspector", debug_assertions))]
-    pub(crate) instance_id: usize,
+    pub instance_id: usize,
 }
 
 impl Clone for InspectorElementId {
@@ -18,7 +18,7 @@ impl Clone for InspectorElementId {
         {
             Self {
                 global_id: crate::GlobalElementId(self.global_id.0.clone()),
-                source: self.source,
+                source_location: self.source_location,
                 instance_id: self.instance_id,
             }
         }
@@ -33,28 +33,6 @@ impl Clone for InspectorElementId {
 impl Into<InspectorElementId> for &InspectorElementId {
     fn into(self) -> InspectorElementId {
         self.clone()
-    }
-}
-
-impl Display for InspectorElementId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        #[cfg(any(feature = "inspector", debug_assertions))]
-        {
-            for (i, element_id) in self.global_id.0.iter().enumerate() {
-                if i > 0 {
-                    write!(f, ".")?;
-                }
-                write!(f, "{}", element_id)?;
-            }
-            write!(f, ":{}[{}]", self.source, self.instance_id)?;
-        }
-
-        #[cfg(not(any(feature = "inspector", debug_assertions)))]
-        {
-            write!(f, "<InspectorElementId only used in debug builds>")?;
-        }
-
-        Ok(())
     }
 }
 
@@ -138,7 +116,12 @@ mod conditional {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             if let Some(inspector_renderer) = cx.inspector_renderer.take() {
                 let rendered_inspector_states = self.render_inspector_states(window, cx);
-                let result = inspector_renderer(rendered_inspector_states, window, cx);
+                let result = inspector_renderer(
+                    self.active_element_id.as_ref(),
+                    rendered_inspector_states,
+                    window,
+                    cx,
+                );
                 cx.inspector_renderer = Some(inspector_renderer);
                 result
             } else {
