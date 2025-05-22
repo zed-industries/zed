@@ -710,29 +710,15 @@ pub(super) fn log_cursor_icon_warning(message: impl std::fmt::Display) {
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
-pub(crate) struct KeyboardState {
-    pub(crate) state: xkb::State,
-    pub(crate) mapper: LinuxKeyboardMapper,
-}
-
-#[cfg(any(feature = "wayland", feature = "x11"))]
-impl KeyboardState {
-    pub(crate) fn new(state: xkb::State) -> Self {
-        let mapper = LinuxKeyboardMapper::new();
-        Self { state, mapper }
-    }
-}
-
-#[cfg(any(feature = "wayland", feature = "x11"))]
 impl crate::Keystroke {
     pub(super) fn from_xkb(
-        keyboard_state: &KeyboardState,
+        keyboard_state: &State,
         mut modifiers: crate::Modifiers,
         keycode: Keycode,
     ) -> Self {
-        let key_utf32 = keyboard_state.state.key_get_utf32(keycode);
-        let key_utf8 = keyboard_state.state.key_get_utf8(keycode);
-        let key_sym = keyboard_state.state.key_get_one_sym(keycode);
+        let key_utf32 = keyboard_state.key_get_utf32(keycode);
+        let key_utf8 = keyboard_state.key_get_utf8(keycode);
+        let key_sym = keyboard_state.key_get_one_sym(keycode);
 
         let key = match key_sym {
             Keysym::space => "space".to_owned(),
