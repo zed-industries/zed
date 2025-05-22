@@ -75,52 +75,43 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
 }
 
 fn render_inspector(
-    inspector_element_id: Option<&InspectorElementId>,
+    inspector_id: Option<&InspectorElementId>,
     rendered_inspector_states: Vec<AnyElement>,
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement + use<> {
-    let source_location = inspector_element_id.map(|id| id.source_location);
+    let ui_font = theme::setup_ui_font(window, cx);
+    let colors = cx.theme().colors();
     v_flex()
         .id("gpui-inspector")
         .size_full()
-        // todo! Better color
+        // TODO: Choose an appropriate color from the theme.
         .bg(cx
             .theme()
             .colors()
             .panel_background
             .blend(Hsla::black().alpha(0.05)))
-        .text_color(cx.theme().colors().text)
-        .font(theme::setup_ui_font(window, cx))
+        .text_color(colors.text)
+        .font(ui_font)
         .p_2()
         .gap_2()
         .border_l_1()
-        .border_color(cx.theme().colors().border)
+        .border_color(colors.border)
         .overflow_y_scroll()
         .child(
             h_flex()
                 .w_full()
                 .pb_2()
                 .border_b_1()
-                .border_color(cx.theme().colors().border_variant)
+                .border_color(colors.border_variant)
                 .child(
                     IconButton::new("pick-mode", IconName::MagnifyingGlass)
                         .tooltip(Tooltip::text("Start inspector pick mode"))
-                        // todo! Why isn't this working?
+                        // TODO: Why isn't the icon colored when inspecting?
                         .selected_icon_color(Color::Selected)
                         .toggle_state(window.is_inspector_picking(cx))
                         .on_click(|_, window, cx| {
                             window.start_inspector_picking(cx);
-                        }),
-                )
-                .child(
-                    IconButton::new("view-source", IconName::FileCode)
-                        .disabled(source_location.is_none())
-                        .on_click(move |_, _window, cx| {
-                            if let Some(source_location) = source_location {
-                                cx.background_spawn(open_zed_source_location(source_location))
-                                    .detach_and_log_err(cx);
-                            }
                         }),
                 )
                 .child(
@@ -130,21 +121,33 @@ fn render_inspector(
                         .child(Label::new("GPUI Inspector").size(LabelSize::Large)),
                 ),
         )
-        .when_some(inspector_element_id, |this, inspector_element_id| {
-            let source_location = inspector_element_id.source_location;
+        .when_some(inspector_id, |this, inspector_id| {
+            let source_location = inspector_id.source_location;
             this.child(
                 v_flex()
                     .pb_2()
                     .border_b_1()
-                    .border_color(cx.theme().colors().border_variant)
+                    .border_color(colors.border_variant)
                     .child(
-                        Label::new(inspector_element_id.global_id.to_string())
-                            .size(LabelSize::Small),
+                        div()
+                            .text_ui_sm(cx)
+                            .child(inspector_id.global_id.to_string()),
                     )
-                    // todo! Make this link-styled and clickable?
-                    .child(Label::new(format!("{}", source_location)).size(LabelSize::Small))
                     .child(
-                        Label::new(format!("Instance {}", inspector_element_id.instance_id))
+                        div()
+                            .id("source-location")
+                            .text_ui_sm(cx)
+                            .bg(colors.editor_foreground.opacity(0.025))
+                            .underline()
+                            .child(format!("{}", source_location))
+                            .tooltip(Tooltip::text("Run Zed cli to open this source location"))
+                            .on_click(move |_, _window, cx| {
+                                cx.background_spawn(open_zed_source_location(source_location))
+                                    .detach_and_log_err(cx);
+                            }),
+                    )
+                    .child(
+                        Label::new(format!("Instance {}", inspector_id.instance_id))
                             .size(LabelSize::Small),
                     ),
             )
@@ -156,7 +159,7 @@ fn render_inspector(
                     div()
                         .child(e)
                         .border_b_1()
-                        .border_color(cx.theme().colors().border_variant)
+                        .border_color(colors.border_variant)
                 })
                 .collect::<Vec<_>>(),
         )
