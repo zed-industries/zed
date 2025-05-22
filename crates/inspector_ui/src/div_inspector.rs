@@ -147,7 +147,7 @@ impl DivInspector {
                                     if let Some(state) = state.as_mut() {
                                         *state.base_style = new_base_style;
                                     }
-                                },
+                                }
                             );
                             this.last_error = None;
                         }

@@ -5,17 +5,18 @@ use crate::{
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Context,
     Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener, DispatchNodeId,
     DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, FontId,
-    Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, InspectorElementId, IsZero,
-    KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
-    LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
-    MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render,
-    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
-    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle,
-    TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowOptions,
-    WindowParams, WindowTextSystem, point, prelude::*, px, rems, size, transparent_black,
+    Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, InspectorElementId,
+    InspectorElementPath, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
+    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
+    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
+    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
+    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine,
+    Task, TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
+    transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -502,13 +503,8 @@ pub(crate) struct DeferredDraw {
 #[cfg(any(feature = "inspector", debug_assertions))]
 #[derive(Default)]
 pub(crate) struct FrameInspectorState {
-    pub(crate) next_element_instance_ids: FxHashMap<
-        (
-            SmallVec<[ElementId; 32]>,
-            &'static std::panic::Location<'static>,
-        ),
-        usize,
-    >,
+    // hashbrown::HashMap is used as it provides an entry_ref API so there's no need to clone keys.
+    pub(crate) next_element_instance_ids: hashbrown::HashMap<InspectorElementPath, usize>,
     pub(crate) element_states:
         hashbrown::HashMap<InspectorElementId, FxHashMap<TypeId, Box<dyn Any>>>,
 }
@@ -522,18 +518,16 @@ impl FrameInspectorState {
 
     pub(crate) fn build_inspector_element_id(
         &mut self,
-        element_id: &SmallVec<[ElementId; 32]>,
-        location: &'static std::panic::Location<'static>,
+        path: InspectorElementPath,
     ) -> InspectorElementId {
-        // todo!(avoid cloning when not needed, extract a function in the window)
-        let key = (element_id.clone(), location);
-        let next_instance_id = self.next_element_instance_ids.entry(key).or_insert(0);
-        let instance_id = *next_instance_id;
-        *next_instance_id += 1;
+        let instance_id = self
+            .next_element_instance_ids
+            .entry_ref(&path)
+            .and_modify(|instance_id| *instance_id += 1)
+            .or_insert(0);
         InspectorElementId {
-            global_id: GlobalElementId(element_id.clone()),
-            source_location: location,
-            instance_id,
+            path,
+            instance_id: *instance_id,
         }
     }
 }
@@ -1645,7 +1639,7 @@ impl Window {
                     self.next_frame
                         .inspector_state
                         .element_states
-                        .entry_ref(inspector_id)
+                        .entry(inspector_id.clone())
                         .or_default()
                         .insert(type_id, Box::new(inspector_state));
                 }
@@ -1685,7 +1679,7 @@ impl Window {
             self.rendered_frame
                 .inspector_state
                 .element_states
-                .entry_ref(inspector_id)
+                .entry(inspector_id.clone())
                 .or_default()
                 .insert(type_id, Box::new(inspector_state));
         }

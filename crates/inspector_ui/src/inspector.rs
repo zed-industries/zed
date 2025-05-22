@@ -115,7 +115,7 @@ fn render_inspector(
                 ),
         )
         .when_some(inspector_id, |this, inspector_id| {
-            let source_location = inspector_id.source_location;
+            let source_location = inspector_id.path.source_location;
             this.child(
                 v_flex()
                     .pb_2()
@@ -124,7 +124,7 @@ fn render_inspector(
                     .child(
                         div()
                             .text_ui_sm(cx)
-                            .child(inspector_id.global_id.to_string()),
+                            .child(inspector_id.path.global_id.to_string()),
                     )
                     .child(
                         div()

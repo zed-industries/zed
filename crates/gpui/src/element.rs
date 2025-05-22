@@ -33,8 +33,8 @@
 
 use crate::{
     App, ArenaBox, AvailableSpace, Bounds, Context, DispatchNodeId, ELEMENT_ARENA, ElementId,
-    FocusHandle, InspectorElementId, LayoutId, Pixels, Point, Size, Style, Window,
-    util::FluentBuilder,
+    FocusHandle, InspectorElementId, InspectorElementPath, LayoutId, Pixels, Point, Size, Style,
+    Window, util::FluentBuilder,
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
@@ -353,10 +353,14 @@ impl<E: Element> Drawable<E> {
                 #[cfg(any(feature = "inspector", debug_assertions))]
                 {
                     inspector_id = self.element.source_location().map(|source| {
+                        let path = InspectorElementPath {
+                            global_id: GlobalElementId(window.element_id_stack.clone()),
+                            source_location: source,
+                        };
                         window
                             .next_frame
                             .inspector_state
-                            .build_inspector_element_id(&window.element_id_stack, source)
+                            .build_inspector_element_id(path)
                     });
                 }
                 #[cfg(not(any(feature = "inspector", debug_assertions)))]

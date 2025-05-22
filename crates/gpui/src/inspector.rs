@@ -1,37 +1,44 @@
-/// A unique identifier for an element that can be debugged.
-#[derive(Debug, Eq, PartialEq, Hash)]
+/// A unique identifier for an element that can be inspected.
+#[derive(Debug, Eq, PartialEq, Hash, Clone)]
 pub struct InspectorElementId {
-    /// The path to the nearest ancestor element that has an ID.
+    /// Stable part of the ID.
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub path: InspectorElementPath,
+    /// Disambiguates elements that have the same path.
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub instance_id: usize,
+}
+
+/// `GlobalElementId` qualified by source location of element construction.
+#[cfg(any(feature = "inspector", debug_assertions))]
+#[derive(Debug, Eq, PartialEq, Hash)]
+pub struct InspectorElementPath {
+    /// The path to the nearest ancestor element that has an `ElementId`.
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub global_id: crate::GlobalElementId,
     /// Source location where this element was constructed.
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub source_location: &'static std::panic::Location<'static>,
-    /// Disambiguates elements that have the same `(global_id, source_location)`.
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    pub instance_id: usize,
 }
 
-impl Clone for InspectorElementId {
+#[cfg(any(feature = "inspector", debug_assertions))]
+impl Clone for InspectorElementPath {
     fn clone(&self) -> Self {
-        #[cfg(any(feature = "inspector", debug_assertions))]
-        {
-            Self {
-                global_id: crate::GlobalElementId(self.global_id.0.clone()),
-                source_location: self.source_location,
-                instance_id: self.instance_id,
-            }
-        }
-
-        #[cfg(not(any(feature = "inspector", debug_assertions)))]
-        {
-            Self {}
+        Self {
+            global_id: crate::GlobalElementId(self.global_id.0.clone()),
+            source_location: self.source_location,
         }
     }
 }
 
 impl Into<InspectorElementId> for &InspectorElementId {
     fn into(self) -> InspectorElementId {
+        self.clone()
+    }
+}
+
+impl Into<InspectorElementPath> for &InspectorElementPath {
+    fn into(self) -> InspectorElementPath {
         self.clone()
     }
 }
