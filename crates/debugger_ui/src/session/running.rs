@@ -96,7 +96,7 @@ impl Render for RunningState {
             .find(|pane| pane.read(cx).is_zoomed());
 
         let active = self.panes.panes().into_iter().next();
-        let x = if let Some(ref zoomed_pane) = zoomed_pane {
+        let pane = if let Some(ref zoomed_pane) = zoomed_pane {
             zoomed_pane.update(cx, |pane, cx| pane.render(window, cx).into_any_element())
         } else if let Some(active) = active {
             self.panes
@@ -122,7 +122,7 @@ impl Render for RunningState {
             .size_full()
             .key_context("DebugSessionItem")
             .track_focus(&self.focus_handle(cx))
-            .child(h_flex().flex_1().child(x))
+            .child(h_flex().flex_1().child(pane))
     }
 }
 
