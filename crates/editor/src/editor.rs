@@ -21,6 +21,7 @@ mod editor_settings;
 mod editor_settings_controls;
 mod element;
 mod git;
+mod gutter;
 mod highlight_matching_bracket;
 mod hover_links;
 pub mod hover_popover;
