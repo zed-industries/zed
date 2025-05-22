@@ -301,7 +301,7 @@ impl Render for BreakpointList {
                     weak: weak.clone(),
                 });
         self.breakpoints
-            .extend(exception_breakpoints.chain(breakpoints));
+            .extend(breakpoints.chain(exception_breakpoints));
         // if self.breakpoints.len() != old_len {
         //     self.list_state.reset(self.breakpoints.len());
         // }
