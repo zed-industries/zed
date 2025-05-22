@@ -19,8 +19,8 @@ use language_model::{
     ZED_CLOUD_PROVIDER_ID,
 };
 use language_model::{
-    LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider, LlmApiToken,
-    PaymentRequiredError, RefreshLlmTokenListener,
+    LanguageModelCompletionEvent, LanguageModelProvider, LlmApiToken, PaymentRequiredError,
+    RefreshLlmTokenListener,
 };
 use proto::Plan;
 use release_channel::AppVersion;
@@ -330,6 +330,14 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             models.insert(
                 anthropic::Model::Claude3_7SonnetThinking.id().to_string(),
                 CloudModel::Anthropic(anthropic::Model::Claude3_7SonnetThinking),
+            );
+            models.insert(
+                anthropic::Model::ClaudeSonnet4.id().to_string(),
+                CloudModel::Anthropic(anthropic::Model::ClaudeSonnet4),
+            );
+            models.insert(
+                anthropic::Model::ClaudeSonnet4Thinking.id().to_string(),
+                CloudModel::Anthropic(anthropic::Model::ClaudeSonnet4Thinking),
             );
         }
 
@@ -697,10 +705,6 @@ impl LanguageModel for CloudLanguageModel {
 
     fn telemetry_id(&self) -> String {
         format!("zed.dev/{}", self.model.id())
-    }
-
-    fn availability(&self) -> LanguageModelAvailability {
-        self.model.availability()
     }
 
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
