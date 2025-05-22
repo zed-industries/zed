@@ -1,6 +1,6 @@
 use gpui::{
     Application, Background, Bounds, ColorSpace, Context, MouseDownEvent, Path, PathBuilder,
-    PathStyle, Pixels, Point, Render, StrokeOptions, Window, WindowOptions, canvas, div,
+    PathStyle, Pixels, Point, Render, Size, StrokeOptions, Window, WindowOptions, canvas, div,
     linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size,
 };
 
@@ -101,6 +101,13 @@ impl PaintingViewer {
         }
         let path = builder.build().unwrap();
         lines.push((path, gpui::green().into()));
+
+        // draw the indicators (aligned and unaligned versions)
+        let aligned_indicator = draw_indicator_aligned(size(px(100.), px(15.)));
+        lines.push((aligned_indicator, rgb(0x1e88e5).into()));
+
+        let unaligned_indicator = draw_indicator_unaligned(size(px(100.), px(15.)));
+        lines.push((unaligned_indicator, rgb(0xe53935).into()));
 
         Self {
             default_lines: lines.clone(),
@@ -237,4 +244,200 @@ fn main() {
         .unwrap();
         cx.activate(true);
     });
+}
+
+// Draw an indicator without pixel alignment
+fn draw_indicator_unaligned(size_param: Size<Pixels>) -> Path<Pixels> {
+    let width = size_param.width;
+    let height = size_param.height;
+
+    // Position the indicator on the canvas
+    let base_x = px(50.0);
+    let base_y = px(300.0);
+
+    // Calculate the scaling factor for the height (SVG is 15px tall)
+    let scale_factor = height / px(15.0);
+
+    // Calculate how much width to allocate to the stretchable middle section
+    // SVG has 32px of fixed elements (corners), so the rest is for the middle
+    let fixed_width = px(32.0) * scale_factor;
+    let middle_width = width - fixed_width;
+
+    // Create a new path
+    let mut builder = PathBuilder::fill();
+
+    // Upper half of the shape - Based on the provided SVG
+    // Start at bottom left (0, 8)
+    builder.move_to(point(base_x, base_y + px(7.5) * scale_factor));
+
+    // Vertical line to (0, 5)
+    builder.line_to(point(base_x, base_y + px(5.0) * scale_factor));
+
+    // Curve to (5, 0) - approximating the cubic Bezier with a quadratic one
+    builder.curve_to(
+        point(base_x + px(5.0) * scale_factor, base_y),
+        point(
+            base_x + px(0.75) * scale_factor,
+            base_y + px(2.5) * scale_factor,
+        ),
+    );
+
+    // Horizontal line through the middle section to (37, 0)
+    builder.line_to(point(
+        base_x + px(5.0) * scale_factor + middle_width,
+        base_y,
+    ));
+
+    // Horizontal line to (41, 0)
+    builder.line_to(point(
+        base_x + px(5.0) * scale_factor + middle_width + px(4.0) * scale_factor,
+        base_y,
+    ));
+
+    // Curve to (50, 7.5) - approximating the cubic Bezier with a quadratic one
+    builder.curve_to(
+        point(
+            base_x + px(5.0) * scale_factor + middle_width + px(13.0) * scale_factor,
+            base_y + px(7.5) * scale_factor,
+        ),
+        point(
+            base_x + px(5.0) * scale_factor + middle_width + px(8.5) * scale_factor,
+            base_y + px(3.0) * scale_factor,
+        ),
+    );
+
+    // Lower half of the shape - mirrored vertically
+    // Curve from (50, 7.5) to (41, 15)
+    builder.curve_to(
+        point(
+            base_x + px(5.0) * scale_factor + middle_width + px(4.0) * scale_factor,
+            base_y + px(15.0) * scale_factor,
+        ),
+        point(
+            base_x + px(5.0) * scale_factor + middle_width + px(8.5) * scale_factor,
+            base_y + px(12.0) * scale_factor,
+        ),
+    );
+
+    // Horizontal line to (37, 15)
+    builder.line_to(point(
+        base_x + px(5.0) * scale_factor + middle_width,
+        base_y + px(15.0) * scale_factor,
+    ));
+
+    // Horizontal line through the middle section to (5, 15)
+    builder.line_to(point(
+        base_x + px(5.0) * scale_factor,
+        base_y + px(15.0) * scale_factor,
+    ));
+
+    // Curve to (0, 10)
+    builder.curve_to(
+        point(base_x, base_y + px(10.0) * scale_factor),
+        point(
+            base_x + px(0.75) * scale_factor,
+            base_y + px(12.5) * scale_factor,
+        ),
+    );
+
+    // Close the path
+    builder.line_to(point(base_x, base_y + px(7.5) * scale_factor));
+
+    builder.build().unwrap()
+}
+
+// Draw an indicator with quarter-pixel alignment
+fn draw_indicator_aligned(size_param: Size<Pixels>) -> Path<Pixels> {
+    let width = size_param.width;
+    let height = size_param.height;
+
+    // Position the indicator on the canvas
+    let base_x = px(50.0);
+    let base_y = px(250.0);
+
+    // Calculate the scaling factor for the height (SVG is 15px tall)
+    let scale_factor = height / px(15.0);
+
+    // Calculate how much width to allocate to the stretchable middle section
+    // SVG has 32px of fixed elements (corners), so the rest is for the middle
+    let fixed_width = px(32.0) * scale_factor;
+    let middle_width = width - fixed_width;
+
+    // Helper function to round to nearest quarter pixel
+    let round_to_quarter = |value: Pixels| -> Pixels {
+        let value_f32: f32 = value.into();
+        px((value_f32 * 4.0).round() / 4.0)
+    };
+
+    // Create a new path
+    let mut builder = PathBuilder::fill();
+
+    // Upper half of the shape - Based on the provided SVG
+    // Start at bottom left (0, 8)
+    let start_x = round_to_quarter(base_x);
+    let start_y = round_to_quarter(base_y + px(7.5) * scale_factor);
+    builder.move_to(point(start_x, start_y));
+
+    // Vertical line to (0, 5)
+    let vert_y = round_to_quarter(base_y + px(5.0) * scale_factor);
+    builder.line_to(point(start_x, vert_y));
+
+    // Curve to (5, 0) - approximating the cubic Bezier with a quadratic one
+    let curve1_end_x = round_to_quarter(base_x + px(5.0) * scale_factor);
+    let curve1_end_y = round_to_quarter(base_y);
+    let curve1_ctrl_x = round_to_quarter(base_x + px(0.75) * scale_factor);
+    let curve1_ctrl_y = round_to_quarter(base_y + px(2.5) * scale_factor);
+    builder.curve_to(
+        point(curve1_end_x, curve1_end_y),
+        point(curve1_ctrl_x, curve1_ctrl_y),
+    );
+
+    // Horizontal line through the middle section to (37, 0)
+    let middle_end_x = round_to_quarter(base_x + px(5.0) * scale_factor + middle_width);
+    builder.line_to(point(middle_end_x, curve1_end_y));
+
+    // Horizontal line to (41, 0)
+    let right_section_x =
+        round_to_quarter(base_x + px(5.0) * scale_factor + middle_width + px(4.0) * scale_factor);
+    builder.line_to(point(right_section_x, curve1_end_y));
+
+    // Curve to (50, 7.5) - approximating the cubic Bezier with a quadratic one
+    let curve2_end_x =
+        round_to_quarter(base_x + px(5.0) * scale_factor + middle_width + px(13.0) * scale_factor);
+    let curve2_end_y = round_to_quarter(base_y + px(7.5) * scale_factor);
+    let curve2_ctrl_x =
+        round_to_quarter(base_x + px(5.0) * scale_factor + middle_width + px(8.5) * scale_factor);
+    let curve2_ctrl_y = round_to_quarter(base_y + px(3.0) * scale_factor);
+    builder.curve_to(
+        point(curve2_end_x, curve2_end_y),
+        point(curve2_ctrl_x, curve2_ctrl_y),
+    );
+
+    // Lower half of the shape - mirrored vertically
+    // Curve from (50, 7.5) to (41, 15)
+    let curve3_end_y = round_to_quarter(base_y + px(15.0) * scale_factor);
+    let curve3_ctrl_y = round_to_quarter(base_y + px(12.0) * scale_factor);
+    builder.curve_to(
+        point(right_section_x, curve3_end_y),
+        point(curve2_ctrl_x, curve3_ctrl_y),
+    );
+
+    // Horizontal line to (37, 15)
+    builder.line_to(point(middle_end_x, curve3_end_y));
+
+    // Horizontal line through the middle section to (5, 15)
+    builder.line_to(point(curve1_end_x, curve3_end_y));
+
+    // Curve to (0, 10)
+    let curve4_end_y = round_to_quarter(base_y + px(10.0) * scale_factor);
+    let curve4_ctrl_y = round_to_quarter(base_y + px(12.5) * scale_factor);
+    builder.curve_to(
+        point(start_x, curve4_end_y),
+        point(curve1_ctrl_x, curve4_ctrl_y),
+    );
+
+    // Close the path
+    builder.line_to(point(start_x, start_y));
+
+    builder.build().unwrap()
 }
