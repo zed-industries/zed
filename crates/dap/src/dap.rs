@@ -48,10 +48,15 @@ pub enum TelemetrySpawnLocation {
 }
 
 pub fn send_telemetry(scenario: &DebugScenario, location: TelemetrySpawnLocation, cx: &App) {
-    let kind = scenario.request.as_ref().map(|request| match request {
-        DebugRequest::Launch(_) => "launch",
-        DebugRequest::Attach(_) => "attach",
-    });
+    let Some(adapter) = cx.global::<DapRegistry>().adapter(&scenario.adapter) else {
+        return;
+    };
+    let kind = adapter
+        .validate_config(&scenario.config)
+        .ok()
+        .map(serde_json::to_value)
+        .map(Result::ok)
+        .flatten();
     let dock = DebuggerSettings::get_global(cx).dock;
     telemetry::event!(
         "Debugger Session Started",

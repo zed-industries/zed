@@ -864,7 +864,7 @@ impl Session {
 
     pub fn binary(&self) -> &DebugAdapterBinary {
         let Mode::Running(local_mode) = &self.mode else {
-            panic!("Session is not local");
+            panic!("Session is not running");
         };
         &local_mode.binary
     }

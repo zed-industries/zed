@@ -3002,6 +3002,7 @@ dependencies = [
  "context_server",
  "ctor",
  "dap",
+ "dap_adapters",
  "dashmap 6.1.0",
  "debugger_ui",
  "derive_more",
@@ -4181,6 +4182,8 @@ dependencies = [
  "dap",
  "extension",
  "gpui",
+ "serde_json",
+ "task",
  "workspace-hack",
 ]
 
@@ -4402,6 +4405,15 @@ name = "diff"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56254986775e3233ffa9c4d7d3faaf6d36a2c09d30b20687e9f88bc8bafc16c8"
+
+[[package]]
+name = "diffy"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b545b8c50194bdd008283985ab0b31dba153cfd5b3066a92770634fbc0d7d291"
+dependencies = [
+ "nu-ansi-term 0.50.1",
+]
 
 [[package]]
 name = "digest"
@@ -8679,6 +8691,7 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
+ "diffy",
  "ec4rs",
  "env_logger 0.11.8",
  "fs",
@@ -8883,6 +8896,7 @@ dependencies = [
  "async-tar",
  "async-trait",
  "collections",
+ "dap",
  "futures 0.3.31",
  "gpui",
  "http_client",
@@ -10191,6 +10205,15 @@ checksum = "77a8165726e8236064dbb45459242600304b42a5ea24ee2948e18e023bf7ba84"
 dependencies = [
  "overload",
  "winapi",
+]
+
+[[package]]
+name = "nu-ansi-term"
+version = "0.50.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4a28e057d01f97e61255210fcff094d74ed0466038633e95017f5beb68e4399"
+dependencies = [
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -16391,7 +16414,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8189decb5ac0fa7bc8b96b7cb9b2701d60d48805aca84a238004d665fcc4008"
 dependencies = [
  "matchers",
- "nu-ansi-term",
+ "nu-ansi-term 0.46.0",
  "once_cell",
  "regex",
  "serde",
@@ -17046,6 +17069,7 @@ dependencies = [
  "rust-embed",
  "serde",
  "serde_json",
+ "serde_json_lenient",
  "smol",
  "take-until",
  "tempfile",

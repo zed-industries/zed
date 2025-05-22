@@ -10,9 +10,7 @@ use std::{
 };
 
 use dap::{
-    DapRegistry, DebugRequest, TelemetrySpawnLocation,
-    adapters::{DebugAdapterName, DebugTaskDefinition},
-    send_telemetry,
+    DapRegistry, DebugRequest, TelemetrySpawnLocation, adapters::DebugAdapterName, send_telemetry,
 };
 use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -23,7 +21,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
 use project::{ProjectPath, TaskContexts, TaskSourceKind, task_store::TaskStore};
 use settings::Settings;
-use task::{DebugScenario, LaunchRequest};
+use task::{DebugScenario, LaunchRequest, ZedDebugConfig};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
@@ -211,15 +209,16 @@ impl NewSessionModal {
             None
         };
 
-        Some(DebugScenario {
+        let session_scenario = ZedDebugConfig {
             adapter: debugger.to_owned().into(),
             label,
-            request: Some(request),
-            initialize_args: None,
-            tcp_connection: None,
+            request: request,
             stop_on_entry,
-            build: None,
-        })
+        };
+
+        cx.global::<DapRegistry>()
+            .adapter(&session_scenario.adapter)
+            .and_then(|adapter| adapter.config_from_zed_format(session_scenario).ok())
     }
 
     fn start_new_session(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -266,12 +265,12 @@ impl NewSessionModal {
         cx: &mut App,
     ) {
         attach.update(cx, |this, cx| {
-            if adapter != &this.definition.adapter {
-                this.definition.adapter = adapter.clone();
+            if adapter.0 != this.definition.adapter {
+                this.definition.adapter = adapter.0.clone();
 
                 this.attach_picker.update(cx, |this, cx| {
                     this.picker.update(cx, |this, cx| {
-                        this.delegate.definition.adapter = adapter.clone();
+                        this.delegate.definition.adapter = adapter.0.clone();
                         this.focus(window, cx);
                     })
                 });
@@ -864,7 +863,7 @@ impl CustomMode {
 
 #[derive(Clone)]
 pub(super) struct AttachMode {
-    pub(super) definition: DebugTaskDefinition,
+    pub(super) definition: ZedDebugConfig,
     pub(super) attach_picker: Entity<AttachModal>,
 }
 
@@ -875,12 +874,10 @@ impl AttachMode {
         window: &mut Window,
         cx: &mut Context<NewSessionModal>,
     ) -> Entity<Self> {
-        let definition = DebugTaskDefinition {
-            adapter: debugger.unwrap_or(DebugAdapterName("".into())),
+        let definition = ZedDebugConfig {
+            adapter: debugger.unwrap_or(DebugAdapterName("".into())).0,
             label: "Attach New Session Setup".into(),
             request: dap::DebugRequest::Attach(task::AttachRequest { process_id: None }),
-            initialize_args: None,
-            tcp_connection: None,
             stop_on_entry: Some(false),
         };
         let attach_picker = cx.new(|cx| {
@@ -940,27 +937,14 @@ impl DebugScenarioDelegate {
             });
 
         let language = language.or_else(|| {
-            scenario
-                .request
-                .as_ref()
-                .and_then(|request| match request {
-                    DebugRequest::Launch(launch) => launch
-                        .program
-                        .rsplit_once(".")
-                        .and_then(|split| languages.language_name_for_extension(split.1))
-                        .map(|name| TaskSourceKind::Language { name: name.into() }),
-                    _ => None,
-                })
-                .or_else(|| {
-                    scenario.label.split_whitespace().find_map(|word| {
-                        language_names
-                            .iter()
-                            .find(|name| name.eq_ignore_ascii_case(word))
-                            .map(|name| TaskSourceKind::Language {
-                                name: name.to_owned().into(),
-                            })
+            scenario.label.split_whitespace().find_map(|word| {
+                language_names
+                    .iter()
+                    .find(|name| name.eq_ignore_ascii_case(word))
+                    .map(|name| TaskSourceKind::Language {
+                        name: name.to_owned().into(),
                     })
-                })
+            })
         });
 
         (language, scenario)
@@ -1094,7 +1078,7 @@ impl PickerDelegate for DebugScenarioDelegate {
             .get(self.selected_index())
             .and_then(|match_candidate| self.candidates.get(match_candidate.candidate_id).cloned());
 
-        let Some((_, mut debug_scenario)) = debug_scenario else {
+        let Some((_, debug_scenario)) = debug_scenario else {
             return;
         };
 
@@ -1109,18 +1093,6 @@ impl PickerDelegate for DebugScenarioDelegate {
             })
             .unwrap_or_default();
 
-        if let Some(launch_config) =
-            debug_scenario
-                .request
-                .as_mut()
-                .and_then(|request| match request {
-                    DebugRequest::Launch(launch) => Some(launch),
-                    _ => None,
-                })
-        {
-            let (program, _) = resolve_paths(launch_config.program.clone(), String::new());
-            launch_config.program = program;
-        }
         send_telemetry(&debug_scenario, TelemetrySpawnLocation::ScenarioList, cx);
         self.debug_panel
             .update(cx, |panel, cx| {
