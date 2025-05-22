@@ -61,7 +61,7 @@ impl DebugAdapter for GdbDebugAdapter {
         })
     }
 
-    fn dap_schema(&self) -> serde_json::Value {
+    async fn dap_schema(&self) -> serde_json::Value {
         json!({
             "oneOf": [
                 {
@@ -184,7 +184,7 @@ impl DebugAdapter for GdbDebugAdapter {
             command: gdb_path,
             arguments: vec!["-i=dap".into()],
             envs: HashMap::default(),
-            cwd: None,
+            cwd: Some(delegate.worktree_root_path().to_path_buf()),
             connection: None,
             request_args,
         })

@@ -7,7 +7,10 @@ pub mod variable_list;
 
 use std::{any::Any, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 
-use crate::persistence::{self, DebuggerPaneItem, SerializedLayout};
+use crate::{
+    new_session_modal::resolve_path,
+    persistence::{self, DebuggerPaneItem, SerializedLayout},
+};
 
 use super::DebugPanelItemEvent;
 use anyhow::{Context as _, Result, anyhow};
@@ -559,15 +562,7 @@ impl RunningState {
                     .for_each(|value| Self::relativlize_paths(None, value, context));
             }
             serde_json::Value::String(s) if key == Some("program") || key == Some("cwd") => {
-                if let Some(path) = s.strip_prefix('~') {
-                    *s = format!("$ZED_WORKTREE_ROOT{}{}", std::path::MAIN_SEPARATOR, &path);
-                } else if let Some(path) =
-                    s.strip_prefix(&format!(".{}", std::path::MAIN_SEPARATOR))
-                {
-                    *s = format!("$ZED_WORKTREE_ROOT{}{}", std::path::MAIN_SEPARATOR, &path);
-                } else if !s.starts_with(std::path::MAIN_SEPARATOR) {
-                    *s = format!("$ZED_WORKTREE_ROOT{}{}", std::path::MAIN_SEPARATOR, &s);
-                };
+                resolve_path(s);
 
                 if let Some(substituted) = substitute_variables_in_str(&s, context) {
                     *s = substituted;

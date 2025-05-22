@@ -1,24 +1,18 @@
-use anyhow::{Context as _, Result};
-use dap::adapters::DebugTaskDefinition;
-use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext, WindowHandle};
-use project::{FakeFs, Project, WorktreeId};
+use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
+use project::{FakeFs, Project};
 use serde_json::json;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use task::{DebugScenario, TaskContext, VariableName};
 use util::path;
-use workspace::Workspace;
 
-use crate::debugger_panel::DebugPanel;
-use crate::session::running::RunningState;
-use crate::tests::{active_debug_session_panel, init_test, init_test_workspace};
+use crate::tests::{init_test, init_test_workspace};
 
 #[gpui::test]
 async fn test_debug_session_substitutes_variables_and_relativizes_paths(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
-) -> Result<()> {
+) {
     init_test(cx);
 
     let fs = FakeFs::new(executor.clone());
@@ -48,21 +42,36 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
         project_env: Default::default(),
     };
 
+    let home_dir = paths::home_dir();
+
+    let sep = std::path::MAIN_SEPARATOR;
+
     // Test cases for different path formats
-    let test_cases = vec![
+    let test_cases: Vec<(Arc<String>, Arc<String>)> = vec![
         // Absolute path - should not be relativized
-        ("/absolute/path/to/program", "/absolute/path/to/program"),
-        // Path with $ZED_WORKTREE_ROOT - should be substituted
         (
-            "$ZED_WORKTREE_ROOT/src/program",
-            "/test/worktree/path/src/program",
+            Arc::from(format!("{0}absolute{0}path{0}to{0}program", sep)),
+            Arc::from(format!("{0}absolute{0}path{0}to{0}program", sep)),
+        ),
+        // Path with $ZED_WORKTREE_ROOT - should be substituted without double appending
+        (
+            Arc::from(format!("$ZED_WORKTREE_ROOT{0}src{0}program", sep)),
+            Arc::from(format!("{0}test{0}worktree{0}path{0}src{0}program", sep)),
         ),
         // Relative path - should be prefixed with worktree root
-        ("./src/program", "/test/worktree/path/src/program"),
-        // Implicit relative path - should be prefixed with worktree root
-        ("src/program", "/test/worktree/path/src/program"),
+        (
+            Arc::from(format!(".{0}src{0}program", sep)),
+            Arc::from(format!("{0}test{0}worktree{0}path{0}src{0}program", sep)),
+        ),
         // Home directory path - should be prefixed with worktree root
-        ("~/src/program", "/test/worktree/path/src/program"),
+        (
+            Arc::from(format!("~{0}src{0}program", sep)),
+            Arc::from(format!(
+                "{1}{0}src{0}program",
+                sep,
+                home_dir.to_string_lossy()
+            )),
+        ),
     ];
 
     let called_launch = Arc::new(AtomicBool::new(false));
@@ -70,26 +79,31 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
     for (input_path, expected_path) in test_cases {
         let _subscription = project::debugger::test::intercept_debug_sessions(cx, {
             let called_launch = called_launch.clone();
+            let input_path = input_path.clone();
+            let expected_path = expected_path.clone();
             move |client| {
                 client.on_request::<dap::requests::Launch, _>({
                     let called_launch = called_launch.clone();
+                    let input_path = input_path.clone();
+                    let expected_path = expected_path.clone();
+
                     move |_, args| {
                         let config = args.raw.as_object().unwrap();
 
                         // Verify the program path was substituted correctly
                         assert_eq!(
                             config["program"].as_str().unwrap(),
-                            expected_path,
+                            expected_path.as_str(),
                             "Program path was not correctly substituted for input: {}",
-                            input_path
+                            input_path.as_str()
                         );
 
                         // Verify the cwd path was substituted correctly
                         assert_eq!(
                             config["cwd"].as_str().unwrap(),
-                            expected_path,
+                            expected_path.as_str(),
                             "CWD path was not correctly substituted for input: {}",
-                            input_path
+                            input_path.as_str()
                         );
 
                         // Verify that otherField was substituted but not relativized
@@ -115,7 +129,6 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
             }
         });
 
-        // Create a debug scenario with the input path
         let scenario = DebugScenario {
             adapter: "fake-adapter".into(),
             label: "test-debug-session".into(),
@@ -124,12 +137,11 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
                 "request": "launch",
                 "program": input_path,
                 "cwd": input_path,
-                "otherField": input_path // This field should not be relativized
+                "otherField": input_path
             }),
             tcp_connection: None,
         };
 
-        // Start the debug session
         workspace
             .update(cx, |workspace, window, cx| {
                 workspace.start_debug_session(scenario, task_context.clone(), None, window, cx)
@@ -141,6 +153,4 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
         assert!(called_launch.load(Ordering::SeqCst));
         called_launch.store(false, Ordering::SeqCst);
     }
-
-    Ok(())
 }

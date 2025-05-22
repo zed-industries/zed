@@ -61,8 +61,8 @@ impl DebugAdapter for ExtensionDapAdapter {
         self.debug_adapter_name.as_ref().into()
     }
 
-    fn dap_schema(&self) -> serde_json::Value {
-        serde_json::Value::Null
+    async fn dap_schema(&self) -> serde_json::Value {
+        self.extension.get_dap_schema().await.unwrap_or_default()
     }
 
     async fn get_binary(

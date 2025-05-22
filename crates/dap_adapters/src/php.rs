@@ -2,6 +2,7 @@ use adapters::latest_github_release;
 use anyhow::Context as _;
 use anyhow::bail;
 use dap::StartDebuggingRequestArguments;
+use dap::StartDebuggingRequestArgumentsRequest;
 use dap::adapters::{DebugTaskDefinition, TcpArguments};
 use gpui::{AsyncApp, SharedString};
 use language::LanguageName;
@@ -44,6 +45,13 @@ impl PhpDebugAdapter {
                 .browser_download_url
                 .clone(),
         })
+    }
+
+    fn validate_config(
+        &self,
+        _: &serde_json::Value,
+    ) -> Result<StartDebuggingRequestArgumentsRequest> {
+        Ok(StartDebuggingRequestArgumentsRequest::Launch)
     }
 
     async fn get_installed_binary(
@@ -89,11 +97,11 @@ impl PhpDebugAdapter {
                 host,
                 timeout,
             }),
-            cwd: None,
+            cwd: Some(delegate.worktree_root_path().to_path_buf()),
             envs: HashMap::default(),
             request_args: StartDebuggingRequestArguments {
                 configuration: task_definition.config.clone(),
-                request: dap::StartDebuggingRequestArgumentsRequest::Launch,
+                request: self.validate_config(&task_definition.config)?,
             },
         })
     }
@@ -101,7 +109,7 @@ impl PhpDebugAdapter {
 
 #[async_trait(?Send)]
 impl DebugAdapter for PhpDebugAdapter {
-    fn dap_schema(&self) -> serde_json::Value {
+    async fn dap_schema(&self) -> serde_json::Value {
         json!({
             "properties": {
                 "request": {

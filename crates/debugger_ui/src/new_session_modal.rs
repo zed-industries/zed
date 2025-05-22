@@ -9,7 +9,9 @@ use std::{
     usize,
 };
 
-use dap::{DapRegistry, DebugRequest, adapters::DebugAdapterName};
+use dap::{
+    DapRegistry, DebugRequest, TelemetrySpawnLocation, adapters::DebugAdapterName, send_telemetry,
+};
 use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -240,6 +242,7 @@ impl NewSessionModal {
         let Some(task_contexts) = self.task_contexts(cx) else {
             return;
         };
+        send_telemetry(&config, TelemetrySpawnLocation::Custom, cx);
         let task_context = task_contexts.active_context().cloned().unwrap_or_default();
         let worktree_id = task_contexts.worktree();
         cx.spawn_in(window, async move |this, cx| {
@@ -277,8 +280,8 @@ impl NewSessionModal {
         })
     }
 
-    fn task_contexts<'a>(&self, cx: &'a mut Context<Self>) -> Option<&'a TaskContexts> {
-        self.launch_picker.read(cx).delegate.task_contexts.as_ref()
+    fn task_contexts(&self, cx: &App) -> Option<Arc<TaskContexts>> {
+        self.launch_picker.read(cx).delegate.task_contexts.clone()
     }
 
     fn adapter_drop_down_menu(
@@ -899,7 +902,7 @@ pub(super) struct DebugScenarioDelegate {
     matches: Vec<StringMatch>,
     prompt: String,
     debug_panel: WeakEntity<DebugPanel>,
-    task_contexts: Option<TaskContexts>,
+    task_contexts: Option<Arc<TaskContexts>>,
     divider_index: Option<usize>,
     last_used_candidate_index: Option<usize>,
 }
@@ -952,7 +955,7 @@ impl DebugScenarioDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) {
-        self.task_contexts = Some(task_contexts);
+        self.task_contexts = Some(Arc::new(task_contexts));
 
         let (recent, scenarios) = self
             .task_store
@@ -1088,6 +1091,7 @@ impl PickerDelegate for DebugScenarioDelegate {
             })
             .unwrap_or_default();
 
+        send_telemetry(&debug_scenario, TelemetrySpawnLocation::ScenarioList, cx);
         self.debug_panel
             .update(cx, |panel, cx| {
                 panel.start_session(debug_scenario, task_context, None, worktree_id, window, cx);
@@ -1138,5 +1142,44 @@ impl PickerDelegate for DebugScenarioDelegate {
                 .toggle_state(selected)
                 .child(highlighted_location.render(window, cx)),
         )
+    }
+}
+
+pub(crate) fn resolve_path(path: &mut String) {
+    if path.starts_with('~') {
+        let home = paths::home_dir().to_string_lossy().to_string();
+        let trimmed_path = path.trim().to_owned();
+        *path = trimmed_path.replacen('~', &home, 1);
+    } else if let Some(strip_path) = path.strip_prefix(&format!(".{}", std::path::MAIN_SEPARATOR)) {
+        *path = format!(
+            "$ZED_WORKTREE_ROOT{}{}",
+            std::path::MAIN_SEPARATOR,
+            &strip_path
+        );
+    };
+}
+
+#[cfg(test)]
+mod tests {
+    use paths::home_dir;
+
+    #[test]
+    fn test_normalize_paths() {
+        let sep = std::path::MAIN_SEPARATOR;
+        let home = home_dir().to_string_lossy().to_string();
+        let resolve_path = |path: &str| -> String {
+            let mut path = path.to_string();
+            super::resolve_path(&mut path);
+            path
+        };
+
+        assert_eq!(resolve_path("bin"), format!("bin"));
+        assert_eq!(resolve_path(&format!("{sep}foo")), format!("{sep}foo"));
+        assert_eq!(resolve_path(""), format!(""));
+        assert_eq!(
+            resolve_path(&format!("~{sep}blah")),
+            format!("{home}{sep}blah")
+        );
+        assert_eq!(resolve_path("~"), home);
     }
 }
