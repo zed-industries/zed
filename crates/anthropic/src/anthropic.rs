@@ -42,6 +42,10 @@ pub enum Model {
         alias = "claude-3-7-sonnet-thinking-latest"
     )]
     Claude3_7SonnetThinking,
+    #[serde(rename = "claude-opus-4", alias = "claude-opus-4-latest")]
+    ClaudeOpus4,
+    #[serde(rename = "claude-sonnet-4", alias = "claude-sonnet-4-latest")]
+    ClaudeSonnet4,
     #[serde(rename = "claude-3-5-haiku", alias = "claude-3-5-haiku-latest")]
     Claude3_5Haiku,
     #[serde(rename = "claude-3-opus", alias = "claude-3-opus-latest")]
@@ -89,6 +93,10 @@ impl Model {
             Ok(Self::Claude3Sonnet)
         } else if id.starts_with("claude-3-haiku") {
             Ok(Self::Claude3Haiku)
+        } else if id.starts_with("claude-opus-4") {
+            Ok(Self::ClaudeOpus4)
+        } else if id.starts_with("claude-sonnet-4") {
+            Ok(Self::ClaudeSonnet4)
         } else {
             anyhow::bail!("invalid model id {id}");
         }
@@ -96,6 +104,8 @@ impl Model {
 
     pub fn id(&self) -> &str {
         match self {
+            Model::ClaudeOpus4 => "claude-opus-4-latest",
+            Model::ClaudeSonnet4 => "claude-sonnet-4-latest",
             Model::Claude3_5Sonnet => "claude-3-5-sonnet-latest",
             Model::Claude3_7Sonnet => "claude-3-7-sonnet-latest",
             Model::Claude3_7SonnetThinking => "claude-3-7-sonnet-thinking-latest",
@@ -110,6 +120,8 @@ impl Model {
     /// The id of the model that should be used for making API requests
     pub fn request_id(&self) -> &str {
         match self {
+            Model::ClaudeOpus4 => "claude-opus-4-20250514",
+            Model::ClaudeSonnet4 => "claude-sonnet-4-20250514",
             Model::Claude3_5Sonnet => "claude-3-5-sonnet-latest",
             Model::Claude3_7Sonnet | Model::Claude3_7SonnetThinking => "claude-3-7-sonnet-latest",
             Model::Claude3_5Haiku => "claude-3-5-haiku-latest",
@@ -122,6 +134,8 @@ impl Model {
 
     pub fn display_name(&self) -> &str {
         match self {
+            Model::ClaudeOpus4 => "Claude 4 Opus",
+            Model::ClaudeSonnet4 => "Claude 4 Sonnet",
             Self::Claude3_7Sonnet => "Claude 3.7 Sonnet",
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
             Self::Claude3_7SonnetThinking => "Claude 3.7 Sonnet Thinking",
@@ -137,7 +151,9 @@ impl Model {
 
     pub fn cache_configuration(&self) -> Option<AnthropicModelCacheConfiguration> {
         match self {
-            Self::Claude3_5Sonnet
+            Self::ClaudeOpus4
+            | Self::ClaudeSonnet4
+            | Self::Claude3_5Sonnet
             | Self::Claude3_5Haiku
             | Self::Claude3_7Sonnet
             | Self::Claude3_7SonnetThinking
@@ -156,7 +172,9 @@ impl Model {
 
     pub fn max_token_count(&self) -> usize {
         match self {
-            Self::Claude3_5Sonnet
+            Self::ClaudeOpus4
+            | Self::ClaudeSonnet4
+            | Self::Claude3_5Sonnet
             | Self::Claude3_5Haiku
             | Self::Claude3_7Sonnet
             | Self::Claude3_7SonnetThinking
@@ -173,7 +191,9 @@ impl Model {
             Self::Claude3_5Sonnet
             | Self::Claude3_7Sonnet
             | Self::Claude3_7SonnetThinking
-            | Self::Claude3_5Haiku => 8_192,
+            | Self::Claude3_5Haiku
+            | Self::ClaudeOpus4
+            | Self::ClaudeSonnet4 => 8_192,
             Self::Custom {
                 max_output_tokens, ..
             } => max_output_tokens.unwrap_or(4_096),
@@ -186,6 +206,8 @@ impl Model {
             | Self::Claude3_7Sonnet
             | Self::Claude3_7SonnetThinking
             | Self::Claude3_5Haiku
+            | Self::ClaudeOpus4
+            | Self::ClaudeSonnet4
             | Self::Claude3Opus
             | Self::Claude3Sonnet
             | Self::Claude3Haiku => 1.0,
@@ -201,6 +223,8 @@ impl Model {
             Self::Claude3_5Sonnet
             | Self::Claude3_7Sonnet
             | Self::Claude3_5Haiku
+            | Self::ClaudeOpus4
+            | Self::ClaudeSonnet4
             | Self::Claude3Opus
             | Self::Claude3Sonnet
             | Self::Claude3Haiku => AnthropicModelMode::Default,

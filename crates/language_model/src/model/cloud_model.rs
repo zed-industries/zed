@@ -66,7 +66,9 @@ impl CloudModel {
             Self::Anthropic(model) => match model {
                 anthropic::Model::Claude3_5Sonnet
                 | anthropic::Model::Claude3_7Sonnet
-                | anthropic::Model::Claude3_7SonnetThinking => {
+                | anthropic::Model::Claude3_7SonnetThinking
+                | anthropic::Model::ClaudeOpus4
+                | anthropic::Model::ClaudeSonnet4 => {
                     LanguageModelAvailability::RequiresPlan(Plan::Free)
                 }
                 anthropic::Model::Claude3Opus
