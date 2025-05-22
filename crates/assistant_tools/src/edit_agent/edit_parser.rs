@@ -72,6 +72,8 @@ impl EditParser {
                             old_text.pop();
                         }
 
+                        // We're tolerant of mismatched tags because we couldn't get this to zero
+                        // Seems like things are more likely on distribution if the model gets this right, but we don't really know.
                         self.metrics.tags += 1;
                         if &self.buffer[tag_range.clone()] != OLD_TEXT_END_TAG {
                             self.metrics.mismatched_tags += 1;
@@ -324,6 +326,7 @@ mod tests {
         );
     }
 
+    // This is the traditional randomized test on the parser covering the last N%.
     #[gpui::test(iterations = 1000)]
     fn test_mismatched_tags(mut rng: StdRng) {
         let mut parser = EditParser::new();

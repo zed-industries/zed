@@ -805,6 +805,10 @@ mod tests {
                 cx,
             )
         });
+
+        // This is a more traditional unit test.
+        // It's randomized, but still fundamentally deterministic.
+        // But still relevant to working with an LLM
         let raw_edits = simulate_llm_output(
             indoc! {"
                 <old_text></old_text>
@@ -828,6 +832,7 @@ mod tests {
         );
     }
 
+    // Really interesting unit test - Again about purely algorithmic code but critical to performance on the task.
     #[gpui::test(iterations = 100)]
     async fn test_indentation(cx: &mut TestAppContext, mut rng: StdRng) {
         let agent = init_test(cx).await;
