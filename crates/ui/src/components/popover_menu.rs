@@ -71,6 +71,14 @@ impl<M: ManagedView> PopoverMenuHandle<M> {
         }
     }
 
+    pub fn menu(&self) -> Option<Entity<M>> {
+        self.0
+            .borrow()
+            .as_ref()
+            .map(|state| state.menu.borrow().clone())
+            .flatten()
+    }
+
     pub fn hide(&self, cx: &mut App) {
         if let Some(state) = self.0.borrow().as_ref() {
             if let Some(menu) = state.menu.borrow().as_ref() {

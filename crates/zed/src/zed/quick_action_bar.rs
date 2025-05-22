@@ -1,11 +1,13 @@
 mod markdown_preview;
 mod repl_menu;
+use std::rc::Rc;
+
 use assistant_settings::AssistantSettings;
 use editor::actions::{
     AddSelectionAbove, AddSelectionBelow, ConfirmCodeAction, DuplicateLineDown, GoToDiagnostic,
     GoToHunk, GoToPreviousDiagnostic, GoToPreviousHunk, MoveLineDown, MoveLineUp, SelectAll,
-    SelectLargerSyntaxNode, SelectNext, SelectSmallerSyntaxNode, ToggleDiagnostics, ToggleGoToLine,
-    ToggleInlineDiagnostics,
+    SelectLargerSyntaxNode, SelectNext, SelectSmallerSyntaxNode, ToggleCodeActions,
+    ToggleDiagnostics, ToggleGoToLine, ToggleInlineDiagnostics,
 };
 use editor::{Editor, EditorSettings};
 use gpui::{
@@ -17,7 +19,7 @@ use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, SettingsStore};
 use ui::{
     ButtonStyle, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconName, IconSize,
-    PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
+    ListItem, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
 };
 use vim_mode_setting::VimModeSetting;
 use workspace::{
@@ -27,12 +29,13 @@ use zed_actions::{assistant::InlineAssist, outline::ToggleOutline};
 
 pub struct QuickActionBar {
     _inlay_hints_enabled_subscription: Option<Subscription>,
+    _context_menu_subscription: Option<Subscription>,
     active_item: Option<Box<dyn ItemHandle>>,
     buffer_search_bar: Entity<BufferSearchBar>,
     show: bool,
     toggle_selections_handle: PopoverMenuHandle<ContextMenu>,
+    toggle_code_action_handle: PopoverMenuHandle<ContextMenu>,
     toggle_settings_handle: PopoverMenuHandle<ContextMenu>,
-    toggle_code_actions_handle: PopoverMenuHandle<ContextMenu>,
     workspace: WeakEntity<Workspace>,
 }
 
@@ -44,12 +47,13 @@ impl QuickActionBar {
     ) -> Self {
         let mut this = Self {
             _inlay_hints_enabled_subscription: None,
+            _context_menu_subscription: None,
             active_item: None,
             buffer_search_bar,
             show: true,
             toggle_selections_handle: Default::default(),
+            toggle_code_action_handle: Default::default(),
             toggle_settings_handle: Default::default(),
-            toggle_code_actions_handle: Default::default(),
             workspace: workspace.weak_handle(),
         };
         this.apply_settings(cx);
@@ -110,6 +114,7 @@ impl Render for QuickActionBar {
         let minimap_enabled = supports_minimap && editor_value.minimap().is_some();
         let has_code_actions = editor_value.has_code_actions();
         let code_action_enabled = editor_value.code_actions_enabled(cx);
+        let code_action_origin = editor_value.context_menu_origin();
 
         let focus_handle = editor_value.focus_handle(cx);
 
@@ -146,42 +151,55 @@ impl Render for QuickActionBar {
 
         let code_actions_dropdown = code_action_enabled.then(|| {
             let focus = editor.focus_handle(cx);
+            let editor_weak = editor.downgrade();
             PopoverMenu::new("editor-code-actions-dropdown")
-                .menu({
-                    let editor_weak = editor.downgrade();
-                    move |window, cx| {
-                        let focus = focus.clone();
-                        let actions = editor_weak
-                            .update(cx, |editor, cx| {
-                                editor.set_popover_code_actions_menu(window, cx)
-                            })
-                            .ok()
-                            .flatten()?;
-                        let menu = ContextMenu::build(window, cx, move |menu, _, _| {
-                            let mut menu = menu.context(focus.clone());
-                            for (index, action) in actions.iter().enumerate() {
-                                menu = menu.action(
-                                    action.action.lsp_action.title().to_string(),
-                                    Box::new(ConfirmCodeAction {
-                                        item_ix: Some(index),
-                                    }),
-                                );
-                            }
-                            menu
+                .menu(move |window, cx| {
+                    let editor = editor_weak.upgrade()?;
+                    let menu =
+                        ContextMenu::build_persistent(window, cx, move |menu, window, cx| {
+                            let inner_menu = editor.update(cx, |editor, cx| {
+                                // First, ensure code actions are loaded
+                                // if !matches!(
+                                //     editor.context_menu_origin(),
+                                //     Some(ContextMenuOrigin::QuickAction)
+                                // ) {
+                                // }
+                                // Now get the rendered menu
+                                editor.render_code_actions_menu_for_popover(menu, window, cx)
+                            });
+                            inner_menu
                         });
-                        Some(menu)
-                    }
+                    Some(menu)
+                })
+                .on_open({
+                    let editor_weak = editor.downgrade();
+                    Rc::new(move |window, cx| {
+                        println!("open called");
+                        let Some(editor) = editor_weak.upgrade() else {
+                            return;
+                        };
+                        editor.update(cx, |editor, cx| {
+                            editor.toggle_code_actions(
+                                &ToggleCodeActions {
+                                    deployed_from_indicator: None,
+                                    quick_launch: false,
+                                    deployed_from_quick_action: true,
+                                },
+                                window,
+                                cx,
+                            );
+                        })
+                    })
                 })
                 .trigger_with_tooltip(
                     IconButton::new("toggle_code_actions_icon", IconName::Bolt)
                         .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
                         .disabled(!has_code_actions)
-                        .toggle_state(self.toggle_code_actions_handle.is_deployed()),
+                        .toggle_state(self.toggle_code_action_handle.is_deployed()),
                     Tooltip::text("Code Actions"),
                 )
                 .anchor(Corner::TopRight)
-                .with_handle(self.toggle_code_actions_handle.clone())
         });
 
         let editor_selections_dropdown = selection_menu_enabled.then(|| {
@@ -591,12 +609,13 @@ impl ToolbarItemView for QuickActionBar {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
         self.active_item = active_pane_item.map(ItemHandle::boxed_clone);
         if let Some(active_item) = active_pane_item {
             self._inlay_hints_enabled_subscription.take();
+            self._context_menu_subscription.take();
 
             if let Some(editor) = active_item.downcast::<Editor>() {
                 let (mut inlay_hints_enabled, mut supports_inlay_hints) =
@@ -622,6 +641,32 @@ impl ToolbarItemView for QuickActionBar {
                         if should_notify {
                             cx.notify()
                         }
+                    }));
+
+                self._context_menu_subscription =
+                    Some(cx.observe_in(&editor, window, |this, editor, window, cx| {
+                        // Check if the context menu origin is QuickAction
+                        // let is_quick_action_menu = editor
+                        //     .read(cx)
+                        //     .context_menu_origin()
+                        //     .map_or(false, |origin| {
+                        //         matches!(origin, ContextMenuOrigin::QuickAction)
+                        //     });
+
+                        this.toggle_code_action_handle
+                            .menu()
+                            .map(|menu| menu.update(cx, |menu, cx| menu.rebuild(window, cx)));
+                        println!("notified quick action");
+                        cx.notify();
+                        // Update the popover handle state if needed
+                        // if is_quick_action_menu && !this.toggle_code_actions_handle.is_deployed() {
+                        //     // The menu was opened but popover doesn't know about it
+                        // } else if !is_quick_action_menu && this.toggle_code_actions_handle.is_deployed()
+                        // {
+                        //     // The menu was closed but popover still thinks it's open
+                        //     this.toggle_code_actions_handle.hide(cx);
+                        //     cx.notify();
+                        // }
                     }));
             }
         }

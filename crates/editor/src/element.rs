@@ -2386,14 +2386,19 @@ impl EditorElement {
             let active_task_indicator_row =
                 if let Some(crate::CodeContextMenu::CodeActions(CodeActionsMenu {
                     deployed_from_indicator,
+                    deployed_from_quick_action,
                     actions,
                     ..
                 })) = editor.context_menu.borrow().as_ref()
                 {
-                    actions
-                        .tasks()
-                        .map(|tasks| tasks.position.to_display_point(snapshot).row())
-                        .or(*deployed_from_indicator)
+                    if *deployed_from_quick_action {
+                        None
+                    } else {
+                        actions
+                            .tasks()
+                            .map(|tasks| tasks.position.to_display_point(snapshot).row())
+                            .or(*deployed_from_indicator)
+                    }
                 } else {
                     None
                 };
@@ -3583,7 +3588,7 @@ impl EditorElement {
         header
     }
 
-    fn layout_cursor_popovers(
+    fn layout_cursor_context_menu(
         &self,
         line_height: Pixels,
         text_hitbox: &Hitbox,
@@ -8092,7 +8097,7 @@ impl Element for EditorElement {
                             let newest_selection_point =
                                 newest_selection_head.to_point(&snapshot.display_snapshot);
                             if (start_row..end_row).contains(&newest_selection_head.row()) {
-                                self.layout_cursor_popovers(
+                                self.layout_cursor_context_menu(
                                     line_height,
                                     &text_hitbox,
                                     content_origin,

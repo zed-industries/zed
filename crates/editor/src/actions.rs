@@ -82,6 +82,10 @@ pub struct ToggleCodeActions {
     #[serde(default)]
     #[serde(skip)]
     pub quick_launch: bool,
+    // If deployed from quick action bar.
+    #[serde(default)]
+    #[serde(skip)]
+    pub deployed_from_quick_action: bool,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]

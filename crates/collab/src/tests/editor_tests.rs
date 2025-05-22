@@ -681,6 +681,7 @@ async fn test_collaborating_with_code_actions(
             &ToggleCodeActions {
                 deployed_from_indicator: None,
                 quick_launch: false,
+                deployed_from_quick_action: false,
             },
             window,
             cx,

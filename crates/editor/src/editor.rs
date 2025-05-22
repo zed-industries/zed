@@ -83,7 +83,7 @@ use ::git::blame::BlameEntry;
 use ::git::{Restore, blame::ParsedCommitMessage};
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
-    CompletionsMenu, ContextMenuOrigin, PopoverCodeActionsMenu,
+    CompletionsMenu, ContextMenuOrigin,
 };
 use git::blame::{GitBlame, GlobalBlameRenderer};
 use gpui::{
@@ -200,7 +200,7 @@ use theme::{
 };
 use ui::{
     ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape, IconName,
-    IconSize, Indicator, Key, Tooltip, h_flex, prelude::*,
+    IconSize, Indicator, Key, ListItem, Tooltip, h_flex, prelude::*,
 };
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{
@@ -941,7 +941,7 @@ pub struct Editor {
     scrollbar_marker_state: ScrollbarMarkerState,
     active_indent_guides_state: ActiveIndentGuidesState,
     nav_history: Option<ItemNavHistory>,
-    context_menu: RefCell<Option<CodeContextMenu>>,
+    pub context_menu: RefCell<Option<CodeContextMenu>>,
     context_menu_options: Option<ContextMenuOptions>,
     mouse_context_menu: Option<MouseContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
@@ -951,7 +951,6 @@ pub struct Editor {
     find_all_references_task_sources: Vec<Anchor>,
     next_completion_id: CompletionId,
     available_code_actions: Option<(Location, Rc<[AvailableCodeAction]>)>,
-    popover_code_actions_menu: Option<PopoverCodeActionsMenu>,
     code_actions_task: Option<Task<Result<()>>>,
     quick_selection_highlight_task: Option<(Range<Anchor>, Task<()>)>,
     debounced_selection_highlight_task: Option<(Range<Anchor>, Task<()>)>,
@@ -1794,7 +1793,6 @@ impl Editor {
             next_inlay_id: 0,
             code_action_providers,
             available_code_actions: None,
-            popover_code_actions_menu: None,
             code_actions_task: None,
             quick_selection_highlight_task: None,
             debounced_selection_highlight_task: None,
@@ -5374,6 +5372,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        println!("toggled");
         let quick_launch = action.quick_launch;
         let mut context_menu = self.context_menu.borrow_mut();
         if let Some(CodeContextMenu::CodeActions(code_actions)) = context_menu.as_ref() {
@@ -5391,6 +5390,7 @@ impl Editor {
         drop(context_menu);
         let snapshot = self.snapshot(window, cx);
         let deployed_from_indicator = action.deployed_from_indicator;
+        let deployed_from_quick_action = action.deployed_from_quick_action;
         let mut task = self.code_actions_task.take();
         let action = action.clone();
         cx.spawn_in(window, async move |editor, cx| {
@@ -5398,9 +5398,9 @@ impl Editor {
                 prev_task.await.log_err();
                 task = editor.update(cx, |this, _| this.code_actions_task.take())?;
             }
-
+            println!("task over");
             let spawned_test_task = editor.update_in(cx, |editor, window, cx| {
-                if editor.focus_handle.is_focused(window) {
+                if editor.focus_handle.is_focused(window) || deployed_from_quick_action {
                     let multibuffer_point = action
                         .deployed_from_indicator
                         .map(|row| DisplayPoint::new(row, 0).to_point(&snapshot))
@@ -5517,6 +5517,7 @@ impl Editor {
                             && debug_scenarios.is_empty();
                         if let Ok(task) = editor.update_in(cx, |editor, window, cx| {
                             crate::hover_popover::hide_hover(editor, cx);
+                            dbg!(&code_actions.is_some());
                             *editor.context_menu.borrow_mut() =
                                 Some(CodeContextMenu::CodeActions(CodeActionsMenu {
                                     buffer,
@@ -5529,6 +5530,7 @@ impl Editor {
                                     selected_item: Default::default(),
                                     scroll_handle: UniformListScrollHandle::default(),
                                     deployed_from_indicator,
+                                    deployed_from_quick_action,
                                 }));
                             if spawn_straight_away {
                                 if let Some(task) = editor.confirm_code_action(
@@ -5540,6 +5542,7 @@ impl Editor {
                                     return task;
                                 }
                             }
+                            println!("cx notify on editor");
                             cx.notify();
                             Task::ready(Ok(()))
                         }) {
@@ -5574,16 +5577,6 @@ impl Editor {
                 let action_ix = action.item_ix.unwrap_or(menu.selected_item);
                 let action_item = menu.actions.get(action_ix)?;
                 (action_item, menu.buffer, Some(menu.actions.context))
-            } else if let Some(popover_menu) = self.popover_code_actions_menu.take() {
-                let action_ix = action.item_ix?;
-                let actions = popover_menu.actions;
-                let available_code_action = actions.get(action_ix)?;
-                let action_item = CodeActionsItem::CodeAction {
-                    excerpt_id: available_code_action.excerpt_id,
-                    action: available_code_action.action.clone(),
-                    provider: available_code_action.provider.clone(),
-                };
-                (action_item, popover_menu.buffer, None)
             } else {
                 return None;
             };
@@ -5767,45 +5760,6 @@ impl Editor {
         self.available_code_actions
             .as_ref()
             .is_some_and(|(_, actions)| !actions.is_empty())
-    }
-
-    pub fn set_popover_code_actions_menu(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<Rc<[AvailableCodeAction]>> {
-        let multibuffer_point = self.selections.newest::<Point>(cx).head();
-        let snapshot = self.snapshot(window, cx);
-        let (buffer, buffer_row) = snapshot
-            .buffer_snapshot
-            .buffer_line_for_row(MultiBufferRow(multibuffer_point.row))
-            .and_then(|(buffer_snapshot, range)| {
-                self.buffer()
-                    .read(cx)
-                    .buffer(buffer_snapshot.remote_id())
-                    .map(|buffer| (buffer, range.start.row))
-            })?;
-        let Some(code_actions) =
-            self.available_code_actions
-                .clone()
-                .and_then(|(location, code_actions)| {
-                    let snapshot = location.buffer.read(cx).snapshot();
-                    let point_range = location.range.to_point(&snapshot);
-                    let point_range = point_range.start.row..=point_range.end.row;
-                    if point_range.contains(&buffer_row) {
-                        Some(code_actions)
-                    } else {
-                        None
-                    }
-                })
-        else {
-            return None;
-        };
-        self.popover_code_actions_menu = Some(PopoverCodeActionsMenu {
-            actions: code_actions.clone(),
-            buffer,
-        });
-        Some(code_actions)
     }
 
     fn refresh_code_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<()> {
@@ -6456,6 +6410,70 @@ impl Editor {
         }
 
         self.update_visible_inline_completion(window, cx);
+    }
+
+    // In editor.rs, add this method:
+
+    pub fn render_code_actions_menu_for_popover(
+        &self,
+        menu_final: ContextMenu,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> ContextMenu {
+        let context_menu = self.context_menu.borrow();
+        match context_menu.as_ref() {
+            Some(CodeContextMenu::CodeActions(menu))
+                if matches!(menu.origin(), ContextMenuOrigin::QuickAction) =>
+            {
+                println!("rendering code context menu");
+                let actions = menu.actions.clone();
+                let selected_item = menu.selected_item;
+                let focus_handle = self.focus_handle.clone();
+                {
+                    let mut menu_final = menu_final;
+                    menu_final = menu_final.context(focus_handle);
+
+                    for (index, action_item) in actions.iter().enumerate() {
+                        let label = action_item.label();
+                        let is_selected = index == selected_item;
+
+                        menu_final = menu_final.custom_entry(
+                            {
+                                let label = label.clone();
+                                move |_, _| {
+                                    ListItem::new(index)
+                                        .inset(true)
+                                        .toggle_state(is_selected)
+                                        .child(h_flex().overflow_hidden().child(label.clone()))
+                                        .into_any_element()
+                                }
+                            },
+                            {
+                                move |_, cx| {
+                                    // editor_entity.update(cx, |editor, cx| {
+                                    //     if let Some(task) = editor.confirm_code_action(
+                                    //         &ConfirmCodeAction {
+                                    //             item_ix: Some(index),
+                                    //         },
+                                    //         window,
+                                    //         cx,
+                                    //     ) {
+                                    //         task.detach_and_log_err(cx)
+                                    //     }
+                                    // })
+                                }
+                            },
+                        );
+                    }
+
+                    menu_final
+                }
+            }
+            _ => {
+                println!("rendering nothing");
+                menu_final
+            }
+        }
     }
 
     pub fn display_cursor_names(
@@ -7562,6 +7580,7 @@ impl Editor {
                     &ToggleCodeActions {
                         deployed_from_indicator: Some(row),
                         quick_launch,
+                        deployed_from_quick_action: false,
                     },
                     window,
                     cx,
@@ -7581,7 +7600,7 @@ impl Editor {
                 .map_or(false, |menu| menu.visible())
     }
 
-    fn context_menu_origin(&self) -> Option<ContextMenuOrigin> {
+    pub fn context_menu_origin(&self) -> Option<ContextMenuOrigin> {
         self.context_menu
             .borrow()
             .as_ref()

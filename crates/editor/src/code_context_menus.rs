@@ -168,6 +168,7 @@ impl CodeContextMenu {
 pub enum ContextMenuOrigin {
     Cursor,
     GutterIndicator(DisplayRow),
+    QuickAction,
 }
 
 #[derive(Clone, Debug)]
@@ -876,7 +877,7 @@ impl CodeActionContents {
         self.len() == 0
     }
 
-    fn iter(&self) -> impl Iterator<Item = CodeActionsItem> + '_ {
+    pub fn iter(&self) -> impl Iterator<Item = CodeActionsItem> + '_ {
         self.tasks
             .iter()
             .flat_map(|tasks| {
@@ -968,17 +969,13 @@ impl CodeActionsItem {
     }
 }
 
-pub(crate) struct PopoverCodeActionsMenu {
-    pub actions: Rc<[AvailableCodeAction]>,
-    pub buffer: Entity<Buffer>,
-}
-
 pub(crate) struct CodeActionsMenu {
     pub actions: CodeActionContents,
     pub buffer: Entity<Buffer>,
     pub selected_item: usize,
     pub scroll_handle: UniformListScrollHandle,
     pub deployed_from_indicator: Option<DisplayRow>,
+    pub deployed_from_quick_action: bool,
 }
 
 impl CodeActionsMenu {
@@ -1046,11 +1043,15 @@ impl CodeActionsMenu {
         !self.actions.is_empty()
     }
 
-    fn origin(&self) -> ContextMenuOrigin {
-        if let Some(row) = self.deployed_from_indicator {
-            ContextMenuOrigin::GutterIndicator(row)
+    pub fn origin(&self) -> ContextMenuOrigin {
+        if self.deployed_from_quick_action {
+            ContextMenuOrigin::QuickAction
         } else {
-            ContextMenuOrigin::Cursor
+            if let Some(row) = self.deployed_from_indicator {
+                ContextMenuOrigin::GutterIndicator(row)
+            } else {
+                ContextMenuOrigin::Cursor
+            }
         }
     }
 

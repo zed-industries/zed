@@ -14245,6 +14245,7 @@ async fn test_context_menus_hide_hover_popover(cx: &mut gpui::TestAppContext) {
             &ToggleCodeActions {
                 deployed_from_indicator: None,
                 quick_launch: false,
+                deployed_from_quick_action: false,
             },
             window,
             cx,
