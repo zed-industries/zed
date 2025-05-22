@@ -827,7 +827,7 @@ impl X11Client {
             }
             Event::XkbNewKeyboardNotify(_) | Event::MapNotify(_) => {
                 let mut state = self.0.borrow_mut();
-                let mut xkb_state = {
+                let xkb_state = {
                     let xkb_keymap = xkbc::x11::keymap_new_from_device(
                         &state.xkb_context,
                         &state.xcb_connection,
