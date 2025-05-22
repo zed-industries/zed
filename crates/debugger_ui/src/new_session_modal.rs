@@ -779,7 +779,7 @@ impl CustomMode {
     }
 
     pub(super) fn debug_request(&self, cx: &App) -> task::LaunchRequest {
-        let path = self.cwd.read(cx).text(cx);
+        let path = resolve_path(&self.cwd.read(cx).text(cx));
         if cfg!(windows) {
             return task::LaunchRequest {
                 program: self.program.read(cx).text(cx),
@@ -797,16 +797,14 @@ impl CustomMode {
             env.insert(lhs.to_string(), rhs.to_string());
         }
 
-        let program = if let Some(program) = args.next() {
+        let program = resolve_path(&if let Some(program) = args.next() {
             program
         } else {
             env = FxHashMap::default();
             command
-        };
+        });
 
         let args = args.collect::<Vec<_>>();
-
-        let (program, path) = resolve_paths(program, path);
 
         task::LaunchRequest {
             program,
@@ -1147,34 +1145,33 @@ impl PickerDelegate for DebugScenarioDelegate {
     }
 }
 
-fn resolve_paths(program: String, path: String) -> (String, String) {
-    let program = if let Some(program) = program.strip_prefix('~') {
-        format!(
-            "$ZED_WORKTREE_ROOT{}{}",
-            std::path::MAIN_SEPARATOR,
-            &program
-        )
-    } else if !program.starts_with(std::path::MAIN_SEPARATOR) {
-        format!(
-            "$ZED_WORKTREE_ROOT{}{}",
-            std::path::MAIN_SEPARATOR,
-            &program
-        )
+fn resolve_path(path: &str) -> String {
+    if path.starts_with('~') {
+        let home = paths::home_dir().to_string_lossy().to_string();
+        let path = path.trim().to_owned();
+        path.replace('~', &home)
     } else {
-        program
-    };
+        path.to_owned()
+    }
+}
 
-    let path = if path.starts_with('~') && !path.is_empty() {
-        format!(
-            "$ZED_WORKTREE_ROOT{}{}",
-            std::path::MAIN_SEPARATOR,
-            &path[1..]
-        )
-    } else if !path.starts_with(std::path::MAIN_SEPARATOR) && !path.is_empty() {
-        format!("$ZED_WORKTREE_ROOT{}{}", std::path::MAIN_SEPARATOR, &path)
-    } else {
-        path
-    };
+#[cfg(test)]
+mod tests {
+    use paths::home_dir;
 
-    (program, path)
+    use super::*;
+
+    #[test]
+    fn test_normalize_paths() {
+        let sep = std::path::MAIN_SEPARATOR;
+        let home = home_dir().to_string_lossy().to_string();
+        assert_eq!(resolve_path("bin"), format!("bin"));
+        assert_eq!(resolve_path(&format!("{sep}foo")), format!("{sep}foo"));
+        assert_eq!(resolve_path(""), format!(""));
+        assert_eq!(
+            resolve_path(&format!("~{sep}blah")),
+            format!("{home}{sep}blah")
+        );
+        assert_eq!(resolve_path("~"), home);
+    }
 }
