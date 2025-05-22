@@ -89,7 +89,7 @@ impl PhpDebugAdapter {
                 host,
                 timeout,
             }),
-            cwd: None,
+            cwd: Some(delegate.worktree_root_path().to_path_buf()),
             envs: HashMap::default(),
             request_args: StartDebuggingRequestArguments {
                 configuration: task_definition.config.clone(),
