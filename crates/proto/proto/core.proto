@@ -12,6 +12,7 @@ message User {
     string avatar_url = 3;
     optional string email = 4;
     optional string name = 5;
+    optional bool is_account_too_young = 6;
 }
 
 message Nonce {
