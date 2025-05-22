@@ -83,7 +83,7 @@ use ::git::blame::BlameEntry;
 use ::git::{Restore, blame::ParsedCommitMessage};
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
-    CompletionsMenu, ContextMenuOrigin,
+    CompletionsMenu, ContextMenuOrigin, PopoverCodeActionsMenu,
 };
 use git::blame::{GitBlame, GlobalBlameRenderer};
 use gpui::{
@@ -928,7 +928,6 @@ pub struct Editor {
     show_line_numbers: Option<bool>,
     use_relative_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
-    show_code_actions: Option<bool>,
     show_runnables: Option<bool>,
     show_breakpoints: Option<bool>,
     show_wrap_guides: Option<bool>,
@@ -951,6 +950,7 @@ pub struct Editor {
     find_all_references_task_sources: Vec<Anchor>,
     next_completion_id: CompletionId,
     available_code_actions: Option<(Location, Rc<[AvailableCodeAction]>)>,
+    popover_code_actions_menu: Option<PopoverCodeActionsMenu>,
     code_actions_task: Option<Task<Result<()>>>,
     quick_selection_highlight_task: Option<(Range<Anchor>, Task<()>)>,
     debounced_selection_highlight_task: Option<(Range<Anchor>, Task<()>)>,
@@ -1768,7 +1768,6 @@ impl Editor {
             use_relative_line_numbers: None,
             disable_expand_excerpt_buttons: false,
             show_git_diff_gutter: None,
-            show_code_actions: None,
             show_runnables: None,
             show_breakpoints: None,
             show_wrap_guides: None,
@@ -5568,11 +5567,23 @@ impl Editor {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
 
         let actions_menu =
-            if let CodeContextMenu::CodeActions(menu) = self.hide_context_menu(window, cx)? {
+            if let Some(CodeContextMenu::CodeActions(menu)) = self.hide_context_menu(window, cx) {
                 menu
             } else {
-                return None;
+                let action_ix = action.item_ix?;
+                let actions = self.popover_code_actions.take()?;
+                let action = actions.get(action_ix)?;
+                let title = action.label();
+
+                //
             };
+
+        // let actions_menu =
+        //     if let CodeContextMenu::CodeActions(menu) = self.hide_context_menu(window, cx)? {
+        //         menu
+        //     } else {
+        //         return None;
+        //     };
 
         let action_ix = action.item_ix.unwrap_or(actions_menu.selected_item);
         let action = actions_menu.actions.get(action_ix)?;
@@ -5750,10 +5761,14 @@ impl Editor {
         EditorSettings::get_global(cx).toolbar.code_actions
     }
 
-    pub fn available_code_actions(&self) -> Option<Rc<[AvailableCodeAction]>> {
+    pub fn available_code_actions(&self) -> Option<&Rc<[AvailableCodeAction]>> {
         self.available_code_actions
             .as_ref()
-            .map(|(_, actions)| actions.clone())
+            .map(|(_, actions)| actions)
+    }
+
+    pub fn set_popover_code_actions_menu(&mut self, menu: Option<PopoverCodeActionsMenu>) {
+        self.popover_code_actions_menu = menu;
     }
 
     fn refresh_code_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<()> {
@@ -16922,11 +16937,6 @@ impl Editor {
 
     pub fn set_show_git_diff_gutter(&mut self, show_git_diff_gutter: bool, cx: &mut Context<Self>) {
         self.show_git_diff_gutter = Some(show_git_diff_gutter);
-        cx.notify();
-    }
-
-    pub fn set_show_code_actions(&mut self, show_code_actions: bool, cx: &mut Context<Self>) {
-        self.show_code_actions = Some(show_code_actions);
         cx.notify();
     }
 

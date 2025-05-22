@@ -158,6 +158,31 @@ impl Render for QuickActionBar {
                 )
                 .with_handle(self.toggle_code_actions_handle.clone())
                 .anchor(Corner::TopRight)
+                .on_open({
+                    Rc::new(move |window, cx| {
+                        let Some(actions) = code_actions.as_ref() else {
+                            return None;
+                        };
+                        editor
+                            .update(cx, |editor, _| {
+                                let snapshot = self.snapshot(window, cx);
+                                let mut task = self.code_actions_task.take();
+                                let multibuffer_point =
+                                    editor.selections.newest::<Point>(cx).head();
+                                let buffer = editor
+                                    .buffer()
+                                    .read(cx)
+                                    .buffer(actions[0].excerpt_id.buffer_id)?;
+                                let menu = PopoverCodeActionsMenu {
+                                    actions: actions.clone(),
+                                    buffer,
+                                };
+                                editor.set_popover_code_actions_menu(Some(menu));
+                                Some(())
+                            })
+                            .ok()
+                    })
+                })
                 .menu(move |window, cx| {
                     let Some(actions) = code_actions.as_ref() else {
                         return None;
