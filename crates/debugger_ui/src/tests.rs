@@ -25,6 +25,9 @@ mod inline_values;
 #[cfg(test)]
 mod module_list;
 #[cfg(test)]
+#[cfg(not(windows))]
+mod new_session_modal;
+#[cfg(test)]
 mod persistence;
 #[cfg(test)]
 mod stack_frame_list;
