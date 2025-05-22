@@ -45,6 +45,8 @@ actions!(
         FocusLoadedSources,
         FocusTerminal,
         ShowStackTrace,
+        ToggleThreadPicker,
+        ToggleSessionPicker,
     ]
 );
 

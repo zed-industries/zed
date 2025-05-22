@@ -5,7 +5,7 @@ use crate::{
     ClearAllBreakpoints, Continue, Detach, FocusBreakpointList, FocusConsole, FocusFrames,
     FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, Pause, Restart,
     ShowStackTrace, StepBack, StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints,
-    persistence,
+    ToggleSessionPicker, ToggleThreadPicker, persistence,
 };
 use anyhow::{Context as _, Result, anyhow};
 use command_palette_hooks::CommandPaletteFilter;
@@ -31,7 +31,7 @@ use settings::Settings;
 use std::any::TypeId;
 use std::sync::Arc;
 use task::{DebugScenario, TaskContext};
-use ui::{ContextMenu, Divider, Tooltip, prelude::*};
+use ui::{ContextMenu, Divider, PopoverMenuHandle, Tooltip, prelude::*};
 use workspace::SplitDirection;
 use workspace::{
     Pane, Workspace,
@@ -65,6 +65,8 @@ pub struct DebugPanel {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
+    pub(crate) thread_picker_menu_handle: PopoverMenuHandle<ContextMenu>,
+    pub(crate) session_picker_menu_handle: PopoverMenuHandle<ContextMenu>,
     fs: Arc<dyn Fs>,
 }
 
@@ -77,6 +79,8 @@ impl DebugPanel {
         cx.new(|cx| {
             let project = workspace.project().clone();
             let focus_handle = cx.focus_handle();
+            let thread_picker_menu_handle = PopoverMenuHandle::default();
+            let session_picker_menu_handle = PopoverMenuHandle::default();
 
             let debug_panel = Self {
                 size: px(300.),
@@ -87,6 +91,8 @@ impl DebugPanel {
                 workspace: workspace.weak_handle(),
                 context_menu: None,
                 fs: workspace.app_state().fs.clone(),
+                thread_picker_menu_handle,
+                session_picker_menu_handle,
             };
 
             debug_panel
@@ -1033,6 +1039,14 @@ impl DebugPanel {
             })
             .unwrap_or_else(|err| Task::ready(Err(err)))
     }
+
+    pub(crate) fn toggle_thread_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.thread_picker_menu_handle.toggle(window, cx);
+    }
+
+    pub(crate) fn toggle_session_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.session_picker_menu_handle.toggle(window, cx);
+    }
 }
 
 impl EventEmitter<PanelEvent> for DebugPanel {}
@@ -1245,6 +1259,24 @@ impl Render for DebugPanel {
                 move |_: &FocusTerminal, window, cx| {
                     this.update(cx, |this, cx| {
                         this.activate_item(DebuggerPaneItem::Terminal, window, cx);
+                    })
+                    .ok();
+                }
+            })
+            .on_action({
+                let this = this.clone();
+                move |_: &ToggleThreadPicker, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.toggle_thread_picker(window, cx);
+                    })
+                    .ok();
+                }
+            })
+            .on_action({
+                let this = this.clone();
+                move |_: &ToggleSessionPicker, window, cx| {
+                    this.update(cx, |this, cx| {
+                        this.toggle_session_picker(window, cx);
                     })
                     .ok();
                 }
