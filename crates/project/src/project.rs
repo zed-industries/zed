@@ -3662,9 +3662,8 @@ impl Project {
             // ranges in the buffer matched by the query.
             let mut chunks = pin!(chunks);
             'outer: while let Some(matching_buffer_chunk) = chunks.next().await {
-                let mut chunk_results = Vec::new();
+                let mut chunk_results = Vec::with_capacity(matching_buffer_chunk.len());
                 for buffer in matching_buffer_chunk {
-                    let buffer = buffer.clone();
                     let query = query.clone();
                     let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
                     chunk_results.push(cx.background_spawn(async move {
