@@ -1216,24 +1216,6 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 };
                 state.keyboard_state = Some(KeyboardState::new(xkb::State::new(&keymap)));
                 state.compose_state = get_xkb_compose_state(&xkb_context);
-                let layout = {
-                    let layout_idx = state
-                        .keyboard_state
-                        .as_mut()
-                        .unwrap()
-                        .state
-                        .serialize_layout(xkbcommon::xkb::STATE_LAYOUT_EFFECTIVE);
-                    let id = state
-                        .keyboard_state
-                        .as_mut()
-                        .unwrap()
-                        .state
-                        .get_keymap()
-                        .layout_get_name(layout_idx)
-                        .to_string();
-                    LinuxKeyboardLayout::new(id).id().to_string()
-                };
-                println!("Wayland Keyboard layout changed to {layout}");
                 drop(state);
 
                 this.handle_keyboard_layout_change();
@@ -1285,18 +1267,6 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     0,
                     group,
                 );
-                let layout = {
-                    let layout_idx = keyboard_state
-                        .state
-                        .serialize_layout(xkbcommon::xkb::STATE_LAYOUT_EFFECTIVE);
-                    let id = keyboard_state
-                        .state
-                        .get_keymap()
-                        .layout_get_name(layout_idx)
-                        .to_string();
-                    LinuxKeyboardLayout::new(id).id().to_string()
-                };
-                println!("Wayland Keyboard layout changed to {layout}");
                 state.modifiers = Modifiers::from_xkb(&keyboard_state.state);
                 state.capslock = Capslock::from_xkb(&keyboard_state.state);
                 let keymap_state = state.keymap_state.as_mut().unwrap();
