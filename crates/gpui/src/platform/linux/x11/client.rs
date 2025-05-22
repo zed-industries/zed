@@ -206,6 +206,7 @@ pub struct X11ClientState {
     pub(crate) xkb: State,
     previous_xkb_state: XKBStateNotiy,
     keyboard_layout: LinuxKeyboardLayout,
+    pub(crate) keyboard_layout: Box<LinuxKeyboardLayout>,
     pub(crate) keyboard_mapper: LinuxKeyboardMapper,
     pub(crate) ximc: Option<X11rbClient<Rc<XCBConnection>>>,
     pub(crate) xim_handler: Option<XimHandler>,
@@ -426,6 +427,7 @@ impl X11Client {
             .layout_get_name(layout_idx)
             .to_string();
         let keyboard_layout = LinuxKeyboardLayout::new(layout_name.into());
+        let keyboard_layout = Box::new(LinuxKeyboardLayout::new(&xkb_state));
         let keyboard_mapper = LinuxKeyboardMapper::new(0, 0, 0);
 
         let gpu_context = BladeContext::new().context("Unable to init GPU context")?;
@@ -983,16 +985,7 @@ impl X11Client {
                 drop(state);
                 self.handle_keyboard_layout_change();
                 state.keyboard_mapper = LinuxKeyboardMapper::new(0, 0, 0);
-                let layout_idx = state.xkb.serialize_layout(STATE_LAYOUT_EFFECTIVE);
-                let layout = LinuxKeyboardLayout::new(
-                    state
-                        .xkb
-                        .get_keymap()
-                        .layout_get_name(layout_idx)
-                        .to_string(),
-                )
-                .id()
-                .to_string();
+                let layout = LinuxKeyboardLayout::new(&state.xkb).id().to_string();
                 println!("X11 Keyboard layout: {:#?}", layout);
             }
             Event::XkbStateNotify(event) => {

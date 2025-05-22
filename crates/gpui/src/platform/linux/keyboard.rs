@@ -9,13 +9,13 @@ use strum::{EnumIter, IntoEnumIterator as _};
 use x11rb::{protocol::xkb::ConnectionExt as _, xcb_ffi::XCBConnection};
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use xkbcommon::xkb::{
-    Keycode, Keysym,
+    Keycode, Keysym, STATE_LAYOUT_EFFECTIVE, State,
     x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION},
 };
 
 use crate::{PlatformKeyboardLayout, SharedString};
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct LinuxKeyboardLayout {
     name: SharedString,
 }
@@ -33,6 +33,13 @@ impl PlatformKeyboardLayout for LinuxKeyboardLayout {
 impl LinuxKeyboardLayout {
     pub(crate) fn new(name: SharedString) -> Self {
         Self { name }
+    }
+
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    pub(crate) fn unknown() -> Self {
+        Self {
+            id: "unknown".to_string(),
+        }
     }
 }
 
