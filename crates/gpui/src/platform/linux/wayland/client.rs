@@ -1147,6 +1147,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
     ) {
         let mut client = this.get_client();
         let mut state = client.borrow_mut();
+        println!("Keyboard event: {event:#?}");
         match event {
             wl_keyboard::Event::RepeatInfo { rate, delay } => {
                 state.repeat.characters_per_second = rate as u32;
