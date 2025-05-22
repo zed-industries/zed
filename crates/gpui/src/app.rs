@@ -33,14 +33,14 @@ use util::{ResultExt, debug_panic};
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::InspectorElementRegistry;
 use crate::{
-    Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Asset,
-    AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
-    EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
-    Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, Point, PromptBuilder, PromptHandle, PromptLevel,
-    Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString,
-    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance,
-    WindowHandle, WindowId, WindowInvalidator,
+    Action, ActionBuildError, ActionRegistry, Any, AnyElement, AnyView, AnyWindowHandle,
+    AppContext, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle,
+    DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global,
+    KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu,
+    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, Point,
+    PromptBuilder, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
+    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
+    TextSystem, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -274,6 +274,9 @@ pub struct App {
         FxHashMap<EntityId, FxHashMap<WindowId, WindowInvalidator>>,
     pub(crate) tracked_entities: FxHashMap<WindowId, FxHashSet<EntityId>>,
     #[cfg(any(feature = "inspector", debug_assertions))]
+    pub(crate) inspector_renderer:
+        Option<Box<dyn Fn(Vec<AnyElement>, &mut Window, &mut App) -> AnyElement>>,
+    #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) inspector_element_registry: InspectorElementRegistry,
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
@@ -339,6 +342,8 @@ impl App {
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
                 prompt_builder: Some(PromptBuilder::Default),
+                #[cfg(any(feature = "inspector", debug_assertions))]
+                inspector_renderer: None,
                 #[cfg(any(feature = "inspector", debug_assertions))]
                 inspector_element_registry: InspectorElementRegistry::default(),
                 quitting: false,
@@ -1665,7 +1670,19 @@ impl App {
         }
     }
 
-    /// Registers a renderer for the given inspector state.
+    /// Sets the renderer for the inspector. This is provided the rendered states for the selected
+    /// element (if any).
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub fn set_inspector_renderer<R: crate::IntoElement>(
+        &mut self,
+        f: impl 'static + Fn(Vec<AnyElement>, &mut Window, &mut App) -> R,
+    ) {
+        self.inspector_renderer = Some(Box::new(move |states, window, cx| {
+            f(states, window, cx).into_any_element()
+        }));
+    }
+
+    /// Registers a renderer specific to an inspector state.
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub fn register_inspector_element<T: 'static, R: crate::IntoElement>(
         &mut self,

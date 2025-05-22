@@ -64,12 +64,8 @@ pub(crate) use conditional::*;
 #[cfg(any(feature = "inspector", debug_assertions))]
 mod conditional {
     use super::*;
-    use crate::{
-        AnyElement, App, Context, InteractiveElement, IntoElement, ParentElement, Render, Styled,
-        Window, div,
-    };
+    use crate::{AnyElement, App, Context, Empty, IntoElement, Render, Window};
     use collections::FxHashMap;
-    use smallvec::SmallVec;
     use std::any::{Any, TypeId};
 
     pub struct Inspector {
@@ -92,12 +88,12 @@ mod conditional {
             self.active_element_id.as_ref()
         }
 
-        fn render_elements(
+        fn render_inspector_states(
             &mut self,
             window: &mut Window,
             cx: &mut Context<Self>,
-        ) -> SmallVec<[AnyElement; 1]> {
-            let mut elements = SmallVec::new();
+        ) -> Vec<AnyElement> {
+            let mut elements = Vec::new();
             if let Some(inspected_element_id) = self.active_element_id.take() {
                 if let Some(states_by_type_id) = window
                     .next_frame
@@ -140,13 +136,14 @@ mod conditional {
 
     impl Render for Inspector {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            div().flex().flex_col().size_full().items_end().child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .occlude()
-                    .children(self.render_elements(window, cx)),
-            )
+            if let Some(inspector_renderer) = cx.inspector_renderer.take() {
+                let rendered_inspector_states = self.render_inspector_states(window, cx);
+                let result = inspector_renderer(rendered_inspector_states, window, cx);
+                cx.inspector_renderer = Some(inspector_renderer);
+                result
+            } else {
+                Empty.into_any_element()
+            }
         }
     }
 

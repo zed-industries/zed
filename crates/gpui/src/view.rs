@@ -102,7 +102,7 @@ impl AnyView {
     /// The one exception is when [Window::refresh] is called, in which case caching is ignored.
     pub fn cached(mut self, style: StyleRefinement) -> Self {
         // todo!("handle cached elements")
-        // self.cached_style = Some(style.into());
+        self.cached_style = Some(style.into());
         self
     }
 
