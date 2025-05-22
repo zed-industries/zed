@@ -59,6 +59,7 @@ use client::{Collaborator, ParticipantIndex};
 use clock::{AGENT_REPLICA_ID, ReplicaId};
 use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
+use dap::TelemetrySpawnLocation;
 use display_map::*;
 pub use display_map::{ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder};
 pub use editor_settings::{
@@ -5619,6 +5620,7 @@ impl Editor {
                 let context = actions_menu.actions.context.clone();
 
                 workspace.update(cx, |workspace, cx| {
+                    dap::send_telemetry(&scenario, TelemetrySpawnLocation::Gutter, cx);
                     workspace.start_debug_session(scenario, context, Some(buffer), window, cx);
                 });
                 Some(Task::ready(Ok(())))

@@ -9,7 +9,11 @@ pub mod transport;
 use std::net::Ipv4Addr;
 
 pub use dap_types::*;
+use debugger_settings::DebuggerSettings;
+use gpui::App;
 pub use registry::{DapLocator, DapRegistry};
+use serde::Serialize;
+use settings::Settings;
 pub use task::DebugRequest;
 
 pub type ScopeId = u64;
@@ -18,7 +22,7 @@ pub type StackFrameId = u64;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use adapters::FakeAdapter;
-use task::TcpArgumentsTemplate;
+use task::{DebugScenario, TcpArgumentsTemplate};
 
 pub async fn configure_tcp_connection(
     tcp_connection: TcpArgumentsTemplate,
@@ -33,4 +37,28 @@ pub async fn configure_tcp_connection(
     };
 
     Ok((host, port, timeout))
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TelemetrySpawnLocation {
+    Gutter,
+    ScenarioList,
+    Custom,
+}
+
+pub fn send_telemetry(scenario: &DebugScenario, location: TelemetrySpawnLocation, cx: &App) {
+    let kind = scenario.request.as_ref().map(|request| match request {
+        DebugRequest::Launch(_) => "launch",
+        DebugRequest::Attach(_) => "attach",
+    });
+    let dock = DebuggerSettings::get_global(cx).dock;
+    telemetry::event!(
+        "Debugger Session Started",
+        spawn_location = location,
+        with_build_task = scenario.build.is_some(),
+        kind = kind,
+        adapter = scenario.adapter.as_ref(),
+        dock_position = dock,
+    );
 }
