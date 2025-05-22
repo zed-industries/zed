@@ -5763,18 +5763,20 @@ impl Editor {
         EditorSettings::get_global(cx).toolbar.code_actions
     }
 
+    pub fn has_code_actions(&self) -> bool {
+        self.available_code_actions
+            .as_ref()
+            .is_some_and(|(_, actions)| !actions.is_empty())
+    }
+
     pub fn set_popover_code_actions_menu(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Rc<[AvailableCodeAction]>> {
-        let actions = self
-            .available_code_actions
-            .as_ref()
-            .map(|(_, actions)| actions)?;
         let multibuffer_point = self.selections.newest::<Point>(cx).head();
         let snapshot = self.snapshot(window, cx);
-        let (buffer, _buffer_row) = snapshot
+        let (buffer, buffer_row) = snapshot
             .buffer_snapshot
             .buffer_line_for_row(MultiBufferRow(multibuffer_point.row))
             .and_then(|(buffer_snapshot, range)| {
@@ -5783,11 +5785,27 @@ impl Editor {
                     .buffer(buffer_snapshot.remote_id())
                     .map(|buffer| (buffer, range.start.row))
             })?;
+        let Some(code_actions) =
+            self.available_code_actions
+                .clone()
+                .and_then(|(location, code_actions)| {
+                    let snapshot = location.buffer.read(cx).snapshot();
+                    let point_range = location.range.to_point(&snapshot);
+                    let point_range = point_range.start.row..=point_range.end.row;
+                    if point_range.contains(&buffer_row) {
+                        Some(code_actions)
+                    } else {
+                        None
+                    }
+                })
+        else {
+            return None;
+        };
         self.popover_code_actions_menu = Some(PopoverCodeActionsMenu {
-            actions: actions.clone(),
+            actions: code_actions.clone(),
             buffer,
         });
-        Some(actions.clone())
+        Some(code_actions)
     }
 
     fn refresh_code_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<()> {

@@ -15,7 +15,6 @@ use gpui::{
 use project::project_settings::DiagnosticSeverity;
 use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, SettingsStore};
-use std::rc::Rc;
 use ui::{
     ButtonStyle, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconName, IconSize,
     PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
@@ -109,6 +108,7 @@ impl Render for QuickActionBar {
             editor_value.edit_predictions_enabled_at_cursor(cx);
         let supports_minimap = editor_value.supports_minimap(cx);
         let minimap_enabled = supports_minimap && editor_value.minimap().is_some();
+        let has_code_actions = editor_value.has_code_actions();
         let code_action_enabled = editor_value.code_actions_enabled(cx);
 
         let focus_handle = editor_value.focus_handle(cx);
@@ -176,6 +176,7 @@ impl Render for QuickActionBar {
                     IconButton::new("toggle_code_actions_icon", IconName::Bolt)
                         .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
+                        .disabled(!has_code_actions)
                         .toggle_state(self.toggle_code_actions_handle.is_deployed()),
                     Tooltip::text("Code Actions"),
                 )
