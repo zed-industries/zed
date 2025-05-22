@@ -61,7 +61,7 @@ impl DebugAdapter for GdbDebugAdapter {
         })
     }
 
-    fn dap_schema(&self) -> serde_json::Value {
+    async fn dap_schema(&self) -> serde_json::Value {
         json!({
             "oneOf": [
                 {

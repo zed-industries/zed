@@ -175,7 +175,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         })
     }
 
-    fn dap_schema(&self) -> serde_json::Value {
+    async fn dap_schema(&self) -> serde_json::Value {
         json!({
             "properties": {
                 "request": {
