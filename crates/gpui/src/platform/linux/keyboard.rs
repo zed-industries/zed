@@ -30,6 +30,7 @@ impl LinuxKeyboardLayout {
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) struct LinuxKeyboardMapper {
+    letters: HashMap<Keycode, String>,
     code_to_key: HashMap<Keycode, String>,
     code_to_shifted_key: HashMap<Keycode, String>,
 }
@@ -37,9 +38,10 @@ pub(crate) struct LinuxKeyboardMapper {
 #[cfg(any(feature = "wayland", feature = "x11"))]
 impl LinuxKeyboardMapper {
     pub(crate) fn new(xkb_state: &xkbcommon::xkb::State) -> Self {
+        let mut letters = HashMap::default();
         let mut code_to_key = HashMap::default();
         let mut code_to_shifted_key = HashMap::default();
-        let mut inserted = HashSet::default();
+        let mut inserted_letters = HashSet::default();
 
         let keymap = xkb_state.get_keymap();
         let mut shifted_state = xkbcommon::xkb::State::new(&keymap);
@@ -52,14 +54,18 @@ impl LinuxKeyboardMapper {
 
             let key = xkb_state.key_get_utf8(keycode);
             if !key.is_empty() {
-                code_to_key.insert(keycode, key.clone());
-                inserted.insert(key);
+                if key_is_a_letter(&key) {
+                    letters.insert(keycode, key.clone());
+                } else {
+                    code_to_key.insert(keycode, key.clone());
+                }
+                inserted_letters.insert(key);
             } else {
                 // keycode might be a dead key
                 let keysym = xkb_state.key_get_one_sym(keycode);
                 if let Some(key) = underlying_dead_key(keysym) {
                     code_to_key.insert(keycode, key.clone());
-                    inserted.insert(key);
+                    inserted_letters.insert(key);
                 }
             }
 
@@ -74,9 +80,10 @@ impl LinuxKeyboardMapper {
                 }
             }
         }
-        insert_letters_if_missing(&inserted, &mut code_to_key);
+        insert_letters_if_missing(&inserted_letters, &mut letters);
 
         Self {
+            letters,
             code_to_key,
             code_to_shifted_key,
         }
@@ -94,6 +101,38 @@ impl LinuxKeyboardMapper {
             self.code_to_shifted_key.get(&keycode).cloned()
         }
     }
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
+fn key_is_a_letter(key: &str) -> bool {
+    matches!(
+        key,
+        "a" | "b"
+            | "c"
+            | "d"
+            | "e"
+            | "f"
+            | "g"
+            | "h"
+            | "i"
+            | "j"
+            | "k"
+            | "l"
+            | "m"
+            | "n"
+            | "o"
+            | "p"
+            | "q"
+            | "r"
+            | "s"
+            | "t"
+            | "u"
+            | "v"
+            | "w"
+            | "x"
+            | "y"
+            | "z"
+    )
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -190,15 +229,12 @@ pub(crate) fn underlying_dead_key(keysym: Keysym) -> Option<String> {
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
-fn insert_letters_if_missing(
-    inserted: &HashSet<String>,
-    code_to_key: &mut HashMap<Keycode, String>,
-) {
+fn insert_letters_if_missing(inserted: &HashSet<String>, letters: &mut HashMap<Keycode, String>) {
     for scan_code in LinuxScanCodes::LETTERS.iter() {
         let keycode = Keycode::new(*scan_code as u32);
         let key = scan_code.to_str();
         if !inserted.contains(key) {
-            code_to_key.insert(keycode, key.to_owned());
+            letters.insert(keycode, key.to_owned());
         }
     }
 }
