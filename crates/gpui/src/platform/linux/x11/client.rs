@@ -844,6 +844,11 @@ impl X11Client {
                 let latched_group = xkb_state.serialize_layout(xkbc::STATE_LAYOUT_LATCHED);
                 let locked_group = xkb_state.serialize_layout(xkbc::ffi::XKB_STATE_LAYOUT_LOCKED);
                 xkb_state.update_mask(0, 0, 0, depressed_group, latched_group, locked_group);
+                state.previous_xkb_state = XKBStateNotiy {
+                    depressed_layout: depressed_group,
+                    latched_layout: latched_group,
+                    locked_layout: locked_group,
+                };
                 state.xkb = xkb_state;
             }
             Event::XkbStateNotify(event) => {
