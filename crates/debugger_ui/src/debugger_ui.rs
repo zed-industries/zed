@@ -11,7 +11,6 @@ use util::maybe;
 use workspace::{ShutdownDebugAdapters, Workspace};
 
 pub mod attach_modal;
-mod breakpoint;
 pub mod debugger_panel;
 mod new_session_modal;
 mod persistence;

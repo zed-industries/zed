@@ -2459,80 +2459,64 @@ impl EditorElement {
             .clone()
             .line_height
             .to_pixels(editor_font_size, window.rem_size());
+        let indicator_offset = px(2.);
+        let indicator_height = line_height - indicator_offset;
 
         let longest_line_width = self.max_line_number_width(snapshot, window, cx);
         let indicator_width = longest_line_width + px(62.);
 
         // let opacity = if self.reachable { 0.5 } else { 0.85 };
-        let opacity = 0.5;
+        let opacity = 0.24;
 
-        let bg = if matches!(breakpoint.state, BreakpointState::Enabled) {
-            cx.theme().status().info
-        } else {
-            cx.theme()
-                .status()
-                .info
-                .alpha(1.0)
-                .blend(cx.theme().colors().editor_background.alpha(opacity))
-        };
+        // let bg = if matches!(breakpoint.state, BreakpointState::Enabled) {
+        //     cx.theme().status().info
+        // } else {
+        //     cx.theme()
+        //         .status()
+        //         .info
+        //         .alpha(1.0)
+        //         .blend(cx.theme().colors().editor_background.alpha(opacity))
+        // };
 
-        let vector_width = rems_from_px(line_height.0);
-        let right_adjustment = indicator_width - vector_width.to_pixels(window.rem_size()) / 2.0;
+        let bg = cx.theme().status().info.alpha(opacity);
+
+        let vector_width = rems_from_px(indicator_height.0);
+        let right_adjustment =
+            indicator_width - vector_width.to_pixels(window.rem_size()) / 2.0 - px(6.);
         let middle_segment = indicator_width - vector_width.to_pixels(window.rem_size());
 
         div()
             .id(id)
+            .absolute()
+            .top(indicator_offset / 2.0)
+            .left_0()
             .child(
                 div()
                     .flex()
-                    .h(line_height)
+                    .h(indicator_height)
                     .w(indicator_width)
                     .items_center()
                     .child(
                         div()
-                            .absolute()
-                            .top_0()
-                            .left(px(12.0))
-                            .h(line_height)
-                            .child(
-                                Vector::square(
-                                    VectorName::BreakpointFlagStart,
-                                    rems_from_px(line_height.0),
-                                )
-                                .color(Color::Custom(bg)),
-                            ),
-                    )
-                    .child(
-                        div()
                             .w(middle_segment)
                             .ml(vector_width / 1.5)
-                            .h(line_height)
+                            .h(indicator_height)
+                            .rounded_lg()
                             .bg(bg),
-                    )
-                    .child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .left(rems_from_px(right_adjustment.0))
-                            .h(line_height)
-                            .child(
-                                Vector::square(
-                                    VectorName::BreakpointFlagEnd,
-                                    rems_from_px(line_height.0),
-                                )
-                                .color(Color::Custom(bg)),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .absolute()
-                            .mr(px(-2.))
-                            .text_right()
-                            .text_color(cx.theme().colors().text)
-                            .text_size(font_size)
-                            .line_height(line_height)
-                            .child(line_number.to_string()),
-                    ),
+                    ), // .child(
+                       //     div()
+                       //         .absolute()
+                       //         .top_0()
+                       //         .left(rems_from_px(right_adjustment.0))
+                       //         .h(indicator_height)
+                       //         .child(
+                       //             Vector::square(
+                       //                 VectorName::BreakpointFlagEnd,
+                       //                 rems_from_px(indicator_height.0),
+                       //             )
+                       //             .color(Color::Custom(bg)),
+                       //         ),
+                       // ),
             )
             .on_click({
                 let editor = self.editor.downgrade();
@@ -5208,6 +5192,9 @@ impl EditorElement {
         cx: &mut App,
     ) {
         window.paint_layer(layout.gutter_hitbox.bounds, |window| {
+            for breakpoint in layout.breakpoints.iter_mut() {
+                breakpoint.paint(window, cx);
+            }
             window.with_element_namespace("crease_toggles", |window| {
                 for crease_toggle in layout.crease_toggles.iter_mut().flatten() {
                     crease_toggle.paint(window, cx);
@@ -5220,12 +5207,23 @@ impl EditorElement {
                 }
             });
 
-            for breakpoint in layout.breakpoints.iter_mut() {
-                breakpoint.paint(window, cx);
-            }
-
             for test_indicator in layout.test_indicators.iter_mut() {
                 test_indicator.paint(window, cx);
+            }
+
+            let show_git_gutter = layout
+                .position_map
+                .snapshot
+                .show_git_diff_gutter
+                .unwrap_or_else(|| {
+                    matches!(
+                        ProjectSettings::get_global(cx).git.git_gutter,
+                        Some(GitGutterSetting::TrackedFiles)
+                    )
+                });
+
+            if show_git_gutter {
+                Self::paint_gutter_diff_hunks(layout, window, cx)
             }
         });
     }
@@ -5248,20 +5246,6 @@ impl EditorElement {
                     window.set_cursor_style(CursorStyle::PointingHand, Some(hunk_hitbox));
                 }
             }
-        }
-
-        let show_git_gutter = layout
-            .position_map
-            .snapshot
-            .show_git_diff_gutter
-            .unwrap_or_else(|| {
-                matches!(
-                    ProjectSettings::get_global(cx).git.git_gutter,
-                    Some(GitGutterSetting::TrackedFiles)
-                )
-            });
-        if show_git_gutter {
-            Self::paint_gutter_diff_hunks(layout, window, cx)
         }
 
         let highlight_width = 0.275 * layout.position_map.line_height;
@@ -8433,16 +8417,15 @@ impl Element for EditorElement {
                     self.paint_indent_guides(layout, window, cx);
 
                     if layout.gutter_hitbox.size.width > Pixels::ZERO {
+                        self.paint_gutter_highlights(layout, window, cx);
+                        self.paint_gutter_indicators(layout, window, cx);
+                    }
+                    if layout.gutter_hitbox.size.width > Pixels::ZERO {
                         self.paint_blamed_display_rows(layout, window, cx);
                         self.paint_line_numbers(layout, window, cx);
                     }
 
                     self.paint_text(layout, window, cx);
-
-                    if layout.gutter_hitbox.size.width > Pixels::ZERO {
-                        self.paint_gutter_highlights(layout, window, cx);
-                        self.paint_gutter_indicators(layout, window, cx);
-                    }
 
                     if !layout.blocks.is_empty() {
                         window.with_element_namespace("blocks", |window| {
