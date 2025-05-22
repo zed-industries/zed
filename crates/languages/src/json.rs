@@ -363,7 +363,6 @@ async fn get_cached_server_binary(
     .log_err()
 }
 
-// todo! is this really correct in all cases? Should have a better name
 #[inline]
 fn schema_file_match(path: &Path) -> String {
     path.strip_prefix(path.parent().unwrap().parent().unwrap())

@@ -139,9 +139,6 @@ impl ObjectFit {
 }
 
 /// The CSS styling that can be applied to an element via the `Styled` trait
-///
-/// todo! Many of the types this references just had `Serialize` / `Deserialize` directly added,
-/// should refine the format.
 #[derive(Clone, Refineable, Debug)]
 #[refineable(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Style {

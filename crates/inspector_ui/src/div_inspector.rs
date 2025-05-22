@@ -1,5 +1,9 @@
+use anyhow::Result;
 use editor::{Editor, EditorEvent, EditorMode, MultiBuffer};
-use gpui::{DivInspectorState, Entity, InspectorElementId, IntoElement, Window};
+use gpui::{
+    AsyncWindowContext, DivInspectorState, Entity, InspectorElementId, IntoElement, WeakEntity,
+    Window,
+};
 use language::Buffer;
 use language::language_settings::SoftWrap;
 use project::{Project, ProjectPath};
@@ -7,7 +11,10 @@ use std::path::Path;
 use ui::prelude::*;
 use ui::{Label, LabelSize, v_flex};
 
-// todo! rename back to DivInspector
+/// Path used for unsaved buffer that contains style json. To support the json lanugage server, this
+/// matches the name used in the generated schemas.
+const ZED_INSPECTOR_STYLE_PATH: &str = "/zed-inspector-style.json";
+
 pub(crate) struct DivInspector {
     project: Entity<Project>,
     last_id: Option<InspectorElementId>,
@@ -23,51 +30,10 @@ impl DivInspector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> DivInspector {
-        // Load the buffer once, so it can then be used for each editor.
+        // Open the buffer once, so it can then be used for each editor.
         cx.spawn_in(window, {
             let project = project.clone();
-            async move |this, cx| {
-                let worktree = project
-                    .update(cx, |project, cx| {
-                        project.create_worktree("/zed-inspector-style.json", false, cx)
-                    })
-                    .unwrap()
-                    .await
-                    .unwrap();
-
-                let project_path = worktree
-                    .read_with(cx, |worktree, cx| ProjectPath {
-                        worktree_id: worktree.id(),
-                        path: Path::new("").into(),
-                    })
-                    .unwrap();
-
-                let style_buffer = project
-                    .update(cx, |project, cx| project.open_path(project_path, cx))
-                    .unwrap()
-                    .await
-                    .unwrap()
-                    .1;
-
-                project
-                    .update(cx, |project, cx| {
-                        project.register_buffer_with_language_servers(&style_buffer, cx)
-                    })
-                    .ok();
-
-                this.update_in(cx, |this, window, cx| {
-                    this.style_buffer = Some(style_buffer);
-                    // TODO: Avoid clone somehow
-                    if let Some(id) = this.last_id.clone() {
-                        window.update_inspector_state(&id, |state, window| {
-                            if let Some(state) = state.as_ref() {
-                                this.update_inspected_element(&id, state, window, cx);
-                            }
-                        });
-                    }
-                })
-                .ok();
-            }
+            async move |this, cx| Self::open_style_buffer(project, this, cx).await
         })
         .detach();
 
@@ -78,6 +44,46 @@ impl DivInspector {
             style_editor: None,
             last_error: None,
         }
+    }
+
+    async fn open_style_buffer(
+        project: Entity<Project>,
+        this: WeakEntity<DivInspector>,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<()> {
+        let worktree = project
+            .update(cx, |project, cx| {
+                project.create_worktree(ZED_INSPECTOR_STYLE_PATH, false, cx)
+            })?
+            .await?;
+
+        let project_path = worktree.read_with(cx, |worktree, _cx| ProjectPath {
+            worktree_id: worktree.id(),
+            path: Path::new("").into(),
+        })?;
+
+        let style_buffer = project
+            .update(cx, |project, cx| project.open_path(project_path, cx))?
+            .await?
+            .1;
+
+        project.update(cx, |project, cx| {
+            project.register_buffer_with_language_servers(&style_buffer, cx)
+        })?;
+
+        this.update_in(cx, |this, window, cx| {
+            this.style_buffer = Some(style_buffer);
+            // TODO: Avoid clone somehow
+            if let Some(id) = this.last_id.clone() {
+                window.update_inspector_state(&id, |state, window| {
+                    if let Some(state) = state.as_ref() {
+                        this.update_inspected_element(&id, state, window, cx);
+                    }
+                });
+            }
+        })?;
+
+        Ok(())
     }
 
     pub fn update_inspected_element(

@@ -1,11 +1,6 @@
 use anyhow::{Context as _, anyhow};
-use gpui::{App, InspectorElementId, IntoElement, Window};
-use std::{
-    cell::{OnceCell, RefCell},
-    path::Path,
-    rc::Rc,
-    sync::{Arc, OnceLock},
-};
+use gpui::{App, Hsla, InspectorElementId, IntoElement, Window};
+use std::{cell::OnceCell, path::Path, sync::Arc};
 use ui::{Label, Tooltip, prelude::*};
 use util::{ResultExt as _, command::new_smol_command};
 use workspace::AppState;
@@ -33,6 +28,9 @@ use crate::div_inspector::DivInspector;
 //
 // * GPUI just implement what's needed to implement an inspector, since so much of the inspector
 // logic is already outside GPUI (due to access to editor / theme / ui components / etc).
+
+// TODO: Related to above TODO, it could make sense to not even have special handling of rendering
+// the inspector to the side - it could just be a workspace item.
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     // TODO: Instead toggle a global debug mode? Not all windows support the command pallete.
@@ -86,7 +84,12 @@ fn render_inspector(
     v_flex()
         .id("gpui-inspector")
         .size_full()
-        .bg(cx.theme().colors().elevated_surface_background)
+        // todo! Better color
+        .bg(cx
+            .theme()
+            .colors()
+            .panel_background
+            .blend(Hsla::black().alpha(0.05)))
         .text_color(cx.theme().colors().text)
         .font(theme::setup_ui_font(window, cx))
         .p_2()
@@ -103,7 +106,9 @@ fn render_inspector(
                 .child(
                     IconButton::new("pick-mode", IconName::MagnifyingGlass)
                         .tooltip(Tooltip::text("Start inspector pick mode"))
+                        // todo! Why isn't this working?
                         .selected_icon_color(Color::Selected)
+                        .toggle_state(window.is_inspector_picking(cx))
                         .on_click(|_, window, cx| {
                             window.start_inspector_picking(cx);
                         }),
@@ -136,7 +141,7 @@ fn render_inspector(
                         Label::new(inspector_element_id.global_id.to_string())
                             .size(LabelSize::Small),
                     )
-                    // todo! Make this link-styled and clickable
+                    // todo! Make this link-styled and clickable?
                     .child(Label::new(format!("{}", source_location)).size(LabelSize::Small))
                     .child(
                         Label::new(format!("Instance {}", inspector_element_id.instance_id))
