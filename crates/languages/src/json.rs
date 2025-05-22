@@ -26,7 +26,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-use task::{TaskTemplate, TaskTemplates, VariableName};
+use task::{AdapterSchemas, TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into};
 
 const SERVER_PATH: &str =
@@ -76,7 +76,11 @@ impl JsonLspAdapter {
         }
     }
 
-    fn get_workspace_config(language_names: Vec<String>, cx: &mut App) -> Value {
+    fn get_workspace_config(
+        language_names: Vec<String>,
+        adapter_schemas: AdapterSchemas,
+        cx: &mut App,
+    ) -> Value {
         let keymap_schema = KeymapFile::generate_json_schema_for_registered_actions(cx);
         let font_names = &cx.text_system().all_font_names();
         let settings_schema = cx.global::<SettingsStore>().json_schema(
@@ -87,7 +91,6 @@ impl JsonLspAdapter {
             cx,
         );
 
-        let adapter_schemas = cx.global::<DapRegistry>().adapters_schema();
         let tasks_schema = task::TaskTemplates::generate_json_schema();
         let debug_schema = task::DebugTaskFile::generate_json_schema(&adapter_schemas);
         let snippets_schema = snippet_provider::format::VsSnippetsFile::generate_json_schema();
@@ -163,8 +166,15 @@ impl JsonLspAdapter {
             }
         }
         let mut writer = self.workspace_config.write().await;
-        let config =
-            cx.update(|cx| Self::get_workspace_config(self.languages.language_names(), cx))?;
+
+        let adapter_schemas = cx
+            .read_global::<DapRegistry, _>(|dap_registry, _| dap_registry.to_owned())?
+            .adapters_schema()
+            .await;
+
+        let config = cx.update(|cx| {
+            Self::get_workspace_config(self.languages.language_names().clone(), adapter_schemas, cx)
+        })?;
         writer.replace(config.clone());
         return Ok(config);
     }

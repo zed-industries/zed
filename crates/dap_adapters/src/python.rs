@@ -5,7 +5,9 @@ use dap::{
     adapters::DebugTaskDefinition,
 };
 use gpui::{AsyncApp, SharedString};
+use json_dotpath::DotPaths;
 use language::LanguageName;
+use serde_json::Value;
 use std::{collections::HashMap, ffi::OsStr, path::PathBuf, sync::OnceLock};
 use util::ResultExt;
 
@@ -26,8 +28,16 @@ impl PythonDebugAdapter {
     ) -> Result<StartDebuggingRequestArguments> {
         let request = self.validate_config(&task_definition.config)?;
 
+        let mut configuration = task_definition.config.clone();
+        if let Ok(console) = configuration.dot_get_mut("console") {
+            // Use built-in Zed terminal if user did not explicitly provide a setting for console.
+            if console.is_null() {
+                *console = Value::String("integratedTerminal".into());
+            }
+        }
+
         Ok(StartDebuggingRequestArguments {
-            configuration: task_definition.config.clone(),
+            configuration,
             request,
         })
     }
@@ -138,7 +148,7 @@ impl PythonDebugAdapter {
                 port,
                 timeout,
             }),
-            cwd: None,
+            cwd: Some(delegate.worktree_root_path().to_path_buf()),
             envs: HashMap::default(),
             request_args: self.request_args(config)?,
         })
@@ -201,7 +211,10 @@ impl DebugAdapter for PythonDebugAdapter {
     ) -> Result<StartDebuggingRequestArgumentsRequest> {
         let map = config.as_object().context("Config isn't an object")?;
 
-        let request_variant = map["request"].as_str().context("request is not valid")?;
+        let request_variant = map
+            .get("request")
+            .and_then(|val| val.as_str())
+            .context("request is not valid")?;
 
         match request_variant {
             "launch" => Ok(StartDebuggingRequestArgumentsRequest::Launch),
@@ -210,7 +223,7 @@ impl DebugAdapter for PythonDebugAdapter {
         }
     }
 
-    fn dap_schema(&self) -> serde_json::Value {
+    async fn dap_schema(&self) -> serde_json::Value {
         json!({
             "properties": {
                 "request": {

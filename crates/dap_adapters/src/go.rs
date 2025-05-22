@@ -27,7 +27,7 @@ impl DebugAdapter for GoDebugAdapter {
         Some(SharedString::new_static("Go").into())
     }
 
-    fn dap_schema(&self) -> serde_json::Value {
+    async fn dap_schema(&self) -> serde_json::Value {
         // Create common properties shared between launch and attach
         let common_properties = json!({
             "debugAdapter": {
@@ -289,7 +289,10 @@ impl DebugAdapter for GoDebugAdapter {
     ) -> Result<StartDebuggingRequestArgumentsRequest> {
         let map = config.as_object().context("Config isn't an object")?;
 
-        let request_variant = map["request"].as_str().context("request is not valid")?;
+        let request_variant = map
+            .get("request")
+            .and_then(|val| val.as_str())
+            .context("request argument is not found or invalid")?;
 
         match request_variant {
             "launch" => Ok(StartDebuggingRequestArgumentsRequest::Launch),
@@ -347,7 +350,7 @@ impl DebugAdapter for GoDebugAdapter {
         Ok(DebugAdapterBinary {
             command: delve_path,
             arguments: vec!["dap".into(), "--listen".into(), format!("{host}:{port}")],
-            cwd: None,
+            cwd: Some(delegate.worktree_root_path().to_path_buf()),
             envs: HashMap::default(),
             connection: Some(adapters::TcpArguments {
                 host,

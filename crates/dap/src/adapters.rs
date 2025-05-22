@@ -375,9 +375,10 @@ pub trait DebugAdapter: 'static + Send + Sync {
     ) -> Result<StartDebuggingRequestArgumentsRequest> {
         let map = config.as_object().context("Config isn't an object")?;
 
-        let request_variant = map["request"]
-            .as_str()
-            .ok_or_else(|| anyhow!("request is not valid"))?;
+        let request_variant = map
+            .get("request")
+            .and_then(|val| val.as_str())
+            .context("request argument is not found or invalid")?;
 
         match request_variant {
             "launch" => Ok(StartDebuggingRequestArgumentsRequest::Launch),
@@ -386,7 +387,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
         }
     }
 
-    fn dap_schema(&self) -> serde_json::Value;
+    async fn dap_schema(&self) -> serde_json::Value;
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -434,7 +435,7 @@ impl DebugAdapter for FakeAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
-    fn dap_schema(&self) -> serde_json::Value {
+    async fn dap_schema(&self) -> serde_json::Value {
         serde_json::Value::Null
     }
 
