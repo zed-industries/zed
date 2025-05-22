@@ -16,7 +16,6 @@ use gpui::{AnyElement, AnyView, App, AsyncApp, SharedString, Task, Window};
 use http_client::http::{HeaderMap, HeaderValue};
 use icons::IconName;
 use parking_lot::Mutex;
-use proto::Plan;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::fmt;
@@ -46,15 +45,6 @@ pub fn init(client: Arc<Client>, cx: &mut App) {
 
 pub fn init_settings(cx: &mut App) {
     registry::init(cx);
-}
-
-/// The availability of a [`LanguageModel`].
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum LanguageModelAvailability {
-    /// The language model is available to the general public.
-    Public,
-    /// The language model is available to users on the indicated plan.
-    RequiresPlan(Plan),
 }
 
 /// Configuration for caching language model messages.
@@ -240,11 +230,6 @@ pub trait LanguageModel: Send + Sync {
 
     fn api_key(&self, _cx: &App) -> Option<String> {
         None
-    }
-
-    /// Returns the availability of this language model.
-    fn availability(&self) -> LanguageModelAvailability {
-        LanguageModelAvailability::Public
     }
 
     /// Whether this model supports images
