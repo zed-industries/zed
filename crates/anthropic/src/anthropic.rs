@@ -150,10 +150,10 @@ impl Model {
 
     pub fn display_name(&self) -> &str {
         match self {
-            Model::ClaudeOpus4 => "Claude 4 Opus",
-            Model::ClaudeOpus4Thinking => "Claude 4 Opus Thinking",
-            Model::ClaudeSonnet4 => "Claude 4 Sonnet",
-            Model::ClaudeSonnet4Thinking => "Claude 4 Sonnet Thinking",
+            Model::ClaudeOpus4 => "Claude Opus 4",
+            Model::ClaudeOpus4Thinking => "Claude Opus 4 Thinking",
+            Model::ClaudeSonnet4 => "Claude Sonnet 4",
+            Model::ClaudeSonnet4Thinking => "Claude Sonnet 4 Thinking",
             Self::Claude3_7Sonnet => "Claude 3.7 Sonnet",
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
             Self::Claude3_7SonnetThinking => "Claude 3.7 Sonnet Thinking",
