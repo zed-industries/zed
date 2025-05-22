@@ -25,7 +25,7 @@ env:
 jobs:
   job_spec:
     name: Decide which jobs to run
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'Tritwies'
     outputs:
       run_tests: ${{ steps.filter.outputs.run_tests }}
       run_license: ${{ steps.filter.outputs.run_license }}
@@ -68,7 +68,7 @@ jobs:
     name: Check Postgres and Protobuf migrations, mergability
     needs: [job_spec]
     if: |
-      github.repository_owner == 'zed-industries' &&
+      github.repository_owner == 'Tritwies' &&
       needs.job_spec.outputs.run_tests == 'true'
     timeout-minutes: 60
     runs-on:
@@ -115,7 +115,7 @@ jobs:
     name: Check workspace-hack crate
     needs: [job_spec]
     if: |
-      github.repository_owner == 'zed-industries' &&
+      github.repository_owner == 'Tritwies' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
       - buildjet-8vcpu-ubuntu-2204
@@ -147,7 +147,7 @@ jobs:
     timeout-minutes: 60
     name: Check formatting and spelling
     needs: [job_spec]
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'Tritwies'
     runs-on:
       - buildjet-8vcpu-ubuntu-2204
     steps:
@@ -196,7 +196,7 @@ jobs:
     name: (macOS) Run Clippy and tests
     needs: [job_spec]
     if: |
-      github.repository_owner == 'zed-industries' &&
+      github.repository_owner == 'Tritwies' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
       - self-hosted
@@ -263,7 +263,7 @@ jobs:
     name: (Linux) Run Clippy and tests
     needs: [job_spec]
     if: |
-      github.repository_owner == 'zed-industries' &&
+      github.repository_owner == 'Tritwies' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
       - buildjet-16vcpu-ubuntu-2204
@@ -315,7 +315,7 @@ jobs:
     name: (Linux) Build Remote Server
     needs: [job_spec]
     if: |
-      github.repository_owner == 'zed-industries' &&
+      github.repository_owner == 'Tritwies' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
       - buildjet-8vcpu-ubuntu-2204
@@ -354,7 +354,7 @@ jobs:
     name: (Windows) Run Clippy
     needs: [job_spec]
     if: |
-      github.repository_owner == 'zed-industries' &&
+      github.repository_owner == 'Tritwies' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on: windows-2025-16
     steps:
@@ -412,7 +412,7 @@ jobs:
     name: (Windows) Run Tests
     needs: [job_spec]
     if: |
-      github.repository_owner == 'zed-industries' &&
+      github.repository_owner == 'Tritwies' &&
       needs.job_spec.outputs.run_tests == 'true'
     # Use bigger runners for PRs (speed); smaller for async (cost)
     runs-on: ${{ github.event_name == 'pull_request' && 'windows-2025-32' || 'windows-2025-16' }}
@@ -720,7 +720,7 @@ jobs:
     timeout-minutes: 60
     name: Nix Build
     continue-on-error: true
-    if: github.repository_owner == 'zed-industries' && contains(github.event.pull_request.labels.*.name, 'run-nix')
+    if: github.repository_owner == 'Tritwies' && contains(github.event.pull_request.labels.*.name, 'run-nix')
     strategy:
       fail-fast: false
       matrix:
@@ -754,7 +754,7 @@ jobs:
 
       - uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad # v16
         with:
-          name: zed-industries
+          name: Tritwies
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
           skipPush: true
       - run: nix build .#debug
