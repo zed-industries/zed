@@ -928,6 +928,7 @@ pub struct Editor {
     show_line_numbers: Option<bool>,
     use_relative_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
+    show_code_actions: Option<bool>,
     show_runnables: Option<bool>,
     show_breakpoints: Option<bool>,
     show_wrap_guides: Option<bool>,
@@ -1768,6 +1769,7 @@ impl Editor {
             use_relative_line_numbers: None,
             disable_expand_excerpt_buttons: false,
             show_git_diff_gutter: None,
+            show_code_actions: None,
             show_runnables: None,
             show_breakpoints: None,
             show_wrap_guides: None,
@@ -1792,6 +1794,7 @@ impl Editor {
             next_inlay_id: 0,
             code_action_providers,
             available_code_actions: None,
+            popover_code_actions_menu: None,
             code_actions_task: None,
             quick_selection_highlight_task: None,
             debounced_selection_highlight_task: None,
@@ -5566,29 +5569,26 @@ impl Editor {
     ) -> Option<Task<Result<()>>> {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
 
-        let actions_menu =
+        let (action, buffer, context) =
             if let Some(CodeContextMenu::CodeActions(menu)) = self.hide_context_menu(window, cx) {
-                menu
-            } else {
+                let action_ix = action.item_ix.unwrap_or(menu.selected_item);
+                let action_item = menu.actions.get(action_ix)?;
+                (action_item, menu.buffer, Some(menu.actions.context))
+            } else if let Some(popover_menu) = self.popover_code_actions_menu.take() {
                 let action_ix = action.item_ix?;
-                let actions = self.popover_code_actions.take()?;
-                let action = actions.get(action_ix)?;
-                let title = action.label();
-
-                //
+                let actions = popover_menu.actions;
+                let available_code_action = actions.get(action_ix)?;
+                let action_item = CodeActionsItem::CodeAction {
+                    excerpt_id: available_code_action.excerpt_id,
+                    action: available_code_action.action.clone(),
+                    provider: available_code_action.provider.clone(),
+                };
+                (action_item, popover_menu.buffer, None)
+            } else {
+                return None;
             };
 
-        // let actions_menu =
-        //     if let CodeContextMenu::CodeActions(menu) = self.hide_context_menu(window, cx)? {
-        //         menu
-        //     } else {
-        //         return None;
-        //     };
-
-        let action_ix = action.item_ix.unwrap_or(actions_menu.selected_item);
-        let action = actions_menu.actions.get(action_ix)?;
         let title = action.label();
-        let buffer = actions_menu.buffer;
         let workspace = self.workspace()?;
 
         match action {
@@ -5626,13 +5626,15 @@ impl Editor {
                 }))
             }
             CodeActionsItem::DebugScenario(scenario) => {
-                let context = actions_menu.actions.context.clone();
-
-                workspace.update(cx, |workspace, cx| {
-                    dap::send_telemetry(&scenario, TelemetrySpawnLocation::Gutter, cx);
-                    workspace.start_debug_session(scenario, context, Some(buffer), window, cx);
-                });
-                Some(Task::ready(Ok(())))
+                if let Some(context) = context {
+                    workspace.update(cx, |workspace, cx| {
+                        dap::send_telemetry(&scenario, TelemetrySpawnLocation::Gutter, cx);
+                        workspace.start_debug_session(scenario, context, Some(buffer), window, cx);
+                    });
+                    Some(Task::ready(Ok(())))
+                } else {
+                    None
+                }
             }
         }
     }
@@ -5767,8 +5769,41 @@ impl Editor {
             .map(|(_, actions)| actions)
     }
 
-    pub fn set_popover_code_actions_menu(&mut self, menu: Option<PopoverCodeActionsMenu>) {
-        self.popover_code_actions_menu = menu;
+    pub fn popover_code_actions(&self) -> Option<&Rc<[AvailableCodeAction]>> {
+        self.popover_code_actions_menu
+            .as_ref()
+            .map(|menu| &menu.actions)
+    }
+
+    pub fn set_popover_code_actions_menu(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        println!("reached 0");
+        let actions = self
+            .available_code_actions
+            .as_ref()
+            .map(|(_, actions)| actions)?;
+        println!("reached 0.5");
+        let multibuffer_point = self.selections.newest::<Point>(cx).head();
+        let snapshot = self.snapshot(window, cx);
+        println!("reached 1");
+        let (buffer, _buffer_row) = snapshot
+            .buffer_snapshot
+            .buffer_line_for_row(MultiBufferRow(multibuffer_point.row))
+            .and_then(|(buffer_snapshot, range)| {
+                self.buffer()
+                    .read(cx)
+                    .buffer(buffer_snapshot.remote_id())
+                    .map(|buffer| (buffer, range.start.row))
+            })?;
+        println!("reached 2");
+        self.popover_code_actions_menu = Some(PopoverCodeActionsMenu {
+            actions: actions.clone(),
+            buffer,
+        });
+        None
     }
 
     fn refresh_code_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<()> {
@@ -16937,6 +16972,11 @@ impl Editor {
 
     pub fn set_show_git_diff_gutter(&mut self, show_git_diff_gutter: bool, cx: &mut Context<Self>) {
         self.show_git_diff_gutter = Some(show_git_diff_gutter);
+        cx.notify();
+    }
+
+    pub fn set_show_code_actions(&mut self, show_code_actions: bool, cx: &mut Context<Self>) {
+        self.show_code_actions = Some(show_code_actions);
         cx.notify();
     }
 

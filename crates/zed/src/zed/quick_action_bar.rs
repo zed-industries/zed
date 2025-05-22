@@ -1,6 +1,5 @@
 mod markdown_preview;
 mod repl_menu;
-
 use assistant_settings::AssistantSettings;
 use editor::actions::{
     AddSelectionAbove, AddSelectionBelow, ConfirmCodeAction, DuplicateLineDown, GoToDiagnostic,
@@ -16,6 +15,7 @@ use gpui::{
 use project::project_settings::DiagnosticSeverity;
 use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, SettingsStore};
+use std::rc::Rc;
 use ui::{
     ButtonStyle, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconName, IconSize,
     PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
@@ -109,7 +109,7 @@ impl Render for QuickActionBar {
             editor_value.edit_predictions_enabled_at_cursor(cx);
         let supports_minimap = editor_value.supports_minimap(cx);
         let minimap_enabled = supports_minimap && editor_value.minimap().is_some();
-        let code_actions = editor_value.available_code_actions();
+        let has_code_actions = editor_value.available_code_actions().is_some();
         let code_action_enabled = editor_value.code_actions_enabled(cx);
 
         let focus_handle = editor_value.focus_handle(cx);
@@ -152,55 +152,45 @@ impl Render for QuickActionBar {
                     IconButton::new("toggle_code_actions_icon", IconName::Bolt)
                         .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
-                        .disabled(code_actions.is_none())
+                        .disabled(!has_code_actions)
                         .toggle_state(self.toggle_code_actions_handle.is_deployed()),
                     Tooltip::text("Code Actions"),
                 )
                 .with_handle(self.toggle_code_actions_handle.clone())
                 .anchor(Corner::TopRight)
                 .on_open({
+                    let editor_weak = editor.downgrade();
                     Rc::new(move |window, cx| {
-                        let Some(actions) = code_actions.as_ref() else {
-                            return None;
-                        };
-                        editor
-                            .update(cx, |editor, _| {
-                                let snapshot = self.snapshot(window, cx);
-                                let mut task = self.code_actions_task.take();
-                                let multibuffer_point =
-                                    editor.selections.newest::<Point>(cx).head();
-                                let buffer = editor
-                                    .buffer()
-                                    .read(cx)
-                                    .buffer(actions[0].excerpt_id.buffer_id)?;
-                                let menu = PopoverCodeActionsMenu {
-                                    actions: actions.clone(),
-                                    buffer,
-                                };
-                                editor.set_popover_code_actions_menu(Some(menu));
-                                Some(())
+                        println!("called");
+                        editor_weak
+                            .update(cx, |editor, cx| {
+                                editor.set_popover_code_actions_menu(window, cx);
                             })
-                            .ok()
+                            .ok();
                     })
                 })
-                .menu(move |window, cx| {
-                    let Some(actions) = code_actions.as_ref() else {
-                        return None;
-                    };
-                    let focus = focus.clone();
-                    let menu = ContextMenu::build(window, cx, move |menu, _, _| {
-                        let mut menu = menu.context(focus.clone());
-                        for (index, action) in actions.iter().enumerate() {
-                            menu = menu.action(
-                                action.action.lsp_action.title().to_string(),
-                                Box::new(ConfirmCodeAction {
-                                    item_ix: Some(index),
-                                }),
-                            );
-                        }
-                        menu
-                    });
-                    Some(menu)
+                .menu({
+                    let editor_weak = editor.downgrade();
+                    move |window, cx| {
+                        let focus = focus.clone();
+                        let actions = editor_weak
+                            .update(cx, |editor, _| editor.available_code_actions().cloned())
+                            .ok()
+                            .flatten()?;
+                        let menu = ContextMenu::build(window, cx, move |menu, _, _| {
+                            let mut menu = menu.context(focus.clone());
+                            for (index, action) in actions.iter().enumerate() {
+                                menu = menu.action(
+                                    action.action.lsp_action.title().to_string(),
+                                    Box::new(ConfirmCodeAction {
+                                        item_ix: Some(index),
+                                    }),
+                                );
+                            }
+                            menu
+                        });
+                        Some(menu)
+                    }
                 })
         });
 

@@ -969,7 +969,7 @@ impl CodeActionsItem {
 }
 
 pub(crate) struct PopoverCodeActionsMenu {
-    pub actions: Option<Rc<[AvailableCodeAction]>>,
+    pub actions: Rc<[AvailableCodeAction]>,
     pub buffer: Entity<Buffer>,
 }
 
