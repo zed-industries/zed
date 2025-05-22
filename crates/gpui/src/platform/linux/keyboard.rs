@@ -138,39 +138,6 @@ fn key_is_a_letter(key: &str) -> bool {
     )
 }
 
-#[cfg(any(feature = "wayland", feature = "x11"))]
-fn is_alphabetic_key(keycode: Keycode) -> bool {
-    matches!(
-        keycode.raw(),
-        0x0026 // a
-        | 0x0038 // b
-        | 0x0036 // c
-        | 0x0028 // d
-        | 0x001a // e
-        | 0x0029 // f
-        | 0x002a // g
-        | 0x002b // h
-        | 0x001f // i
-        | 0x002c // j
-        | 0x002d // k
-        | 0x002e // l
-        | 0x003a // m
-        | 0x0039 // n
-        | 0x0020 // o
-        | 0x0021 // p
-        | 0x0018 // q
-        | 0x001b // r
-        | 0x0027 // s
-        | 0x001c // t
-        | 0x001e // u
-        | 0x0037 // v
-        | 0x0019 // w
-        | 0x0035 // x
-        | 0x001d // y
-        | 0x0034 // z
-    )
-}
-
 /**
  * Returns which symbol the dead key represents
  * <https://developer.mozilla.org/en-US/docs/Web/API/UI_Events/Keyboard_event_key_values#dead_keycodes_for_linux>
