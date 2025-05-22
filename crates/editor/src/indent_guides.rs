@@ -69,7 +69,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<HashSet<usize>> {
-        let selection = self.selections.newest::<Point>(cx);
+        let selection = self
+            .selections
+            .newest::<Point>(&self.selections.display_map(cx));
         let cursor_row = MultiBufferRow(selection.head().row);
 
         let state = &mut self.active_indent_guides_state;

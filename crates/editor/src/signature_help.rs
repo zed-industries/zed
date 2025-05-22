@@ -81,7 +81,9 @@ impl Editor {
         if !(self.signature_help_state.is_shown() || self.auto_signature_help_enabled(cx)) {
             return false;
         }
-        let newest_selection = self.selections.newest::<usize>(cx);
+        let newest_selection = self
+            .selections
+            .newest::<usize>(&self.selections.display_map(cx));
         let head = newest_selection.head();
 
         // There are two cases where the head and tail of a selection are different: selecting multiple ranges and using backspace.

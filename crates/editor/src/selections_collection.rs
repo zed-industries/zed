@@ -102,25 +102,23 @@ impl SelectionsCollection {
 
     pub fn pending<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &mut App,
+        snapshot: &DisplaySnapshot,
     ) -> Option<Selection<D>> {
-        let map = self.display_map(cx);
-        let selection = resolve_selections(self.pending_anchor().as_ref(), &map).next();
-        selection
+        resolve_selections(self.pending_anchor().as_ref(), &snapshot).next()
     }
 
     pub(crate) fn pending_mode(&self) -> Option<SelectMode> {
         self.pending.as_ref().map(|pending| pending.mode.clone())
     }
 
-    pub fn all<'a, D>(&self, cx: &mut App) -> Vec<Selection<D>>
+    pub fn all<'a, D>(&self, snapshot: &DisplaySnapshot) -> Vec<Selection<D>>
     where
         D: 'a + TextDimension + Ord + Sub<D, Output = D>,
     {
-        let map = self.display_map(cx);
         let disjoint_anchors = &self.disjoint;
-        let mut disjoint = resolve_selections::<D, _>(disjoint_anchors.iter(), &map).peekable();
-        let mut pending_opt = self.pending::<D>(cx);
+        let mut disjoint =
+            resolve_selections::<D, _>(disjoint_anchors.iter(), &snapshot).peekable();
+        let mut pending_opt = self.pending::<D>(&snapshot);
         iter::from_fn(move || {
             if let Some(pending) = pending_opt.as_mut() {
                 while let Some(next_selection) = disjoint.peek() {
@@ -149,11 +147,11 @@ impl SelectionsCollection {
 
     /// Returns all of the selections, adjusted to take into account the selection line_mode
     pub fn all_adjusted(&self, cx: &mut App) -> Vec<Selection<Point>> {
-        let mut selections = self.all::<Point>(cx);
+        let display_map = self.display_map(cx);
+        let mut selections = self.all::<Point>(&display_map);
         if self.line_mode {
-            let map = self.display_map(cx);
             for selection in &mut selections {
-                let new_range = map.expand_to_line(selection.range());
+                let new_range = display_map.expand_to_line(selection.range());
                 selection.start = new_range.start;
                 selection.end = new_range.end;
             }
@@ -163,10 +161,10 @@ impl SelectionsCollection {
 
     /// Returns the newest selection, adjusted to take into account the selection line_mode
     pub fn newest_adjusted(&self, cx: &mut App) -> Selection<Point> {
-        let mut selection = self.newest::<Point>(cx);
+        let display_map = self.display_map(cx);
+        let mut selection = self.newest::<Point>(&display_map);
         if self.line_mode {
-            let map = self.display_map(cx);
-            let new_range = map.expand_to_line(selection.range());
+            let new_range = display_map.expand_to_line(selection.range());
             selection.start = new_range.start;
             selection.end = new_range.end;
         }
@@ -178,18 +176,18 @@ impl SelectionsCollection {
         cx: &mut App,
     ) -> (DisplaySnapshot, Vec<Selection<DisplayPoint>>) {
         if self.line_mode {
-            let selections = self.all::<Point>(cx);
-            let map = self.display_map(cx);
+            let display_map = self.display_map(cx);
+            let selections = self.all::<Point>(&display_map);
             let result = selections
                 .into_iter()
                 .map(|mut selection| {
-                    let new_range = map.expand_to_line(selection.range());
+                    let new_range = display_map.expand_to_line(selection.range());
                     selection.start = new_range.start;
                     selection.end = new_range.end;
-                    selection.map(|point| point.to_display_point(&map))
+                    selection.map(|point| point.to_display_point(&display_map))
                 })
                 .collect();
-            (map, result)
+            (display_map, result)
         } else {
             self.all_display(cx)
         }
@@ -259,21 +257,17 @@ impl SelectionsCollection {
 
     pub fn newest<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &mut App,
+        snapshot: &DisplaySnapshot,
     ) -> Selection<D> {
-        let map = self.display_map(cx);
-        let selection = resolve_selections([self.newest_anchor()], &map)
+        resolve_selections([self.newest_anchor()], snapshot)
             .next()
-            .unwrap();
-        selection
+            .unwrap()
     }
 
-    pub fn newest_display(&self, cx: &mut App) -> Selection<DisplayPoint> {
-        let map = self.display_map(cx);
-        let selection = resolve_selections_display([self.newest_anchor()], &map)
+    pub fn newest_display(&self, snapshot: &DisplaySnapshot) -> Selection<DisplayPoint> {
+        resolve_selections_display([self.newest_anchor()], snapshot)
             .next()
-            .unwrap();
-        selection
+            .unwrap()
     }
 
     pub fn oldest_anchor(&self) -> &Selection<Anchor> {
@@ -286,13 +280,11 @@ impl SelectionsCollection {
 
     pub fn oldest<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &mut App,
+        snapshot: &DisplaySnapshot,
     ) -> Selection<D> {
-        let map = self.display_map(cx);
-        let selection = resolve_selections([self.oldest_anchor()], &map)
+        resolve_selections([self.oldest_anchor()], &snapshot)
             .next()
-            .unwrap();
-        selection
+            .unwrap()
     }
 
     pub fn first_anchor(&self) -> Selection<Anchor> {
@@ -303,18 +295,18 @@ impl SelectionsCollection {
     }
 
     pub fn first<D: TextDimension + Ord + Sub<D, Output = D>>(&self, cx: &mut App) -> Selection<D> {
-        self.all(cx).first().unwrap().clone()
+        self.all(&self.display_map(cx)).first().unwrap().clone()
     }
 
     pub fn last<D: TextDimension + Ord + Sub<D, Output = D>>(&self, cx: &mut App) -> Selection<D> {
-        self.all(cx).last().unwrap().clone()
+        self.all(&self.display_map(cx)).last().unwrap().clone()
     }
 
     pub fn ranges<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
         cx: &mut App,
     ) -> Vec<Range<D>> {
-        self.all::<D>(cx)
+        self.all::<D>(&self.display_map(cx))
             .iter()
             .map(|s| {
                 if s.reversed {
@@ -493,7 +485,8 @@ impl<'a> MutableSelectionsCollection<'a> {
     where
         T: 'a + ToOffset + ToPoint + TextDimension + Ord + Sub<T, Output = T> + std::marker::Copy,
     {
-        let mut selections = self.collection.all(self.cx);
+        let display_map = self.display_map();
+        let mut selections = self.collection.all(&display_map);
         let mut start = range.start.to_offset(&self.buffer());
         let mut end = range.end.to_offset(&self.buffer());
         let reversed = if start > end {
@@ -709,9 +702,10 @@ impl<'a> MutableSelectionsCollection<'a> {
     ) {
         let mut changed = false;
         let snapshot = self.buffer().clone();
+        let display_map = self.display_map();
         let selections = self
             .collection
-            .all::<usize>(self.cx)
+            .all::<usize>(&display_map)
             .into_iter()
             .map(|selection| {
                 let mut moved_selection = selection.clone();

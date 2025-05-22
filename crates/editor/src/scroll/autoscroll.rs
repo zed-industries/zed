@@ -135,7 +135,7 @@ impl Editor {
             target_top = first_highlighted_row.as_f32();
             target_bottom = target_top + 1.;
         } else {
-            let selections = self.selections.all::<Point>(cx);
+            let selections = self.selections.all::<Point>(&display_map);
 
             target_top = selections
                 .first()
@@ -268,8 +268,8 @@ impl Editor {
         layouts: &[LineWithInvisibles],
         cx: &mut Context<Self>,
     ) -> bool {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let selections = self.selections.all::<Point>(cx);
+        let display_map = self.selections.display_map(cx);
+        let selections = self.selections.all::<Point>(&display_map);
 
         let mut target_left;
         let mut target_right;
