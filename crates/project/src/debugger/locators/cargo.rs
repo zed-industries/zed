@@ -166,7 +166,7 @@ impl DapLocator for CargoLocator {
             program: executable,
             cwd: build_config.cwd,
             args,
-            env: build_config.env,
+            env: build_config.env.into_iter().collect(),
         }))
     }
 }
