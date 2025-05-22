@@ -82,6 +82,7 @@ fn render_inspector(
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement + use<> {
+    let source_location = inspector_element_id.map(|id| id.source_location);
     v_flex()
         .id("gpui-inspector")
         .size_full()
@@ -107,16 +108,16 @@ fn render_inspector(
                             window.start_inspector_picking(cx);
                         }),
                 )
-                .when_some(inspector_element_id, |this, inspector_element_id| {
-                    let source_location = inspector_element_id.source_location;
-                    // todo! Link displayed location insead?
-                    this.child(IconButton::new("view-source", IconName::FileCode).on_click(
-                        |_, _window, cx| {
-                            cx.background_spawn(open_zed_source_location(source_location))
-                                .detach_and_log_err(cx);
-                        },
-                    ))
-                })
+                .child(
+                    IconButton::new("view-source", IconName::FileCode)
+                        .disabled(source_location.is_none())
+                        .on_click(move |_, _window, cx| {
+                            if let Some(source_location) = source_location {
+                                cx.background_spawn(open_zed_source_location(source_location))
+                                    .detach_and_log_err(cx);
+                            }
+                        }),
+                )
                 .child(
                     h_flex()
                         .w_full()
