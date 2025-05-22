@@ -827,7 +827,7 @@ impl X11Client {
             }
             Event::XkbNewKeyboardNotify(_) | Event::MapNotify(_) => {
                 let mut state = self.0.borrow_mut();
-                let xkb_state = {
+                let mut xkb_state = {
                     let xkb_keymap = xkbc::x11::keymap_new_from_device(
                         &state.xkb_context,
                         &state.xcb_connection,
@@ -840,6 +840,10 @@ impl X11Client {
                         state.xkb_device_id,
                     )
                 };
+                let depressed_group = xkb_state.serialize_layout(xkbc::STATE_LAYOUT_DEPRESSED);
+                let latched_group = xkb_state.serialize_layout(xkbc::STATE_LAYOUT_LATCHED);
+                let locked_group = xkb_state.serialize_layout(xkbc::ffi::XKB_STATE_LAYOUT_LOCKED);
+                xkb_state.update_mask(0, 0, 0, depressed_group, latched_group, locked_group);
                 state.xkb = xkb_state;
             }
             Event::XkbStateNotify(event) => {
