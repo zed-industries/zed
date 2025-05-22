@@ -927,6 +927,7 @@ impl RunningState {
                     .ok_or_else(|| anyhow!("{}: is not a valid adapter name", &adapter))
                     .map(|adapter| adapter.config_from_zed_format(zed_config))??;
                 config = scenario.config;
+                Self::substitute_variables_in_config(&mut config, &task_context);
             } else {
                 anyhow::bail!("No request or build provided");
             };
