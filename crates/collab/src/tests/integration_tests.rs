@@ -1850,6 +1850,7 @@ async fn test_active_call_events(
                 avatar_uri: "avatar_a".into(),
                 name: None,
                 email: None,
+                is_account_too_young: None,
             }),
             project_id: project_a_id,
             worktree_root_names: vec!["a".to_string()],
@@ -1870,6 +1871,7 @@ async fn test_active_call_events(
                 avatar_uri: "avatar_b".into(),
                 name: None,
                 email: None,
+                is_account_too_young: None,
             }),
             project_id: project_b_id,
             worktree_root_names: vec!["b".to_string()]

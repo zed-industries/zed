@@ -1,5 +1,5 @@
 use crate::db::UserId;
-use chrono::NaiveDateTime;
+use chrono::{Duration, NaiveDateTime, Utc};
 use sea_orm::entity::prelude::*;
 use serde::Serialize;
 
@@ -54,6 +54,11 @@ impl Model {
         }
 
         account_created_at
+    }
+
+    /// Returns true if the user's account is too young.
+    pub fn is_account_too_young(&self) -> bool {
+        self.account_created_at() < (Utc::now() - Duration::days(30)).naive_utc()
     }
 }
 

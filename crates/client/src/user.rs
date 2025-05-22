@@ -50,6 +50,7 @@ pub struct User {
     pub avatar_uri: SharedUri,
     pub name: Option<String>,
     pub email: Option<String>,
+    pub is_account_too_young: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -866,6 +867,7 @@ impl User {
             avatar_uri: message.avatar_url.into(),
             name: message.name,
             email: message.email,
+            is_account_too_young: message.is_account_too_young,
         })
     }
 }
