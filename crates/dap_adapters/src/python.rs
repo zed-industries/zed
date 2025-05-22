@@ -88,6 +88,19 @@ impl PythonDebugAdapter {
         let tcp_connection = config.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
+        let debugpy_dir = if let Some(user_installed_path) = user_installed_path {
+            user_installed_path
+        } else {
+            let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
+            let file_name_prefix = format!("{}_", Self::ADAPTER_NAME);
+
+            util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
+                file_name.starts_with(&file_name_prefix)
+            })
+            .await
+            .context("Debugpy directory not found")?
+        };
+
         let python_path = if let Some(toolchain) = toolchain {
             Some(toolchain.path.to_string())
         } else {
@@ -103,19 +116,6 @@ impl PythonDebugAdapter {
                 }
             }
             name
-        };
-
-        let debugpy_dir = if let Some(user_installed_path) = user_installed_path {
-            user_installed_path
-        } else {
-            let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
-            let file_name_prefix = format!("{}_", Self::ADAPTER_NAME);
-
-            util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
-                file_name.starts_with(&file_name_prefix)
-            })
-            .await
-            .context("Debugpy directory not found")?
         };
 
         Ok(DebugAdapterBinary {
