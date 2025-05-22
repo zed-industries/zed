@@ -4044,31 +4044,29 @@ impl Editor {
                                 };
 
                                 let cursor_is_before_end_tag_if_exists = {
-                                    let num_of_whitespaces_rev = snapshot
-                                        .reversed_chars_for_range(range.clone())
-                                        .take_while(|c| c.is_whitespace())
-                                        .count();
-                                    let mut line_iter = snapshot
-                                        .reversed_chars_for_range(range)
-                                        .skip(num_of_whitespaces_rev);
-                                    let end_tag_exists = end_tag
-                                        .chars()
-                                        .rev()
-                                        .all(|char| line_iter.next() == Some(char));
-                                    if end_tag_exists {
-                                        let max_point = snapshot.line_len(start_point.row) as usize;
-                                        let ordering = (num_of_whitespaces_rev
-                                            + end_tag.len()
-                                            + start_point.column as usize)
-                                            .cmp(&max_point);
+                                    let mut char_position = 0u32;
+                                    let mut end_tag_offset = None;
+
+                                    'outer: for chunk in snapshot.text_for_range(range.clone()) {
+                                        if let Some(byte_pos) = chunk.find(&**end_tag) {
+                                            let chars_before_match =
+                                                chunk[..byte_pos].chars().count() as u32;
+                                            end_tag_offset =
+                                                Some(char_position + chars_before_match);
+                                            break 'outer;
+                                        }
+                                        char_position += chunk.chars().count() as u32;
+                                    }
+
+                                    if let Some(end_tag_offset) = end_tag_offset {
                                         let cursor_is_before_end_tag =
-                                            ordering != Ordering::Greater;
+                                            start_point.column <= end_tag_offset;
                                         if cursor_is_after_start_tag {
                                             if cursor_is_before_end_tag {
                                                 insert_extra_newline = true;
                                             }
                                             let cursor_is_at_start_of_end_tag =
-                                                ordering == Ordering::Equal;
+                                                start_point.column == end_tag_offset;
                                             if cursor_is_at_start_of_end_tag {
                                                 indent_on_extra_newline.len = (*len).into();
                                             }
