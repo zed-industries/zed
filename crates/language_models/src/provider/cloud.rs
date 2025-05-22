@@ -615,7 +615,7 @@ impl CloudLanguageModel {
                     }
                 }
 
-                return Err(anyhow!("Forbidden"));
+                anyhow::bail!("Forbidden");
             } else if status.as_u16() >= 500 && status.as_u16() < 600 {
                 // If we encounter an error in the 500 range, retry after a delay.
                 // We've seen at least these in the wild from API providers:
@@ -626,10 +626,10 @@ impl CloudLanguageModel {
                 if retries_remaining == 0 {
                     let mut body = String::new();
                     response.body_mut().read_to_string(&mut body).await?;
-                    return Err(anyhow!(
+                    anyhow::bail!(
                         "cloud language model completion failed after {} retries with status {status}: {body}",
                         Self::MAX_RETRIES
-                    ));
+                    );
                 }
 
                 Timer::after(retry_delay).await;

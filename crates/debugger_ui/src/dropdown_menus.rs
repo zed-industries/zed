@@ -132,7 +132,8 @@ impl DebugPanel {
                         this
                     }),
                 )
-                .style(DropdownStyle::Ghost),
+                .style(DropdownStyle::Ghost)
+                .handle(self.session_picker_menu_handle.clone()),
             )
         } else {
             None
@@ -163,7 +164,7 @@ impl DebugPanel {
                 DropdownMenu::new_with_element(
                     ("thread-list", session_id.0),
                     trigger,
-                    ContextMenu::build_eager(window, cx, move |mut this, _, _| {
+                    ContextMenu::build(window, cx, move |mut this, _, _| {
                         for (thread, _) in threads {
                             let running_state = running_state.clone();
                             let thread_id = thread.id;
@@ -177,7 +178,8 @@ impl DebugPanel {
                     }),
                 )
                 .disabled(session_terminated)
-                .style(DropdownStyle::Ghost),
+                .style(DropdownStyle::Ghost)
+                .handle(self.thread_picker_menu_handle.clone()),
             )
         } else {
             None

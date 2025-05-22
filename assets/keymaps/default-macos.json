@@ -17,6 +17,7 @@
       "f4": "debugger::Start",
       "f5": "debugger::Continue",
       "shift-f5": "debugger::Stop",
+      "shift-cmd-f5": "debugger::Restart",
       "f6": "debugger::Pause",
       "f7": "debugger::StepOver",
       "f11": "debugger::StepInto",
@@ -624,6 +625,7 @@
       "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-shift-b": "outline_panel::ToggleFocus",
       "ctrl-shift-g": "git_panel::ToggleFocus",
+      "cmd-shift-d": "debug_panel::ToggleFocus",
       "cmd-?": "agent::ToggleFocus",
       "cmd-alt-s": "workspace::SaveAll",
       "cmd-k m": "language_selector::Toggle",
@@ -930,6 +932,13 @@
     }
   },
   {
+    "context": "DebugPanel",
+    "bindings": {
+      "cmd-t": "debugger::ToggleThreadPicker",
+      "cmd-i": "debugger::ToggleSessionPicker"
+    }
+  },
+  {
     "context": "CollabPanel && not_editing",
     "use_key_equivalents": true,
     "bindings": {
@@ -1012,7 +1021,6 @@
       "alt-right": ["terminal::SendText", "\u001bf"],
       "alt-b": ["terminal::SendText", "\u001bb"],
       "alt-f": ["terminal::SendText", "\u001bf"],
-      "alt-.": ["terminal::SendText", "\u001b."],
       "ctrl-delete": ["terminal::SendText", "\u001bd"],
       // There are conflicting bindings for these keys in the global context.
       // these bindings override them, remove at your own risk:

@@ -10,7 +10,7 @@ use std::{any::Any, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 use crate::persistence::{self, DebuggerPaneItem, SerializedLayout};
 
 use super::DebugPanelItemEvent;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use breakpoint_list::BreakpointList;
 use collections::{HashMap, IndexMap};
 use console::Console;
@@ -96,7 +96,7 @@ impl Render for RunningState {
             .find(|pane| pane.read(cx).is_zoomed());
 
         let active = self.panes.panes().into_iter().next();
-        let x = if let Some(ref zoomed_pane) = zoomed_pane {
+        let pane = if let Some(ref zoomed_pane) = zoomed_pane {
             zoomed_pane.update(cx, |pane, cx| pane.render(window, cx).into_any_element())
         } else if let Some(active) = active {
             self.panes
@@ -122,7 +122,7 @@ impl Render for RunningState {
             .size_full()
             .key_context("DebugSessionItem")
             .track_focus(&self.focus_handle(cx))
-            .child(h_flex().flex_1().child(x))
+            .child(h_flex().flex_1().child(pane))
     }
 }
 
@@ -628,10 +628,9 @@ impl RunningState {
                 &workspace,
                 &stack_frame_list,
                 &variable_list,
-                &module_list,
-                &loaded_source_list,
                 &console,
                 &breakpoint_list,
+                &debug_terminal,
                 dock_axis,
                 &mut pane_close_subscriptions,
                 window,
@@ -817,7 +816,7 @@ impl RunningState {
                 let exit_status = terminal
                     .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
                     .await
-                    .ok_or_else(|| anyhow!("Failed to wait for completed task"))?;
+                    .context("Failed to wait for completed task")?;
 
                 if !exit_status.success() {
                     anyhow::bail!("Build failed");
@@ -829,22 +828,22 @@ impl RunningState {
             let request = if let Some(request) = request {
                 request
             } else if let Some((task, locator_name)) = build_output {
-                let locator_name = locator_name
-                    .ok_or_else(|| anyhow!("Could not find a valid locator for a build task"))?;
+                let locator_name =
+                    locator_name.context("Could not find a valid locator for a build task")?;
                 dap_store
                     .update(cx, |this, cx| {
                         this.run_debug_locator(&locator_name, task, cx)
                     })?
                     .await?
             } else {
-                return Err(anyhow!("No request or build provided"));
+                anyhow::bail!("No request or build provided");
             };
             let request = match request {
                 dap::DebugRequest::Launch(launch_request) => {
                     let cwd = match launch_request.cwd.as_deref().and_then(|path| path.to_str()) {
                         Some(cwd) => {
                             let substituted_cwd = substitute_variables_in_str(&cwd, &task_context)
-                                .ok_or_else(|| anyhow!("Failed to substitute variables in cwd"))?;
+                                .context("substituting variables in cwd")?;
                             Some(PathBuf::from(substituted_cwd))
                         }
                         None => None,
@@ -854,7 +853,7 @@ impl RunningState {
                         &launch_request.env.into_iter().collect(),
                         &task_context,
                     )
-                    .ok_or_else(|| anyhow!("Failed to substitute variables in env"))?
+                    .context("substituting variables in env")?
                     .into_iter()
                     .collect();
                     let new_launch_request = LaunchRequest {
@@ -862,13 +861,13 @@ impl RunningState {
                             &launch_request.program,
                             &task_context,
                         )
-                        .ok_or_else(|| anyhow!("Failed to substitute variables in program"))?,
+                        .context("substituting variables in program")?,
                         args: launch_request
                             .args
                             .into_iter()
                             .map(|arg| substitute_variables_in_str(&arg, &task_context))
                             .collect::<Option<Vec<_>>>()
-                            .ok_or_else(|| anyhow!("Failed to substitute variables in args"))?,
+                            .context("substituting variables in args")?,
                         cwd,
                         env,
                     };
@@ -994,7 +993,7 @@ impl RunningState {
                     .pty_info
                     .pid()
                     .map(|pid| pid.as_u32())
-                    .ok_or_else(|| anyhow!("Terminal was spawned but PID was not available"))
+                    .context("Terminal was spawned but PID was not available")
             })?
         });
 
@@ -1468,10 +1467,9 @@ impl RunningState {
         workspace: &WeakEntity<Workspace>,
         stack_frame_list: &Entity<StackFrameList>,
         variable_list: &Entity<VariableList>,
-        module_list: &Entity<ModuleList>,
-        loaded_source_list: &Entity<LoadedSourceList>,
         console: &Entity<Console>,
         breakpoints: &Entity<BreakpointList>,
+        debug_terminal: &Entity<DebugTerminal>,
         dock_axis: Axis,
         subscriptions: &mut HashMap<EntityId, Subscription>,
         window: &mut Window,
@@ -1512,6 +1510,26 @@ impl RunningState {
         let center_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
 
         center_pane.update(cx, |this, cx| {
+            let weak_console = console.downgrade();
+            this.add_item(
+                Box::new(SubView::new(
+                    console.focus_handle(cx),
+                    console.clone().into(),
+                    DebuggerPaneItem::Console,
+                    Some(Box::new(move |cx| {
+                        weak_console
+                            .read_with(cx, |console, cx| console.show_indicator(cx))
+                            .unwrap_or_default()
+                    })),
+                    cx,
+                )),
+                true,
+                false,
+                None,
+                window,
+                cx,
+            );
+
             this.add_item(
                 Box::new(SubView::new(
                     variable_list.focus_handle(cx),
@@ -1526,54 +1544,20 @@ impl RunningState {
                 window,
                 cx,
             );
-            this.add_item(
-                Box::new(SubView::new(
-                    module_list.focus_handle(cx),
-                    module_list.clone().into(),
-                    DebuggerPaneItem::Modules,
-                    None,
-                    cx,
-                )),
-                false,
-                false,
-                None,
-                window,
-                cx,
-            );
-
-            this.add_item(
-                Box::new(SubView::new(
-                    loaded_source_list.focus_handle(cx),
-                    loaded_source_list.clone().into(),
-                    DebuggerPaneItem::LoadedSources,
-                    None,
-                    cx,
-                )),
-                false,
-                false,
-                None,
-                window,
-                cx,
-            );
             this.activate_item(0, false, false, window, cx);
         });
 
         let rightmost_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
         rightmost_pane.update(cx, |this, cx| {
-            let weak_console = console.downgrade();
             this.add_item(
                 Box::new(SubView::new(
-                    this.focus_handle(cx),
-                    console.clone().into(),
-                    DebuggerPaneItem::Console,
-                    Some(Box::new(move |cx| {
-                        weak_console
-                            .read_with(cx, |console, cx| console.show_indicator(cx))
-                            .unwrap_or_default()
-                    })),
+                    debug_terminal.focus_handle(cx),
+                    debug_terminal.clone().into(),
+                    DebuggerPaneItem::Terminal,
+                    None,
                     cx,
                 )),
-                true,
+                false,
                 false,
                 None,
                 window,

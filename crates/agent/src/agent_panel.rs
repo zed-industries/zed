@@ -17,6 +17,7 @@ use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 
+use assistant_context_editor::language_model_selector::ToggleModelSelector;
 use client::{UserStore, zed_urls};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use fs::Fs;
@@ -30,7 +31,6 @@ use language::LanguageRegistry;
 use language_model::{
     LanguageModelProviderTosView, LanguageModelRegistry, RequestUsage, ZED_CLOUD_PROVIDER_ID,
 };
-use language_model_selector::ToggleModelSelector;
 use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
 use proto::Plan;
@@ -1212,12 +1212,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(workspace) = self
-            .workspace
-            .upgrade()
-            .ok_or_else(|| anyhow!("workspace dropped"))
-            .log_err()
-        else {
+        let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
 

@@ -1,5 +1,5 @@
 use ::fs::Fs;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
@@ -12,7 +12,7 @@ use language::{LanguageName, LanguageToolchainStore};
 use node_runtime::NodeRuntime;
 use serde::{Deserialize, Serialize};
 use settings::WorktreeId;
-use smol::{self, fs::File};
+use smol::fs::File;
 use std::{
     borrow::Borrow,
     ffi::OsStr,
@@ -23,6 +23,7 @@ use std::{
     sync::Arc,
 };
 use task::{AttachRequest, DebugRequest, DebugScenario, LaunchRequest, TcpArgumentsTemplate};
+use util::archive::extract_zip;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DapStatus {
@@ -103,8 +104,8 @@ impl TcpArguments {
     pub fn from_proto(proto: proto::TcpHost) -> anyhow::Result<Self> {
         let host = TcpArgumentsTemplate::from_proto(proto)?;
         Ok(TcpArguments {
-            host: host.host.ok_or_else(|| anyhow!("missing host"))?,
-            port: host.port.ok_or_else(|| anyhow!("missing port"))?,
+            host: host.host.context("missing host")?,
+            port: host.port.context("missing port")?,
             timeout: host.timeout,
         })
     }
@@ -200,9 +201,7 @@ impl DebugTaskDefinition {
     }
 
     pub fn from_proto(proto: proto::DebugTaskDefinition) -> Result<Self> {
-        let request = proto
-            .request
-            .ok_or_else(|| anyhow::anyhow!("request is required"))?;
+        let request = proto.request.context("request is required")?;
         Ok(Self {
             label: proto.label.into(),
             initialize_args: proto.initialize_args.map(|v| v.into()),
@@ -346,12 +345,11 @@ pub async fn download_adapter_from_github(
         .get(&github_version.url, Default::default(), true)
         .await
         .context("Error downloading release")?;
-    if !response.status().is_success() {
-        Err(anyhow!(
-            "download failed with status {}",
-            response.status().to_string()
-        ))?;
-    }
+    anyhow::ensure!(
+        response.status().is_success(),
+        "download failed with status {}",
+        response.status().to_string()
+    );
 
     match file_type {
         DownloadedFileType::GzipTar => {
@@ -361,17 +359,13 @@ pub async fn download_adapter_from_github(
         }
         DownloadedFileType::Zip | DownloadedFileType::Vsix => {
             let zip_path = version_path.with_extension("zip");
-
             let mut file = File::create(&zip_path).await?;
             futures::io::copy(response.body_mut(), &mut file).await?;
-
-            // we cannot check the status as some adapter include files with names that trigger `Illegal byte sequence`
-            util::command::new_smol_command("unzip")
-                .arg(&zip_path)
-                .arg("-d")
-                .arg(&version_path)
-                .output()
-                .await?;
+            let file = File::open(&zip_path).await?;
+            extract_zip(&version_path, BufReader::new(file))
+                .await
+                // we cannot check the status as some adapter include files with names that trigger `Illegal byte sequence`
+                .ok();
 
             util::fs::remove_matching(&adapter_path, |entry| {
                 entry

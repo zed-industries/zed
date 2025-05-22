@@ -1,6 +1,7 @@
 use super::*;
 use crate::{
     JoinLines,
+    inline_completion_tests::FakeInlineCompletionProvider,
     linked_editing_ranges::LinkedEditingRanges,
     scroll::scroll_amount::ScrollAmount,
     test::{
@@ -2818,6 +2819,42 @@ async fn test_newline_comments(cx: &mut TestAppContext) {
         // Foo
         ˇ
     "});
+}
+
+#[gpui::test]
+async fn test_newline_comments_with_multiple_delimiters(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4)
+    });
+
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["// ".into(), "/// ".into()],
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+    {
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+        cx.set_state(indoc! {"
+        //ˇ
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        //
+        // ˇ
+    "});
+
+        cx.set_state(indoc! {"
+        ///ˇ
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        ///
+        /// ˇ
+    "});
+    }
 }
 
 #[gpui::test]
@@ -5965,8 +6002,34 @@ async fn test_add_selection_above_below(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc!(
         r#"abc
            defˇghi
-
+           ˇ
            jk
+           nlmo
+           "#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_below(&Default::default(), window, cx);
+    });
+
+    cx.assert_editor_state(indoc!(
+        r#"abc
+           defˇghi
+           ˇ
+           jkˇ
+           nlmo
+           "#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_below(&Default::default(), window, cx);
+    });
+
+    cx.assert_editor_state(indoc!(
+        r#"abc
+           defˇghi
+           ˇ
+           jkˇ
            nlmˇo
            "#
     ));
@@ -5978,10 +6041,10 @@ async fn test_add_selection_above_below(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc!(
         r#"abc
            defˇghi
-
-           jk
+           ˇ
+           jkˇ
            nlmˇo
-           "#
+           ˇ"#
     ));
 
     // change selections
@@ -6315,6 +6378,98 @@ async fn test_undo_format_scrolls_to_last_edit_pos(cx: &mut TestAppContext) {
         linXˇe 3
         line 4
         line 5
+    "});
+}
+
+#[gpui::test]
+async fn test_undo_inline_completion_scrolls_to_edit_pos(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let provider = cx.new(|_| FakeInlineCompletionProvider::default());
+    cx.update_editor(|editor, window, cx| {
+        editor.set_edit_prediction_provider(Some(provider.clone()), window, cx);
+    });
+
+    cx.set_state(indoc! {"
+        line 1
+        line 2
+        linˇe 3
+        line 4
+        line 5
+        line 6
+        line 7
+        line 8
+        line 9
+        line 10
+    "});
+
+    let snapshot = cx.buffer_snapshot();
+    let edit_position = snapshot.anchor_after(Point::new(2, 4));
+
+    cx.update(|_, cx| {
+        provider.update(cx, |provider, _| {
+            provider.set_inline_completion(Some(inline_completion::InlineCompletion {
+                id: None,
+                edits: vec![(edit_position..edit_position, "X".into())],
+                edit_preview: None,
+            }))
+        })
+    });
+
+    cx.update_editor(|editor, window, cx| editor.update_visible_inline_completion(window, cx));
+    cx.update_editor(|editor, window, cx| {
+        editor.accept_edit_prediction(&crate::AcceptEditPrediction, window, cx)
+    });
+
+    cx.assert_editor_state(indoc! {"
+        line 1
+        line 2
+        lineXˇ 3
+        line 4
+        line 5
+        line 6
+        line 7
+        line 8
+        line 9
+        line 10
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(None, window, cx, |s| {
+            s.select_ranges([Point::new(9, 2)..Point::new(9, 2)]);
+        });
+    });
+
+    cx.assert_editor_state(indoc! {"
+        line 1
+        line 2
+        lineX 3
+        line 4
+        line 5
+        line 6
+        line 7
+        line 8
+        line 9
+        liˇne 10
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.undo(&Default::default(), window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        line 1
+        line 2
+        lineˇ 3
+        line 4
+        line 5
+        line 6
+        line 7
+        line 8
+        line 9
+        line 10
     "});
 }
 
@@ -13981,6 +14136,148 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(cx: &mut
 }
 
 #[gpui::test]
+async fn test_context_menus_hide_hover_popover(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+            code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+            completion_provider: Some(lsp::CompletionOptions {
+                resolve_provider: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+    cx.set_state(indoc! {"
+        struct TestStruct {
+            field: i32
+        }
+
+        fn mainˇ() {
+            let unused_var = 42;
+            let test_struct = TestStruct { field: 42 };
+        }
+    "});
+    let symbol_range = cx.lsp_range(indoc! {"
+        struct TestStruct {
+            field: i32
+        }
+
+        «fn main»() {
+            let unused_var = 42;
+            let test_struct = TestStruct { field: 42 };
+        }
+    "});
+    let mut hover_requests =
+        cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+            Ok(Some(lsp::Hover {
+                contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                    kind: lsp::MarkupKind::Markdown,
+                    value: "Function documentation".to_string(),
+                }),
+                range: Some(symbol_range),
+            }))
+        });
+
+    // Case 1: Test that code action menu hide hover popover
+    cx.dispatch_action(Hover);
+    hover_requests.next().await;
+    cx.condition(|editor, _| editor.hover_state.visible()).await;
+    let mut code_action_requests = cx.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
+        move |_, _, _| async move {
+            Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                lsp::CodeAction {
+                    title: "Remove unused variable".to_string(),
+                    kind: Some(CodeActionKind::QUICKFIX),
+                    edit: Some(lsp::WorkspaceEdit {
+                        changes: Some(
+                            [(
+                                lsp::Url::from_file_path(path!("/file.rs")).unwrap(),
+                                vec![lsp::TextEdit {
+                                    range: lsp::Range::new(
+                                        lsp::Position::new(5, 4),
+                                        lsp::Position::new(5, 27),
+                                    ),
+                                    new_text: "".to_string(),
+                                }],
+                            )]
+                            .into_iter()
+                            .collect(),
+                        ),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )]))
+        },
+    );
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_code_actions(
+            &ToggleCodeActions {
+                deployed_from_indicator: None,
+                quick_launch: false,
+            },
+            window,
+            cx,
+        );
+    });
+    code_action_requests.next().await;
+    cx.run_until_parked();
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, _, _| {
+        assert!(
+            !editor.hover_state.visible(),
+            "Hover popover should be hidden when code action menu is shown"
+        );
+        // Hide code actions
+        editor.context_menu.take();
+    });
+
+    // Case 2: Test that code completions hide hover popover
+    cx.dispatch_action(Hover);
+    hover_requests.next().await;
+    cx.condition(|editor, _| editor.hover_state.visible()).await;
+    let counter = Arc::new(AtomicUsize::new(0));
+    let mut completion_requests =
+        cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, _, _| {
+            let counter = counter.clone();
+            async move {
+                counter.fetch_add(1, atomic::Ordering::Release);
+                Ok(Some(lsp::CompletionResponse::Array(vec![
+                    lsp::CompletionItem {
+                        label: "main".into(),
+                        kind: Some(lsp::CompletionItemKind::FUNCTION),
+                        detail: Some("() -> ()".to_string()),
+                        ..Default::default()
+                    },
+                    lsp::CompletionItem {
+                        label: "TestStruct".into(),
+                        kind: Some(lsp::CompletionItemKind::STRUCT),
+                        detail: Some("struct TestStruct".to_string()),
+                        ..Default::default()
+                    },
+                ])))
+            }
+        });
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+    });
+    completion_requests.next().await;
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, _, _| {
+        assert!(
+            !editor.hover_state.visible(),
+            "Hover popover should be hidden when completion menu is shown"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_completions_resolve_happens_once(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -18716,7 +19013,7 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -18741,7 +19038,7 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -18763,7 +19060,7 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -18830,7 +19127,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -18851,7 +19148,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -18871,7 +19168,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -18894,7 +19191,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -18917,7 +19214,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -19010,7 +19307,7 @@ async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -19042,7 +19339,7 @@ async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -19078,7 +19375,7 @@ async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 

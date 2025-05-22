@@ -1,3 +1,5 @@
+use anyhow::Context as _;
+
 use crate::db::billing_subscription::{
     StripeCancellationReason, StripeSubscriptionStatus, SubscriptionKind,
 };
@@ -51,7 +53,7 @@ impl Database {
             Ok(billing_subscription::Entity::find_by_id(id)
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("failed to retrieve inserted billing subscription"))?)
+                .context("failed to retrieve inserted billing subscription")?)
         })
         .await
     }

@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context as _, Result, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
@@ -26,7 +26,7 @@ use std::{
     sync::Arc,
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
-use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
+use util::{ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into};
 
 const SERVER_PATH: &str =
     "node_modules/vscode-langservers-extracted/bin/vscode-json-language-server";
@@ -321,20 +321,17 @@ async fn get_cached_server_binary(
             }
         }
 
-        let last_version_dir = last_version_dir.ok_or_else(|| anyhow!("no cached binary"))?;
+        let last_version_dir = last_version_dir.context("no cached binary")?;
         let server_path = last_version_dir.join(SERVER_PATH);
-        if server_path.exists() {
-            Ok(LanguageServerBinary {
-                path: node.binary_path().await?,
-                env: None,
-                arguments: server_binary_arguments(&server_path),
-            })
-        } else {
-            Err(anyhow!(
-                "missing executable in directory {:?}",
-                last_version_dir
-            ))
-        }
+        anyhow::ensure!(
+            server_path.exists(),
+            "missing executable in directory {last_version_dir:?}"
+        );
+        Ok(LanguageServerBinary {
+            path: node.binary_path().await?,
+            env: None,
+            arguments: server_binary_arguments(&server_path),
+        })
     })
     .await
     .log_err()
@@ -430,9 +427,9 @@ impl LspAdapter for NodeVersionAdapter {
                 .http_client()
                 .get(&version.url, Default::default(), true)
                 .await
-                .map_err(|err| anyhow!("error downloading release: {}", err))?;
+                .context("downloading release")?;
             if version.url.ends_with(".zip") {
-                node_runtime::extract_zip(
+                extract_zip(
                     &destination_container_path,
                     BufReader::new(response.body_mut()),
                 )
@@ -488,7 +485,7 @@ async fn get_cached_version_server_binary(container_dir: PathBuf) -> Option<Lang
         }
 
         anyhow::Ok(LanguageServerBinary {
-            path: last.ok_or_else(|| anyhow!("no cached binary"))?,
+            path: last.context("no cached binary")?,
             env: None,
             arguments: Default::default(),
         })

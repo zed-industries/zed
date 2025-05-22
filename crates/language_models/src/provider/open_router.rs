@@ -12,7 +12,7 @@ use language_model::{
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, StopReason,
+    RateLimiter, Role, StopReason, WrappedTextContent,
 };
 use open_router::{Model, ResponseStreamEvent, list_models, stream_completion};
 use schemars::JsonSchema;
@@ -426,15 +426,20 @@ pub fn into_open_router(
                 }
                 MessageContent::ToolResult(tool_result) => {
                     let content = match &tool_result.content {
-                        LanguageModelToolResultContent::Text(text) => text.to_string(),
+                        LanguageModelToolResultContent::Text(text)
+                        | LanguageModelToolResultContent::WrappedText(WrappedTextContent {
+                            text,
+                            ..
+                        }) => {
+                          text.to_string()
+                        }
                         LanguageModelToolResultContent::Image(_) => {
-                            // TODO: Open AI image support
-                            "[Tool responded with an image, but Zed doesn't support these in Open AI models yet]".to_string()
+                          "[Tool responded with an image, but Zed doesn't support these in Open AI models yet]".to_string()
                         }
                     };
 
                     messages.push(open_router::RequestMessage::Tool {
-                        content,
+                        content: content.into(),
                         tool_call_id: tool_result.tool_use_id.to_string(),
                     });
                 }

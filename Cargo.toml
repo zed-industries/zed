@@ -80,7 +80,6 @@ members = [
     "crates/language",
     "crates/language_extension",
     "crates/language_model",
-    "crates/language_model_selector",
     "crates/language_models",
     "crates/language_selector",
     "crates/language_tools",
@@ -288,7 +287,6 @@ journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_extension = { path = "crates/language_extension" }
 language_model = { path = "crates/language_model" }
-language_model_selector = { path = "crates/language_model_selector" }
 language_models = { path = "crates/language_models" }
 language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
@@ -478,6 +476,7 @@ lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "c9c189
 markup5ever_rcdom = "0.3.0"
 metal = "0.29"
 mlua = { version = "0.10", features = ["lua54", "vendored", "async", "send"] }
+moka = { version = "0.12.10", features = ["sync"] }
 naga = { version = "25.0", features = ["wgsl-in"] }
 nanoid = "0.4"
 nbformat = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
@@ -601,7 +600,7 @@ unindent = "0.2.0"
 url = "2.2"
 urlencoding = "2.1.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
-walkdir = "2.3"
+walkdir = "2.5"
 wasi-preview1-component-adapter-provider = "29"
 wasm-encoder = "0.221"
 wasmparser = "0.221"
@@ -611,13 +610,14 @@ wasmtime = { version = "29", default-features = false, features = [
     "runtime",
     "cranelift",
     "component-model",
+    "incremental-cache",
     "parallel-compilation",
 ] }
 wasmtime-wasi = "29"
 which = "6.0.0"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
-zed_llm_client = "0.8.1"
+zed_llm_client = "0.8.2"
 zstd = "0.11"
 
 [workspace.dependencies.async-stripe]
