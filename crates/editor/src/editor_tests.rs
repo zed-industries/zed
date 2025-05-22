@@ -3012,6 +3012,32 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
          */
          ˇ
     "});
+
+        // Ensure that inline comment followed by code
+        // doesn't add comment prefix on newline
+        cx.set_state(indoc! {"
+        /** */ textˇ
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        /** */ text
+        ˇ
+    "});
+
+        // Ensure that text after comment end tag
+        // doesn't add comment prefix on newline
+        cx.set_state(indoc! {"
+        /**
+         *
+         */ˇtext
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        /**
+         *
+         */
+         ˇtext
+    "});
     }
     // Ensure that comment continuations can be disabled.
     update_test_language_settings(cx, |settings| {
