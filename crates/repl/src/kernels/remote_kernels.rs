@@ -1,12 +1,10 @@
-use futures::{channel::mpsc, SinkExt as _};
+use futures::{SinkExt as _, channel::mpsc};
 use gpui::{App, AppContext as _, Entity, Task, Window};
 use http_client::{AsyncBody, HttpClient, Request};
 use jupyter_protocol::{ExecutionState, JupyterKernelspec, JupyterMessage, KernelInfoReply};
 
-use async_tungstenite::{
-    async_std::connect_async,
-    tungstenite::{client::IntoClientRequest, http::HeaderValue},
-};
+use async_tungstenite::tokio::connect_async;
+use async_tungstenite::tungstenite::{client::IntoClientRequest, http::HeaderValue};
 
 use futures::StreamExt;
 use smol::io::AsyncReadExt as _;
@@ -56,7 +54,7 @@ pub async fn launch_remote_kernel(
     if !response.status().is_success() {
         let mut body = String::new();
         response.into_body().read_to_string(&mut body).await?;
-        return Err(anyhow::anyhow!("Failed to launch kernel: {}", body));
+        anyhow::bail!("Failed to launch kernel: {body}");
     }
 
     let mut body = String::new();
@@ -81,36 +79,31 @@ pub async fn list_remote_kernelspecs(
 
     let response = http_client.send(request).await?;
 
-    if response.status().is_success() {
-        let mut body = response.into_body();
+    anyhow::ensure!(
+        response.status().is_success(),
+        "Failed to fetch kernel specs: {}",
+        response.status()
+    );
+    let mut body = response.into_body();
 
-        let mut body_bytes = Vec::new();
-        body.read_to_end(&mut body_bytes).await?;
+    let mut body_bytes = Vec::new();
+    body.read_to_end(&mut body_bytes).await?;
 
-        let kernel_specs: KernelSpecsResponse = serde_json::from_slice(&body_bytes)?;
+    let kernel_specs: KernelSpecsResponse = serde_json::from_slice(&body_bytes)?;
 
-        let remote_kernelspecs = kernel_specs
-            .kernelspecs
-            .into_iter()
-            .map(|(name, spec)| RemoteKernelSpecification {
-                name: name.clone(),
-                url: remote_server.base_url.clone(),
-                token: remote_server.token.clone(),
-                kernelspec: spec.spec,
-            })
-            .collect::<Vec<RemoteKernelSpecification>>();
+    let remote_kernelspecs = kernel_specs
+        .kernelspecs
+        .into_iter()
+        .map(|(name, spec)| RemoteKernelSpecification {
+            name: name.clone(),
+            url: remote_server.base_url.clone(),
+            token: remote_server.token.clone(),
+            kernelspec: spec.spec,
+        })
+        .collect::<Vec<RemoteKernelSpecification>>();
 
-        if remote_kernelspecs.is_empty() {
-            Err(anyhow::anyhow!("No kernel specs found"))
-        } else {
-            Ok(remote_kernelspecs.clone())
-        }
-    } else {
-        Err(anyhow::anyhow!(
-            "Failed to fetch kernel specs: {}",
-            response.status()
-        ))
-    }
+    anyhow::ensure!(!remote_kernelspecs.is_empty(), "No kernel specs found");
+    Ok(remote_kernelspecs.clone())
 }
 
 impl PartialEq for RemoteKernelSpecification {
@@ -290,14 +283,12 @@ impl RunningKernel for RemoteRunningKernel {
 
             let response = http_client.send(request).await?;
 
-            if response.status().is_success() {
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!(
-                    "Failed to shutdown kernel: {}",
-                    response.status()
-                ))
-            }
+            anyhow::ensure!(
+                response.status().is_success(),
+                "Failed to shutdown kernel: {}",
+                response.status()
+            );
+            Ok(())
         })
     }
 }

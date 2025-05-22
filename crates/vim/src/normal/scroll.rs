@@ -1,10 +1,10 @@
 use crate::Vim;
 use editor::{
+    DisplayPoint, Editor, EditorSettings,
     display_map::{DisplayRow, ToDisplayPoint},
     scroll::ScrollAmount,
-    DisplayPoint, Editor, EditorSettings,
 };
-use gpui::{actions, Context, Window};
+use gpui::{Context, Window, actions};
 use language::Bias;
 use settings::Settings;
 
@@ -55,6 +55,7 @@ impl Vim {
         by: fn(c: Option<f32>) -> ScrollAmount,
     ) {
         let amount = by(Vim::take_count(cx).map(|c| c as f32));
+        Vim::take_forced_motion(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             scroll_editor(editor, move_cursor, &amount, window, cx)
         });
@@ -131,7 +132,15 @@ fn scroll_editor(
             let max_visible_row = top.row().0.saturating_add(
                 (visible_line_count as u32).saturating_sub(1 + vertical_scroll_margin),
             );
-            let max_row = DisplayRow(map.max_point().row().0.max(max_visible_row));
+            // scroll off the end.
+            let max_row = if top.row().0 + visible_line_count as u32 >= map.max_point().row().0 {
+                map.max_point().row()
+            } else {
+                DisplayRow(
+                    (top.row().0 + visible_line_count as u32)
+                        .saturating_sub(1 + vertical_scroll_margin),
+                )
+            };
 
             let new_row = if full_page_up {
                 // Special-casing ctrl-b/page-up, which is special-cased by Vim, it seems
@@ -163,7 +172,7 @@ mod test {
         test::{NeovimBackedTestContext, VimTestContext},
     };
     use editor::{EditorSettings, ScrollBeyondLastLine};
-    use gpui::{point, px, size, AppContext as _};
+    use gpui::{AppContext as _, point, px, size};
     use indoc::indoc;
     use language::Point;
     use settings::SettingsStore;
@@ -371,14 +380,14 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.set_scroll_height(10).await;
-        cx.neovim.set_option(&format!("scrolloff={}", 0)).await;
 
         let content = "ˇ".to_owned() + &sample_text(26, 2, 'a');
         cx.set_shared_state(&content).await;
 
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings::<EditorSettings>(cx, |s| {
-                s.scroll_beyond_last_line = Some(ScrollBeyondLastLine::Off)
+                s.scroll_beyond_last_line = Some(ScrollBeyondLastLine::Off);
+                // s.vertical_scroll_margin = Some(0.);
             });
         });
 
@@ -393,5 +402,25 @@ mod test {
         cx.shared_state().await.assert_matches();
         cx.simulate_shared_keystrokes("ctrl-u").await;
         cx.shared_state().await.assert_matches();
+    }
+
+    #[gpui::test]
+    async fn test_ctrl_y_e(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_scroll_height(10).await;
+
+        let content = "ˇ".to_owned() + &sample_text(26, 2, 'a');
+        cx.set_shared_state(&content).await;
+
+        for _ in 0..8 {
+            cx.simulate_shared_keystrokes("ctrl-e").await;
+            cx.shared_state().await.assert_matches();
+        }
+
+        for _ in 0..8 {
+            cx.simulate_shared_keystrokes("ctrl-y").await;
+            cx.shared_state().await.assert_matches();
+        }
     }
 }

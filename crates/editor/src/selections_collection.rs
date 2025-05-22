@@ -12,10 +12,10 @@ use language::{Bias, Point, Selection, SelectionGoal, TextDimension};
 use util::post_inc;
 
 use crate::{
-    display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
-    movement::TextLayoutDetails,
     Anchor, DisplayPoint, DisplayRow, ExcerptId, MultiBuffer, MultiBufferSnapshot, SelectMode,
     ToOffset, ToPoint,
+    display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
+    movement::TextLayoutDetails,
 };
 
 #[derive(Debug, Clone)]
@@ -352,28 +352,32 @@ impl SelectionsCollection {
     ) -> Option<Selection<Point>> {
         let is_empty = positions.start == positions.end;
         let line_len = display_map.line_len(row);
-
         let line = display_map.layout_row(row, text_layout_details);
-
         let start_col = line.closest_index_for_x(positions.start) as u32;
-        if start_col < line_len || (is_empty && positions.start == line.width) {
+
+        let (start, end) = if is_empty {
+            let point = DisplayPoint::new(row, std::cmp::min(start_col, line_len));
+            (point, point)
+        } else {
+            if start_col >= line_len {
+                return None;
+            }
             let start = DisplayPoint::new(row, start_col);
             let end_col = line.closest_index_for_x(positions.end) as u32;
             let end = DisplayPoint::new(row, end_col);
+            (start, end)
+        };
 
-            Some(Selection {
-                id: post_inc(&mut self.next_selection_id),
-                start: start.to_point(display_map),
-                end: end.to_point(display_map),
-                reversed,
-                goal: SelectionGoal::HorizontalRange {
-                    start: positions.start.into(),
-                    end: positions.end.into(),
-                },
-            })
-        } else {
-            None
-        }
+        Some(Selection {
+            id: post_inc(&mut self.next_selection_id),
+            start: start.to_point(display_map),
+            end: end.to_point(display_map),
+            reversed,
+            goal: SelectionGoal::HorizontalRange {
+                start: positions.start.into(),
+                end: positions.end.into(),
+            },
+        })
     }
 
     pub fn change_with<R>(
@@ -654,6 +658,25 @@ impl<'a> MutableSelectionsCollection<'a> {
             })
             .collect();
         self.select(selections);
+    }
+    pub fn reverse_selections(&mut self) {
+        let map = &self.display_map();
+        let mut new_selections: Vec<Selection<Point>> = Vec::new();
+        let disjoint = self.disjoint.clone();
+        for selection in disjoint
+            .iter()
+            .sorted_by(|first, second| Ord::cmp(&second.id, &first.id))
+            .collect::<Vec<&Selection<Anchor>>>()
+        {
+            new_selections.push(Selection {
+                id: self.new_selection_id(),
+                start: selection.start.to_display_point(map).to_point(map),
+                end: selection.end.to_display_point(map).to_point(map),
+                reversed: selection.reversed,
+                goal: selection.goal,
+            });
+        }
+        self.select(new_selections);
     }
 
     pub fn move_with(

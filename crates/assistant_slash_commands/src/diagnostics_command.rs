@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
@@ -14,11 +14,11 @@ use rope::Point;
 use std::{
     fmt::Write,
     path::{Path, PathBuf},
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
 };
 use ui::prelude::*;
-use util::paths::PathMatcher;
 use util::ResultExt;
+use util::paths::PathMatcher;
 use workspace::Workspace;
 
 use crate::create_label_for_command;
@@ -189,7 +189,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
         window.spawn(cx, async move |_| {
             task.await?
                 .map(|output| output.to_event_stream())
-                .ok_or_else(|| anyhow!("No diagnostics found"))
+                .context("No diagnostics found")
         })
     }
 }

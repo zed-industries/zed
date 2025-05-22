@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result};
 use smallvec::SmallVec;
 use std::{collections::BTreeMap, ops::Range};
 
@@ -114,7 +114,7 @@ fn parse_tabstop<'a>(
         if source.starts_with('}') {
             source = &source[1..];
         } else {
-            return Err(anyhow!("expected a closing brace"));
+            anyhow::bail!("expected a closing brace");
         }
     } else {
         let (index, rest) = parse_int(source)?;
@@ -137,9 +137,7 @@ fn parse_int(source: &str) -> Result<(usize, &str)> {
     let len = source
         .find(|c: char| !c.is_ascii_digit())
         .unwrap_or(source.len());
-    if len == 0 {
-        return Err(anyhow!("expected an integer"));
-    }
+    anyhow::ensure!(len > 0, "expected an integer");
     let (prefix, suffix) = source.split_at(len);
     Ok((prefix.parse()?, suffix))
 }
@@ -180,11 +178,10 @@ fn parse_choices<'a>(
             Some(_) => {
                 let chunk_end = source.find([',', '|', '\\']);
 
-                if chunk_end.is_none() {
-                    return Err(anyhow!(
-                        "Placeholder choice doesn't contain closing pipe-character '|'"
-                    ));
-                }
+                anyhow::ensure!(
+                    chunk_end.is_some(),
+                    "Placeholder choice doesn't contain closing pipe-character '|'"
+                );
 
                 let (chunk, rest) = source.split_at(chunk_end.unwrap());
 

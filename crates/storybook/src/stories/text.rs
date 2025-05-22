@@ -1,6 +1,6 @@
 use gpui::{
-    div, green, red, App, AppContext as _, Context, Entity, HighlightStyle, InteractiveText,
-    IntoElement, ParentElement, Render, Styled, StyledText, Window,
+    App, AppContext as _, Context, Entity, HighlightStyle, InteractiveText, IntoElement,
+    ParentElement, Render, Styled, StyledText, Window, div, green, red,
 };
 use indoc::indoc;
 use story::*;
@@ -14,9 +14,9 @@ impl TextStory {
 }
 
 impl Render for TextStory {
-    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        Story::container()
-            .child(Story::title("Text"))
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        Story::container(cx)
+            .child(Story::title("Text", cx))
             .children(vec![
                 StorySection::new()
                     .child(

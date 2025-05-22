@@ -1,20 +1,20 @@
 use std::sync::Arc;
 
-use anyhow::{anyhow, Ok, Result};
+use anyhow::{Context as _, Ok, Result};
 use dap::{
-    client::SessionId,
-    proto_conversions::ProtoConversion,
-    requests::{Continue, Next},
-    Capabilities, ContinueArguments, InitializeRequestArguments,
+    Capabilities, ContinueArguments, ExceptionFilterOptions, InitializeRequestArguments,
     InitializeRequestArgumentsPathFormat, NextArguments, SetVariableResponse, SourceBreakpoint,
     StepInArguments, StepOutArguments, SteppingGranularity, ValueFormat, Variable,
     VariablesArgumentsFilter,
+    client::SessionId,
+    proto_conversions::ProtoConversion,
+    requests::{Continue, Next},
 };
 use rpc::proto;
 use serde_json::Value;
 use util::ResultExt;
 
-pub(crate) trait LocalDapCommand: 'static + Send + Sync + std::fmt::Debug {
+pub trait LocalDapCommand: 'static + Send + Sync + std::fmt::Debug {
     type Response: 'static + Send + std::fmt::Debug;
     type DapRequest: 'static + Send + dap::requests::Request;
 
@@ -30,7 +30,7 @@ pub(crate) trait LocalDapCommand: 'static + Send + Sync + std::fmt::Debug {
     ) -> Result<Self::Response>;
 }
 
-pub(crate) trait DapCommand: LocalDapCommand {
+pub trait DapCommand: LocalDapCommand {
     type ProtoRequest: 'static + Send;
     type ProtoResponse: 'static + Send;
     const CACHEABLE: bool = false;
@@ -1479,7 +1479,7 @@ impl LocalDapCommand for ThreadsCommand {
     type DapRequest = dap::requests::Threads;
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
-        ()
+        dap::ThreadsArgument {}
     }
 
     fn response_from_dap(
@@ -1568,7 +1568,7 @@ impl LocalDapCommand for Initialize {
 }
 
 #[derive(Clone, Debug, Hash, PartialEq)]
-pub(super) struct ConfigurationDone;
+pub(super) struct ConfigurationDone {}
 
 impl LocalDapCommand for ConfigurationDone {
     type Response = ();
@@ -1581,7 +1581,7 @@ impl LocalDapCommand for ConfigurationDone {
     }
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
-        dap::ConfigurationDoneArguments
+        dap::ConfigurationDoneArguments {}
     }
 
     fn response_from_dap(
@@ -1665,6 +1665,44 @@ impl LocalDapCommand for SetBreakpoints {
         Ok(message.breakpoints)
     }
 }
+#[derive(Clone, Debug, Hash, PartialEq)]
+pub(super) enum SetExceptionBreakpoints {
+    Plain {
+        filters: Vec<String>,
+    },
+    WithOptions {
+        filters: Vec<ExceptionFilterOptions>,
+    },
+}
+
+impl LocalDapCommand for SetExceptionBreakpoints {
+    type Response = Vec<dap::Breakpoint>;
+    type DapRequest = dap::requests::SetExceptionBreakpoints;
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        match self {
+            SetExceptionBreakpoints::Plain { filters } => dap::SetExceptionBreakpointsArguments {
+                filters: filters.clone(),
+                exception_options: None,
+                filter_options: None,
+            },
+            SetExceptionBreakpoints::WithOptions { filters } => {
+                dap::SetExceptionBreakpointsArguments {
+                    filters: vec![],
+                    filter_options: Some(filters.clone()),
+                    exception_options: None,
+                }
+            }
+        }
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(message.breakpoints.unwrap_or_default())
+    }
+}
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub(super) struct LocationsCommand {
@@ -1728,7 +1766,7 @@ impl DapCommand for LocationsCommand {
             source: response
                 .source
                 .map(<dap::Source as ProtoConversion>::from_proto)
-                .ok_or_else(|| anyhow!("Missing `source` field in Locations proto"))?,
+                .context("Missing `source` field in Locations proto")?,
             line: response.line,
             column: response.column,
             end_line: response.end_line,

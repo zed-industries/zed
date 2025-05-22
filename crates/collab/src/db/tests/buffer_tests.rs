@@ -111,10 +111,11 @@ async fn test_channel_buffers(db: &Arc<Database>) {
     assert_eq!(buffer_b.text(), "hello, cruel world");
 
     // Ensure that C fails to open the buffer
-    assert!(db
-        .join_channel_buffer(zed_id, c_id, ConnectionId { owner_id, id: 3 })
-        .await
-        .is_err());
+    assert!(
+        db.join_channel_buffer(zed_id, c_id, ConnectionId { owner_id, id: 3 })
+            .await
+            .is_err()
+    );
 
     // Ensure that both collaborators have shown up
     assert_eq!(

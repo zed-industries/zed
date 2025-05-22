@@ -6,7 +6,6 @@ function upload_to_blob_store_with_acl
     acl="$4"
 
     date=$(date +"%a, %d %b %Y %T %z")
-    acl="x-amz-acl:public-read"
     content_type="application/octet-stream"
     storage_type="x-amz-storage-class:STANDARD"
     string="PUT\n\n${content_type}\n${date}\n${acl}\n${storage_type}\n/${bucket_name}/${blob_store_key}"
@@ -24,10 +23,10 @@ function upload_to_blob_store_with_acl
 
 function upload_to_blob_store_public
 {
-    upload_to_blob_store_with_acl $1 $2 $3 "x-amz-acl:public-read"
+    upload_to_blob_store_with_acl "$1" "$2" "$3" "x-amz-acl:public-read"
 }
 
 function upload_to_blob_store
 {
-    upload_to_blob_store_with_acl $1 $2 $3 "x-amz-acl:private"
+    upload_to_blob_store_with_acl "$1" "$2" "$3" "x-amz-acl:private"
 }

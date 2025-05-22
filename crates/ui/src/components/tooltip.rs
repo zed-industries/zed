@@ -3,9 +3,9 @@ use settings::Settings;
 use theme::ThemeSettings;
 
 use crate::prelude::*;
-use crate::{h_flex, v_flex, Color, KeyBinding, Label, LabelSize, StyledExt};
+use crate::{Color, KeyBinding, Label, LabelSize, StyledExt, h_flex, v_flex};
 
-#[derive(IntoComponent)]
+#[derive(RegisterComponent)]
 pub struct Tooltip {
     title: SharedString,
     meta: Option<SharedString>,
@@ -34,10 +34,10 @@ impl Tooltip {
         }
     }
 
-    pub fn for_action_title(
-        title: impl Into<SharedString>,
+    pub fn for_action_title<Title: Into<SharedString>>(
+        title: Title,
         action: &dyn Action,
-    ) -> impl Fn(&mut Window, &mut App) -> AnyView {
+    ) -> impl Fn(&mut Window, &mut App) -> AnyView + use<Title> {
         let title = title.into();
         let action = action.boxed_clone();
         move |window, cx| {
@@ -50,11 +50,11 @@ impl Tooltip {
         }
     }
 
-    pub fn for_action_title_in(
-        title: impl Into<SharedString>,
+    pub fn for_action_title_in<Str: Into<SharedString>>(
+        title: Str,
         action: &dyn Action,
         focus_handle: &FocusHandle,
-    ) -> impl Fn(&mut Window, &mut App) -> AnyView {
+    ) -> impl Fn(&mut Window, &mut App) -> AnyView + use<Str> {
         let title = title.into();
         let action = action.boxed_clone();
         let focus_handle = focus_handle.clone();
@@ -160,17 +160,21 @@ impl Render for Tooltip {
                     }),
             )
             .when_some(self.meta.clone(), |this, meta| {
-                this.child(Label::new(meta).size(LabelSize::Small).color(Color::Muted))
+                this.child(
+                    div()
+                        .max_w_72()
+                        .child(Label::new(meta).size(LabelSize::Small).color(Color::Muted)),
+                )
             })
         })
     }
 }
 
-pub fn tooltip_container<V>(
+pub fn tooltip_container<V, ContentsBuilder: FnOnce(Div, &mut Window, &mut Context<V>) -> Div>(
     window: &mut Window,
     cx: &mut Context<V>,
-    f: impl FnOnce(Div, &mut Window, &mut Context<V>) -> Div,
-) -> impl IntoElement {
+    f: ContentsBuilder,
+) -> impl IntoElement + use<V, ContentsBuilder> {
     let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
 
     // padding to avoid tooltip appearing right below the mouse cursor
@@ -222,15 +226,26 @@ impl Render for LinkPreview {
     }
 }
 
-// View this component preview using `workspace: open component-preview`
-impl ComponentPreview for Tooltip {
-    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
-        example_group(vec![single_example(
-            "Text only",
-            Button::new("delete-example", "Delete")
-                .tooltip(Tooltip::text("This is a tooltip!"))
-                .into_any_element(),
-        )])
-        .into_any_element()
+impl Component for Tooltip {
+    fn scope() -> ComponentScope {
+        ComponentScope::None
+    }
+
+    fn description() -> Option<&'static str> {
+        Some(
+            "A tooltip that appears when hovering over an element, optionally showing a keybinding or additional metadata.",
+        )
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        Some(
+            example_group(vec![single_example(
+                "Text only",
+                Button::new("delete-example", "Delete")
+                    .tooltip(Tooltip::text("This is a tooltip!"))
+                    .into_any_element(),
+            )])
+            .into_any_element(),
+        )
     }
 }

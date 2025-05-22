@@ -4,12 +4,8 @@ use futures::{SinkExt as _, StreamExt as _};
 pub struct Connection {
     pub(crate) tx:
         Box<dyn 'static + Send + Unpin + futures::Sink<WebSocketMessage, Error = anyhow::Error>>,
-    pub(crate) rx: Box<
-        dyn 'static
-            + Send
-            + Unpin
-            + futures::Stream<Item = Result<WebSocketMessage, anyhow::Error>>,
-    >,
+    pub(crate) rx:
+        Box<dyn 'static + Send + Unpin + futures::Stream<Item = anyhow::Result<WebSocketMessage>>>,
 }
 
 impl Connection {
@@ -19,7 +15,7 @@ impl Connection {
             + Send
             + Unpin
             + futures::Sink<WebSocketMessage, Error = anyhow::Error>
-            + futures::Stream<Item = Result<WebSocketMessage, anyhow::Error>>,
+            + futures::Stream<Item = anyhow::Result<WebSocketMessage>>,
     {
         let (tx, rx) = stream.split();
         Self {
@@ -28,7 +24,7 @@ impl Connection {
         }
     }
 
-    pub async fn send(&mut self, message: WebSocketMessage) -> Result<(), anyhow::Error> {
+    pub async fn send(&mut self, message: WebSocketMessage) -> anyhow::Result<()> {
         self.tx.send(message).await
     }
 
@@ -37,8 +33,8 @@ impl Connection {
         executor: gpui::BackgroundExecutor,
     ) -> (Self, Self, std::sync::Arc<std::sync::atomic::AtomicBool>) {
         use std::sync::{
-            atomic::{AtomicBool, Ordering::SeqCst},
             Arc,
+            atomic::{AtomicBool, Ordering::SeqCst},
         };
 
         let killed = Arc::new(AtomicBool::new(false));
@@ -56,7 +52,7 @@ impl Connection {
             executor: gpui::BackgroundExecutor,
         ) -> (
             Box<dyn Send + Unpin + futures::Sink<WebSocketMessage, Error = anyhow::Error>>,
-            Box<dyn Send + Unpin + futures::Stream<Item = Result<WebSocketMessage, anyhow::Error>>>,
+            Box<dyn Send + Unpin + futures::Stream<Item = anyhow::Result<WebSocketMessage>>>,
         ) {
             use anyhow::anyhow;
             use futures::channel::mpsc;

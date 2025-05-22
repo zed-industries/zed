@@ -1,18 +1,18 @@
 use channel::{ChannelMembership, ChannelStore};
 use client::{
-    proto::{self, ChannelRole, ChannelVisibility},
     ChannelId, User, UserId, UserStore,
+    proto::{self, ChannelRole, ChannelVisibility},
 };
-use fuzzy::{match_strings, StringMatchCandidate};
+use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
-    actions, anchored, deferred, div, App, ClipboardItem, Context, DismissEvent, Entity,
-    EventEmitter, Focusable, ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window,
+    App, ClipboardItem, Context, DismissEvent, Entity, EventEmitter, Focusable, ParentElement,
+    Render, Styled, Subscription, Task, WeakEntity, Window, actions, anchored, deferred, div,
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
-use ui::{prelude::*, Avatar, CheckboxWithLabel, ContextMenu, ListItem, ListItemSpacing};
+use ui::{Avatar, CheckboxWithLabel, ContextMenu, ListItem, ListItemSpacing, prelude::*};
 use util::TryFutureExt;
-use workspace::{notifications::DetachAndPromptErr, ModalView};
+use workspace::{ModalView, notifications::DetachAndPromptErr};
 
 actions!(
     channel_modal,

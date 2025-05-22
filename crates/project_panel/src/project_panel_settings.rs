@@ -31,6 +31,7 @@ pub enum EntrySpacing {
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct ProjectPanelSettings {
     pub button: bool,
+    pub hide_gitignore: bool,
     pub default_width: Pixels,
     pub dock: ProjectPanelDockPosition,
     pub entry_spacing: EntrySpacing,
@@ -93,6 +94,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub button: Option<bool>,
+    /// Whether to hide gitignore files in the project panel.
+    ///
+    /// Default: false
+    pub hide_gitignore: Option<bool>,
     /// Customize default width (in pixels) taken by project panel
     ///
     /// Default: 240
@@ -152,5 +157,25 @@ impl Settings for ProjectPanelSettings {
         _: &mut gpui::App,
     ) -> anyhow::Result<Self> {
         sources.json_merge()
+    }
+
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+        vscode.bool_setting("explorer.excludeGitIgnore", &mut current.hide_gitignore);
+        vscode.bool_setting("explorer.autoReveal", &mut current.auto_reveal_entries);
+        vscode.bool_setting("explorer.compactFolders", &mut current.auto_fold_dirs);
+
+        if Some(false) == vscode.read_bool("git.decorations.enabled") {
+            current.git_status = Some(false);
+        }
+        if Some(false) == vscode.read_bool("problems.decorations.enabled") {
+            current.show_diagnostics = Some(ShowDiagnostics::Off);
+        }
+        if let (Some(false), Some(false)) = (
+            vscode.read_bool("explorer.decorations.badges"),
+            vscode.read_bool("explorer.decorations.colors"),
+        ) {
+            current.git_status = Some(false);
+            current.show_diagnostics = Some(ShowDiagnostics::Off);
+        }
     }
 }

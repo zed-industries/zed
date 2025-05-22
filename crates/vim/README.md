@@ -28,7 +28,7 @@ but while developing this test you'll need to run it with the neovim flag enable
 cargo test -p vim --features neovim test_visual_star_hash
 ```
 
-This will run your keystrokes against a headless neovim and cache the results in the test_data directory.
+This will run your keystrokes against a headless neovim and cache the results in the test_data directory. Note that neovim must be installed and reachable on your $PATH in order to run the feature.
 
 
 ## Testing zed-only behavior

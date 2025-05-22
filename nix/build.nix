@@ -1,48 +1,49 @@
 {
   lib,
-  crane,
-  rustToolchain,
-  rustPlatform,
-  cmake,
-  copyDesktopItems,
-  fetchFromGitHub,
-  curl,
-  clang,
-  perl,
-  pkg-config,
-  protobuf,
-  fontconfig,
-  freetype,
-  libgit2,
-  openssl,
-  sqlite,
-  zlib,
-  zstd,
-  alsa-lib,
-  libxkbcommon,
-  wayland,
-  libglvnd,
-  xorg,
   stdenv,
-  makeFontsConf,
-  vulkan-loader,
-  envsubst,
-  cargo-about,
-  cargo-bundle,
-  git,
-  livekit-libwebrtc,
+
   apple-sdk_15,
   darwin,
   darwinMinVersionHook,
+
+  cargo-about,
+  cargo-bundle,
+  crane,
+  rustPlatform,
+  rustToolchain,
+
+  copyDesktopItems,
+  envsubst,
+  fetchFromGitHub,
+  makeFontsConf,
   makeWrapper,
+
+  alsa-lib,
+  cmake,
+  curl,
+  fontconfig,
+  freetype,
+  git,
+  libgit2,
+  libglvnd,
+  libxkbcommon,
+  livekit-libwebrtc,
   nodejs_22,
+  openssl,
+  perl,
+  pkg-config,
+  protobuf,
+  sqlite,
+  vulkan-loader,
+  wayland,
+  xorg,
+  zlib,
+  zstd,
 
   withGLES ? false,
   profile ? "release",
 }:
-
 assert withGLES -> stdenv.hostPlatform.isLinux;
-
 let
   mkIncludeFilter =
     root': path: type:
@@ -58,6 +59,7 @@ let
         "tooling"
         "Cargo.toml"
         ".config" # nextest?
+        ".cargo"
       ];
       firstComp = builtins.head (lib.path.subpath.components relPath);
     in
@@ -68,6 +70,7 @@ let
   commonArgs =
     let
       zedCargoLock = builtins.fromTOML (builtins.readFile ../crates/zed/Cargo.toml);
+      stdenv' = stdenv;
     in
     rec {
       pname = "zed-editor";
@@ -82,7 +85,6 @@ let
 
       nativeBuildInputs =
         [
-          clang # TODO: use pkgs.clangStdenv or ignore cargo config?
           cmake
           copyDesktopItems
           curl
@@ -92,18 +94,31 @@ let
           cargo-about
           rustPlatform.bindgenHook
         ]
-        ++ lib.optionals stdenv.hostPlatform.isLinux [ makeWrapper ]
-        ++ lib.optionals stdenv.hostPlatform.isDarwin [
-          # TODO: move to overlay so it's usable in the shell
-          (cargo-bundle.overrideAttrs (old: {
-            version = "0.6.0-zed";
-            src = fetchFromGitHub {
-              owner = "zed-industries";
-              repo = "cargo-bundle";
-              rev = "zed-deploy";
-              hash = "sha256-OxYdTSiR9ueCvtt7Y2OJkvzwxxnxu453cMS+l/Bi5hM=";
-            };
-          }))
+        ++ lib.optionals stdenv'.hostPlatform.isLinux [ makeWrapper ]
+        ++ lib.optionals stdenv'.hostPlatform.isDarwin [
+          (cargo-bundle.overrideAttrs (
+            new: old: {
+              version = "0.6.1-zed";
+              src = fetchFromGitHub {
+                owner = "zed-industries";
+                repo = "cargo-bundle";
+                rev = "2be2669972dff3ddd4daf89a2cb29d2d06cad7c7";
+                hash = "sha256-cSvW0ND148AGdIGWg/ku0yIacVgW+9f1Nsi+kAQxVrI=";
+              };
+              cargoHash = "sha256-urn+A3yuw2uAO4HGmvQnKvWtHqvG9KHxNCCWTiytE4k=";
+
+              # NOTE: can drop once upstream uses `finalAttrs` here:
+              # https://github.com/NixOS/nixpkgs/blob/10214747f5e6e7cb5b9bdf9e018a3c7b3032f5af/pkgs/build-support/rust/build-rust-package/default.nix#L104
+              #
+              # See (for context): https://github.com/NixOS/nixpkgs/pull/382550
+              cargoDeps = rustPlatform.fetchCargoVendor {
+                inherit (new) src;
+                hash = new.cargoHash;
+                patches = new.cargoPatches or [];
+                name = new.cargoDepsName or new.finalPackage.name;
+              };
+            }
+          ))
         ];
 
       buildInputs =
@@ -120,20 +135,37 @@ let
           zlib
           zstd
         ]
-        ++ lib.optionals stdenv.hostPlatform.isLinux [
+        ++ lib.optionals stdenv'.hostPlatform.isLinux [
           alsa-lib
           libxkbcommon
           wayland
           gpu-lib
+          xorg.libX11
           xorg.libxcb
         ]
-        ++ lib.optionals stdenv.hostPlatform.isDarwin [
+        ++ lib.optionals stdenv'.hostPlatform.isDarwin [
           apple-sdk_15
           darwin.apple_sdk.frameworks.System
           (darwinMinVersionHook "10.15")
         ];
 
-      cargoExtraArgs = "--package=zed --package=cli --features=gpui/runtime_shaders";
+      cargoExtraArgs = "-p zed -p cli --locked --features=gpui/runtime_shaders";
+
+      stdenv =
+        pkgs:
+        let
+          base = pkgs.llvmPackages.stdenv;
+          addBinTools = old: {
+            cc = old.cc.override {
+              inherit (pkgs.llvmPackages) bintools;
+            };
+          };
+          custom = lib.pipe base [
+            (stdenv: stdenv.override addBinTools)
+            pkgs.stdenvAdapters.useMoldLinker
+          ];
+        in
+        if stdenv'.hostPlatform.isLinux then custom else base;
 
       env = {
         ZSTD_SYS_USE_PKG_CONFIG = true;
@@ -145,35 +177,54 @@ let
         };
         ZED_UPDATE_EXPLANATION = "Zed has been installed using Nix. Auto-updates have thus been disabled.";
         RELEASE_VERSION = version;
-        RUSTFLAGS = if withGLES then "--cfg gles" else "";
-        # these libraries are used with dlopen so putting them in buildInputs isn't enough
-        NIX_LDFLAGS = "-rpath ${
+        LK_CUSTOM_WEBRTC = livekit-libwebrtc;
+
+        CARGO_PROFILE = profile;
+        # need to handle some profiles specially https://github.com/rust-lang/cargo/issues/11053
+        TARGET_DIR = "target/" + (if profile == "dev" then "debug" else profile);
+
+        # for some reason these deps being in buildInputs isn't enough, the only thing
+        # about them that's special is that they're manually dlopened at runtime
+        NIX_LDFLAGS = lib.optionalString stdenv'.hostPlatform.isLinux "-rpath ${
           lib.makeLibraryPath [
             gpu-lib
             wayland
           ]
         }";
-        LK_CUSTOM_WEBRTC = livekit-libwebrtc;
-        CARGO_PROFILE = profile;
-        # need to handle some profiles specially https://github.com/rust-lang/cargo/issues/11053
-        TARGET_DIR = "target/" + (if profile == "dev" then "debug" else profile);
+
+        NIX_OUTPATH_USED_AS_RANDOM_SEED = "norebuilds";
       };
 
       # prevent nix from removing the "unused" wayland/gpu-lib rpaths
-      dontPatchELF = true;
+      dontPatchELF = stdenv'.hostPlatform.isLinux;
+
+      # TODO: try craneLib.cargoNextest separate output
+      # for now we're not worried about running our test suite (or tests for deps) in the nix sandbox
+      doCheck = false;
 
       cargoVendorDir = craneLib.vendorCargoDeps {
         inherit src cargoLock;
         overrideVendorGitCheckout =
           let
             hasWebRtcSys = builtins.any (crate: crate.name == "webrtc-sys");
+            # we can't set $RUSTFLAGS because that clobbers the cargo config
+            # see https://github.com/rust-lang/cargo/issues/5376#issuecomment-2163350032
+            glesConfig = builtins.toFile "config.toml" ''
+              [target.'cfg(all())']
+              rustflags = ["--cfg", "gles"]
+            '';
+
             # `webrtc-sys` expects a staticlib; nixpkgs' `livekit-webrtc` has been patched to
             # produce a `dylib`... patching `webrtc-sys`'s build script is the easier option
             # TODO: send livekit sdk a PR to make this configurable
-            postPatch = ''
-              substituteInPlace webrtc-sys/build.rs --replace-fail \
-                "cargo:rustc-link-lib=static=webrtc" "cargo:rustc-link-lib=dylib=webrtc"
-            '';
+            postPatch =
+              ''
+                substituteInPlace webrtc-sys/build.rs --replace-fail \
+                  "cargo:rustc-link-lib=static=webrtc" "cargo:rustc-link-lib=dylib=webrtc"
+              ''
+              + lib.optionalString withGLES ''
+                cat ${glesConfig} >> .cargo/config/config.toml
+              '';
           in
           crates: drv:
           if hasWebRtcSys crates then
@@ -184,45 +235,21 @@ let
             drv;
       };
     };
-  cargoArtifacts = craneLib.buildDepsOnly (
-    commonArgs
-    // {
-      # TODO: figure out why the main derivation is still rebuilding deps...
-      # disable pre-building the deps for now
-      buildPhaseCargoCommand = "true";
-
-      # forcibly inhibit `doInstallCargoArtifacts`...
-      # https://github.com/ipetkov/crane/blob/1d19e2ec7a29dcc25845eec5f1527aaf275ec23e/lib/setupHooks/installCargoArtifactsHook.sh#L111
-      #
-      # it is, unfortunately, not overridable in `buildDepsOnly`:
-      # https://github.com/ipetkov/crane/blob/1d19e2ec7a29dcc25845eec5f1527aaf275ec23e/lib/buildDepsOnly.nix#L85
-      preBuild = "postInstallHooks=()";
-      doCheck = false;
-    }
-  );
+  cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 in
 craneLib.buildPackage (
   lib.recursiveUpdate commonArgs {
     inherit cargoArtifacts;
 
-    patches = lib.optionals stdenv.hostPlatform.isDarwin [
-      # Livekit requires Swift 6
-      # We need this until livekit-rust sdk is used
-      ../script/patches/use-cross-platform-livekit.patch
-    ];
-
     dontUseCmakeConfigure = true;
 
     # without the env var generate-licenses fails due to crane's fetchCargoVendor, see:
     # https://github.com/zed-industries/zed/issues/19971#issuecomment-2688455390
+    # TODO: put this in a separate derivation that depends on src to avoid running it on every build
     preBuild = ''
       ALLOW_MISSING_LICENSES=yes bash script/generate-licenses
       echo nightly > crates/zed/RELEASE_CHANNEL
     '';
-
-    # TODO: try craneLib.cargoNextest separate output
-    # for now we're not worried about running our test suite in the nix sandbox
-    doCheck = false;
 
     installPhase =
       if stdenv.hostPlatform.isDarwin then

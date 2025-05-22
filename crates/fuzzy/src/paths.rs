@@ -4,14 +4,14 @@ use std::{
     cmp::{self, Ordering},
     path::Path,
     sync::{
-        atomic::{self, AtomicBool},
         Arc,
+        atomic::{self, AtomicBool},
     },
 };
 
 use crate::{
-    matcher::{MatchCandidate, Matcher},
     CharBag,
+    matcher::{MatchCandidate, Matcher},
 };
 
 #[derive(Clone, Debug)]

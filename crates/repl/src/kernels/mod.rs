@@ -1,5 +1,5 @@
 mod native_kernel;
-use std::{fmt::Debug, future::Future, path::PathBuf};
+use std::{fmt::Debug, future::Future, path::PathBuf, sync::Arc};
 
 use futures::{
     channel::mpsc::{self, Receiver},
@@ -11,7 +11,7 @@ use language::LanguageName;
 pub use native_kernel::*;
 
 mod remote_kernels;
-use project::{Project, WorktreeId};
+use project::{Project, ProjectPath, WorktreeId};
 pub use remote_kernels::*;
 
 use anyhow::Result;
@@ -79,11 +79,16 @@ pub fn python_env_kernel_specifications(
     project: &Entity<Project>,
     worktree_id: WorktreeId,
     cx: &mut App,
-) -> impl Future<Output = Result<Vec<KernelSpecification>>> {
+) -> impl Future<Output = Result<Vec<KernelSpecification>>> + use<> {
     let python_language = LanguageName::new("Python");
-    let toolchains = project
-        .read(cx)
-        .available_toolchains(worktree_id, python_language, cx);
+    let toolchains = project.read(cx).available_toolchains(
+        ProjectPath {
+            worktree_id,
+            path: Arc::from("".as_ref()),
+        },
+        python_language,
+        cx,
+    );
     let background_executor = cx.background_executor().clone();
 
     async move {

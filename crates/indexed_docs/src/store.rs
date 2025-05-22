@@ -1,17 +1,17 @@
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use derive_more::{Deref, Display};
-use futures::future::{self, BoxFuture, Shared};
 use futures::FutureExt;
+use futures::future::{self, BoxFuture, Shared};
 use fuzzy::StringMatchCandidate;
 use gpui::{App, BackgroundExecutor, Task};
-use heed::types::SerdeBincode;
 use heed::Database;
+use heed::types::SerdeBincode;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
@@ -66,7 +66,7 @@ impl IndexedDocsStore {
         let registry = IndexedDocsRegistry::global(cx);
         registry
             .get_provider_store(provider.clone())
-            .ok_or_else(|| anyhow!("no indexed docs store found for {provider}"))
+            .with_context(|| format!("no indexed docs store found for {provider}"))
     }
 
     pub fn new(
@@ -285,7 +285,7 @@ impl IndexedDocsDatabase {
             let txn = env.read_txn()?;
             entries
                 .get(&txn, &key)?
-                .ok_or_else(|| anyhow!("no docs found for {key}"))
+                .with_context(|| format!("no docs found for {key}"))
         })
     }
 

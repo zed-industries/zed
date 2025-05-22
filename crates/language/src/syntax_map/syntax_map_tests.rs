@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-    buffer_tests::{markdown_inline_lang, markdown_lang},
     LanguageConfig, LanguageMatcher,
+    buffer_tests::{markdown_inline_lang, markdown_lang},
 };
 use gpui::App;
 use rand::rngs::StdRng;
@@ -153,14 +153,14 @@ fn test_syntax_map_layers_for_range(cx: &mut App) {
     syntax_map.reparse(language.clone(), &buffer);
 
     assert_layers_for_range(
-            &syntax_map,
-            &buffer,
-            Point::new(2, 14)..Point::new(2, 16),
-            &[
-                "...(function_item ...",
-                "...(tuple_expression (call_expression ... arguments: (arguments (reference_expression value: (array_expression...",
-            ],
-        );
+        &syntax_map,
+        &buffer,
+        Point::new(2, 14)..Point::new(2, 16),
+        &[
+            "...(function_item ...",
+            "...(tuple_expression (call_expression ... arguments: (arguments (reference_expression value: (array_expression...",
+        ],
+    );
 
     // Put the vec! macro back, adding back the syntactic layer.
     buffer.undo();
@@ -207,15 +207,15 @@ fn test_dynamic_language_injection(cx: &mut App) {
     syntax_map.reparse(markdown.clone(), &buffer);
     syntax_map.reparse(markdown_inline.clone(), &buffer);
     assert_layers_for_range(
-            &syntax_map,
-            &buffer,
-            Point::new(3, 0)..Point::new(3, 0),
-            &[
-                "(document (section (paragraph (inline)) (fenced_code_block (fenced_code_block_delimiter) (info_string (language)) (block_continuation) (code_fence_content (block_continuation)) (fenced_code_block_delimiter))))",
-                "(inline (code_span (code_span_delimiter) (code_span_delimiter)))",
-                "...(function_item name: (identifier) parameters: (parameters) body: (block)...",
-            ],
-        );
+        &syntax_map,
+        &buffer,
+        Point::new(3, 0)..Point::new(3, 0),
+        &[
+            "(document (section (paragraph (inline)) (fenced_code_block (fenced_code_block_delimiter) (info_string (language)) (block_continuation) (code_fence_content (block_continuation)) (fenced_code_block_delimiter))))",
+            "(inline (code_span (code_span_delimiter) (code_span_delimiter)))",
+            "...(function_item name: (identifier) parameters: (parameters) body: (block)...",
+        ],
+    );
 
     // Replace `rs` with a path to ending in `.rb` in code block.
     let macro_name_range = range_for_text(&buffer, "rs");
@@ -224,15 +224,15 @@ fn test_dynamic_language_injection(cx: &mut App) {
     syntax_map.reparse(markdown.clone(), &buffer);
     syntax_map.reparse(markdown_inline.clone(), &buffer);
     assert_layers_for_range(
-            &syntax_map,
-            &buffer,
-            Point::new(3, 0)..Point::new(3, 0),
-            &[
-                "(document (section (paragraph (inline)) (fenced_code_block (fenced_code_block_delimiter) (info_string (language)) (block_continuation) (code_fence_content (block_continuation)) (fenced_code_block_delimiter))))",
-                "(inline (code_span (code_span_delimiter) (code_span_delimiter)))",
-                "...(call method: (identifier) arguments: (argument_list (call method: (identifier) arguments: (argument_list) block: (block)...",
-            ],
-        );
+        &syntax_map,
+        &buffer,
+        Point::new(3, 0)..Point::new(3, 0),
+        &[
+            "(document (section (paragraph (inline)) (fenced_code_block (fenced_code_block_delimiter) (info_string (language)) (block_continuation) (code_fence_content (block_continuation)) (fenced_code_block_delimiter))))",
+            "(inline (code_span (code_span_delimiter) (code_span_delimiter)))",
+            "...(call method: (identifier) arguments: (argument_list (call method: (identifier) arguments: (argument_list) block: (block)...",
+        ],
+    );
 
     // Replace Ruby with a language that hasn't been loaded yet.
     let macro_name_range = range_for_text(&buffer, "foo/bar/baz.rb");
@@ -241,29 +241,29 @@ fn test_dynamic_language_injection(cx: &mut App) {
     syntax_map.reparse(markdown.clone(), &buffer);
     syntax_map.reparse(markdown_inline.clone(), &buffer);
     assert_layers_for_range(
-            &syntax_map,
-            &buffer,
-            Point::new(3, 0)..Point::new(3, 0),
-            &[
-                "(document (section (paragraph (inline)) (fenced_code_block (fenced_code_block_delimiter) (info_string (language)) (block_continuation) (code_fence_content (block_continuation)) (fenced_code_block_delimiter))))",
-                "(inline (code_span (code_span_delimiter) (code_span_delimiter)))",
-            ],
-        );
+        &syntax_map,
+        &buffer,
+        Point::new(3, 0)..Point::new(3, 0),
+        &[
+            "(document (section (paragraph (inline)) (fenced_code_block (fenced_code_block_delimiter) (info_string (language)) (block_continuation) (code_fence_content (block_continuation)) (fenced_code_block_delimiter))))",
+            "(inline (code_span (code_span_delimiter) (code_span_delimiter)))",
+        ],
+    );
     assert!(syntax_map.contains_unknown_injections());
 
     registry.add(Arc::new(html_lang()));
     syntax_map.reparse(markdown.clone(), &buffer);
     syntax_map.reparse(markdown_inline.clone(), &buffer);
     assert_layers_for_range(
-            &syntax_map,
-            &buffer,
-            Point::new(3, 0)..Point::new(3, 0),
-            &[
-                "(document (section (paragraph (inline)) (fenced_code_block (fenced_code_block_delimiter) (info_string (language)) (block_continuation) (code_fence_content (block_continuation)) (fenced_code_block_delimiter))))",
-                "(inline (code_span (code_span_delimiter) (code_span_delimiter)))",
-                "(document (text))",
-            ],
-        );
+        &syntax_map,
+        &buffer,
+        Point::new(3, 0)..Point::new(3, 0),
+        &[
+            "(document (section (paragraph (inline)) (fenced_code_block (fenced_code_block_delimiter) (info_string (language)) (block_continuation) (code_fence_content (block_continuation)) (fenced_code_block_delimiter))))",
+            "(inline (code_span (code_span_delimiter) (code_span_delimiter)))",
+            "(document (text))",
+        ],
+    );
     assert!(!syntax_map.contains_unknown_injections());
 }
 

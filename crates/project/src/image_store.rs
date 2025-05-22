@@ -1,22 +1,21 @@
 use crate::{
-    worktree_store::{WorktreeStore, WorktreeStoreEvent},
     Project, ProjectEntryId, ProjectItem, ProjectPath,
+    worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
-use anyhow::{anyhow, Context as _, Result};
-use collections::{hash_map, HashMap, HashSet};
-use futures::{channel::oneshot, StreamExt};
+use anyhow::{Context as _, Result};
+use collections::{HashMap, HashSet, hash_map};
+use futures::{StreamExt, channel::oneshot};
 use gpui::{
-    hash, prelude::*, App, AsyncApp, Context, Entity, EventEmitter, Img, Subscription, Task,
-    WeakEntity,
+    App, AsyncApp, Context, Entity, EventEmitter, Img, Subscription, Task, WeakEntity, prelude::*,
 };
 pub use image::ImageFormat;
 use image::{ExtendedColorType, GenericImageView, ImageReader};
 use language::{DiskState, File};
 use rpc::{AnyProtoClient, ErrorExt as _};
-use std::ffi::OsStr;
 use std::num::NonZeroU64;
 use std::path::Path;
 use std::sync::Arc;
+use std::{ffi::OsStr, path::PathBuf};
 use util::ResultExt;
 use worktree::{LoadedBinaryFile, PathChange, Worktree};
 
@@ -97,7 +96,7 @@ impl ImageColorInfo {
 
 pub struct ImageItem {
     pub id: ImageId,
-    pub file: Arc<dyn File>,
+    pub file: Arc<worktree::File>,
     pub image: Arc<gpui::Image>,
     reload_task: Option<Task<()>>,
     pub image_metadata: Option<ImageMetadata>,
@@ -110,22 +109,11 @@ impl ImageItem {
         cx: &mut AsyncApp,
     ) -> Result<ImageMetadata> {
         let (fs, image_path) = cx.update(|cx| {
-            let project_path = image.read(cx).project_path(cx);
-
-            let worktree = project
-                .read(cx)
-                .worktree_for_id(project_path.worktree_id, cx)
-                .ok_or_else(|| anyhow!("worktree not found"))?;
-            let worktree_root = worktree.read(cx).abs_path();
-            let image_path = image.read(cx).path();
-            let image_path = if image_path.is_absolute() {
-                image_path.to_path_buf()
-            } else {
-                worktree_root.join(image_path)
-            };
-
             let fs = project.read(cx).fs().clone();
-
+            let image_path = image
+                .read(cx)
+                .abs_path(cx)
+                .context("absolutizing image file path")?;
             anyhow::Ok((fs, image_path))
         })??;
 
@@ -140,7 +128,7 @@ impl ImageItem {
         let file_metadata = fs
             .metadata(image_path.as_path())
             .await?
-            .ok_or_else(|| anyhow!("failed to load image metadata"))?;
+            .context("failed to load image metadata")?;
 
         Ok(ImageMetadata {
             width,
@@ -158,14 +146,14 @@ impl ImageItem {
         }
     }
 
-    pub fn path(&self) -> &Arc<Path> {
-        self.file.path()
+    pub fn abs_path(&self, cx: &App) -> Option<PathBuf> {
+        Some(self.file.as_local()?.abs_path(cx))
     }
 
-    fn file_updated(&mut self, new_file: Arc<dyn File>, cx: &mut Context<Self>) {
+    fn file_updated(&mut self, new_file: Arc<worktree::File>, cx: &mut Context<Self>) {
         let mut file_changed = false;
 
-        let old_file = self.file.as_ref();
+        let old_file = &self.file;
         if new_file.path() != old_file.path() {
             file_changed = true;
         }
@@ -210,38 +198,41 @@ impl ImageItem {
     }
 }
 
-impl ProjectItem for ImageItem {
-    fn try_open(
-        project: &Entity<Project>,
-        path: &ProjectPath,
-        cx: &mut App,
-    ) -> Option<Task<gpui::Result<Entity<Self>>>> {
-        let path = path.clone();
-        let project = project.clone();
-
+pub fn is_image_file(project: &Entity<Project>, path: &ProjectPath, cx: &App) -> bool {
+    let ext = util::maybe!({
         let worktree_abs_path = project
             .read(cx)
             .worktree_for_id(path.worktree_id, cx)?
             .read(cx)
             .abs_path();
-
-        // Resolve the file extension from either the worktree path (if it's a single file)
-        // or from the project path's subpath.
-        let ext = worktree_abs_path
+        path.path
             .extension()
-            .or_else(|| path.path.extension())
+            .or_else(|| worktree_abs_path.extension())
             .and_then(OsStr::to_str)
             .map(str::to_lowercase)
-            .unwrap_or_default();
-        let ext = ext.as_str();
+    });
 
-        // Only open the item if it's a binary image (no SVGs, etc.)
-        // Since we do not have a way to toggle to an editor
-        if Img::extensions().contains(&ext) && !ext.contains("svg") {
-            Some(cx.spawn(async move |cx| {
-                project
-                    .update(cx, |project, cx| project.open_image(path, cx))?
-                    .await
+    match ext {
+        Some(ext) => Img::extensions().contains(&ext.as_str()) && !ext.contains("svg"),
+        None => false,
+    }
+}
+
+impl ProjectItem for ImageItem {
+    fn try_open(
+        project: &Entity<Project>,
+        path: &ProjectPath,
+        cx: &mut App,
+    ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
+        if is_image_file(&project, &path, cx) {
+            Some(cx.spawn({
+                let path = path.clone();
+                let project = project.clone();
+                async move |cx| {
+                    project
+                        .update(cx, |project, cx| project.open_image(path, cx))?
+                        .await
+                }
             }))
         } else {
             None
@@ -249,7 +240,7 @@ impl ProjectItem for ImageItem {
     }
 
     fn entry_id(&self, _: &App) -> Option<ProjectEntryId> {
-        worktree::File::from_dyn(Some(&self.file))?.entry_id
+        self.file.entry_id
     }
 
     fn project_path(&self, cx: &App) -> Option<ProjectPath> {
@@ -385,6 +376,12 @@ impl ImageStore {
                 entry.insert(rx.clone());
 
                 let project_path = project_path.clone();
+                // TODO kb this is causing another error, and we also pass a worktree nearby — seems ok to pass "" here?
+                // let image_path = worktree
+                //     .read(cx)
+                //     .absolutize(&project_path.path)
+                //     .map(Arc::from)
+                //     .unwrap_or_else(|_| project_path.path.clone());
                 let load_image = self
                     .state
                     .open_image(project_path.path.clone(), worktree, cx);
@@ -602,9 +599,7 @@ impl LocalImageStore {
         };
 
         image.update(cx, |image, cx| {
-            let Some(old_file) = worktree::File::from_dyn(Some(&image.file)) else {
-                return;
-            };
+            let old_file = &image.file;
             if old_file.worktree != *worktree {
                 return;
             }
@@ -637,7 +632,7 @@ impl LocalImageStore {
                 }
             };
 
-            if new_file == *old_file {
+            if new_file == **old_file {
                 return;
             }
 
@@ -670,9 +665,10 @@ impl LocalImageStore {
     }
 
     fn image_changed_file(&mut self, image: Entity<ImageItem>, cx: &mut App) -> Option<()> {
-        let file = worktree::File::from_dyn(Some(&image.read(cx).file))?;
+        let image = image.read(cx);
+        let file = &image.file;
 
-        let image_id = image.read(cx).id;
+        let image_id = image.id;
         if let Some(entry_id) = file.entry_id {
             match self.local_image_ids_by_entry_id.get(&entry_id) {
                 Some(_) => {
@@ -698,19 +694,18 @@ impl LocalImageStore {
 fn create_gpui_image(content: Vec<u8>) -> anyhow::Result<Arc<gpui::Image>> {
     let format = image::guess_format(&content)?;
 
-    Ok(Arc::new(gpui::Image {
-        id: hash(&content),
-        format: match format {
+    Ok(Arc::new(gpui::Image::from_bytes(
+        match format {
             image::ImageFormat::Png => gpui::ImageFormat::Png,
             image::ImageFormat::Jpeg => gpui::ImageFormat::Jpeg,
             image::ImageFormat::WebP => gpui::ImageFormat::Webp,
             image::ImageFormat::Gif => gpui::ImageFormat::Gif,
             image::ImageFormat::Bmp => gpui::ImageFormat::Bmp,
             image::ImageFormat::Tiff => gpui::ImageFormat::Tiff,
-            _ => Err(anyhow::anyhow!("Image format not supported"))?,
+            format => anyhow::bail!("Image format {format:?} not supported"),
         },
-        bytes: content,
-    }))
+        content,
+    )))
 }
 
 impl ImageStoreImpl for Entity<RemoteImageStore> {

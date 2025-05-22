@@ -14,3 +14,4 @@ path = "src/semantic_version.rs"
 [dependencies]
 anyhow.workspace = true
 serde.workspace = true
+workspace-hack.workspace = true

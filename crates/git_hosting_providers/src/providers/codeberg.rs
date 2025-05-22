@@ -1,7 +1,7 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
 use futures::AsyncReadExt;
 use gpui::SharedString;

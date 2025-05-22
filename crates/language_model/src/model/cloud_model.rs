@@ -12,9 +12,8 @@ use serde::{Deserialize, Serialize};
 use smol::lock::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
 use strum::EnumIter;
 use thiserror::Error;
-use ui::IconName;
 
-use crate::LanguageModelAvailability;
+use crate::{LanguageModelAvailability, LanguageModelToolSchemaFormat};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "provider", rename_all = "lowercase")]
@@ -53,13 +52,6 @@ impl CloudModel {
         }
     }
 
-    pub fn icon(&self) -> Option<IconName> {
-        match self {
-            Self::Anthropic(_) => Some(IconName::AiAnthropicHosted),
-            _ => None,
-        }
-    }
-
     pub fn max_token_count(&self) -> usize {
         match self {
             Self::Anthropic(model) => model.max_token_count(),
@@ -91,10 +83,15 @@ impl CloudModel {
                 | open_ai::Model::FourTurbo
                 | open_ai::Model::FourOmni
                 | open_ai::Model::FourOmniMini
+                | open_ai::Model::FourPointOne
+                | open_ai::Model::FourPointOneMini
+                | open_ai::Model::FourPointOneNano
                 | open_ai::Model::O1Mini
                 | open_ai::Model::O1Preview
                 | open_ai::Model::O1
                 | open_ai::Model::O3Mini
+                | open_ai::Model::O3
+                | open_ai::Model::O4Mini
                 | open_ai::Model::Custom { .. } => {
                     LanguageModelAvailability::RequiresPlan(Plan::ZedPro)
                 }
@@ -106,10 +103,20 @@ impl CloudModel {
                 | google_ai::Model::Gemini20Flash
                 | google_ai::Model::Gemini20FlashThinking
                 | google_ai::Model::Gemini20FlashLite
+                | google_ai::Model::Gemini25ProExp0325
+                | google_ai::Model::Gemini25ProPreview0325
+                | google_ai::Model::Gemini25FlashPreview0417
                 | google_ai::Model::Custom { .. } => {
                     LanguageModelAvailability::RequiresPlan(Plan::ZedPro)
                 }
             },
+        }
+    }
+
+    pub fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
+        match self {
+            Self::Anthropic(_) | Self::OpenAi(_) => LanguageModelToolSchemaFormat::JsonSchema,
+            Self::Google(_) => LanguageModelToolSchemaFormat::JsonSchemaSubset,
         }
     }
 }
@@ -127,14 +134,23 @@ impl fmt::Display for PaymentRequiredError {
 }
 
 #[derive(Error, Debug)]
-pub struct MaxMonthlySpendReachedError;
+pub struct ModelRequestLimitReachedError {
+    pub plan: Plan,
+}
 
-impl fmt::Display for MaxMonthlySpendReachedError {
+impl fmt::Display for ModelRequestLimitReachedError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "Maximum spending limit reached for this month. For more usage, increase your spending limit."
-        )
+        let message = match self.plan {
+            Plan::Free => "Model request limit reached. Upgrade to Zed Pro for more requests.",
+            Plan::ZedPro => {
+                "Model request limit reached. Upgrade to usage-based billing for more requests."
+            }
+            Plan::ZedProTrial => {
+                "Model request limit reached. Upgrade to Zed Pro for more requests."
+            }
+        };
+
+        write!(f, "{message}")
     }
 }
 

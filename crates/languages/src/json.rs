@@ -1,16 +1,17 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context as _, Result, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
+use dap::DapRegistry;
 use futures::StreamExt;
 use gpui::{App, AsyncApp};
-use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
+use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use language::{LanguageRegistry, LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
-use project::{lsp_store::language_server_settings, ContextProviderWithTasks, Fs};
-use serde_json::{json, Value};
+use project::{ContextProviderWithTasks, Fs, lsp_store::language_server_settings};
+use serde_json::{Value, json};
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::{
     fs::{self},
@@ -25,8 +26,8 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-use task::{TaskTemplate, TaskTemplates, VariableName};
-use util::{fs::remove_matching, maybe, merge_json_value_into, ResultExt};
+use task::{AdapterSchemas, TaskTemplate, TaskTemplates, VariableName};
+use util::{ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into};
 
 const SERVER_PATH: &str =
     "node_modules/vscode-langservers-extracted/bin/vscode-json-language-server";
@@ -75,7 +76,11 @@ impl JsonLspAdapter {
         }
     }
 
-    fn get_workspace_config(language_names: Vec<String>, cx: &mut App) -> Value {
+    fn get_workspace_config(
+        language_names: Vec<String>,
+        adapter_schemas: AdapterSchemas,
+        cx: &mut App,
+    ) -> Value {
         let keymap_schema = KeymapFile::generate_json_schema_for_registered_actions(cx);
         let font_names = &cx.text_system().all_font_names();
         let settings_schema = cx.global::<SettingsStore>().json_schema(
@@ -85,13 +90,14 @@ impl JsonLspAdapter {
             },
             cx,
         );
+
         let tasks_schema = task::TaskTemplates::generate_json_schema();
-        let debug_schema = task::DebugTaskFile::generate_json_schema();
-        let snippets_schema = snippet_provider::format::VSSnippetsFile::generate_json_schema();
+        let debug_schema = task::DebugTaskFile::generate_json_schema(&adapter_schemas);
+        let snippets_schema = snippet_provider::format::VsSnippetsFile::generate_json_schema();
         let tsconfig_schema = serde_json::Value::from_str(TSCONFIG_SCHEMA).unwrap();
         let package_json_schema = serde_json::Value::from_str(PACKAGE_JSON_SCHEMA).unwrap();
 
-        // This can be viewed via `debug: open language server logs` -> `json-language-server` ->
+        // This can be viewed via `dev: open language server logs` -> `json-language-server` ->
         // `Server Info`
         serde_json::json!({
             "json": {
@@ -141,7 +147,7 @@ impl JsonLspAdapter {
                     },
                     {
                         "fileMatch": [
-                            schema_file_match(paths::debug_tasks_file()),
+                            schema_file_match(paths::debug_scenarios_file()),
                             paths::local_debug_file_relative_path()
                         ],
                         "schema": debug_schema,
@@ -160,8 +166,15 @@ impl JsonLspAdapter {
             }
         }
         let mut writer = self.workspace_config.write().await;
-        let config =
-            cx.update(|cx| Self::get_workspace_config(self.languages.language_names(), cx))?;
+
+        let adapter_schemas = cx
+            .read_global::<DapRegistry, _>(|dap_registry, _| dap_registry.to_owned())?
+            .adapters_schema()
+            .await;
+
+        let config = cx.update(|cx| {
+            Self::get_workspace_config(self.languages.language_names().clone(), adapter_schemas, cx)
+        })?;
         writer.replace(config.clone());
         return Ok(config);
     }
@@ -321,20 +334,17 @@ async fn get_cached_server_binary(
             }
         }
 
-        let last_version_dir = last_version_dir.ok_or_else(|| anyhow!("no cached binary"))?;
+        let last_version_dir = last_version_dir.context("no cached binary")?;
         let server_path = last_version_dir.join(SERVER_PATH);
-        if server_path.exists() {
-            Ok(LanguageServerBinary {
-                path: node.binary_path().await?,
-                env: None,
-                arguments: server_binary_arguments(&server_path),
-            })
-        } else {
-            Err(anyhow!(
-                "missing executable in directory {:?}",
-                last_version_dir
-            ))
-        }
+        anyhow::ensure!(
+            server_path.exists(),
+            "missing executable in directory {last_version_dir:?}"
+        );
+        Ok(LanguageServerBinary {
+            path: node.binary_path().await?,
+            env: None,
+            arguments: server_binary_arguments(&server_path),
+        })
     })
     .await
     .log_err()
@@ -430,9 +440,9 @@ impl LspAdapter for NodeVersionAdapter {
                 .http_client()
                 .get(&version.url, Default::default(), true)
                 .await
-                .map_err(|err| anyhow!("error downloading release: {}", err))?;
+                .context("downloading release")?;
             if version.url.ends_with(".zip") {
-                node_runtime::extract_zip(
+                extract_zip(
                     &destination_container_path,
                     BufReader::new(response.body_mut()),
                 )
@@ -488,7 +498,7 @@ async fn get_cached_version_server_binary(container_dir: PathBuf) -> Option<Lang
         }
 
         anyhow::Ok(LanguageServerBinary {
-            path: last.ok_or_else(|| anyhow!("no cached binary"))?,
+            path: last.context("no cached binary")?,
             env: None,
             arguments: Default::default(),
         })

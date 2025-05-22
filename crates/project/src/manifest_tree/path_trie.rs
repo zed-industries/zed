@@ -1,5 +1,5 @@
 use std::{
-    collections::{btree_map::Entry, BTreeMap},
+    collections::{BTreeMap, btree_map::Entry},
     ffi::OsStr,
     ops::ControlFlow,
     path::{Path, PathBuf},
@@ -98,7 +98,7 @@ impl<Label: Ord + Clone> RootPathTrie<Label> {
             };
         }
         if !current.labels.is_empty() {
-            (callback)(&current.worktree_relative_path, &current.labels);
+            let _ = (callback)(&current.worktree_relative_path, &current.labels);
         }
     }
 

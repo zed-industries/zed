@@ -35,6 +35,7 @@ actions!(
         Quit,
         OpenKeymap,
         About,
+        OpenDocs,
         OpenLicenses,
         OpenTelemetryLog,
     ]
@@ -141,6 +142,12 @@ pub mod git {
     action_with_deprecated_aliases!(git, Branch, ["branches::OpenRecent"]);
 }
 
+pub mod jj {
+    use gpui::actions;
+
+    actions!(jj, [BookmarkList]);
+}
+
 pub mod command_palette {
     use gpui::actions;
 
@@ -150,7 +157,7 @@ pub mod command_palette {
 pub mod feedback {
     use gpui::actions;
 
-    actions!(feedback, [GiveFeedback]);
+    actions!(feedback, [FileBugReport, GiveFeedback]);
 }
 
 pub mod theme_selector {
@@ -183,12 +190,42 @@ pub mod icon_theme_selector {
     impl_actions!(icon_theme_selector, [Toggle]);
 }
 
+pub mod agent {
+    use gpui::actions;
+
+    actions!(
+        agent,
+        [OpenConfiguration, OpenOnboardingModal, ResetOnboarding]
+    );
+}
+
 pub mod assistant {
-    use gpui::{actions, impl_actions};
+    use gpui::{
+        action_with_deprecated_aliases, actions, impl_action_with_deprecated_aliases, impl_actions,
+    };
     use schemars::JsonSchema;
     use serde::Deserialize;
+    use uuid::Uuid;
 
-    actions!(assistant, [ToggleFocus, DeployPromptLibrary]);
+    action_with_deprecated_aliases!(agent, ToggleFocus, ["assistant::ToggleFocus"]);
+
+    actions!(assistant, [ShowConfiguration]);
+
+    #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct OpenRulesLibrary {
+        #[serde(skip)]
+        pub prompt_to_select: Option<Uuid>,
+    }
+
+    impl_action_with_deprecated_aliases!(
+        agent,
+        OpenRulesLibrary,
+        [
+            "assistant::OpenRulesLibrary",
+            "assistant::DeployPromptLibrary"
+        ]
+    );
 
     #[derive(Clone, Default, Deserialize, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
@@ -206,8 +243,14 @@ pub struct OpenRecent {
     pub create_new_window: bool,
 }
 
-impl_actions!(projects, [OpenRecent]);
-actions!(projects, [OpenRemote]);
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OpenRemote {
+    #[serde(default)]
+    pub from_existing_connection: bool,
+}
+
+impl_actions!(projects, [OpenRecent, OpenRemote]);
 
 /// Where to spawn the task in the UI.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -227,6 +270,12 @@ pub enum Spawn {
     /// Spawns a task by the name given.
     ByName {
         task_name: String,
+        #[serde(default)]
+        reveal_target: Option<RevealTarget>,
+    },
+    /// Spawns a task by the name given.
+    ByTag {
+        task_tag: String,
         #[serde(default)]
         reveal_target: Option<RevealTarget>,
     },
@@ -275,7 +324,7 @@ impl_actions!(task, [Spawn, Rerun]);
 pub mod outline {
     use std::sync::OnceLock;
 
-    use gpui::{action_as, AnyView, App, Window};
+    use gpui::{AnyView, App, Window, action_as};
 
     action_as!(outline, ToggleOutline as Toggle);
     /// A pointer to outline::toggle function, exposed here to sewer the breadcrumbs <-> outline dependency.

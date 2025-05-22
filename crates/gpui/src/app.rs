@@ -1,21 +1,21 @@
 use std::{
-    any::{type_name, TypeId},
-    cell::{Ref, RefCell, RefMut},
+    any::{TypeId, type_name},
+    cell::{BorrowMutError, Ref, RefCell, RefMut},
     marker::PhantomData,
     mem,
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
-    sync::{atomic::Ordering::SeqCst, Arc},
+    sync::{Arc, atomic::Ordering::SeqCst},
     time::Duration,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{Context as _, Result, anyhow};
 use derive_more::{Deref, DerefMut};
 use futures::{
+    Future, FutureExt,
     channel::oneshot,
     future::{LocalBoxFuture, Shared},
-    Future, FutureExt,
 };
 use parking_lot::RwLock;
 use slotmap::SlotMap;
@@ -24,20 +24,23 @@ pub use async_context::*;
 use collections::{FxHashMap, FxHashSet, HashMap, VecDeque};
 pub use context::*;
 pub use entity_map::*;
-use http_client::HttpClient;
+use http_client::{HttpClient, Url};
+use smallvec::SmallVec;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
-use util::ResultExt;
+use util::{ResultExt, debug_panic};
 
 use crate::{
-    current_platform, hash, init_app_menus, Action, ActionBuildError, ActionRegistry, Any, AnyView,
-    AnyWindowHandle, AppContext, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem,
-    DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global,
-    KeyBinding, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels,
-    Platform, PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
-    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
-    WindowInvalidator,
+    Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Asset,
+    AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
+    EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
+    Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
+    PlatformDisplay, PlatformKeyboardLayout, Point, PromptBuilder, PromptHandle, PromptLevel,
+    Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString,
+    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance,
+    WindowHandle, WindowId, WindowInvalidator,
+    colors::{Colors, GlobalColors},
+    current_platform, hash, init_app_menus,
 };
 
 mod async_context;
@@ -75,6 +78,16 @@ impl AppCell {
             eprintln!("borrowed {thread_id:?}");
         }
         AppRefMut(self.app.borrow_mut())
+    }
+
+    #[doc(hidden)]
+    #[track_caller]
+    pub fn try_borrow_mut(&self) -> Result<AppRefMut, BorrowMutError> {
+        if option_env!("TRACK_THREAD_BORROWS").is_some() {
+            let thread_id = std::thread::current().id();
+            eprintln!("borrowed {thread_id:?}");
+        }
+        Ok(AppRefMut(self.app.try_borrow_mut()?))
     }
 }
 
@@ -247,7 +260,7 @@ pub struct App {
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
     pub(crate) focus_handles: Arc<FocusMap>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
-    pub(crate) keyboard_layout: SharedString,
+    pub(crate) keyboard_layout: Box<dyn PlatformKeyboardLayout>,
     pub(crate) global_action_listeners:
         FxHashMap<TypeId, Vec<Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Self)>>>,
     pending_effects: VecDeque<Effect>,
@@ -270,6 +283,7 @@ pub struct App {
     pub(crate) tracked_entities: FxHashMap<WindowId, FxHashSet<EntityId>>,
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
+    quitting: bool,
 }
 
 impl App {
@@ -288,7 +302,7 @@ impl App {
 
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
         let entities = EntityMap::new();
-        let keyboard_layout = SharedString::from(platform.keyboard_layout());
+        let keyboard_layout = platform.keyboard_layout();
 
         let app = Rc::new_cyclic(|this| AppCell {
             app: RefCell::new(App {
@@ -331,6 +345,7 @@ impl App {
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
                 prompt_builder: Some(PromptBuilder::Default),
+                quitting: false,
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
                 name: None,
@@ -344,7 +359,7 @@ impl App {
             move || {
                 if let Some(app) = app.upgrade() {
                     let cx = &mut app.borrow_mut();
-                    cx.keyboard_layout = SharedString::from(cx.platform.keyboard_layout());
+                    cx.keyboard_layout = cx.platform.keyboard_layout();
                     cx.keyboard_layout_observers
                         .clone()
                         .retain(&(), move |callback| (callback)(cx));
@@ -374,6 +389,7 @@ impl App {
         self.windows.clear();
         self.window_handles.clear();
         self.flush_effects();
+        self.quitting = true;
 
         let futures = futures::future::join_all(futures);
         if self
@@ -383,11 +399,13 @@ impl App {
         {
             log::error!("timed out waiting on app_will_quit");
         }
+
+        self.quitting = false;
     }
 
     /// Get the id of the current keyboard layout
-    pub fn keyboard_layout(&self) -> &SharedString {
-        &self.keyboard_layout
+    pub fn keyboard_layout(&self) -> &dyn PlatformKeyboardLayout {
+        self.keyboard_layout.as_ref()
     }
 
     /// Invokes a handler when the current keyboard layout changes
@@ -504,8 +522,8 @@ impl App {
         self.new_observer(
             entity_id,
             Box::new(move |cx| {
-                if let Some(handle) = Entity::<W>::upgrade_from(&handle) {
-                    on_notify(handle, cx)
+                if let Some(entity) = handle.upgrade() {
+                    on_notify(entity, cx)
                 } else {
                     false
                 }
@@ -549,15 +567,15 @@ impl App {
         Evt: 'static,
     {
         let entity_id = entity.entity_id();
-        let entity = entity.downgrade();
+        let handle = entity.downgrade();
         self.new_subscription(
             entity_id,
             (
                 TypeId::of::<Evt>(),
                 Box::new(move |event, cx| {
                     let event: &Evt = event.downcast_ref().expect("invalid event type");
-                    if let Some(handle) = Entity::<T>::upgrade_from(&entity) {
-                        on_event(handle, event, cx)
+                    if let Some(entity) = handle.upgrade() {
+                        on_event(entity, event, cx)
                     } else {
                         false
                     }
@@ -648,6 +666,11 @@ impl App {
     /// Returns the primary display that will be used for new windows.
     pub fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         self.platform.primary_display()
+    }
+
+    /// Returns whether `screen_capture_sources` may work.
+    pub fn is_screen_capture_supported(&self) -> bool {
+        self.platform.is_screen_capture_supported()
     }
 
     /// Returns a list of available screen capture sources.
@@ -998,9 +1021,9 @@ impl App {
             let mut window = cx
                 .windows
                 .get_mut(id)
-                .ok_or_else(|| anyhow!("window not found"))?
+                .context("window not found")?
                 .take()
-                .ok_or_else(|| anyhow!("window not found"))?;
+                .context("window not found")?;
 
             let root_view = window.root.clone().unwrap();
 
@@ -1019,7 +1042,7 @@ impl App {
             } else {
                 cx.windows
                     .get_mut(id)
-                    .ok_or_else(|| anyhow!("window not found"))?
+                    .context("window not found")?
                     .replace(window);
             }
 
@@ -1043,6 +1066,9 @@ impl App {
 
     /// Obtains a reference to the executor, which can be used to spawn futures.
     pub fn foreground_executor(&self) -> &ForegroundExecutor {
+        if self.quitting {
+            panic!("Can't spawn on main thread after on_app_quit")
+        };
         &self.foreground_executor
     }
 
@@ -1054,7 +1080,12 @@ impl App {
         AsyncFn: AsyncFnOnce(&mut AsyncApp) -> R + 'static,
         R: 'static,
     {
+        if self.quitting {
+            debug_panic!("Can't spawn on main thread after on_app_quit")
+        };
+
         let mut cx = self.to_async();
+
         self.foreground_executor
             .spawn(async move { f(&mut cx).await })
     }
@@ -1088,7 +1119,7 @@ impl App {
         self.globals_by_type
             .get(&TypeId::of::<G>())
             .map(|any_state| any_state.downcast_ref::<G>().unwrap())
-            .ok_or_else(|| anyhow!("no state of type {} exists", type_name::<G>()))
+            .with_context(|| format!("no state of type {} exists", type_name::<G>()))
             .unwrap()
     }
 
@@ -1107,7 +1138,7 @@ impl App {
         self.globals_by_type
             .get_mut(&global_type)
             .and_then(|any_state| any_state.downcast_mut::<G>())
-            .ok_or_else(|| anyhow!("no state of type {} exists", type_name::<G>()))
+            .with_context(|| format!("no state of type {} exists", type_name::<G>()))
             .unwrap()
     }
 
@@ -1170,7 +1201,7 @@ impl App {
         GlobalLease::new(
             self.globals_by_type
                 .remove(&TypeId::of::<G>())
-                .ok_or_else(|| anyhow!("no global registered of type {}", type_name::<G>()))
+                .with_context(|| format!("no global registered of type {}", type_name::<G>()))
                 .unwrap(),
         )
     }
@@ -1347,7 +1378,7 @@ impl App {
     /// Get all non-internal actions that have been registered, along with their schemas.
     pub fn action_schemas(
         &self,
-        generator: &mut schemars::gen::SchemaGenerator,
+        generator: &mut schemars::r#gen::SchemaGenerator,
     ) -> Vec<(SharedString, Option<schemars::schema::Schema>)> {
         self.actions.action_schemas(generator)
     }
@@ -1425,7 +1456,7 @@ impl App {
 
     /// Sets the right click menu for the app icon in the dock
     pub fn set_dock_menu(&self, menus: Vec<MenuItem>) {
-        self.platform.set_dock_menu(menus, &self.keymap.borrow());
+        self.platform.set_dock_menu(menus, &self.keymap.borrow())
     }
 
     /// Performs the action associated with the given dock menu item, only used on Windows for now.
@@ -1439,6 +1470,16 @@ impl App {
     /// If the path is already in the list, it will be moved to the bottom of the list.
     pub fn add_recent_document(&self, path: &Path) {
         self.platform.add_recent_document(path);
+    }
+
+    /// Updates the jump list with the updated list of recent paths for the application, only used on Windows for now.
+    /// Note that this also sets the dock menu on Windows.
+    pub fn update_jump_list(
+        &self,
+        menus: Vec<MenuItem>,
+        entries: Vec<SmallVec<[PathBuf; 2]>>,
+    ) -> Vec<SmallVec<[PathBuf; 2]>> {
+        self.platform.update_jump_list(menus, entries)
     }
 
     /// Dispatch an action to the currently active window or global action handler
@@ -1508,20 +1549,31 @@ impl App {
         self.active_drag.is_some()
     }
 
+    /// Stops active drag and clears any related effects.
+    pub fn stop_active_drag(&mut self, window: &mut Window) -> bool {
+        if self.active_drag.is_some() {
+            self.active_drag = None;
+            window.refresh();
+            true
+        } else {
+            false
+        }
+    }
+
     /// Set the prompt renderer for GPUI. This will replace the default or platform specific
     /// prompts with this custom implementation.
     pub fn set_prompt_builder(
         &mut self,
         renderer: impl Fn(
-                PromptLevel,
-                &str,
-                Option<&str>,
-                &[&str],
-                PromptHandle,
-                &mut Window,
-                &mut App,
-            ) -> RenderablePromptHandle
-            + 'static,
+            PromptLevel,
+            &str,
+            Option<&str>,
+            &[&str],
+            PromptHandle,
+            &mut Window,
+            &mut App,
+        ) -> RenderablePromptHandle
+        + 'static,
     ) {
         self.prompt_builder = Some(PromptBuilder::Custom(Box::new(renderer)))
     }
@@ -1600,6 +1652,29 @@ impl App {
     pub fn can_select_mixed_files_and_dirs(&self) -> bool {
         self.platform.can_select_mixed_files_and_dirs()
     }
+
+    /// Removes an image from the sprite atlas on all windows.
+    ///
+    /// If the current window is being updated, it will be removed from `App.windows``, you can use `current_window` to specify the current window.
+    /// This is a no-op if the image is not in the sprite atlas.
+    pub fn drop_image(&mut self, image: Arc<RenderImage>, current_window: Option<&mut Window>) {
+        // remove the texture from all other windows
+        for window in self.windows.values_mut().flatten() {
+            _ = window.drop_image(image.clone());
+        }
+
+        // remove the texture from the current window
+        if let Some(window) = current_window {
+            _ = window.drop_image(image);
+        }
+    }
+
+    /// Initializes gpui's default colors for the application.
+    ///
+    /// These colors can be accessed through `cx.default_colors()`.
+    pub fn init_colors(&mut self) {
+        self.set_global(GlobalColors(Arc::new(Colors::default())));
+    }
 }
 
 impl AppContext for App {
@@ -1609,10 +1684,7 @@ impl AppContext for App {
     ///
     /// The given function will be invoked with a [`Context`] and must return an object representing the entity. An
     /// [`Entity`] handle will be returned, which can be used to access the entity in a context.
-    fn new<T: 'static>(
-        &mut self,
-        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
-    ) -> Entity<T> {
+    fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Entity<T> {
         self.update(|cx| {
             let slot = cx.entities.reserve();
             let handle = slot.clone();
@@ -1636,7 +1708,7 @@ impl AppContext for App {
     fn insert_entity<T: 'static>(
         &mut self,
         reservation: Reservation<T>,
-        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Self::Result<Entity<T>> {
         self.update(|cx| {
             let slot = reservation.0;
@@ -1650,7 +1722,7 @@ impl AppContext for App {
     fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Entity<T>,
-        update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Context<T>) -> R,
     ) -> R {
         self.update(|cx| {
             let mut entity = cx.entities.lease(handle);
@@ -1693,7 +1765,7 @@ impl AppContext for App {
         let window = self
             .windows
             .get(window.id)
-            .ok_or_else(|| anyhow!("window not found"))?
+            .context("window not found")?
             .as_ref()
             .expect("attempted to read a window that is already on the stack");
 
@@ -1801,6 +1873,9 @@ pub struct AnyDrag {
     /// This is used to render the dragged item in the same place
     /// on the original element that the drag was initiated
     pub cursor_offset: Point<Pixels>,
+
+    /// The cursor style to use while dragging
+    pub cursor_style: Option<CursorStyle>,
 }
 
 /// Contains state associated with a tooltip. You'll only need this struct if you're implementing
@@ -1827,6 +1902,9 @@ pub struct KeystrokeEvent {
 
     /// The action that was resolved for the keystroke, if any
     pub action: Option<Box<dyn Action>>,
+
+    /// The context stack at the time
+    pub context_stack: Vec<KeyContext>,
 }
 
 struct NullHttpClient;
@@ -1837,12 +1915,15 @@ impl HttpClient for NullHttpClient {
         _req: http_client::Request<http_client::AsyncBody>,
     ) -> futures::future::BoxFuture<
         'static,
-        Result<http_client::Response<http_client::AsyncBody>, anyhow::Error>,
+        anyhow::Result<http_client::Response<http_client::AsyncBody>>,
     > {
-        async move { Err(anyhow!("No HttpClient available")) }.boxed()
+        async move {
+            anyhow::bail!("No HttpClient available");
+        }
+        .boxed()
     }
 
-    fn proxy(&self) -> Option<&http_client::Uri> {
+    fn proxy(&self) -> Option<&Url> {
         None
     }
 

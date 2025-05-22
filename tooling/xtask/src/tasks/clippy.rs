@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context as _, Result, bail};
 use clap::Parser;
 
 #[derive(Parser)]

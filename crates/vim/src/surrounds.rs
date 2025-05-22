@@ -1,10 +1,10 @@
 use crate::{
+    Vim,
     motion::{self, Motion},
     object::Object,
     state::Mode,
-    Vim,
 };
-use editor::{movement, scroll::Autoscroll, Bias};
+use editor::{Bias, movement, scroll::Autoscroll};
 use gpui::{Context, Window};
 use language::BracketPair;
 
@@ -27,6 +27,7 @@ impl Vim {
     ) {
         self.stop_recording(cx);
         let count = Vim::take_count(cx);
+        let forced_motion = Vim::take_forced_motion(cx);
         let mode = self.mode;
         self.update_editor(window, cx, |_, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
@@ -59,10 +60,10 @@ impl Vim {
                                     &display_map,
                                     selection.clone(),
                                     count,
-                                    true,
                                     &text_layout_details,
+                                    forced_motion,
                                 )
-                                .map(|mut range| {
+                                .map(|(mut range, _)| {
                                     // The Motion::CurrentLine operation will contain the newline of the current line and leading/trailing whitespace
                                     if let Motion::CurrentLine = motion {
                                         range.start = motion::first_non_whitespace(
@@ -72,11 +73,7 @@ impl Vim {
                                         );
                                         range.end = movement::saturating_right(
                                             &display_map,
-                                            motion::last_non_whitespace(
-                                                &display_map,
-                                                movement::left(&display_map, range.end),
-                                                1,
-                                            ),
+                                            motion::last_non_whitespace(&display_map, range.end, 1),
                                         );
                                     }
                                     range
@@ -89,7 +86,7 @@ impl Vim {
                         let start = range.start.to_offset(&display_map, Bias::Right);
                         let end = range.end.to_offset(&display_map, Bias::Left);
                         let (start_cursor_str, end_cursor_str) = if mode == Mode::VisualLine {
-                            (format!("{}\n", pair.start), format!("{}\n", pair.end))
+                            (format!("{}\n", pair.start), format!("\n{}", pair.end))
                         } else {
                             let maybe_space = if surround { " " } else { "" };
                             (
@@ -554,7 +551,7 @@ mod test {
     use gpui::KeyBinding;
     use indoc::indoc;
 
-    use crate::{state::Mode, test::VimTestContext, PushAddSurrounds};
+    use crate::{PushAddSurrounds, state::Mode, test::VimTestContext};
 
     #[gpui::test]
     async fn test_add_surrounds(cx: &mut gpui::TestAppContext) {

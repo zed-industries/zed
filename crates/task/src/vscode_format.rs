@@ -3,7 +3,7 @@ use collections::HashMap;
 use serde::Deserialize;
 use util::ResultExt;
 
-use crate::{TaskTemplate, TaskTemplates, VariableName};
+use crate::{EnvVariableReplacer, TaskTemplate, TaskTemplates, VariableName};
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -39,48 +39,6 @@ enum Command {
     Gulp {
         task: String,
     },
-}
-
-type VsCodeEnvVariable = String;
-type ZedEnvVariable = String;
-
-struct EnvVariableReplacer {
-    variables: HashMap<VsCodeEnvVariable, ZedEnvVariable>,
-}
-
-impl EnvVariableReplacer {
-    fn new(variables: HashMap<VsCodeEnvVariable, ZedEnvVariable>) -> Self {
-        Self { variables }
-    }
-    // Replaces occurrences of VsCode-specific environment variables with Zed equivalents.
-    fn replace(&self, input: &str) -> String {
-        shellexpand::env_with_context_no_errors(&input, |var: &str| {
-            // Colons denote a default value in case the variable is not set. We want to preserve that default, as otherwise shellexpand will substitute it for us.
-            let colon_position = var.find(':').unwrap_or(var.len());
-            let (variable_name, default) = var.split_at(colon_position);
-            let append_previous_default = |ret: &mut String| {
-                if !default.is_empty() {
-                    ret.push_str(default);
-                }
-            };
-            if let Some(substitution) = self.variables.get(variable_name) {
-                // Got a VSCode->Zed hit, perform a substitution
-                let mut name = format!("${{{substitution}");
-                append_previous_default(&mut name);
-                name.push('}');
-                return Some(name);
-            }
-            // This is an unknown variable.
-            // We should not error out, as they may come from user environment (e.g. $PATH). That means that the variable substitution might not be perfect.
-            // If there's a default, we need to return the string verbatim as otherwise shellexpand will apply that default for us.
-            if !default.is_empty() {
-                return Some(format!("${{{var}}}"));
-            }
-            // Else we can just return None and that variable will be left as is.
-            None
-        })
-        .into_owned()
-    }
 }
 
 impl VsCodeTaskDefinition {
@@ -154,8 +112,8 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::{
-        vscode_format::{Command, VsCodeTaskDefinition},
         TaskTemplate, TaskTemplates, VsCodeTaskFile,
+        vscode_format::{Command, VsCodeTaskDefinition},
     };
 
     use super::EnvVariableReplacer;

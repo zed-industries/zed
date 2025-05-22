@@ -1,11 +1,14 @@
 pub mod arc_cow;
+pub mod archive;
 pub mod command;
 pub mod fs;
 pub mod markdown;
 pub mod paths;
 pub mod serde;
+pub mod size;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
+pub mod time;
 
 use anyhow::Result;
 use futures::Future;
@@ -25,7 +28,7 @@ use std::{
 use unicase::UniCase;
 
 #[cfg(unix)]
-use anyhow::{anyhow, Context as _};
+use anyhow::Context as _;
 
 pub use take_until::*;
 #[cfg(any(test, feature = "test-support"))]
@@ -145,6 +148,66 @@ pub fn truncate_lines_and_trailoff(s: &str, max_lines: usize) -> String {
     }
 }
 
+/// Truncates the string at a character boundary, such that the result is less than `max_bytes` in
+/// length.
+pub fn truncate_to_byte_limit(s: &str, max_bytes: usize) -> &str {
+    if s.len() < max_bytes {
+        return s;
+    }
+
+    for i in (0..max_bytes).rev() {
+        if s.is_char_boundary(i) {
+            return &s[..i];
+        }
+    }
+
+    ""
+}
+
+/// Takes a prefix of complete lines which fit within the byte limit. If the first line is longer
+/// than the limit, truncates at a character boundary.
+pub fn truncate_lines_to_byte_limit(s: &str, max_bytes: usize) -> &str {
+    if s.len() < max_bytes {
+        return s;
+    }
+
+    for i in (0..max_bytes).rev() {
+        if s.is_char_boundary(i) {
+            if s.as_bytes()[i] == b'\n' {
+                // Since the i-th character is \n, valid to slice at i + 1.
+                return &s[..i + 1];
+            }
+        }
+    }
+
+    truncate_to_byte_limit(s, max_bytes)
+}
+
+#[test]
+fn test_truncate_lines_to_byte_limit() {
+    let text = "Line 1\nLine 2\nLine 3\nLine 4";
+
+    // Limit that includes all lines
+    assert_eq!(truncate_lines_to_byte_limit(text, 100), text);
+
+    // Exactly the first line
+    assert_eq!(truncate_lines_to_byte_limit(text, 7), "Line 1\n");
+
+    // Limit between lines
+    assert_eq!(truncate_lines_to_byte_limit(text, 13), "Line 1\n");
+    assert_eq!(truncate_lines_to_byte_limit(text, 20), "Line 1\nLine 2\n");
+
+    // Limit before first newline
+    assert_eq!(truncate_lines_to_byte_limit(text, 6), "Line ");
+
+    // Test with non-ASCII characters
+    let text_utf8 = "Line 1\nLíne 2\nLine 3";
+    assert_eq!(
+        truncate_lines_to_byte_limit(text_utf8, 15),
+        "Line 1\nLíne 2\n"
+    );
+}
+
 pub fn post_inc<T: From<u8> + AddAssign<T> + Copy>(value: &mut T) -> T {
     let prev = *value;
     *value += T::from(1);
@@ -197,7 +260,7 @@ where
 }
 
 #[cfg(unix)]
-pub fn load_shell_from_passwd() -> Result<()> {
+fn load_shell_from_passwd() -> Result<()> {
     let buflen = match unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) } {
         n if n < 0 => 1024,
         n => n as usize,
@@ -239,7 +302,7 @@ pub fn load_shell_from_passwd() -> Result<()> {
             "updating SHELL environment variable to value from passwd entry: {:?}",
             shell,
         );
-        env::set_var("SHELL", shell);
+        unsafe { env::set_var("SHELL", shell) };
     }
 
     Ok(())
@@ -247,6 +310,8 @@ pub fn load_shell_from_passwd() -> Result<()> {
 
 #[cfg(unix)]
 pub fn load_login_shell_environment() -> Result<()> {
+    load_shell_from_passwd().log_err();
+
     let marker = "ZED_LOGIN_SHELL_START";
     let shell = env::var("SHELL").context(
         "SHELL environment variable is not assigned so we can't source login environment variables",
@@ -261,31 +326,24 @@ pub fn load_login_shell_environment() -> Result<()> {
         .and_then(|home| home.into_string().ok())
         .map(|home| format!("cd '{home}';"));
 
-    // The `exit 0` is the result of hours of debugging, trying to find out
-    // why running this command here, without `exit 0`, would mess
-    // up signal process for our process so that `ctrl-c` doesn't work
-    // anymore.
-    // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
-    // do that, but it does, and `exit 0` helps.
     let shell_cmd = format!(
-        "{}printf '%s' {marker}; /usr/bin/env; exit 0;",
+        "{}printf '%s' {marker}; /usr/bin/env;",
         shell_cmd_prefix.as_deref().unwrap_or("")
     );
 
-    let output = std::process::Command::new(&shell)
-        .args(["-l", "-i", "-c", &shell_cmd])
-        .output()
-        .context("failed to spawn login shell to source login environment variables")?;
-    if !output.status.success() {
-        Err(anyhow!("login shell exited with error"))?;
-    }
+    let output = set_pre_exec_to_start_new_session(
+        std::process::Command::new(&shell).args(["-l", "-i", "-c", &shell_cmd]),
+    )
+    .output()
+    .context("failed to spawn login shell to source login environment variables")?;
+    anyhow::ensure!(output.status.success(), "login shell exited with error");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     if let Some(env_output_start) = stdout.find(marker) {
         let env_output = &stdout[env_output_start + marker.len()..];
 
-        parse_env_output(env_output, |key, value| env::set_var(key, value));
+        parse_env_output(env_output, |key, value| unsafe { env::set_var(key, value) });
 
         log::info!(
             "set environment variables from shell:{}, path:{}",
@@ -295,6 +353,26 @@ pub fn load_login_shell_environment() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Configures the process to start a new session, to prevent interactive shells from taking control
+/// of the terminal.
+///
+/// For more details: https://registerspill.thorstenball.com/p/how-to-lose-control-of-your-shell
+pub fn set_pre_exec_to_start_new_session(
+    command: &mut std::process::Command,
+) -> &mut std::process::Command {
+    // safety: code in pre_exec should be signal safe.
+    // https://man7.org/linux/man-pages/man7/signal-safety.7.html
+    #[cfg(not(target_os = "windows"))]
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        command.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    };
+    command
 }
 
 /// Parse the result of calling `usr/bin/env` with no arguments
@@ -320,6 +398,31 @@ pub fn parse_env_output(env: &str, mut f: impl FnMut(String, String)) {
     }
     if let Some((key, value)) = Option::zip(current_key.take(), current_value.take()) {
         f(key, value)
+    }
+}
+
+pub fn merge_json_lenient_value_into(
+    source: serde_json_lenient::Value,
+    target: &mut serde_json_lenient::Value,
+) {
+    match (source, target) {
+        (serde_json_lenient::Value::Object(source), serde_json_lenient::Value::Object(target)) => {
+            for (key, value) in source {
+                if let Some(target) = target.get_mut(&key) {
+                    merge_json_lenient_value_into(value, target);
+                } else {
+                    target.insert(key, value);
+                }
+            }
+        }
+
+        (serde_json_lenient::Value::Array(source), serde_json_lenient::Value::Array(target)) => {
+            for value in source {
+                target.push(value);
+            }
+        }
+
+        (source, target) => *target = source,
     }
 }
 
@@ -414,6 +517,108 @@ pub fn iterate_expanded_and_wrapped_usize_range(
     } else {
         Either::Left((range.start - additional_before)..(range.end + additional_after))
     }
+}
+
+#[cfg(target_os = "windows")]
+pub fn get_windows_system_shell() -> String {
+    use std::path::PathBuf;
+
+    fn find_pwsh_in_programfiles(find_alternate: bool, find_preview: bool) -> Option<PathBuf> {
+        #[cfg(target_pointer_width = "64")]
+        let env_var = if find_alternate {
+            "ProgramFiles(x86)"
+        } else {
+            "ProgramFiles"
+        };
+
+        #[cfg(target_pointer_width = "32")]
+        let env_var = if find_alternate {
+            "ProgramW6432"
+        } else {
+            "ProgramFiles"
+        };
+
+        let install_base_dir = PathBuf::from(std::env::var_os(env_var)?).join("PowerShell");
+        install_base_dir
+            .read_dir()
+            .ok()?
+            .filter_map(Result::ok)
+            .filter(|entry| matches!(entry.file_type(), Ok(ft) if ft.is_dir()))
+            .filter_map(|entry| {
+                let dir_name = entry.file_name();
+                let dir_name = dir_name.to_string_lossy();
+
+                let version = if find_preview {
+                    let dash_index = dir_name.find('-')?;
+                    if &dir_name[dash_index + 1..] != "preview" {
+                        return None;
+                    };
+                    dir_name[..dash_index].parse::<u32>().ok()?
+                } else {
+                    dir_name.parse::<u32>().ok()?
+                };
+
+                let exe_path = entry.path().join("pwsh.exe");
+                if exe_path.exists() {
+                    Some((version, exe_path))
+                } else {
+                    None
+                }
+            })
+            .max_by_key(|(version, _)| *version)
+            .map(|(_, path)| path)
+    }
+
+    fn find_pwsh_in_msix(find_preview: bool) -> Option<PathBuf> {
+        let msix_app_dir =
+            PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("Microsoft\\WindowsApps");
+        if !msix_app_dir.exists() {
+            return None;
+        }
+
+        let prefix = if find_preview {
+            "Microsoft.PowerShellPreview_"
+        } else {
+            "Microsoft.PowerShell_"
+        };
+        msix_app_dir
+            .read_dir()
+            .ok()?
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
+                if !matches!(entry.file_type(), Ok(ft) if ft.is_dir()) {
+                    return None;
+                }
+
+                if !entry.file_name().to_string_lossy().starts_with(prefix) {
+                    return None;
+                }
+
+                let exe_path = entry.path().join("pwsh.exe");
+                exe_path.exists().then_some(exe_path)
+            })
+            .next()
+    }
+
+    fn find_pwsh_in_scoop() -> Option<PathBuf> {
+        let pwsh_exe =
+            PathBuf::from(std::env::var_os("USERPROFILE")?).join("scoop\\shims\\pwsh.exe");
+        pwsh_exe.exists().then_some(pwsh_exe)
+    }
+
+    static SYSTEM_SHELL: LazyLock<String> = LazyLock::new(|| {
+        find_pwsh_in_programfiles(false, false)
+            .or_else(|| find_pwsh_in_programfiles(true, false))
+            .or_else(|| find_pwsh_in_msix(false))
+            .or_else(|| find_pwsh_in_programfiles(false, true))
+            .or_else(|| find_pwsh_in_msix(true))
+            .or_else(|| find_pwsh_in_programfiles(true, true))
+            .or_else(find_pwsh_in_scoop)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or("powershell.exe".to_string())
+    });
+
+    (*SYSTEM_SHELL).clone()
 }
 
 pub trait ResultExt<E> {
@@ -625,7 +830,7 @@ pub fn defer<F: FnOnce()>(f: F) -> Deferred<F> {
 
 #[cfg(any(test, feature = "test-support"))]
 mod rng {
-    use rand::{seq::SliceRandom, Rng};
+    use rand::{Rng, seq::SliceRandom};
     pub struct RandomCharIter<T: Rng> {
         rng: T,
         simple_text: bool,
@@ -830,6 +1035,41 @@ pub fn word_consists_of_emojis(s: &str) -> bool {
 
 pub fn default<D: Default>() -> D {
     Default::default()
+}
+
+pub fn get_system_shell() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        get_windows_system_shell()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::env::var("SHELL").unwrap_or("/bin/sh".to_string())
+    }
+}
+
+#[derive(Debug)]
+pub enum ConnectionResult<O> {
+    Timeout,
+    ConnectionReset,
+    Result(anyhow::Result<O>),
+}
+
+impl<O> ConnectionResult<O> {
+    pub fn into_response(self) -> anyhow::Result<O> {
+        match self {
+            ConnectionResult::Timeout => anyhow::bail!("Request timed out"),
+            ConnectionResult::ConnectionReset => anyhow::bail!("Server reset the connection"),
+            ConnectionResult::Result(r) => r,
+        }
+    }
+}
+
+impl<O> From<anyhow::Result<O>> for ConnectionResult<O> {
+    fn from(result: anyhow::Result<O>) -> Self {
+        ConnectionResult::Result(result)
+    }
 }
 
 #[cfg(test)]

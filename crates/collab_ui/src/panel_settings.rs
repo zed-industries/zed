@@ -11,57 +11,13 @@ pub struct CollaborationPanelSettings {
     pub default_width: Pixels,
 }
 
-#[derive(Clone, Copy, Default, Serialize, JsonSchema, Debug)]
+#[derive(Clone, Copy, Default, Serialize, Deserialize, JsonSchema, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum ChatPanelButton {
     Never,
     Always,
     #[default]
     WhenInCall,
-}
-
-impl<'de> Deserialize<'de> for ChatPanelButton {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        struct Visitor;
-
-        impl serde::de::Visitor<'_> for Visitor {
-            type Value = ChatPanelButton;
-
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                write!(
-                    f,
-                    r#"a boolean or one of "never", "always", "when_in_call""#
-                )
-            }
-
-            fn visit_bool<E>(self, b: bool) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                match b {
-                    false => Ok(ChatPanelButton::Never),
-                    true => Ok(ChatPanelButton::Always),
-                }
-            }
-
-            fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                match s {
-                    "never" => Ok(ChatPanelButton::Never),
-                    "always" => Ok(ChatPanelButton::Always),
-                    "when_in_call" => Ok(ChatPanelButton::WhenInCall),
-                    _ => Err(E::unknown_variant(s, &["never", "always", "when_in_call"])),
-                }
-            }
-        }
-
-        deserializer.deserialize_any(Visitor)
-    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -72,6 +28,7 @@ pub struct ChatPanelSettings {
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[schemars(deny_unknown_fields)]
 pub struct ChatPanelSettingsContent {
     /// When to show the panel button in the status bar.
     ///
@@ -95,6 +52,7 @@ pub struct NotificationPanelSettings {
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[schemars(deny_unknown_fields)]
 pub struct PanelSettingsContent {
     /// Whether to show the panel button in the status bar.
     ///
@@ -111,6 +69,7 @@ pub struct PanelSettingsContent {
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[schemars(deny_unknown_fields)]
 pub struct MessageEditorSettings {
     /// Whether to automatically replace emoji shortcodes with emoji characters.
     /// For example: typing `:wave:` gets replaced with `👋`.
@@ -130,6 +89,8 @@ impl Settings for CollaborationPanelSettings {
     ) -> anyhow::Result<Self> {
         sources.json_merge()
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
 impl Settings for ChatPanelSettings {
@@ -143,6 +104,8 @@ impl Settings for ChatPanelSettings {
     ) -> anyhow::Result<Self> {
         sources.json_merge()
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
 impl Settings for NotificationPanelSettings {
@@ -156,6 +119,8 @@ impl Settings for NotificationPanelSettings {
     ) -> anyhow::Result<Self> {
         sources.json_merge()
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
 impl Settings for MessageEditorSettings {
@@ -169,4 +134,6 @@ impl Settings for MessageEditorSettings {
     ) -> anyhow::Result<Self> {
         sources.json_merge()
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }

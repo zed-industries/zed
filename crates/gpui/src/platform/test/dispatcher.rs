@@ -89,7 +89,16 @@ impl TestDispatcher {
         self.state.lock().time = new_now;
     }
 
-    pub fn simulate_random_delay(&self) -> impl 'static + Send + Future<Output = ()> {
+    pub fn advance_clock_to_next_delayed(&self) -> bool {
+        let next_due_time = self.state.lock().delayed.first().map(|(time, _)| *time);
+        if let Some(next_due_time) = next_due_time {
+            self.state.lock().time = next_due_time;
+            return true;
+        }
+        false
+    }
+
+    pub fn simulate_random_delay(&self) -> impl 'static + Send + Future<Output = ()> + use<> {
         struct YieldNow {
             pub(crate) count: usize,
         }

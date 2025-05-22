@@ -3,7 +3,7 @@ use crate::{
     summary_index::FileSummary,
     worktree_index::{WorktreeIndex, WorktreeIndexHandle},
 };
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
 use fs::Fs;
 use futures::FutureExt;
@@ -282,11 +282,10 @@ impl ProjectIndex {
                 .collect();
 
             let query_embeddings = embedding_provider.embed(&queries[..]).await?;
-            if query_embeddings.len() != queries.len() {
-                return Err(anyhow!(
-                    "The number of query embeddings does not match the number of queries"
-                ));
-            }
+            anyhow::ensure!(
+                query_embeddings.len() == queries.len(),
+                "The number of query embeddings does not match the number of queries"
+            );
 
             let mut results_by_worker = Vec::new();
             for _ in 0..cx.background_executor().num_cpus() {

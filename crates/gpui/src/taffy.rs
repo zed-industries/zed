@@ -5,10 +5,10 @@ use collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::fmt::Debug;
 use taffy::{
+    TaffyTree, TraversePartialTree as _,
     geometry::{Point as TaffyPoint, Rect as TaffyRect, Size as TaffySize},
     style::AvailableSpace as TaffyAvailableSpace,
     tree::NodeId,
-    TaffyTree, TraversePartialTree as _,
 };
 
 type NodeMeasureFn = Box<
@@ -71,8 +71,13 @@ impl TaffyLayoutEngine {
         &mut self,
         style: Style,
         rem_size: Pixels,
-        measure: impl FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
-            + 'static,
+        measure: impl FnMut(
+            Size<Option<Pixels>>,
+            Size<AvailableSpace>,
+            &mut Window,
+            &mut App,
+        ) -> Size<Pixels>
+        + 'static,
     ) -> LayoutId {
         let taffy_style = style.to_taffy(rem_size);
 

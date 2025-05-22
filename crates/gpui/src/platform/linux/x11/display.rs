@@ -1,8 +1,8 @@
-use anyhow::Result;
+use anyhow::Context as _;
 use uuid::Uuid;
 use x11rb::{connection::Connection as _, xcb_ffi::XCBConnection};
 
-use crate::{px, Bounds, DisplayId, Pixels, PlatformDisplay, Size};
+use crate::{Bounds, DisplayId, Pixels, PlatformDisplay, Size, px};
 
 #[derive(Debug)]
 pub(crate) struct X11Display {
@@ -17,12 +17,11 @@ impl X11Display {
         scale_factor: f32,
         x_screen_index: usize,
     ) -> anyhow::Result<Self> {
-        let Some(screen) = xcb.setup().roots.get(x_screen_index) else {
-            return Err(anyhow::anyhow!(
-                "No screen found with index {}",
-                x_screen_index
-            ));
-        };
+        let screen = xcb
+            .setup()
+            .roots
+            .get(x_screen_index)
+            .with_context(|| format!("No screen found with index {x_screen_index}"))?;
         Ok(Self {
             x_screen_index,
             bounds: Bounds {
@@ -42,7 +41,7 @@ impl PlatformDisplay for X11Display {
         DisplayId(self.x_screen_index as u32)
     }
 
-    fn uuid(&self) -> Result<Uuid> {
+    fn uuid(&self) -> anyhow::Result<Uuid> {
         Ok(self.uuid)
     }
 

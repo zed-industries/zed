@@ -1,16 +1,16 @@
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AsyncApp;
-use http_client::github::{build_asset_url, AssetKind, GitHubLspBinaryVersion};
+use http_client::github::{AssetKind, GitHubLspBinaryVersion, build_asset_url};
 use language::{LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
-use project::{lsp_store::language_server_settings, Fs};
-use serde_json::{json, Value};
+use project::{Fs, lsp_store::language_server_settings};
+use serde_json::{Value, json};
 use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
     any::Any,
@@ -19,7 +19,8 @@ use std::{
     sync::Arc,
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
-use util::{fs::remove_matching, maybe, ResultExt};
+use util::archive::extract_zip;
+use util::{ResultExt, fs::remove_matching, maybe};
 
 pub(super) fn typescript_task_context() -> ContextProviderWithTasks {
     ContextProviderWithTasks::new(TaskTemplates(vec![
@@ -315,10 +316,7 @@ async fn get_cached_ts_server_binary(
                 arguments: typescript_server_binary_arguments(&old_server_path),
             })
         } else {
-            Err(anyhow!(
-                "missing executable in directory {:?}",
-                container_dir
-            ))
+            anyhow::bail!("missing executable in directory {container_dir:?}")
         }
     })
     .await
@@ -341,8 +339,14 @@ impl EsLintLspAdapter {
     const SERVER_PATH: &'static str = "vscode-eslint/server/out/eslintServer.js";
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("eslint");
 
-    const FLAT_CONFIG_FILE_NAMES: &'static [&'static str] =
-        &["eslint.config.js", "eslint.config.mjs", "eslint.config.cjs"];
+    const FLAT_CONFIG_FILE_NAMES: &'static [&'static str] = &[
+        "eslint.config.js",
+        "eslint.config.mjs",
+        "eslint.config.cjs",
+        "eslint.config.ts",
+        "eslint.config.cts",
+        "eslint.config.mts",
+    ];
 
     pub fn new(node: NodeRuntime) -> Self {
         EsLintLspAdapter { node }
@@ -485,7 +489,7 @@ impl LspAdapter for EsLintLspAdapter {
                 .http_client()
                 .get(&version.url, Default::default(), true)
                 .await
-                .map_err(|err| anyhow!("error downloading release: {}", err))?;
+                .context("downloading release")?;
             match Self::GITHUB_ASSET_KIND {
                 AssetKind::TarGz => {
                     let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
@@ -511,19 +515,16 @@ impl LspAdapter for EsLintLspAdapter {
                         })?;
                 }
                 AssetKind::Zip => {
-                    node_runtime::extract_zip(
-                        &destination_path,
-                        BufReader::new(response.body_mut()),
-                    )
-                    .await
-                    .with_context(|| {
-                        format!("unzipping {} to {:?}", version.url, destination_path)
-                    })?;
+                    extract_zip(&destination_path, BufReader::new(response.body_mut()))
+                        .await
+                        .with_context(|| {
+                            format!("unzipping {} to {:?}", version.url, destination_path)
+                        })?;
                 }
             }
 
             let mut dir = fs::read_dir(&destination_path).await?;
-            let first = dir.next().await.ok_or(anyhow!("missing first file"))??;
+            let first = dir.next().await.context("missing first file")??;
             let repo_root = destination_path.join("vscode-eslint");
             fs::rename(first.path(), &repo_root).await?;
 
@@ -574,9 +575,10 @@ impl LspAdapter for EsLintLspAdapter {
 
 #[cfg(target_os = "windows")]
 async fn handle_symlink(src_dir: PathBuf, dest_dir: PathBuf) -> Result<()> {
-    if fs::metadata(&src_dir).await.is_err() {
-        return Err(anyhow!("Directory {} not present.", src_dir.display()));
-    }
+    anyhow::ensure!(
+        fs::metadata(&src_dir).await.is_ok(),
+        "Directory {src_dir:?} is not present"
+    );
     if fs::metadata(&dest_dir).await.is_ok() {
         fs::remove_file(&dest_dir).await?;
     }

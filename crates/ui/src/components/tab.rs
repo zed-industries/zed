@@ -26,7 +26,7 @@ pub enum TabCloseSide {
     End,
 }
 
-#[derive(IntoElement, IntoComponent)]
+#[derive(IntoElement, RegisterComponent)]
 pub struct Tab {
     div: Stateful<Div>,
     selected: bool,
@@ -73,11 +73,11 @@ impl Tab {
         self
     }
 
-    pub fn content_height(cx: &mut App) -> Pixels {
+    pub fn content_height(cx: &App) -> Pixels {
         DynamicSpacing::Base32.px(cx) - px(1.)
     }
 
-    pub fn container_height(cx: &mut App) -> Pixels {
+    pub fn container_height(cx: &App) -> Pixels {
         DynamicSpacing::Base32.px(cx)
     }
 }
@@ -122,9 +122,15 @@ impl RenderOnce for Tab {
         };
 
         let (start_slot, end_slot) = {
-            let start_slot = h_flex().size_3().justify_center().children(self.start_slot);
+            let start_slot = h_flex()
+                .size(px(12.)) // use px over rem from size_3
+                .justify_center()
+                .children(self.start_slot);
 
-            let end_slot = h_flex().size_3().justify_center().children(self.end_slot);
+            let end_slot = h_flex()
+                .size(px(12.)) // use px over rem from size_3
+                .justify_center()
+                .children(self.end_slot);
 
             match self.close_side {
                 TabCloseSide::End => (start_slot, end_slot),
@@ -148,7 +154,7 @@ impl RenderOnce for Tab {
                     if self.selected {
                         this.border_l_1().border_r_1().pb_px()
                     } else {
-                        this.pr_px().pl_px().border_b_1().border_r_1()
+                        this.pr_px().border_b_1().border_r_1()
                     }
                 }
                 TabPosition::Middle(Ordering::Equal) => this.border_l_1().border_r_1().pb_px(),
@@ -171,48 +177,59 @@ impl RenderOnce for Tab {
     }
 }
 
-// View this component preview using `workspace: open component-preview`
-impl ComponentPreview for Tab {
-    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
-        v_flex()
-            .gap_6()
-            .children(vec![example_group_with_title(
-                "Variations",
-                vec![
-                    single_example(
-                        "Default",
-                        Tab::new("default").child("Default Tab").into_any_element(),
-                    ),
-                    single_example(
-                        "Selected",
-                        Tab::new("selected")
-                            .toggle_state(true)
-                            .child("Selected Tab")
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "First",
-                        Tab::new("first")
-                            .position(TabPosition::First)
-                            .child("First Tab")
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "Middle",
-                        Tab::new("middle")
-                            .position(TabPosition::Middle(Ordering::Equal))
-                            .child("Middle Tab")
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "Last",
-                        Tab::new("last")
-                            .position(TabPosition::Last)
-                            .child("Last Tab")
-                            .into_any_element(),
-                    ),
-                ],
-            )])
-            .into_any_element()
+impl Component for Tab {
+    fn scope() -> ComponentScope {
+        ComponentScope::None
+    }
+
+    fn description() -> Option<&'static str> {
+        Some(
+            "A tab component that can be used in a tabbed interface, supporting different positions and states.",
+        )
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        Some(
+            v_flex()
+                .gap_6()
+                .children(vec![example_group_with_title(
+                    "Variations",
+                    vec![
+                        single_example(
+                            "Default",
+                            Tab::new("default").child("Default Tab").into_any_element(),
+                        ),
+                        single_example(
+                            "Selected",
+                            Tab::new("selected")
+                                .toggle_state(true)
+                                .child("Selected Tab")
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "First",
+                            Tab::new("first")
+                                .position(TabPosition::First)
+                                .child("First Tab")
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Middle",
+                            Tab::new("middle")
+                                .position(TabPosition::Middle(Ordering::Equal))
+                                .child("Middle Tab")
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Last",
+                            Tab::new("last")
+                                .position(TabPosition::Last)
+                                .child("Last Tab")
+                                .into_any_element(),
+                        ),
+                    ],
+                )])
+                .into_any_element(),
+        )
     }
 }

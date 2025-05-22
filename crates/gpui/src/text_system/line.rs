@@ -1,7 +1,7 @@
 use crate::{
-    black, fill, point, px, size, App, Bounds, Half, Hsla, LineLayout, Pixels, Point, Result,
-    SharedString, StrikethroughStyle, TextAlign, UnderlineStyle, Window, WrapBoundary,
-    WrappedLineLayout,
+    App, Bounds, Half, Hsla, LineLayout, Pixels, Point, Result, SharedString, StrikethroughStyle,
+    TextAlign, UnderlineStyle, Window, WrapBoundary, WrappedLineLayout, black, fill, point, px,
+    size,
 };
 use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
@@ -140,6 +140,36 @@ impl WrappedLine {
         };
 
         paint_line(
+            origin,
+            &self.layout.unwrapped_layout,
+            line_height,
+            align,
+            align_width,
+            &self.decoration_runs,
+            &self.wrap_boundaries,
+            window,
+            cx,
+        )?;
+
+        Ok(())
+    }
+
+    /// Paint the background of line of text to the window.
+    pub fn paint_background(
+        &self,
+        origin: Point<Pixels>,
+        line_height: Pixels,
+        align: TextAlign,
+        bounds: Option<Bounds<Pixels>>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<()> {
+        let align_width = match bounds {
+            Some(bounds) => Some(bounds.size.width),
+            None => self.layout.wrap_width,
+        };
+
+        paint_line_background(
             origin,
             &self.layout.unwrapped_layout,
             line_height,
@@ -452,6 +482,16 @@ fn paint_line_background(
                         background_origin.x = origin.x;
                         background_origin.y += line_height;
                     }
+
+                    glyph_origin.x = aligned_origin_x(
+                        origin,
+                        align_width.unwrap_or(layout.width),
+                        glyph.position.x,
+                        &align,
+                        layout,
+                        wraps.peek(),
+                    );
+                    glyph_origin.y += line_height;
                 }
                 prev_glyph_position = glyph.position;
 

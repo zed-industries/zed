@@ -1,27 +1,74 @@
 //! # logger
 pub use log as log_impl;
 
+mod env_config;
+pub mod filter;
+pub mod sink;
+
+pub use sink::{flush, init_output_file, init_output_stdout};
+
 pub const SCOPE_DEPTH_MAX: usize = 4;
 
-/// because we are currently just wrapping the `log` crate in `zlog`,
-/// we need to work around the fact that the `log` crate only provides a
-/// single global level filter. In order to have more precise control until
-/// we no longer wrap `log`, we bump up the priority of log level so that it
-/// will be logged, even if the actual level is lower
-/// This is fine for now, as we use a `info` level filter by default in releases,
-/// which hopefully won't result in confusion like `warn` or `error` levels might.
-pub fn min_printed_log_level(level: log_impl::Level) -> log_impl::Level {
-    // this logic is defined based on the logic used in the `log` crate,
-    // which checks that a logs level is <= both of these values,
-    // so we take the minimum of the two values to ensure that check passes
-    let level_min_static = log_impl::STATIC_MAX_LEVEL;
-    let level_min_dynamic = log_impl::max_level();
-    if level <= level_min_static && level <= level_min_dynamic {
-        return level;
+pub fn init() {
+    process_env();
+    log::set_logger(&ZLOG).expect("Logger should not be initialized twice");
+    log::set_max_level(log::LevelFilter::max());
+}
+
+pub fn process_env() {
+    let Ok(env_config) = std::env::var("ZED_LOG").or_else(|_| std::env::var("RUST_LOG")) else {
+        return;
+    };
+    match env_config::parse(&env_config) {
+        Ok(filter) => {
+            filter::init_env_filter(filter);
+            filter::refresh();
+        }
+        Err(err) => {
+            eprintln!("Failed to parse log filter: {}", err);
+        }
     }
-    return log_impl::LevelFilter::min(level_min_static, level_min_dynamic)
-        .to_level()
-        .unwrap_or(level);
+}
+
+static ZLOG: Zlog = Zlog {};
+
+pub struct Zlog {}
+
+impl log::Log for Zlog {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        filter::is_possibly_enabled_level(metadata.level())
+    }
+
+    fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+        let (crate_name_scope, module_scope) = match record.module_path_static() {
+            Some(module_path) => {
+                let crate_name = private::extract_crate_name_from_module_path(module_path);
+                let crate_name_scope = private::scope_new(&[crate_name]);
+                let module_scope = private::scope_new(&[module_path]);
+                (crate_name_scope, module_scope)
+            }
+            // TODO: when do we hit this
+            None => (private::scope_new(&[]), private::scope_new(&["*unknown*"])),
+        };
+        let level = record.metadata().level();
+        if !filter::is_scope_enabled(&crate_name_scope, record.module_path(), level) {
+            return;
+        }
+        sink::submit(sink::Record {
+            scope: module_scope,
+            level,
+            message: record.args(),
+            // PERF(batching): store non-static paths in a cache + leak them and pass static str here
+            module_path: record.module_path().or(record.file()),
+        });
+    }
+
+    fn flush(&self) {
+        sink::flush();
+    }
 }
 
 #[macro_export]
@@ -29,9 +76,14 @@ macro_rules! log {
     ($logger:expr, $level:expr, $($arg:tt)+) => {
         let level = $level;
         let logger = $logger;
-        let (enabled, level) = $crate::scope_map::is_scope_enabled(&logger.scope, level);
+        let enabled = $crate::filter::is_scope_enabled(&logger.scope, Some(module_path!()), level);
         if enabled {
-            $crate::log_impl::log!(level, "[{}]: {}", &logger.fmt_scope(), format!($($arg)+));
+            $crate::sink::submit($crate::sink::Record {
+                scope: logger.scope,
+                level,
+                message: &format_args!($($arg)+),
+                module_path: Some(module_path!()),
+            });
         }
     }
 }
@@ -94,7 +146,7 @@ macro_rules! error {
 /// However, this is a feature not a bug, as it allows for a more accurate
 /// understanding of how long the action actually took to complete, including
 /// interruptions, which can help explain why something may have timed out,
-/// why it took longer to complete than it would had the await points resolved
+/// why it took longer to complete than it would have had the await points resolved
 /// immediately, etc.
 #[macro_export]
 macro_rules! time {
@@ -119,15 +171,7 @@ macro_rules! scoped {
         if index >= scope.len() {
             #[cfg(debug_assertions)]
             {
-                panic!("Scope overflow trying to add scope {}", name);
-            }
-            #[cfg(not(debug_assertions))]
-            {
-                $crate::warn!(
-                    parent =>
-                    "Scope overflow trying to add scope {}... ignoring scope",
-                    name
-                );
+                unreachable!("Scope overflow trying to add scope... ignoring scope");
             }
         }
         scope[index] = name;
@@ -159,17 +203,31 @@ macro_rules! crate_name {
 pub mod private {
     use super::*;
 
-    pub fn extract_crate_name_from_module_path(module_path: &'static str) -> &'static str {
-        return module_path
-            .split_once("::")
-            .map(|(crate_name, _)| crate_name)
-            .unwrap_or(module_path);
+    pub const fn extract_crate_name_from_module_path(module_path: &str) -> &str {
+        let mut i = 0;
+        let mod_path_bytes = module_path.as_bytes();
+        let mut index = mod_path_bytes.len();
+        while i + 1 < mod_path_bytes.len() {
+            if mod_path_bytes[i] == b':' && mod_path_bytes[i + 1] == b':' {
+                index = i;
+                break;
+            }
+            i += 1;
+        }
+        let Some((crate_name, _)) = module_path.split_at_checked(index) else {
+            return module_path;
+        };
+        return crate_name;
     }
 
-    pub fn scope_new(scopes: &[&'static str]) -> Scope {
+    pub const fn scope_new(scopes: &[&'static str]) -> Scope {
         assert!(scopes.len() <= SCOPE_DEPTH_MAX);
         let mut scope = [""; SCOPE_DEPTH_MAX];
-        scope[0..scopes.len()].copy_from_slice(scopes);
+        let mut i = 0;
+        while i < scopes.len() {
+            scope[i] = scopes[i];
+            i += 1;
+        }
         scope
     }
 
@@ -187,24 +245,37 @@ pub mod private {
 
 pub type Scope = [&'static str; SCOPE_DEPTH_MAX];
 pub type ScopeAlloc = [String; SCOPE_DEPTH_MAX];
-const SCOPE_STRING_SEP: &'static str = ".";
+const SCOPE_STRING_SEP_STR: &'static str = ".";
+const SCOPE_STRING_SEP_CHAR: char = '.';
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Logger {
     pub scope: Scope,
 }
 
-impl Logger {
-    pub fn fmt_scope(&self) -> String {
-        let mut last = 0;
-        for s in self.scope {
-            if s.is_empty() {
-                break;
-            }
-            last += 1;
-        }
+impl log::Log for Logger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        filter::is_possibly_enabled_level(metadata.level())
+    }
 
-        return self.scope[0..last].join(SCOPE_STRING_SEP);
+    fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+        let level = record.metadata().level();
+        if !filter::is_scope_enabled(&self.scope, record.module_path(), level) {
+            return;
+        }
+        sink::submit(sink::Record {
+            scope: self.scope,
+            level,
+            message: record.args(),
+            module_path: record.module_path(),
+        });
+    }
+
+    fn flush(&self) {
+        sink::flush();
     }
 }
 
@@ -233,6 +304,7 @@ impl Timer {
             done: false,
         };
     }
+
     pub fn warn_if_gt(mut self, warn_limit: std::time::Duration) -> Self {
         self.warn_if_longer_than = Some(warn_limit);
         return self;
@@ -270,139 +342,6 @@ impl Timer {
     }
 }
 
-pub mod scope_map {
-    use std::{
-        collections::HashMap,
-        hash::{DefaultHasher, Hasher},
-        sync::{
-            atomic::{AtomicU64, Ordering},
-            RwLock,
-        },
-    };
-
-    use super::*;
-
-    type ScopeMap = HashMap<ScopeAlloc, log_impl::Level>;
-    static SCOPE_MAP: RwLock<Option<ScopeMap>> = RwLock::new(None);
-    static SCOPE_MAP_HASH: AtomicU64 = AtomicU64::new(0);
-
-    pub fn is_scope_enabled(scope: &Scope, level: log_impl::Level) -> (bool, log_impl::Level) {
-        let level_min = min_printed_log_level(level);
-        if level <= level_min {
-            // [FAST PATH]
-            // if the message is at or below the minimum printed log level
-            // (where error < warn < info etc) then always enable
-            return (true, level);
-        }
-
-        let Ok(map) = SCOPE_MAP.read() else {
-            // on failure, default to enabled detection done by `log` crate
-            return (true, level);
-        };
-
-        let Some(map) = map.as_ref() else {
-            // on failure, default to enabled detection done by `log` crate
-            return (true, level);
-        };
-
-        if map.is_empty() {
-            // if no scopes are enabled, default to enabled detection done by `log` crate
-            return (true, level);
-        }
-        let mut scope_alloc = private::scope_to_alloc(scope);
-        let mut level_enabled = map.get(&scope_alloc);
-        if level_enabled.is_none() {
-            for i in (0..SCOPE_DEPTH_MAX).rev() {
-                if scope_alloc[i] == "" {
-                    continue;
-                }
-                scope_alloc[i].clear();
-                if let Some(level) = map.get(&scope_alloc) {
-                    level_enabled = Some(level);
-                    break;
-                }
-            }
-        }
-        let Some(level_enabled) = level_enabled else {
-            // if this scope isn't configured, default to enabled detection done by `log` crate
-            return (true, level);
-        };
-        if level_enabled < &level {
-            // if the configured level is lower than the requested level, disable logging
-            // note: err = 0, warn = 1, etc.
-            return (false, level);
-        }
-
-        // note: bumping level to min level that will be printed
-        // to work around log crate limitations
-        return (true, level_min);
-    }
-
-    fn hash_scope_map_settings(map: &HashMap<String, String>) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        let mut items = map.iter().collect::<Vec<_>>();
-        items.sort();
-        for (key, value) in items {
-            Hasher::write(&mut hasher, key.as_bytes());
-            Hasher::write(&mut hasher, value.as_bytes());
-        }
-        return hasher.finish();
-    }
-
-    pub fn refresh(settings: &HashMap<String, String>) {
-        let hash_old = SCOPE_MAP_HASH.load(Ordering::Acquire);
-        let hash_new = hash_scope_map_settings(settings);
-        if hash_old == hash_new && hash_old != 0 {
-            return;
-        }
-        // compute new scope map then atomically swap it, instead of
-        // updating in place to reduce contention
-        let mut map_new = ScopeMap::with_capacity(settings.len());
-        'settings: for (key, value) in settings {
-            let level = match value.to_ascii_lowercase().as_str() {
-                "" => log_impl::Level::Trace,
-                "trace" => log_impl::Level::Trace,
-                "debug" => log_impl::Level::Debug,
-                "info" => log_impl::Level::Info,
-                "warn" => log_impl::Level::Warn,
-                "error" => log_impl::Level::Error,
-                "off" | "disable" | "no" | "none" | "disabled" => {
-                    crate::warn!("Invalid log level \"{value}\", set to error to disable non-error logging. Defaulting to error");
-                    log_impl::Level::Error
-                }
-                _ => {
-                    crate::warn!("Invalid log level \"{value}\", ignoring");
-                    continue 'settings;
-                }
-            };
-            let mut scope_buf = [""; SCOPE_DEPTH_MAX];
-            for (index, scope) in key.split(SCOPE_STRING_SEP).enumerate() {
-                let Some(scope_ptr) = scope_buf.get_mut(index) else {
-                    crate::warn!("Invalid scope key, too many nested scopes: '{key}'");
-                    continue 'settings;
-                };
-                *scope_ptr = scope;
-            }
-            let scope = scope_buf.map(|s| s.to_string());
-            map_new.insert(scope, level);
-        }
-
-        if let Ok(_) = SCOPE_MAP_HASH.compare_exchange(
-            hash_old,
-            hash_new,
-            Ordering::Release,
-            Ordering::Relaxed,
-        ) {
-            let mut map = SCOPE_MAP.write().unwrap_or_else(|err| {
-                SCOPE_MAP.clear_poison();
-                err.into_inner()
-            });
-            *map = Some(map_new.clone());
-            // note: hash update done here to ensure consistency with scope map
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -410,5 +349,21 @@ mod tests {
     #[test]
     fn test_crate_name() {
         assert_eq!(crate_name!(), "zlog");
+        assert_eq!(
+            private::extract_crate_name_from_module_path("my_speedy_⚡️_crate::some_module"),
+            "my_speedy_⚡️_crate"
+        );
+        assert_eq!(
+            private::extract_crate_name_from_module_path("my_speedy_crate_⚡️::some_module"),
+            "my_speedy_crate_⚡️"
+        );
+        assert_eq!(
+            private::extract_crate_name_from_module_path("my_speedy_crate_:⚡️:some_module"),
+            "my_speedy_crate_:⚡️:some_module"
+        );
+        assert_eq!(
+            private::extract_crate_name_from_module_path("my_speedy_crate_::⚡️some_module"),
+            "my_speedy_crate_"
+        );
     }
 }

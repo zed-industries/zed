@@ -1,6 +1,6 @@
 use crate::{
-    point, seal::Sealed, Context, Empty, IntoElement, Keystroke, Modifiers, Pixels, Point, Render,
-    Window,
+    Context, Empty, IntoElement, Keystroke, Modifiers, Pixels, Point, Render, Window, point,
+    seal::Sealed,
 };
 use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug, ops::Deref, path::PathBuf};
@@ -311,13 +311,13 @@ impl ScrollDelta {
     pub fn coalesce(self, other: ScrollDelta) -> ScrollDelta {
         match (self, other) {
             (ScrollDelta::Pixels(a), ScrollDelta::Pixels(b)) => {
-                let x = if a.x.signum() * b.x.signum() >= 0. {
+                let x = if a.x.signum() == b.x.signum() {
                     a.x + b.x
                 } else {
                     b.x
                 };
 
-                let y = if a.y.signum() * b.y.signum() >= 0. {
+                let y = if a.y.signum() == b.y.signum() {
                     a.y + b.y
                 } else {
                     b.y
@@ -327,13 +327,13 @@ impl ScrollDelta {
             }
 
             (ScrollDelta::Lines(a), ScrollDelta::Lines(b)) => {
-                let x = if a.x.signum() * b.x.signum() >= 0. {
+                let x = if a.x.signum() == b.x.signum() {
                     a.x + b.x
                 } else {
                     b.x
                 };
 
-                let y = if a.y.signum() * b.y.signum() >= 0. {
+                let y = if a.y.signum() == b.y.signum() {
                     a.y + b.y
                 } else {
                     b.y
@@ -481,8 +481,8 @@ impl PlatformInput {
 mod test {
 
     use crate::{
-        self as gpui, div, AppContext as _, Context, FocusHandle, InteractiveElement, IntoElement,
-        KeyBinding, Keystroke, ParentElement, Render, TestAppContext, Window,
+        self as gpui, AppContext as _, Context, FocusHandle, InteractiveElement, IntoElement,
+        KeyBinding, Keystroke, ParentElement, Render, TestAppContext, Window, div,
     };
 
     struct TestView {

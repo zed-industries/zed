@@ -5,35 +5,35 @@ use std::{
     collections::BTreeMap,
     hash::Hash,
     ops::Range,
-    path::{Path, PathBuf, MAIN_SEPARATOR_STR},
+    path::{MAIN_SEPARATOR_STR, Path, PathBuf},
     sync::{
-        atomic::{self, AtomicBool},
         Arc, OnceLock,
+        atomic::{self, AtomicBool},
     },
     time::Duration,
     u32,
 };
 
 use anyhow::Context as _;
-use collections::{hash_map, BTreeSet, HashMap, HashSet};
+use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
+    AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, EditorSettings, ExcerptId,
+    ExcerptRange, MultiBufferSnapshot, RangeToAnchorExt, ShowScrollbar,
     display_map::ToDisplayPoint,
     items::{entry_git_aware_label_color, entry_label_color},
     scroll::{Autoscroll, AutoscrollStrategy, ScrollAnchor, ScrollbarAutoHide},
-    AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, EditorMode, EditorSettings, ExcerptId,
-    ExcerptRange, MultiBufferSnapshot, RangeToAnchorExt, ShowScrollbar,
 };
 use file_icons::FileIcons;
-use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
+use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    actions, anchored, deferred, div, point, px, size, uniform_list, Action, AnyElement, App,
-    AppContext as _, AsyncWindowContext, Bounds, ClipboardItem, Context, DismissEvent, Div,
-    ElementId, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle, InteractiveElement,
-    IntoElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton,
-    MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy, SharedString, Stateful,
-    StatefulInteractiveElement as _, Styled, Subscription, Task, UniformListScrollHandle,
-    WeakEntity, Window,
+    Action, AnyElement, App, AppContext as _, AsyncWindowContext, Bounds, ClipboardItem, Context,
+    DismissEvent, Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
+    InteractiveElement, IntoElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
+    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy,
+    SharedString, Stateful, StatefulInteractiveElement as _, Styled, Subscription, Task,
+    UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, point, px, size,
+    uniform_list,
 };
 use itertools::Itertools;
 use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
@@ -47,18 +47,18 @@ use settings::{Settings, SettingsStore};
 use smol::channel;
 use theme::{SyntaxTheme, ThemeSettings};
 use ui::{DynamicSpacing, IndentGuideColors, IndentGuideLayout};
-use util::{debug_panic, RangeExt, ResultExt, TryFutureExt};
+use util::{RangeExt, ResultExt, TryFutureExt, debug_panic};
 use workspace::{
+    OpenInTerminal, WeakItemHandle, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     item::ItemHandle,
     searchable::{SearchEvent, SearchableItem},
     ui::{
-        h_flex, v_flex, ActiveTheme, ButtonCommon, Clickable, Color, ContextMenu, FluentBuilder,
-        HighlightedLabel, Icon, IconButton, IconButtonShape, IconName, IconSize, Label,
-        LabelCommon, ListItem, Scrollbar, ScrollbarState, StyledExt, StyledTypography, Toggleable,
-        Tooltip,
+        ActiveTheme, ButtonCommon, Clickable, Color, ContextMenu, FluentBuilder, HighlightedLabel,
+        Icon, IconButton, IconButtonShape, IconName, IconSize, Label, LabelCommon, ListItem,
+        Scrollbar, ScrollbarState, StyledExt, StyledTypography, Toggleable, Tooltip, h_flex,
+        v_flex,
     },
-    OpenInTerminal, WeakItemHandle, Workspace,
 };
 use worktree::{Entry, ProjectEntryId, WorktreeId};
 
@@ -70,7 +70,7 @@ actions!(
         ExpandAllEntries,
         ExpandSelectedEntry,
         FoldDirectory,
-        Open,
+        OpenSelectedEntry,
         RevealInFileManager,
         SelectParent,
         ToggleActiveEditorPin,
@@ -646,7 +646,7 @@ struct ActiveItem {
     item_handle: Box<dyn WeakItemHandle>,
     active_editor: WeakEntity<Editor>,
     _buffer_search_subscription: Subscription,
-    _editor_subscrpiption: Subscription,
+    _editor_subscription: Subscription,
 }
 
 #[derive(Debug)]
@@ -680,16 +680,25 @@ impl OutlinePanel {
         workspace: WeakEntity<Workspace>,
         mut cx: AsyncWindowContext,
     ) -> anyhow::Result<Entity<Self>> {
-        let serialized_panel = cx
-            .background_spawn(async move { KEY_VALUE_STORE.read_kvp(OUTLINE_PANEL_KEY) })
-            .await
-            .context("loading outline panel")
-            .log_err()
+        let serialized_panel = match workspace
+            .read_with(&cx, |workspace, _| {
+                OutlinePanel::serialization_key(workspace)
+            })
+            .ok()
             .flatten()
-            .map(|panel| serde_json::from_str::<SerializedOutlinePanel>(&panel))
-            .transpose()
-            .log_err()
-            .flatten();
+        {
+            Some(serialization_key) => cx
+                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
+                .await
+                .context("loading outline panel")
+                .log_err()
+                .flatten()
+                .map(|panel| serde_json::from_str::<SerializedOutlinePanel>(&panel))
+                .transpose()
+                .log_err()
+                .flatten(),
+            None => None,
+        };
 
         workspace.update_in(&mut cx, |workspace, window, cx| {
             let panel = Self::new(workspace, window, cx);
@@ -845,14 +854,32 @@ impl OutlinePanel {
         outline_panel
     }
 
+    fn serialization_key(workspace: &Workspace) -> Option<String> {
+        workspace
+            .database_id()
+            .map(|id| i64::from(id).to_string())
+            .or(workspace.session_id())
+            .map(|id| format!("{}-{:?}", OUTLINE_PANEL_KEY, id))
+    }
+
     fn serialize(&mut self, cx: &mut Context<Self>) {
+        let Some(serialization_key) = self
+            .workspace
+            .update(cx, |workspace, _| {
+                OutlinePanel::serialization_key(workspace)
+            })
+            .ok()
+            .flatten()
+        else {
+            return;
+        };
         let width = self.width;
         let active = Some(self.active);
         self.pending_serialization = cx.background_spawn(
             async move {
                 KEY_VALUE_STORE
                     .write_kvp(
-                        OUTLINE_PANEL_KEY.into(),
+                        serialization_key,
                         serde_json::to_string(&SerializedOutlinePanel { width, active })?,
                     )
                     .await?;
@@ -922,7 +949,12 @@ impl OutlinePanel {
         self.update_cached_entries(None, window, cx);
     }
 
-    fn open(&mut self, _: &Open, window: &mut Window, cx: &mut Context<Self>) {
+    fn open_selected_entry(
+        &mut self,
+        _: &OpenSelectedEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.filter_editor.focus_handle(cx).is_focused(window) {
             cx.propagate()
         } else if let Some(selected_entry) = self.selected_entry().cloned() {
@@ -1067,7 +1099,7 @@ impl OutlinePanel {
                 if change_selection {
                     active_editor.update(cx, |editor, cx| {
                         editor.change_selections(
-                            Some(Autoscroll::Strategy(AutoscrollStrategy::Center)),
+                            Some(Autoscroll::Strategy(AutoscrollStrategy::Center, None)),
                             window,
                             cx,
                             |s| s.select_ranges(Some(anchor..anchor)),
@@ -1588,7 +1620,7 @@ impl OutlinePanel {
                                     .get(&external_file.buffer_id)
                                     .into_iter()
                                     .flat_map(|excerpts| {
-                                        excerpts.iter().map(|(excerpt_id, _)| {
+                                        excerpts.keys().map(|excerpt_id| {
                                             CollapsedEntry::Excerpt(
                                                 external_file.buffer_id,
                                                 *excerpt_id,
@@ -1609,7 +1641,7 @@ impl OutlinePanel {
                             entries.extend(
                                 self.excerpts.get(&file.buffer_id).into_iter().flat_map(
                                     |excerpts| {
-                                        excerpts.iter().map(|(excerpt_id, _)| {
+                                        excerpts.keys().map(|excerpt_id| {
                                             CollapsedEntry::Excerpt(file.buffer_id, *excerpt_id)
                                         })
                                     },
@@ -1767,11 +1799,7 @@ impl OutlinePanel {
         active_editor.update(cx, |editor, cx| {
             buffers_to_toggle.retain(|buffer_id| {
                 let folded = editor.is_buffer_folded(*buffer_id, cx);
-                if fold {
-                    !folded
-                } else {
-                    folded
-                }
+                if fold { !folded } else { folded }
             });
         });
 
@@ -2555,6 +2583,9 @@ impl OutlinePanel {
         let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
         let active_multi_buffer = active_editor.read(cx).buffer().clone();
         let new_entries = self.new_entries_for_fs_update.clone();
+        let repo_snapshots = self.project.update(cx, |project, cx| {
+            project.git_store().read(cx).repo_snapshots(cx)
+        });
         self.updating_fs_entries = true;
         self.fs_entries_update_task = cx.spawn_in(window, async move |outline_panel, cx| {
             if let Some(debounce) = debounce {
@@ -2679,13 +2710,15 @@ impl OutlinePanel {
                                             .unwrap_or_default(),
                                         entry,
                                     };
-                                    let mut traversal =
-                                        GitTraversal::new(worktree.traverse_from_path(
+                                    let mut traversal = GitTraversal::new(
+                                        &repo_snapshots,
+                                        worktree.traverse_from_path(
                                             true,
                                             true,
                                             true,
                                             entry.path.as_ref(),
-                                        ));
+                                        ),
+                                    );
 
                                     let mut entries_to_add = HashMap::default();
                                     worktree_excerpts
@@ -2956,7 +2989,7 @@ impl OutlinePanel {
         );
         self.active_item = Some(ActiveItem {
             _buffer_search_subscription: buffer_search_subscription,
-            _editor_subscrpiption: subscribe_for_editor_events(&new_active_editor, window, cx),
+            _editor_subscription: subscribe_for_editor_events(&new_active_editor, window, cx),
             item_handle: new_active_item.downgrade_item(),
             active_editor: new_active_editor.downgrade(),
         });
@@ -4586,7 +4619,7 @@ impl OutlinePanel {
                         .with_render_fn(
                             cx.entity().clone(),
                             move |outline_panel, params, _, _| {
-                                const LEFT_OFFSET: f32 = 14.;
+                                const LEFT_OFFSET: Pixels = px(14.);
 
                                 let indent_size = params.indent_size;
                                 let item_height = params.item_height;
@@ -4602,11 +4635,10 @@ impl OutlinePanel {
                                     .map(|(ix, layout)| {
                                         let bounds = Bounds::new(
                                             point(
-                                                px(layout.offset.x as f32) * indent_size
-                                                    + px(LEFT_OFFSET),
-                                                px(layout.offset.y as f32) * item_height,
+                                                layout.offset.x * indent_size + LEFT_OFFSET,
+                                                layout.offset.y * item_height,
                                             ),
-                                            size(px(1.), px(layout.length as f32) * item_height),
+                                            size(px(1.), layout.length * item_height),
                                         );
                                         ui::RenderedIndentGuide {
                                             bounds,
@@ -4725,7 +4757,7 @@ fn workspace_active_editor(
     let active_item = workspace.active_item(cx)?;
     let active_editor = active_item
         .act_as::<Editor>(cx)
-        .filter(|editor| editor.read(cx).mode() == EditorMode::Full)?;
+        .filter(|editor| editor.read(cx).mode().is_full())?;
     Some((active_item, active_editor))
 }
 
@@ -4798,10 +4830,12 @@ impl Panel for OutlinePanel {
             .unwrap_or_else(|| OutlinePanelSettings::get_global(cx).default_width)
     }
 
-    fn set_size(&mut self, size: Option<Pixels>, _: &mut Window, cx: &mut Context<Self>) {
+    fn set_size(&mut self, size: Option<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         self.width = size;
-        self.serialize(cx);
         cx.notify();
+        cx.defer_in(window, |this, _, cx| {
+            this.serialize(cx);
+        });
     }
 
     fn icon(&self, _: &Window, cx: &App) -> Option<IconName> {
@@ -4906,7 +4940,7 @@ impl Render for OutlinePanel {
                 }
             }))
             .key_context(self.dispatch_context(window, cx))
-            .on_action(cx.listener(Self::open))
+            .on_action(cx.listener(Self::open_selected_entry))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
@@ -4957,7 +4991,7 @@ impl Render for OutlinePanel {
                         .border_color(cx.theme().colors().border)
                         .gap_0p5()
                         .child(Label::new("Searching:").color(Color::Muted))
-                        .child(Label::new(format!("'{}'", search_state.query))),
+                        .child(Label::new(search_state.query.to_string())),
                 )
             })
             .child(self.render_main_contents(query, show_indent_guides, indent_size, window, cx))
@@ -5023,7 +5057,7 @@ fn subscribe_for_editor_events(
                         .extend(excerpts.iter().map(|&(excerpt_id, _)| excerpt_id));
                     outline_panel.update_fs_entries(editor.clone(), debounce, window, cx);
                 }
-                EditorEvent::ExcerptsRemoved { ids } => {
+                EditorEvent::ExcerptsRemoved { ids, .. } => {
                     let mut ids = ids.iter().collect::<HashSet<_>>();
                     for excerpts in outline_panel.excerpts.values_mut() {
                         excerpts.retain(|excerpt_id, _| !ids.remove(excerpt_id));
@@ -5161,7 +5195,7 @@ impl GenerationState {
 mod tests {
     use db::indoc;
     use gpui::{TestAppContext, VisualTestContext, WindowHandle};
-    use language::{tree_sitter_rust, Language, LanguageConfig, LanguageMatcher};
+    use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use search::project_search::{self, perform_project_search};
@@ -5677,7 +5711,7 @@ mod tests {
         });
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.open(&Open, window, cx);
+            outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
         });
         outline_panel.update(cx, |_outline_panel, cx| {
             assert_eq!(
@@ -5690,8 +5724,7 @@ mod tests {
         outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.select_next(&SelectNext, window, cx);
         });
-        let next_navigated_outline_selection =
-            "search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },";
+        let next_navigated_outline_selection = "search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },";
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
@@ -5853,7 +5886,7 @@ mod tests {
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.select_previous(&SelectPrevious, window, cx);
-            outline_panel.open(&Open, window, cx);
+            outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
@@ -5877,7 +5910,7 @@ mod tests {
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.select_next(&SelectNext, window, cx);
-            outline_panel.open(&Open, window, cx);
+            outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
@@ -5898,7 +5931,7 @@ mod tests {
         });
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.open(&Open, window, cx);
+            outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));

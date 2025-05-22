@@ -1,8 +1,8 @@
 use crate::{
-    platform::AtlasTextureList, AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds,
-    DevicePixels, PlatformAtlas, Point, Size,
+    AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, DevicePixels, PlatformAtlas,
+    Point, Size, platform::AtlasTextureList,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Context as _, Result};
 use collections::FxHashMap;
 use derive_more::{Deref, DerefMut};
 use etagere::BucketedAtlasAllocator;
@@ -77,7 +77,7 @@ impl PlatformAtlas for MetalAtlas {
             };
             let tile = lock
                 .allocate(size, key.texture_kind())
-                .ok_or_else(|| anyhow!("failed to allocate"))?;
+                .context("failed to allocate")?;
             let texture = lock.texture(tile.texture_id);
             texture.upload(tile.bounds, &bytes);
             lock.tiles_by_key.insert(key.clone(), tile.clone());

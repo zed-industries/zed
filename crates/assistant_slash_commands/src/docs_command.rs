@@ -1,9 +1,9 @@
 use std::path::Path;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Context as _, Result, anyhow, bail};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
@@ -16,7 +16,7 @@ use indexed_docs::{
 use language::{BufferSnapshot, LspAdapterDelegate};
 use project::{Project, ProjectPath};
 use ui::prelude::*;
-use util::{maybe, ResultExt};
+use util::{ResultExt, maybe};
 use workspace::Workspace;
 
 pub struct DocsSlashCommand;
@@ -52,15 +52,16 @@ impl DocsSlashCommand {
             .is_none()
         {
             let index_provider_deps = maybe!({
-                let workspace = workspace.clone().ok_or_else(|| anyhow!("no workspace"))?;
                 let workspace = workspace
+                    .as_ref()
+                    .context("no workspace")?
                     .upgrade()
-                    .ok_or_else(|| anyhow!("workspace was dropped"))?;
+                    .context("workspace dropped")?;
                 let project = workspace.read(cx).project().clone();
                 let fs = project.read(cx).fs().clone();
                 let cargo_workspace_root = Self::path_to_cargo_toml(project, cx)
                     .and_then(|path| path.parent().map(|path| path.to_path_buf()))
-                    .ok_or_else(|| anyhow!("no Cargo workspace root found"))?;
+                    .context("no Cargo workspace root found")?;
 
                 anyhow::Ok((fs, cargo_workspace_root))
             });
@@ -78,12 +79,13 @@ impl DocsSlashCommand {
             .is_none()
         {
             let http_client = maybe!({
-                let workspace = workspace.ok_or_else(|| anyhow!("no workspace"))?;
                 let workspace = workspace
+                    .as_ref()
+                    .context("no workspace")?
                     .upgrade()
-                    .ok_or_else(|| anyhow!("workspace was dropped"))?;
+                    .context("workspace was dropped")?;
                 let project = workspace.read(cx).project().clone();
-                anyhow::Ok(project.read(cx).client().http_client().clone())
+                anyhow::Ok(project.read(cx).client().http_client())
             });
 
             if let Some(http_client) = http_client.log_err() {
@@ -174,7 +176,7 @@ impl SlashCommand for DocsSlashCommand {
         let args = DocsSlashCommandArgs::parse(arguments);
         let store = args
             .provider()
-            .ok_or_else(|| anyhow!("no docs provider specified"))
+            .context("no docs provider specified")
             .and_then(|provider| IndexedDocsStore::try_global(provider, cx));
         cx.background_spawn(async move {
             fn build_completions(items: Vec<String>) -> Vec<ArgumentCompletion> {
@@ -287,7 +289,7 @@ impl SlashCommand for DocsSlashCommand {
         let task = cx.background_spawn({
             let store = args
                 .provider()
-                .ok_or_else(|| anyhow!("no docs provider specified"))
+                .context("no docs provider specified")
                 .and_then(|provider| IndexedDocsStore::try_global(provider, cx));
             async move {
                 let (provider, key) = match args.clone() {

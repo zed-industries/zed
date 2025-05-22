@@ -20,14 +20,17 @@ test-support = [
 
 [dependencies]
 anyhow.workspace = true
+base64.workspace = true
 gpui.workspace = true
 language.workspace = true
 linkify.workspace = true
 log.workspace = true
 pulldown-cmark.workspace = true
+sum_tree.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 assets.workspace = true

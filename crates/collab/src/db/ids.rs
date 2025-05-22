@@ -1,6 +1,6 @@
 use crate::Result;
 use rpc::proto;
-use sea_orm::{entity::prelude::*, DbErr};
+use sea_orm::{DbErr, entity::prelude::*};
 use serde::{Deserialize, Serialize};
 
 #[macro_export]

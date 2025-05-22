@@ -30,7 +30,6 @@ fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 git.workspace = true
-git_hosting_providers.workspace = true
 gpui.workspace = true
 ignore.workspace = true
 language.workspace = true
@@ -48,6 +47,7 @@ smol.workspace = true
 sum_tree.workspace = true
 text.workspace = true
 util.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }

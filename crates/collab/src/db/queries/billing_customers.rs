@@ -11,6 +11,7 @@ pub struct UpdateBillingCustomerParams {
     pub user_id: ActiveValue<UserId>,
     pub stripe_customer_id: ActiveValue<String>,
     pub has_overdue_invoices: ActiveValue<bool>,
+    pub trial_started_at: ActiveValue<Option<DateTime>>,
 }
 
 impl Database {
@@ -45,12 +46,26 @@ impl Database {
                 user_id: params.user_id.clone(),
                 stripe_customer_id: params.stripe_customer_id.clone(),
                 has_overdue_invoices: params.has_overdue_invoices.clone(),
-                ..Default::default()
+                trial_started_at: params.trial_started_at.clone(),
+                created_at: ActiveValue::not_set(),
             })
             .exec(&*tx)
             .await?;
 
             Ok(())
+        })
+        .await
+    }
+
+    pub async fn get_billing_customer_by_id(
+        &self,
+        id: BillingCustomerId,
+    ) -> Result<Option<billing_customer::Model>> {
+        self.transaction(|tx| async move {
+            Ok(billing_customer::Entity::find()
+                .filter(billing_customer::Column::Id.eq(id))
+                .one(&*tx)
+                .await?)
         })
         .await
     }

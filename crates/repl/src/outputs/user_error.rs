@@ -1,5 +1,5 @@
 use gpui::{AnyElement, App, Entity, FontWeight, Window};
-use ui::{h_flex, prelude::*, v_flex, Label};
+use ui::{Label, h_flex, prelude::*, v_flex};
 
 use crate::outputs::plain::TerminalOutput;
 

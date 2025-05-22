@@ -52,7 +52,7 @@ impl<'a, T: 'static> Context<'a, T> {
     pub fn observe<W>(
         &mut self,
         entity: &Entity<W>,
-        mut on_notify: impl FnMut(&mut T, Entity<W>, &mut Context<'_, T>) + 'static,
+        mut on_notify: impl FnMut(&mut T, Entity<W>, &mut Context<T>) + 'static,
     ) -> Subscription
     where
         T: 'static,
@@ -73,7 +73,7 @@ impl<'a, T: 'static> Context<'a, T> {
     pub fn subscribe<T2, Evt>(
         &mut self,
         entity: &Entity<T2>,
-        mut on_event: impl FnMut(&mut T, Entity<T2>, &Evt, &mut Context<'_, T>) + 'static,
+        mut on_event: impl FnMut(&mut T, Entity<T2>, &Evt, &mut Context<T>) + 'static,
     ) -> Subscription
     where
         T: 'static,
@@ -94,7 +94,7 @@ impl<'a, T: 'static> Context<'a, T> {
     /// Subscribe to an event type from ourself
     pub fn subscribe_self<Evt>(
         &mut self,
-        mut on_event: impl FnMut(&mut T, &Evt, &mut Context<'_, T>) + 'static,
+        mut on_event: impl FnMut(&mut T, &Evt, &mut Context<T>) + 'static,
     ) -> Subscription
     where
         T: 'static + EventEmitter<Evt>,
@@ -126,7 +126,7 @@ impl<'a, T: 'static> Context<'a, T> {
     pub fn observe_release<T2>(
         &self,
         entity: &Entity<T2>,
-        on_release: impl FnOnce(&mut T, &mut T2, &mut Context<'_, T>) + 'static,
+        on_release: impl FnOnce(&mut T, &mut T2, &mut Context<T>) + 'static,
     ) -> Subscription
     where
         T: Any,
@@ -150,7 +150,7 @@ impl<'a, T: 'static> Context<'a, T> {
     /// Register a callback to for updates to the given global
     pub fn observe_global<G: 'static>(
         &mut self,
-        mut f: impl FnMut(&mut T, &mut Context<'_, T>) + 'static,
+        mut f: impl FnMut(&mut T, &mut Context<T>) + 'static,
     ) -> Subscription
     where
         T: 'static,
@@ -212,7 +212,7 @@ impl<'a, T: 'static> Context<'a, T> {
 
     /// Convenience method for accessing view state in an event callback.
     ///
-    /// Many GPUI callbacks take the form of `Fn(&E, &mut Window, &mut AppContext)`,
+    /// Many GPUI callbacks take the form of `Fn(&E, &mut Window, &mut App)`,
     /// but it's often useful to be able to access view state in these
     /// callbacks. This method provides a convenient way to do so.
     pub fn listener<E: ?Sized>(
@@ -272,7 +272,7 @@ impl<'a, T: 'static> Context<'a, T> {
         &mut self,
         observed: &Entity<V2>,
         window: &mut Window,
-        mut on_notify: impl FnMut(&mut T, Entity<V2>, &mut Window, &mut Context<'_, T>) + 'static,
+        mut on_notify: impl FnMut(&mut T, Entity<V2>, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription
     where
         V2: 'static,
@@ -310,8 +310,7 @@ impl<'a, T: 'static> Context<'a, T> {
         &mut self,
         emitter: &Entity<Emitter>,
         window: &Window,
-        mut on_event: impl FnMut(&mut T, &Entity<Emitter>, &Evt, &mut Window, &mut Context<'_, T>)
-            + 'static,
+        mut on_event: impl FnMut(&mut T, &Entity<Emitter>, &Evt, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription
     where
         Emitter: EventEmitter<Evt>,
@@ -363,7 +362,7 @@ impl<'a, T: 'static> Context<'a, T> {
         &self,
         observed: &Entity<T2>,
         window: &Window,
-        mut on_release: impl FnMut(&mut T, &mut T2, &mut Window, &mut Context<'_, T>) + 'static,
+        mut on_release: impl FnMut(&mut T, &mut T2, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription
     where
         T: 'static,
@@ -609,8 +608,8 @@ impl<'a, T: 'static> Context<'a, T> {
     }
 
     /// Schedule a future to be run asynchronously.
-    /// The given callback is invoked with a [`WeakEntity<V>`] to avoid leaking the view for a long-running process.
-    /// It's also given an [`AsyncWindowContext`], which can be used to access the state of the view across await points.
+    /// The given callback is invoked with a [`WeakEntity<V>`] to avoid leaking the entity for a long-running process.
+    /// It's also given an [`AsyncWindowContext`], which can be used to access the state of the entity across await points.
     /// The returned future will be polled on the main thread.
     #[track_caller]
     pub fn spawn_in<AsyncFn, R>(&self, window: &Window, f: AsyncFn) -> Task<R>
@@ -626,7 +625,7 @@ impl<'a, T: 'static> Context<'a, T> {
     pub fn observe_global_in<G: Global>(
         &mut self,
         window: &Window,
-        mut f: impl FnMut(&mut T, &mut Window, &mut Context<'_, T>) + 'static,
+        mut f: impl FnMut(&mut T, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription {
         let window_handle = window.handle;
         let view = self.weak_entity();
@@ -691,10 +690,7 @@ impl<T> Context<'_, T> {
 impl<T> AppContext for Context<'_, T> {
     type Result<U> = U;
 
-    fn new<U: 'static>(
-        &mut self,
-        build_entity: impl FnOnce(&mut Context<'_, U>) -> U,
-    ) -> Entity<U> {
+    fn new<U: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<U>) -> U) -> Entity<U> {
         self.app.new(build_entity)
     }
 
@@ -705,7 +701,7 @@ impl<T> AppContext for Context<'_, T> {
     fn insert_entity<U: 'static>(
         &mut self,
         reservation: Reservation<U>,
-        build_entity: impl FnOnce(&mut Context<'_, U>) -> U,
+        build_entity: impl FnOnce(&mut Context<U>) -> U,
     ) -> Self::Result<Entity<U>> {
         self.app.insert_entity(reservation, build_entity)
     }
@@ -713,7 +709,7 @@ impl<T> AppContext for Context<'_, T> {
     fn update_entity<U: 'static, R>(
         &mut self,
         handle: &Entity<U>,
-        update: impl FnOnce(&mut U, &mut Context<'_, U>) -> R,
+        update: impl FnOnce(&mut U, &mut Context<U>) -> R,
     ) -> R {
         self.app.update_entity(handle, update)
     }

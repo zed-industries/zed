@@ -2,22 +2,23 @@ use crate::components::KernelListItem;
 use crate::kernels::RemoteRunningKernel;
 use crate::setup_editor_session_actions;
 use crate::{
+    KernelStatus,
     kernels::{Kernel, KernelSpecification, NativeRunningKernel},
     outputs::{ExecutionStatus, ExecutionView},
-    KernelStatus,
 };
+use anyhow::Context as _;
 use collections::{HashMap, HashSet};
 use editor::{
+    Anchor, AnchorRangeExt as _, Editor, MultiBuffer, ToPoint,
     display_map::{
         BlockContext, BlockId, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId,
         RenderBlock,
     },
     scroll::Autoscroll,
-    Anchor, AnchorRangeExt as _, Editor, MultiBuffer, ToPoint,
 };
 use futures::FutureExt as _;
 use gpui::{
-    div, prelude::*, Context, Entity, EventEmitter, Render, Subscription, Task, WeakEntity, Window,
+    Context, Entity, EventEmitter, Render, Subscription, Task, WeakEntity, Window, div, prelude::*,
 };
 use language::Point;
 use project::Fs;
@@ -27,7 +28,7 @@ use runtimelib::{
 };
 use std::{env::temp_dir, ops::Range, sync::Arc, time::Duration};
 use theme::ActiveTheme;
-use ui::{prelude::*, IconButtonShape, Tooltip};
+use ui::{IconButtonShape, Tooltip, prelude::*};
 use util::ResultExt as _;
 
 pub struct Session {
@@ -57,13 +58,8 @@ impl EditorBlock {
         on_close: CloseBlockFn,
         cx: &mut Context<Session>,
     ) -> anyhow::Result<Self> {
-        let editor = editor
-            .upgrade()
-            .ok_or_else(|| anyhow::anyhow!("editor is not open"))?;
-        let workspace = editor
-            .read(cx)
-            .workspace()
-            .ok_or_else(|| anyhow::anyhow!("workspace dropped"))?;
+        let editor = editor.upgrade().context("editor is not open")?;
+        let workspace = editor.read(cx).workspace().context("workspace dropped")?;
 
         let execution_view = cx.new(|cx| ExecutionView::new(status, workspace.downgrade(), cx));
 
@@ -89,10 +85,11 @@ impl EditorBlock {
             let block = BlockProperties {
                 placement: BlockPlacement::Below(code_range.end),
                 // Take up at least one height for status, allow the editor to determine the real height based on the content from render
-                height: 1,
+                height: Some(1),
                 style: BlockStyle::Sticky,
                 render: Self::create_output_area_renderer(execution_view.clone(), on_close.clone()),
                 priority: 0,
+                render_in_minimap: false,
             };
 
             let block_id = editor.insert_blocks([block], None, cx)[0];
@@ -126,7 +123,8 @@ impl EditorBlock {
             let execution_view = execution_view.clone();
             let text_style = crate::outputs::plain::text_style(cx.window, cx.app);
 
-            let gutter = cx.gutter_dimensions;
+            let editor_margins = cx.margins;
+            let gutter = editor_margins.gutter;
 
             let block_id = cx.block_id;
             let on_close = on_close.clone();
@@ -184,7 +182,8 @@ impl EditorBlock {
                         .flex_1()
                         .size_full()
                         .py(text_line_height / 2.)
-                        .mr(gutter.width)
+                        .mr(editor_margins.right)
+                        .pr_2()
                         .child(execution_view),
                 )
                 .into_any_element()

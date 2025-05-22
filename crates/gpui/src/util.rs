@@ -27,6 +27,19 @@ pub trait FluentBuilder {
         self.map(|this| if condition { then(this) } else { this })
     }
 
+    /// Conditionally modify self with the given closure.
+    fn when_else(
+        self,
+        condition: bool,
+        then: impl FnOnce(Self) -> Self,
+        else_fn: impl FnOnce(Self) -> Self,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        self.map(|this| if condition { then(this) } else { else_fn(this) })
+    }
+
     /// Conditionally unwrap and modify self with the given closure, if the given option is Some.
     fn when_some<T>(self, option: Option<T>, then: impl FnOnce(Self, T) -> Self) -> Self
     where
@@ -40,7 +53,7 @@ pub trait FluentBuilder {
             }
         })
     }
-    /// Conditionally unwrap and modify self with the given closure, if the given option is Some.
+    /// Conditionally unwrap and modify self with the given closure, if the given option is None.
     fn when_none<T>(self, option: &Option<T>, then: impl FnOnce(Self) -> Self) -> Self
     where
         Self: Sized,

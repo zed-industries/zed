@@ -1,23 +1,23 @@
 mod channel_index;
 
-use crate::{channel_buffer::ChannelBuffer, channel_chat::ChannelChat, ChannelMessage};
-use anyhow::{anyhow, Result};
+use crate::{ChannelMessage, channel_buffer::ChannelBuffer, channel_chat::ChannelChat};
+use anyhow::{Context as _, Result, anyhow};
 use channel_index::ChannelIndex;
 use client::{ChannelId, Client, ClientSettings, Subscription, User, UserId, UserStore};
-use collections::{hash_map, HashMap, HashSet};
-use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
+use collections::{HashMap, HashSet, hash_map};
+use futures::{Future, FutureExt, StreamExt, channel::mpsc, future::Shared};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, SharedString, Task,
     WeakEntity,
 };
 use language::Capability;
 use rpc::{
-    proto::{self, ChannelRole, ChannelVisibility},
     TypedEnvelope,
+    proto::{self, ChannelRole, ChannelVisibility},
 };
 use settings::Settings;
 use std::{mem, sync::Arc, time::Duration};
-use util::{maybe, ResultExt};
+use util::{ResultExt, maybe};
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -332,9 +332,7 @@ impl ChannelStore {
         cx.spawn(async move |this, cx| {
             if let Some(request) = request {
                 let response = request.await?;
-                let this = this
-                    .upgrade()
-                    .ok_or_else(|| anyhow!("channel store dropped"))?;
+                let this = this.upgrade().context("channel store dropped")?;
                 let user_store = this.update(cx, |this, _| this.user_store.clone())?;
                 ChannelMessage::from_proto_vec(response.messages, &user_store, cx).await
             } else {
@@ -482,7 +480,7 @@ impl ChannelStore {
                         .spawn(async move |this, cx| {
                             let channel = this.update(cx, |this, _| {
                                 this.channel_for_id(channel_id).cloned().ok_or_else(|| {
-                                    Arc::new(anyhow!("no channel for id: {}", channel_id))
+                                    Arc::new(anyhow!("no channel for id: {channel_id}"))
                                 })
                             })??;
 
@@ -514,7 +512,7 @@ impl ChannelStore {
                 }
             }
         };
-        cx.background_spawn(async move { task.await.map_err(|error| anyhow!("{}", error)) })
+        cx.background_spawn(async move { task.await.map_err(|error| anyhow!("{error}")) })
     }
 
     pub fn is_channel_admin(&self, channel_id: ChannelId) -> bool {
@@ -578,9 +576,7 @@ impl ChannelStore {
                 })
                 .await?;
 
-            let channel = response
-                .channel
-                .ok_or_else(|| anyhow!("missing channel in response"))?;
+            let channel = response.channel.context("missing channel in response")?;
             let channel_id = ChannelId(channel.id);
 
             this.update(cx, |this, cx| {
@@ -752,7 +748,7 @@ impl ChannelStore {
                 })
                 .await?
                 .channel
-                .ok_or_else(|| anyhow!("missing channel in response"))?;
+                .context("missing channel in response")?;
             this.update(cx, |this, cx| {
                 let task = this.update_channels(
                     proto::UpdateChannels {
@@ -824,7 +820,10 @@ impl ChannelStore {
         })
     }
 
-    pub fn remove_channel(&self, channel_id: ChannelId) -> impl Future<Output = Result<()>> {
+    pub fn remove_channel(
+        &self,
+        channel_id: ChannelId,
+    ) -> impl Future<Output = Result<()>> + use<> {
         let client = self.client.clone();
         async move {
             client

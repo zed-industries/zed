@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
-use gpui::{prelude::*, App, Context, Entity, EntityId, Global, Subscription, Task};
+use gpui::{App, Context, Entity, EntityId, Global, Subscription, Task, prelude::*};
 use jupyter_websocket_client::RemoteServer;
 use language::Language;
 use project::{Fs, Project, WorktreeId};
@@ -125,7 +125,7 @@ impl ReplStore {
         cx.spawn(async move |this, cx| {
             let kernel_specifications = kernel_specifications
                 .await
-                .map_err(|e| anyhow::anyhow!("Failed to get python kernelspecs: {:?}", e))?;
+                .context("getting python kernelspecs")?;
 
             this.update(cx, |this, cx| {
                 this.kernel_specifications_for_worktree
@@ -278,5 +278,15 @@ impl ReplStore {
 
     pub fn remove_session(&mut self, entity_id: EntityId) {
         self.sessions.remove(&entity_id);
+    }
+
+    #[cfg(test)]
+    pub fn set_kernel_specs_for_testing(
+        &mut self,
+        specs: Vec<KernelSpecification>,
+        cx: &mut Context<Self>,
+    ) {
+        self.kernel_specifications = specs;
+        cx.notify();
     }
 }

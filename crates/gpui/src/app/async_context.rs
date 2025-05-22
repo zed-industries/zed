@@ -1,9 +1,9 @@
 use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, BorrowAppContext,
-    Entity, Focusable, ForegroundExecutor, Global, PromptLevel, Render, Reservation, Result, Task,
-    VisualContext, Window, WindowHandle,
+    Entity, EventEmitter, Focusable, ForegroundExecutor, Global, PromptLevel, Render, Reservation,
+    Result, Subscription, Task, VisualContext, Window, WindowHandle,
 };
-use anyhow::{anyhow, Context as _};
+use anyhow::Context as _;
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
 use std::{future::Future, rc::Weak};
@@ -25,21 +25,15 @@ impl AppContext for AsyncApp {
 
     fn new<T: 'static>(
         &mut self,
-        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Self::Result<Entity<T>> {
-        let app = self
-            .app
-            .upgrade()
-            .ok_or_else(|| anyhow!("app was released"))?;
+        let app = self.app.upgrade().context("app was released")?;
         let mut app = app.borrow_mut();
         Ok(app.new(build_entity))
     }
 
     fn reserve_entity<T: 'static>(&mut self) -> Result<Reservation<T>> {
-        let app = self
-            .app
-            .upgrade()
-            .ok_or_else(|| anyhow!("app was released"))?;
+        let app = self.app.upgrade().context("app was released")?;
         let mut app = app.borrow_mut();
         Ok(app.reserve_entity())
     }
@@ -47,12 +41,9 @@ impl AppContext for AsyncApp {
     fn insert_entity<T: 'static>(
         &mut self,
         reservation: Reservation<T>,
-        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Result<Entity<T>> {
-        let app = self
-            .app
-            .upgrade()
-            .ok_or_else(|| anyhow!("app was released"))?;
+        let app = self.app.upgrade().context("app was released")?;
         let mut app = app.borrow_mut();
         Ok(app.insert_entity(reservation, build_entity))
     }
@@ -60,12 +51,9 @@ impl AppContext for AsyncApp {
     fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Entity<T>,
-        update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Context<T>) -> R,
     ) -> Self::Result<R> {
-        let app = self
-            .app
-            .upgrade()
-            .ok_or_else(|| anyhow!("app was released"))?;
+        let app = self.app.upgrade().context("app was released")?;
         let mut app = app.borrow_mut();
         Ok(app.update_entity(handle, update))
     }
@@ -88,7 +76,7 @@ impl AppContext for AsyncApp {
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {
         let app = self.app.upgrade().context("app was released")?;
-        let mut lock = app.borrow_mut();
+        let mut lock = app.try_borrow_mut()?;
         lock.update_window(window, f)
     }
 
@@ -125,10 +113,7 @@ impl AppContext for AsyncApp {
 impl AsyncApp {
     /// Schedules all windows in the application to be redrawn.
     pub fn refresh(&self) -> Result<()> {
-        let app = self
-            .app
-            .upgrade()
-            .ok_or_else(|| anyhow!("app was released"))?;
+        let app = self.app.upgrade().context("app was released")?;
         let mut lock = app.borrow_mut();
         lock.refresh_windows();
         Ok(())
@@ -146,12 +131,26 @@ impl AsyncApp {
 
     /// Invoke the given function in the context of the app, then flush any effects produced during its invocation.
     pub fn update<R>(&self, f: impl FnOnce(&mut App) -> R) -> Result<R> {
-        let app = self
-            .app
-            .upgrade()
-            .ok_or_else(|| anyhow!("app was released"))?;
+        let app = self.app.upgrade().context("app was released")?;
         let mut lock = app.borrow_mut();
         Ok(lock.update(f))
+    }
+
+    /// Arrange for the given callback to be invoked whenever the given entity emits an event of a given type.
+    /// The callback is provided a handle to the emitting entity and a reference to the emitted event.
+    pub fn subscribe<T, Event>(
+        &mut self,
+        entity: &Entity<T>,
+        mut on_event: impl FnMut(Entity<T>, &Event, &mut App) + 'static,
+    ) -> Result<Subscription>
+    where
+        T: 'static + EventEmitter<Event>,
+        Event: 'static,
+    {
+        let app = self.app.upgrade().context("app was released")?;
+        let mut lock = app.borrow_mut();
+        let subscription = lock.subscribe(entity, on_event);
+        Ok(subscription)
     }
 
     /// Open a window with the given options based on the root view returned by the given function.
@@ -163,10 +162,7 @@ impl AsyncApp {
     where
         V: 'static + Render,
     {
-        let app = self
-            .app
-            .upgrade()
-            .ok_or_else(|| anyhow!("app was released"))?;
+        let app = self.app.upgrade().context("app was released")?;
         let mut lock = app.borrow_mut();
         lock.open_window(options, build_root_view)
     }
@@ -186,10 +182,7 @@ impl AsyncApp {
     /// Determine whether global state of the specified type has been assigned.
     /// Returns an error if the `App` has been dropped.
     pub fn has_global<G: Global>(&self) -> Result<bool> {
-        let app = self
-            .app
-            .upgrade()
-            .ok_or_else(|| anyhow!("app was released"))?;
+        let app = self.app.upgrade().context("app was released")?;
         let app = app.borrow_mut();
         Ok(app.has_global::<G>())
     }
@@ -199,10 +192,7 @@ impl AsyncApp {
     /// Panics if no global state of the specified type has been assigned.
     /// Returns an error if the `App` has been dropped.
     pub fn read_global<G: Global, R>(&self, read: impl FnOnce(&G, &App) -> R) -> Result<R> {
-        let app = self
-            .app
-            .upgrade()
-            .ok_or_else(|| anyhow!("app was released"))?;
+        let app = self.app.upgrade().context("app was released")?;
         let app = app.borrow_mut();
         Ok(read(app.global(), &app))
     }
@@ -225,20 +215,17 @@ impl AsyncApp {
         &self,
         update: impl FnOnce(&mut G, &mut App) -> R,
     ) -> Result<R> {
-        let app = self
-            .app
-            .upgrade()
-            .ok_or_else(|| anyhow!("app was released"))?;
+        let app = self.app.upgrade().context("app was released")?;
         let mut app = app.borrow_mut();
         Ok(app.update(|cx| cx.update_global(update)))
     }
 
     /// Run something using this entity and cx, when the returned struct is dropped
-    pub fn on_drop<T: 'static>(
+    pub fn on_drop<T: 'static, Callback: FnOnce(&mut T, &mut Context<T>) + 'static>(
         &self,
         entity: &WeakEntity<T>,
-        f: impl FnOnce(&mut T, &mut Context<T>) + 'static,
-    ) -> util::Deferred<impl FnOnce()> {
+        f: Callback,
+    ) -> util::Deferred<impl FnOnce() + use<T, Callback>> {
         let entity = entity.clone();
         let mut cx = self.clone();
         util::defer(move || {
@@ -345,7 +332,7 @@ impl AsyncWindowContext {
 impl AppContext for AsyncWindowContext {
     type Result<T> = Result<T>;
 
-    fn new<T>(&mut self, build_entity: impl FnOnce(&mut Context<'_, T>) -> T) -> Result<Entity<T>>
+    fn new<T>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Result<Entity<T>>
     where
         T: 'static,
     {
@@ -359,7 +346,7 @@ impl AppContext for AsyncWindowContext {
     fn insert_entity<T: 'static>(
         &mut self,
         reservation: Reservation<T>,
-        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Self::Result<Entity<T>> {
         self.window
             .update(self, |_, _, cx| cx.insert_entity(reservation, build_entity))
@@ -368,7 +355,7 @@ impl AppContext for AsyncWindowContext {
     fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Entity<T>,
-        update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Context<T>) -> R,
     ) -> Result<R> {
         self.window
             .update(self, |_, _, cx| cx.update_entity(handle, update))

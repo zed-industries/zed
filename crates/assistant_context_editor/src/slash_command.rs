@@ -2,20 +2,20 @@ use crate::context_editor::ContextEditor;
 use anyhow::Result;
 pub use assistant_slash_command::SlashCommand;
 use assistant_slash_command::{AfterCompletion, SlashCommandLine, SlashCommandWorkingSet};
-use editor::{CompletionProvider, Editor};
-use fuzzy::{match_strings, StringMatchCandidate};
+use editor::{CompletionProvider, Editor, ExcerptId};
+use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity, Window};
 use language::{Anchor, Buffer, ToPoint};
 use parking_lot::Mutex;
-use project::{lsp_store::CompletionDocumentation, CompletionIntent, CompletionSource};
+use project::{CompletionIntent, CompletionSource, lsp_store::CompletionDocumentation};
 use rope::Point;
 use std::{
     cell::RefCell,
     ops::Range,
     rc::Rc,
     sync::{
-        atomic::{AtomicBool, Ordering::SeqCst},
         Arc,
+        atomic::{AtomicBool, Ordering::SeqCst},
     },
 };
 use workspace::Workspace;
@@ -120,12 +120,14 @@ impl SlashCommandCompletionProvider {
                                         ) as Arc<_>
                                     });
                             Some(project::Completion {
-                                old_range: name_range.clone(),
+                                replace_range: name_range.clone(),
                                 documentation: Some(CompletionDocumentation::SingleLine(
                                     command.description().into(),
                                 )),
                                 new_text,
                                 label: command.label(cx),
+                                icon_path: None,
+                                insert_text_mode: None,
                                 confirm,
                                 source: CompletionSource::Custom,
                             })
@@ -217,15 +219,17 @@ impl SlashCommandCompletionProvider {
                             }
 
                             project::Completion {
-                                old_range: if new_argument.replace_previous_arguments {
+                                replace_range: if new_argument.replace_previous_arguments {
                                     argument_range.clone()
                                 } else {
                                     last_argument_range.clone()
                                 },
                                 label: new_argument.label,
+                                icon_path: None,
                                 new_text,
                                 documentation: None,
                                 confirm,
+                                insert_text_mode: None,
                                 source: CompletionSource::Custom,
                             }
                         })
@@ -241,6 +245,7 @@ impl SlashCommandCompletionProvider {
 impl CompletionProvider for SlashCommandCompletionProvider {
     fn completions(
         &self,
+        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: Anchor,
         _: editor::CompletionContext,
@@ -273,8 +278,8 @@ impl CompletionProvider for SlashCommandCompletionProvider {
                         buffer.anchor_after(Point::new(position.row, first_arg_start.start as u32));
                     let arguments = call
                         .arguments
-                        .iter()
-                        .filter_map(|argument| Some(line.get(argument.clone())?.to_string()))
+                        .into_iter()
+                        .filter_map(|argument| Some(line.get(argument)?.to_string()))
                         .collect::<Vec<_>>();
                     let argument_range = first_arg_start..buffer_position;
                     (

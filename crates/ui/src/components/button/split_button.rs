@@ -1,10 +1,10 @@
 use gpui::{
-    div, hsla, point, px, AnyElement, App, BoxShadow, IntoElement, ParentElement, RenderOnce,
-    Styled, Window,
+    AnyElement, App, BoxShadow, IntoElement, ParentElement, RenderOnce, Styled, Window, div, hsla,
+    point, px,
 };
 use theme::ActiveTheme;
 
-use crate::{h_flex, ElevationIndex};
+use crate::{ElevationIndex, h_flex};
 
 use super::ButtonLike;
 
@@ -18,6 +18,12 @@ use super::ButtonLike;
 pub struct SplitButton {
     pub left: ButtonLike,
     pub right: AnyElement,
+}
+
+impl SplitButton {
+    pub fn new(left: ButtonLike, right: AnyElement) -> Self {
+        Self { left, right }
+    }
 }
 
 impl RenderOnce for SplitButton {

@@ -1,39 +1,43 @@
 use super::*;
 use crate::{
+    JoinLines,
+    inline_completion_tests::FakeInlineCompletionProvider,
+    linked_editing_ranges::LinkedEditingRanges,
     scroll::scroll_amount::ScrollAmount,
     test::{
         assert_text_with_selections, build_editor,
-        editor_lsp_test_context::{git_commit_lang, EditorLspTestContext},
+        editor_lsp_test_context::{EditorLspTestContext, git_commit_lang},
         editor_test_context::EditorTestContext,
         select_ranges,
     },
-    JoinLines,
 };
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
 use futures::StreamExt;
 use gpui::{
-    div, BackgroundExecutor, SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext,
-    WindowBounds, WindowOptions,
+    BackgroundExecutor, DismissEvent, SemanticVersion, TestAppContext, UpdateGlobal,
+    VisualTestContext, WindowBounds, WindowOptions, div,
 };
 use indoc::indoc;
 use language::{
-    language_settings::{
-        AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
-        LanguageSettingsContent, PrettierSettings,
-    },
     BracketPairConfig,
     Capability::ReadWrite,
     FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageName,
     Override, Point,
+    language_settings::{
+        AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
+        LanguageSettingsContent, LspInsertMode, PrettierSettings,
+    },
+    tree_sitter_python,
 };
 use language_settings::{Formatter, FormatterList, IndentGuideSettings};
+use lsp::CompletionParams;
 use multi_buffer::{IndentGuide, PathKey};
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
-    debugger::breakpoint_store::{BreakpointKind, SerializedBreakpoint},
-    project_settings::{LspSettings, ProjectSettings},
     FakeFs,
+    debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
+    project_settings::{LspSettings, ProjectSettings},
 };
 use serde_json::{self, json};
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
@@ -46,12 +50,12 @@ use text::ToPoint as _;
 use unindent::Unindent;
 use util::{
     assert_set_eq, path,
-    test::{marked_text_ranges, marked_text_ranges_by, sample_text, TextRangeMarker},
+    test::{TextRangeMarker, marked_text_ranges, marked_text_ranges_by, sample_text},
     uri,
 };
 use workspace::{
+    CloseActiveItem, CloseAllItems, CloseInactiveItems, NavigationEntry, OpenOptions, ViewId,
     item::{FollowEvent, FollowableItem, Item, ItemHandle},
-    NavigationEntry, ViewId,
 };
 
 #[gpui::test]
@@ -1315,8 +1319,6 @@ fn test_move_cursor(cx: &mut TestAppContext) {
     });
 }
 
-// TODO: Re-enable this test
-#[cfg(target_os = "macos")]
 #[gpui::test]
 fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -2755,7 +2757,7 @@ async fn test_newline_comments(cx: &mut TestAppContext) {
 
     let language = Arc::new(Language::new(
         LanguageConfig {
-            line_comments: vec!["//".into()],
+            line_comments: vec!["// ".into()],
             ..LanguageConfig::default()
         },
         None,
@@ -2770,7 +2772,29 @@ async fn test_newline_comments(cx: &mut TestAppContext) {
         cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
         cx.assert_editor_state(indoc! {"
         // Foo
+        // ˇ
+    "});
+        // Ensure that we add comment prefix when existing line contains space
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(
+            indoc! {"
+        // Foo
+        //s
+        // ˇ
+    "}
+            .replace("s", " ") // s is used as space placeholder to prevent format on save
+            .as_str(),
+        );
+        // Ensure that we add comment prefix when existing line does not contain space
+        cx.set_state(indoc! {"
+        // Foo
         //ˇ
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        // Foo
+        //
+        // ˇ
     "});
         // Ensure that if cursor is before the comment start, we do not actually insert a comment prefix.
         cx.set_state(indoc! {"
@@ -2793,6 +2817,213 @@ async fn test_newline_comments(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
     cx.assert_editor_state(indoc! {"
         // Foo
+        ˇ
+    "});
+}
+
+#[gpui::test]
+async fn test_newline_comments_with_multiple_delimiters(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4)
+    });
+
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["// ".into(), "/// ".into()],
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+    {
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+        cx.set_state(indoc! {"
+        //ˇ
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        //
+        // ˇ
+    "});
+
+        cx.set_state(indoc! {"
+        ///ˇ
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        ///
+        /// ˇ
+    "});
+    }
+}
+
+#[gpui::test]
+async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4)
+    });
+
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            documentation: Some(language::DocumentationConfig {
+                start: "/**".into(),
+                end: "*/".into(),
+                prefix: "* ".into(),
+                tab_size: NonZeroU32::new(1).unwrap(),
+            }),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+    {
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+        cx.set_state(indoc! {"
+        /**ˇ
+    "});
+
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        /**
+         * ˇ
+    "});
+        // Ensure that if cursor is before the comment start,
+        // we do not actually insert a comment prefix.
+        cx.set_state(indoc! {"
+        ˇ/**
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+
+        ˇ/**
+    "});
+        // Ensure that if cursor is between it doesn't add comment prefix.
+        cx.set_state(indoc! {"
+        /*ˇ*
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        /*
+        ˇ*
+    "});
+        // Ensure that if suffix exists on same line after cursor it adds new line.
+        cx.set_state(indoc! {"
+        /**ˇ*/
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        /**
+         * ˇ
+         */
+    "});
+        // Ensure that if suffix exists on same line after cursor with space it adds new line.
+        cx.set_state(indoc! {"
+        /**ˇ */
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        /**
+         * ˇ
+         */
+    "});
+        // Ensure that if suffix exists on same line after cursor with space it adds new line.
+        cx.set_state(indoc! {"
+        /** ˇ*/
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(
+            indoc! {"
+        /**s
+         * ˇ
+         */
+    "}
+            .replace("s", " ") // s is used as space placeholder to prevent format on save
+            .as_str(),
+        );
+        // Ensure that delimiter space is preserved when newline on already
+        // spaced delimiter.
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(
+            indoc! {"
+        /**s
+         *s
+         * ˇ
+         */
+    "}
+            .replace("s", " ") // s is used as space placeholder to prevent format on save
+            .as_str(),
+        );
+        // Ensure that delimiter space is preserved when space is not
+        // on existing delimiter.
+        cx.set_state(indoc! {"
+        /**
+         *ˇ
+         */
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        /**
+         *
+         * ˇ
+         */
+    "});
+        // Ensure that if suffix exists on same line after cursor it
+        // doesn't add extra new line if prefix is not on same line.
+        cx.set_state(indoc! {"
+        /**
+        ˇ*/
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        /**
+
+        ˇ*/
+    "});
+        // Ensure that it detects suffix after existing prefix.
+        cx.set_state(indoc! {"
+        /**ˇ/
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        /**
+        ˇ/
+    "});
+        // Ensure that if suffix exists on same line before
+        // cursor it does not add comment prefix.
+        cx.set_state(indoc! {"
+        /** */ˇ
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        /** */
+        ˇ
+    "});
+        // Ensure that if suffix exists on same line before
+        // cursor it does not add comment prefix.
+        cx.set_state(indoc! {"
+        /**
+         *
+         */ˇ
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        /**
+         *
+         */
+         ˇ
+    "});
+    }
+    // Ensure that comment continuations can be disabled.
+    update_test_language_settings(cx, |settings| {
+        settings.defaults.extend_comment_on_newline = Some(false);
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(indoc! {"
+        /**ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        /**
         ˇ
     "});
 }
@@ -2871,9 +3102,26 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
     );
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
-    // cursors that are already at the suggested indent level insert
-    // a soft tab. cursors that are to the left of the suggested indent
-    // auto-indent their line.
+    // test when all cursors are not at suggested indent
+    // then simply move to their suggested indent location
+    cx.set_state(indoc! {"
+        const a: B = (
+            c(
+        ˇ
+        ˇ    )
+        );
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+        const a: B = (
+            c(
+                ˇ
+            ˇ)
+        );
+    "});
+
+    // test cursor already at suggested indent not moving when
+    // other cursors are yet to reach their suggested indents
     cx.set_state(indoc! {"
         ˇ
         const a: B = (
@@ -2887,13 +3135,132 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
     "});
     cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
     cx.assert_editor_state(indoc! {"
-            ˇ
+        ˇ
         const a: B = (
             c(
                 d(
                     ˇ
                 )
                 ˇ
+            ˇ)
+        );
+    "});
+    // test when all cursors are at suggested indent then tab is inserted
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+            ˇ
+        const a: B = (
+            c(
+                d(
+                        ˇ
+                )
+                    ˇ
+                ˇ)
+        );
+    "});
+
+    // test when current indent is less than suggested indent,
+    // we adjust line to match suggested indent and move cursor to it
+    //
+    // when no other cursor is at word boundary, all of them should move
+    cx.set_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+        ˇ
+        ˇ   )
+        ˇ   )
+        );
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+                    ˇ
+                ˇ)
+            ˇ)
+        );
+    "});
+
+    // test when current indent is less than suggested indent,
+    // we adjust line to match suggested indent and move cursor to it
+    //
+    // when some other cursor is at word boundary, it should not move
+    cx.set_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+        ˇ
+        ˇ   )
+           ˇ)
+        );
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+                    ˇ
+                ˇ)
+            ˇ)
+        );
+    "});
+
+    // test when current indent is more than suggested indent,
+    // we just move cursor to current indent instead of suggested indent
+    //
+    // when no other cursor is at word boundary, all of them should move
+    cx.set_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+        ˇ
+        ˇ                )
+        ˇ   )
+        );
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+                    ˇ
+                        ˇ)
+            ˇ)
+        );
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+                        ˇ
+                            ˇ)
+                ˇ)
+        );
+    "});
+
+    // test when current indent is more than suggested indent,
+    // we just move cursor to current indent instead of suggested indent
+    //
+    // when some other cursor is at word boundary, it doesn't move
+    cx.set_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+        ˇ
+        ˇ                )
+            ˇ)
+        );
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+        const a: B = (
+            c(
+                d(
+                    ˇ
+                        ˇ)
             ˇ)
         );
     "});
@@ -2917,7 +3284,32 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
 }
 
 #[gpui::test]
-async fn test_tab_with_mixed_whitespace(cx: &mut TestAppContext) {
+async fn test_tab_with_mixed_whitespace_txt(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(3)
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(indoc! {"
+         ˇ
+        \t ˇ
+        \t  ˇ
+        \t   ˇ
+         \t  \t\t \t      \t\t   \t\t    \t \t ˇ
+    "});
+
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+           ˇ
+        \t   ˇ
+        \t   ˇ
+        \t      ˇ
+         \t  \t\t \t      \t\t   \t\t    \t \t   ˇ
+    "});
+}
+
+#[gpui::test]
+async fn test_tab_with_mixed_whitespace_rust(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.tab_size = NonZeroU32::new(4)
     });
@@ -3164,18 +3556,12 @@ fn test_indent_outdent_with_excerpts(cx: &mut TestAppContext) {
         let mut multibuffer = MultiBuffer::new(ReadWrite);
         multibuffer.push_excerpts(
             toml_buffer.clone(),
-            [ExcerptRange {
-                context: Point::new(0, 0)..Point::new(2, 0),
-                primary: None,
-            }],
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))],
             cx,
         );
         multibuffer.push_excerpts(
             rust_buffer.clone(),
-            [ExcerptRange {
-                context: Point::new(0, 0)..Point::new(1, 0),
-                primary: None,
-            }],
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 0))],
             cx,
         );
         multibuffer
@@ -3268,18 +3654,6 @@ async fn test_backspace(cx: &mut TestAppContext) {
             ˇtwo
         ˇ  threeˇ  four
     "});
-
-    // Test backspace with line_mode set to true
-    cx.update_editor(|e, _, _| e.selections.line_mode = true);
-    cx.set_state(indoc! {"
-        The ˇquick ˇbrown
-        fox jumps over
-        the lazy dog
-        ˇThe qu«ick bˇ»rown"});
-    cx.update_editor(|e, window, cx| e.backspace(&Backspace, window, cx));
-    cx.assert_editor_state(indoc! {"
-        ˇfox jumps over
-        the lazy dogˇ"});
 }
 
 #[gpui::test]
@@ -3299,16 +3673,6 @@ async fn test_delete(cx: &mut TestAppContext) {
         fouˇ five six
         seven ˇten
     "});
-
-    // Test backspace with line_mode set to true
-    cx.update_editor(|e, _, _| e.selections.line_mode = true);
-    cx.set_state(indoc! {"
-        The ˇquick ˇbrown
-        fox «ˇjum»ps over
-        the lazy dog
-        ˇThe qu«ick bˇ»rown"});
-    cx.update_editor(|e, window, cx| e.backspace(&Backspace, window, cx));
-    cx.assert_editor_state("ˇthe lazy dogˇ");
 }
 
 #[gpui::test]
@@ -3903,6 +4267,41 @@ async fn test_manipulate_lines_with_multi_selection(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_toggle_case(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // If all lower case -> upper case
+    cx.set_state(indoc! {"
+        «hello worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.toggle_case(&ToggleCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «HELLO WORLDˇ»
+    "});
+
+    // If all upper case -> lower case
+    cx.set_state(indoc! {"
+        «HELLO WORLDˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.toggle_case(&ToggleCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «hello worldˇ»
+    "});
+
+    // If any upper case characters are identified -> lower case
+    // This matches JetBrains IDEs
+    cx.set_state(indoc! {"
+        «hEllo worldˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.toggle_case(&ToggleCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «hello worldˇ»
+    "});
+}
+
+#[gpui::test]
 async fn test_manipulate_text(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -4261,9 +4660,10 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
             [BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(snapshot.anchor_after(Point::new(2, 0))),
-                height: 1,
+                height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
+                render_in_minimap: true,
             }],
             Some(Autoscroll::fit()),
             cx,
@@ -4302,10 +4702,11 @@ async fn test_selections_and_replace_blocks(cx: &mut TestAppContext) {
         editor.insert_blocks(
             [BlockProperties {
                 placement,
-                height: 4,
+                height: Some(4),
                 style: BlockStyle::Sticky,
                 render: Arc::new(|_| gpui::div().into_any_element()),
                 priority: 0,
+                render_in_minimap: true,
             }],
             None,
             cx,
@@ -4927,7 +5328,7 @@ async fn test_copy_trim(cx: &mut TestAppContext) {
         r#"            «for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);ˇ»
                 end = cmp::min(max_point, Point::new(end.row + 1, 0));
@@ -4942,7 +5343,7 @@ async fn test_copy_trim(cx: &mut TestAppContext) {
             "for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);"
                 .to_string()
@@ -4957,7 +5358,7 @@ async fn test_copy_trim(cx: &mut TestAppContext) {
             "for selection in selections.iter() {
 let mut start = selection.start;
 let mut end = selection.end;
-let is_entire_line = selection.is_empty() || self.selections.line_mode;
+let is_entire_line = selection.is_empty();
 if is_entire_line {
     start = Point::new(start.row, 0);"
                 .to_string()
@@ -4969,7 +5370,7 @@ if is_entire_line {
         r#"       «     for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);ˇ»
                 end = cmp::min(max_point, Point::new(end.row + 1, 0));
@@ -4984,7 +5385,7 @@ if is_entire_line {
             "     for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);"
                 .to_string()
@@ -4999,7 +5400,7 @@ if is_entire_line {
             "for selection in selections.iter() {
 let mut start = selection.start;
 let mut end = selection.end;
-let is_entire_line = selection.is_empty() || self.selections.line_mode;
+let is_entire_line = selection.is_empty();
 if is_entire_line {
     start = Point::new(start.row, 0);"
                 .to_string()
@@ -5011,7 +5412,7 @@ if is_entire_line {
         r#"       «ˇ     for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);»
                 end = cmp::min(max_point, Point::new(end.row + 1, 0));
@@ -5026,7 +5427,7 @@ if is_entire_line {
             "     for selection in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);"
                 .to_string()
@@ -5041,7 +5442,7 @@ if is_entire_line {
             "for selection in selections.iter() {
 let mut start = selection.start;
 let mut end = selection.end;
-let is_entire_line = selection.is_empty() || self.selections.line_mode;
+let is_entire_line = selection.is_empty();
 if is_entire_line {
     start = Point::new(start.row, 0);"
                 .to_string()
@@ -5053,7 +5454,7 @@ if is_entire_line {
         r#"            for selection «in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);ˇ»
                 end = cmp::min(max_point, Point::new(end.row + 1, 0));
@@ -5068,7 +5469,7 @@ if is_entire_line {
             "in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);"
                 .to_string()
@@ -5083,12 +5484,42 @@ if is_entire_line {
             "in selections.iter() {
             let mut start = selection.start;
             let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);"
                 .to_string()
         ),
         "When selecting past the indent, nothing is trimmed"
+    );
+
+    cx.set_state(
+        r#"            «for selection in selections.iter() {
+            let mut start = selection.start;
+
+            let mut end = selection.end;
+            let is_entire_line = selection.is_empty();
+            if is_entire_line {
+                start = Point::new(start.row, 0);
+ˇ»                end = cmp::min(max_point, Point::new(end.row + 1, 0));
+            }
+        "#,
+    );
+    cx.update_editor(|e, window, cx| e.copy_and_trim(&CopyAndTrim, window, cx));
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some(
+            "for selection in selections.iter() {
+let mut start = selection.start;
+
+let mut end = selection.end;
+let is_entire_line = selection.is_empty();
+if is_entire_line {
+    start = Point::new(start.row, 0);
+"
+            .to_string()
+        ),
+        "Copying with stripping should ignore empty lines"
     );
 }
 
@@ -5571,8 +6002,34 @@ async fn test_add_selection_above_below(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc!(
         r#"abc
            defˇghi
-
+           ˇ
            jk
+           nlmo
+           "#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_below(&Default::default(), window, cx);
+    });
+
+    cx.assert_editor_state(indoc!(
+        r#"abc
+           defˇghi
+           ˇ
+           jkˇ
+           nlmo
+           "#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_below(&Default::default(), window, cx);
+    });
+
+    cx.assert_editor_state(indoc!(
+        r#"abc
+           defˇghi
+           ˇ
+           jkˇ
            nlmˇo
            "#
     ));
@@ -5584,10 +6041,10 @@ async fn test_add_selection_above_below(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc!(
         r#"abc
            defˇghi
-
-           jk
+           ˇ
+           jkˇ
            nlmˇo
-           "#
+           ˇ"#
     ));
 
     // change selections
@@ -5764,6 +6221,13 @@ async fn test_select_next(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| e.select_next(&SelectNext::default(), window, cx))
         .unwrap();
     cx.assert_editor_state("«abcˇ»\n«abcˇ» «abcˇ»\ndefabc\n«abcˇ»");
+
+    // Test selection direction should be preserved
+    cx.set_state("abc\n«ˇabc» abc\ndefabc\nabc");
+
+    cx.update_editor(|e, window, cx| e.select_next(&SelectNext::default(), window, cx))
+        .unwrap();
+    cx.assert_editor_state("abc\n«ˇabc» «ˇabc»\ndefabc\nabc");
 }
 
 #[gpui::test]
@@ -5810,6 +6274,206 @@ async fn test_select_all_matches(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_select_all_matches_does_not_scroll(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let large_body_1 = "\nd".repeat(200);
+    let large_body_2 = "\ne".repeat(200);
+
+    cx.set_state(&format!(
+        "abc\nabc{large_body_1} «ˇa»bc{large_body_2}\nefabc\nabc"
+    ));
+    let initial_scroll_position = cx.update_editor(|editor, _, cx| {
+        let scroll_position = editor.scroll_position(cx);
+        assert!(scroll_position.y > 0.0, "Initial selection is between two large bodies and should have the editor scrolled to it");
+        scroll_position
+    });
+
+    cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state(&format!(
+        "«ˇa»bc\n«ˇa»bc{large_body_1} «ˇa»bc{large_body_2}\nef«ˇa»bc\n«ˇa»bc"
+    ));
+    let scroll_position_after_selection =
+        cx.update_editor(|editor, _, cx| editor.scroll_position(cx));
+    assert_eq!(
+        initial_scroll_position, scroll_position_after_selection,
+        "Scroll position should not change after selecting all matches"
+    );
+}
+
+#[gpui::test]
+async fn test_undo_format_scrolls_to_last_edit_pos(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            document_formatting_provider: Some(lsp::OneOf::Left(true)),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(indoc! {"
+        line 1
+        line 2
+        linˇe 3
+        line 4
+        line 5
+    "});
+
+    // Make an edit
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("X", window, cx);
+    });
+
+    // Move cursor to a different position
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(None, window, cx, |s| {
+            s.select_ranges([Point::new(4, 2)..Point::new(4, 2)]);
+        });
+    });
+
+    cx.assert_editor_state(indoc! {"
+        line 1
+        line 2
+        linXe 3
+        line 4
+        liˇne 5
+    "});
+
+    cx.lsp
+        .set_request_handler::<lsp::request::Formatting, _, _>(move |_, _| async move {
+            Ok(Some(vec![lsp::TextEdit::new(
+                lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                "PREFIX ".to_string(),
+            )]))
+        });
+
+    cx.update_editor(|editor, window, cx| editor.format(&Default::default(), window, cx))
+        .unwrap()
+        .await
+        .unwrap();
+
+    cx.assert_editor_state(indoc! {"
+        PREFIX line 1
+        line 2
+        linXe 3
+        line 4
+        liˇne 5
+    "});
+
+    // Undo formatting
+    cx.update_editor(|editor, window, cx| {
+        editor.undo(&Default::default(), window, cx);
+    });
+
+    // Verify cursor moved back to position after edit
+    cx.assert_editor_state(indoc! {"
+        line 1
+        line 2
+        linXˇe 3
+        line 4
+        line 5
+    "});
+}
+
+#[gpui::test]
+async fn test_undo_inline_completion_scrolls_to_edit_pos(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let provider = cx.new(|_| FakeInlineCompletionProvider::default());
+    cx.update_editor(|editor, window, cx| {
+        editor.set_edit_prediction_provider(Some(provider.clone()), window, cx);
+    });
+
+    cx.set_state(indoc! {"
+        line 1
+        line 2
+        linˇe 3
+        line 4
+        line 5
+        line 6
+        line 7
+        line 8
+        line 9
+        line 10
+    "});
+
+    let snapshot = cx.buffer_snapshot();
+    let edit_position = snapshot.anchor_after(Point::new(2, 4));
+
+    cx.update(|_, cx| {
+        provider.update(cx, |provider, _| {
+            provider.set_inline_completion(Some(inline_completion::InlineCompletion {
+                id: None,
+                edits: vec![(edit_position..edit_position, "X".into())],
+                edit_preview: None,
+            }))
+        })
+    });
+
+    cx.update_editor(|editor, window, cx| editor.update_visible_inline_completion(window, cx));
+    cx.update_editor(|editor, window, cx| {
+        editor.accept_edit_prediction(&crate::AcceptEditPrediction, window, cx)
+    });
+
+    cx.assert_editor_state(indoc! {"
+        line 1
+        line 2
+        lineXˇ 3
+        line 4
+        line 5
+        line 6
+        line 7
+        line 8
+        line 9
+        line 10
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(None, window, cx, |s| {
+            s.select_ranges([Point::new(9, 2)..Point::new(9, 2)]);
+        });
+    });
+
+    cx.assert_editor_state(indoc! {"
+        line 1
+        line 2
+        lineX 3
+        line 4
+        line 5
+        line 6
+        line 7
+        line 8
+        line 9
+        liˇne 10
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.undo(&Default::default(), window, cx);
+    });
+
+    cx.assert_editor_state(indoc! {"
+        line 1
+        line 2
+        lineˇ 3
+        line 4
+        line 5
+        line 6
+        line 7
+        line 8
+        line 9
+        line 10
+    "});
+}
+
+#[gpui::test]
 async fn test_select_next_with_multiple_carets(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -5841,6 +6505,25 @@ let foo = «2ˇ»;"#,
 let «fooˇ» = 2;
 let foo = 2;
 let foo = «2ˇ»;"#,
+    );
+
+    // Test last selection direction should be preserved
+    cx.set_state(
+        r#"let foo = 2;
+let foo = 2;
+let «fooˇ» = 2;
+let «ˇfoo» = 2;
+let foo = 2;"#,
+    );
+
+    cx.update_editor(|e, window, cx| e.select_next(&SelectNext::default(), window, cx))
+        .unwrap();
+    cx.assert_editor_state(
+        r#"let foo = 2;
+let foo = 2;
+let «fooˇ» = 2;
+let «ˇfoo» = 2;
+let «ˇfoo» = 2;"#,
     );
 }
 
@@ -5903,11 +6586,7 @@ async fn test_select_previous_with_single_caret(cx: &mut TestAppContext) {
 
     cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
         .unwrap();
-    cx.assert_editor_state("«abcˇ»\n«abcˇ» abc\ndef«abcˇ»\n«abcˇ»");
-
-    cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
-        .unwrap();
-    cx.assert_editor_state("«abcˇ»\n«abcˇ» «abcˇ»\ndef«abcˇ»\n«abcˇ»");
+    cx.assert_editor_state("«abcˇ»\n«abcˇ» «abcˇ»\ndefabc\n«abcˇ»");
 }
 
 #[gpui::test]
@@ -5969,25 +6648,26 @@ async fn test_select_previous_with_single_selection(cx: &mut TestAppContext) {
 
     cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
         .unwrap();
-    cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\nabc");
+    // selection direction is preserved
+    cx.assert_editor_state("«ˇabc»\n«ˇabc» abc\ndefabc\nabc");
 
     cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
         .unwrap();
-    cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\n«abcˇ»");
+    cx.assert_editor_state("«ˇabc»\n«ˇabc» abc\ndefabc\n«ˇabc»");
 
     cx.update_editor(|editor, window, cx| editor.undo_selection(&UndoSelection, window, cx));
-    cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\nabc");
+    cx.assert_editor_state("«ˇabc»\n«ˇabc» abc\ndefabc\nabc");
 
     cx.update_editor(|editor, window, cx| editor.redo_selection(&RedoSelection, window, cx));
-    cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndefabc\n«abcˇ»");
+    cx.assert_editor_state("«ˇabc»\n«ˇabc» abc\ndefabc\n«ˇabc»");
 
     cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
         .unwrap();
-    cx.assert_editor_state("«abcˇ»\n«ˇabc» abc\ndef«abcˇ»\n«abcˇ»");
+    cx.assert_editor_state("«ˇabc»\n«ˇabc» abc\ndef«ˇabc»\n«ˇabc»");
 
     cx.update_editor(|e, window, cx| e.select_previous(&SelectPrevious::default(), window, cx))
         .unwrap();
-    cx.assert_editor_state("«abcˇ»\n«ˇabc» «abcˇ»\ndef«abcˇ»\n«abcˇ»");
+    cx.assert_editor_state("«ˇabc»\n«ˇabc» «ˇabc»\ndef«ˇabc»\n«ˇabc»");
 }
 
 #[gpui::test]
@@ -6033,7 +6713,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
                 use mod1::mod2::{mod3, «mod4ˇ»};
 
                 fn fn_1«ˇ(param1: bool, param2: &str)» {
-                    let var1 = "«textˇ»";
+                    let var1 = "«ˇtext»";
                 }
             "#},
             cx,
@@ -6101,7 +6781,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
                 use mod1::mod2::{mod3, «mod4ˇ»};
 
                 fn fn_1«ˇ(param1: bool, param2: &str)» {
-                    let var1 = "«textˇ»";
+                    let var1 = "«ˇtext»";
                 }
             "#},
             cx,
@@ -6170,7 +6850,249 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
                 use mod1::mod2::«{mod3, mod4}ˇ»;
 
                 fn fn_1«ˇ(param1: bool, param2: &str)» {
-                    «let var1 = "text";ˇ»
+                    let var1 = "«ˇtext»";
+                }
+            "#},
+            cx,
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_select_larger_syntax_node_for_cursor_at_end(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+
+    let text = "let a = 2;";
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    // Test case 1: Cursor at end of word
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(None, window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 5)..DisplayPoint::new(DisplayRow(0), 5)
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, "let aˇ = 2;", cx);
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, "let «ˇa» = 2;", cx);
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, "«ˇlet a = 2;»", cx);
+    });
+
+    // Test case 2: Cursor at end of statement
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(None, window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 11)..DisplayPoint::new(DisplayRow(0), 11)
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, "let a = 2;ˇ", cx);
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, "«ˇlet a = 2;»", cx);
+    });
+}
+
+#[gpui::test]
+async fn test_select_larger_smaller_syntax_node_for_string(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+
+    let text = r#"
+        use mod1::mod2::{mod3, mod4};
+
+        fn fn_1(param1: bool, param2: &str) {
+            let var1 = "hello world";
+        }
+    "#
+    .unindent();
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    // Test 1: Cursor on a letter of a string word
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(None, window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(3), 17)..DisplayPoint::new(DisplayRow(3), 17)
+            ]);
+        });
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                use mod1::mod2::{mod3, mod4};
+
+                fn fn_1(param1: bool, param2: &str) {
+                    let var1 = "hˇello world";
+                }
+            "#},
+            cx,
+        );
+        editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                use mod1::mod2::{mod3, mod4};
+
+                fn fn_1(param1: bool, param2: &str) {
+                    let var1 = "«ˇhello» world";
+                }
+            "#},
+            cx,
+        );
+    });
+
+    // Test 2: Partial selection within a word
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(None, window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(3), 17)..DisplayPoint::new(DisplayRow(3), 19)
+            ]);
+        });
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                use mod1::mod2::{mod3, mod4};
+
+                fn fn_1(param1: bool, param2: &str) {
+                    let var1 = "h«elˇ»lo world";
+                }
+            "#},
+            cx,
+        );
+        editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                use mod1::mod2::{mod3, mod4};
+
+                fn fn_1(param1: bool, param2: &str) {
+                    let var1 = "«ˇhello» world";
+                }
+            "#},
+            cx,
+        );
+    });
+
+    // Test 3: Complete word already selected
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(None, window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(3), 16)..DisplayPoint::new(DisplayRow(3), 21)
+            ]);
+        });
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                use mod1::mod2::{mod3, mod4};
+
+                fn fn_1(param1: bool, param2: &str) {
+                    let var1 = "«helloˇ» world";
+                }
+            "#},
+            cx,
+        );
+        editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                use mod1::mod2::{mod3, mod4};
+
+                fn fn_1(param1: bool, param2: &str) {
+                    let var1 = "«hello worldˇ»";
+                }
+            "#},
+            cx,
+        );
+    });
+
+    // Test 4: Selection spanning across words
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(None, window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(3), 19)..DisplayPoint::new(DisplayRow(3), 24)
+            ]);
+        });
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                use mod1::mod2::{mod3, mod4};
+
+                fn fn_1(param1: bool, param2: &str) {
+                    let var1 = "hel«lo woˇ»rld";
+                }
+            "#},
+            cx,
+        );
+        editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                use mod1::mod2::{mod3, mod4};
+
+                fn fn_1(param1: bool, param2: &str) {
+                    let var1 = "«ˇhello world»";
+                }
+            "#},
+            cx,
+        );
+    });
+
+    // Test 5: Expansion beyond string
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
+        editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                use mod1::mod2::{mod3, mod4};
+
+                fn fn_1(param1: bool, param2: &str) {
+                    «ˇlet var1 = "hello world";»
                 }
             "#},
             cx,
@@ -6409,7 +7331,7 @@ async fn test_autoindent_selections(cx: &mut TestAppContext) {
         cx.run_until_parked();
 
         cx.update(|_, cx| {
-            pretty_assertions::assert_eq!(
+            assert_eq!(
                 buffer.read(cx).text(),
                 indoc! { "
                     impl A {
@@ -7692,75 +8614,81 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
     cx.executor().start_waiting();
     let fake_server = fake_servers.next().await.unwrap();
 
-    let save = editor
-        .update_in(cx, |editor, window, cx| {
-            editor.save(true, project.clone(), window, cx)
-        })
-        .unwrap();
-    fake_server
-        .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
-            assert_eq!(
-                params.text_document.uri,
-                lsp::Url::from_file_path(path!("/file.rs")).unwrap()
-            );
-            assert_eq!(params.options.tab_size, 4);
-            Ok(Some(vec![lsp::TextEdit::new(
-                lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(1, 0)),
-                ", ".to_string(),
-            )]))
-        })
-        .next()
-        .await;
-    cx.executor().start_waiting();
-    save.await;
-
-    assert_eq!(
-        editor.update(cx, |editor, cx| editor.text(cx)),
-        "one, two\nthree\n"
-    );
-    assert!(!cx.read(|cx| editor.is_dirty(cx)));
-
-    editor.update_in(cx, |editor, window, cx| {
-        editor.set_text("one\ntwo\nthree\n", window, cx)
-    });
-    assert!(cx.read(|cx| editor.is_dirty(cx)));
-
-    // Ensure we can still save even if formatting hangs.
-    fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
-        assert_eq!(
-            params.text_document.uri,
-            lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+    {
+        fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+            move |params, _| async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+                );
+                assert_eq!(params.options.tab_size, 4);
+                Ok(Some(vec![lsp::TextEdit::new(
+                    lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(1, 0)),
+                    ", ".to_string(),
+                )]))
+            },
         );
-        futures::future::pending::<()>().await;
-        unreachable!()
-    });
-    let save = editor
-        .update_in(cx, |editor, window, cx| {
-            editor.save(true, project.clone(), window, cx)
-        })
-        .unwrap();
-    cx.executor().advance_clock(super::FORMAT_TIMEOUT);
-    cx.executor().start_waiting();
-    save.await;
-    assert_eq!(
-        editor.update(cx, |editor, cx| editor.text(cx)),
-        "one\ntwo\nthree\n"
-    );
-    assert!(!cx.read(|cx| editor.is_dirty(cx)));
+        let save = editor
+            .update_in(cx, |editor, window, cx| {
+                editor.save(true, project.clone(), window, cx)
+            })
+            .unwrap();
+        cx.executor().start_waiting();
+        save.await;
+
+        assert_eq!(
+            editor.update(cx, |editor, cx| editor.text(cx)),
+            "one, two\nthree\n"
+        );
+        assert!(!cx.read(|cx| editor.is_dirty(cx)));
+    }
+
+    {
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("one\ntwo\nthree\n", window, cx)
+        });
+        assert!(cx.read(|cx| editor.is_dirty(cx)));
+
+        // Ensure we can still save even if formatting hangs.
+        fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+            move |params, _| async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+                );
+                futures::future::pending::<()>().await;
+                unreachable!()
+            },
+        );
+        let save = editor
+            .update_in(cx, |editor, window, cx| {
+                editor.save(true, project.clone(), window, cx)
+            })
+            .unwrap();
+        cx.executor().advance_clock(super::FORMAT_TIMEOUT);
+        cx.executor().start_waiting();
+        save.await;
+        assert_eq!(
+            editor.update(cx, |editor, cx| editor.text(cx)),
+            "one\ntwo\nthree\n"
+        );
+    }
 
     // For non-dirty buffer, no formatting request should be sent
-    let save = editor
-        .update_in(cx, |editor, window, cx| {
-            editor.save(true, project.clone(), window, cx)
-        })
-        .unwrap();
-    let _pending_format_request = fake_server
-        .handle_request::<lsp::request::RangeFormatting, _, _>(move |_, _| async move {
+    {
+        assert!(!cx.read(|cx| editor.is_dirty(cx)));
+
+        fake_server.set_request_handler::<lsp::request::Formatting, _, _>(move |_, _| async move {
             panic!("Should not be invoked on non-dirty buffer");
-        })
-        .next();
-    cx.executor().start_waiting();
-    save.await;
+        });
+        let save = editor
+            .update_in(cx, |editor, window, cx| {
+                editor.save(true, project.clone(), window, cx)
+            })
+            .unwrap();
+        cx.executor().start_waiting();
+        save.await;
+    }
 
     // Set rust language override and assert overridden tabsize is sent to language server
     update_test_language_settings(cx, |settings| {
@@ -7773,28 +8701,28 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
         );
     });
 
-    editor.update_in(cx, |editor, window, cx| {
-        editor.set_text("somehting_new\n", window, cx)
-    });
-    assert!(cx.read(|cx| editor.is_dirty(cx)));
-    let save = editor
-        .update_in(cx, |editor, window, cx| {
-            editor.save(true, project.clone(), window, cx)
-        })
-        .unwrap();
-    fake_server
-        .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
-            assert_eq!(
-                params.text_document.uri,
-                lsp::Url::from_file_path(path!("/file.rs")).unwrap()
-            );
-            assert_eq!(params.options.tab_size, 8);
-            Ok(Some(vec![]))
-        })
-        .next()
-        .await;
-    cx.executor().start_waiting();
-    save.await;
+    {
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("somehting_new\n", window, cx)
+        });
+        assert!(cx.read(|cx| editor.is_dirty(cx)));
+        let _formatting_request_signal = fake_server
+            .set_request_handler::<lsp::request::Formatting, _, _>(move |params, _| async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+                );
+                assert_eq!(params.options.tab_size, 8);
+                Ok(Some(vec![]))
+            });
+        let save = editor
+            .update_in(cx, |editor, window, cx| {
+                editor.save(true, project.clone(), window, cx)
+            })
+            .unwrap();
+        cx.executor().start_waiting();
+        save.await;
+    }
 }
 
 #[gpui::test]
@@ -7878,54 +8806,27 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
         multi_buffer.push_excerpts(
             buffer_1.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 4),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
             ],
             cx,
         );
         multi_buffer.push_excerpts(
             buffer_2.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 4),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
             ],
             cx,
         );
         multi_buffer.push_excerpts(
             buffer_3.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 4),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
             ],
             cx,
         );
@@ -7933,7 +8834,7 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
     });
     let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             multi_buffer,
             Some(project.clone()),
             window,
@@ -8004,7 +8905,9 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
     assert!(cx.read(|cx| !multi_buffer_editor.is_dirty(cx)));
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.text(cx)),
-        uri!("a|o[file:///a/main.rs formatted]bbbb\ncccc\n\nffff\ngggg\n\njjjj\n\nlll[file:///a/other.rs formatted]mmmm\nnnnn|four|five|six|\nr\n\nuuuu\n\nvvvv\nwwww\nxxxx\n\n{{{{\n||||\n\n\u{7f}\u{7f}\u{7f}\u{7f}"),
+        uri!(
+            "a|o[file:///a/main.rs formatted]bbbb\ncccc\n\nffff\ngggg\n\njjjj\n\nlll[file:///a/other.rs formatted]mmmm\nnnnn|four|five|six|\nr\n\nuuuu\n\nvvvv\nwwww\nxxxx\n\n{{{{\n||||\n\n\u{7f}\u{7f}\u{7f}\u{7f}"
+        ),
     );
     buffer_1.update(cx, |buffer, _| {
         assert!(!buffer.is_dirty());
@@ -8073,7 +8976,7 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
         })
         .unwrap();
     fake_server
-        .handle_request::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
+        .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
                 lsp::Url::from_file_path(path!("/file.rs")).unwrap()
@@ -8100,7 +9003,7 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
     assert!(cx.read(|cx| editor.is_dirty(cx)));
 
     // Ensure we can still save even if formatting hangs.
-    fake_server.handle_request::<lsp::request::RangeFormatting, _, _>(
+    fake_server.set_request_handler::<lsp::request::RangeFormatting, _, _>(
         move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
@@ -8131,7 +9034,7 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
         })
         .unwrap();
     let _pending_format_request = fake_server
-        .handle_request::<lsp::request::RangeFormatting, _, _>(move |_, _| async move {
+        .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |_, _| async move {
             panic!("Should not be invoked on non-dirty buffer");
         })
         .next();
@@ -8159,7 +9062,7 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
         })
         .unwrap();
     fake_server
-        .handle_request::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
+        .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
                 lsp::Url::from_file_path(path!("/file.rs")).unwrap()
@@ -8247,7 +9150,7 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
         })
         .unwrap();
     fake_server
-        .handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
+        .set_request_handler::<lsp::request::Formatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
                 lsp::Url::from_file_path(path!("/file.rs")).unwrap()
@@ -8271,14 +9174,16 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
         editor.set_text("one\ntwo\nthree\n", window, cx)
     });
     // Ensure we don't lock if formatting hangs.
-    fake_server.handle_request::<lsp::request::Formatting, _, _>(move |params, _| async move {
-        assert_eq!(
-            params.text_document.uri,
-            lsp::Url::from_file_path(path!("/file.rs")).unwrap()
-        );
-        futures::future::pending::<()>().await;
-        unreachable!()
-    });
+    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+        move |params, _| async move {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Url::from_file_path(path!("/file.rs")).unwrap()
+            );
+            futures::future::pending::<()>().await;
+            unreachable!()
+        },
+    );
     let format = editor
         .update_in(cx, |editor, window, cx| {
             editor.perform_format(
@@ -8297,6 +9202,273 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
         editor.update(cx, |editor, cx| editor.text(cx)),
         "one\ntwo\nthree\n"
     );
+}
+
+#[gpui::test]
+async fn test_multiple_formatters(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.remove_trailing_whitespace_on_save = Some(true);
+        settings.defaults.formatter =
+            Some(language_settings::SelectedFormatter::List(FormatterList(
+                vec![
+                    Formatter::LanguageServer { name: None },
+                    Formatter::CodeActions(
+                        [
+                            ("code-action-1".into(), true),
+                            ("code-action-2".into(), true),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    ),
+                ]
+                .into(),
+            )))
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.rs"), "one  \ntwo   \nthree".into())
+        .await;
+
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                execute_command_provider: Some(lsp::ExecuteCommandOptions {
+                    commands: vec!["the-command-for-code-action-1".into()],
+                    ..Default::default()
+                }),
+                code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+
+    cx.executor().start_waiting();
+
+    let fake_server = fake_servers.next().await.unwrap();
+    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+        move |_params, _| async move {
+            Ok(Some(vec![lsp::TextEdit::new(
+                lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                "applied-formatting\n".to_string(),
+            )]))
+        },
+    );
+    fake_server.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
+        move |params, _| async move {
+            assert_eq!(
+                params.context.only,
+                Some(vec!["code-action-1".into(), "code-action-2".into()])
+            );
+            let uri = lsp::Url::from_file_path(path!("/file.rs")).unwrap();
+            Ok(Some(vec![
+                lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
+                    kind: Some("code-action-1".into()),
+                    edit: Some(lsp::WorkspaceEdit::new(
+                        [(
+                            uri.clone(),
+                            vec![lsp::TextEdit::new(
+                                lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                                "applied-code-action-1-edit\n".to_string(),
+                            )],
+                        )]
+                        .into_iter()
+                        .collect(),
+                    )),
+                    command: Some(lsp::Command {
+                        command: "the-command-for-code-action-1".into(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
+                    kind: Some("code-action-2".into()),
+                    edit: Some(lsp::WorkspaceEdit::new(
+                        [(
+                            uri.clone(),
+                            vec![lsp::TextEdit::new(
+                                lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                                "applied-code-action-2-edit\n".to_string(),
+                            )],
+                        )]
+                        .into_iter()
+                        .collect(),
+                    )),
+                    ..Default::default()
+                }),
+            ]))
+        },
+    );
+
+    fake_server.set_request_handler::<lsp::request::CodeActionResolveRequest, _, _>({
+        move |params, _| async move { Ok(params) }
+    });
+
+    let command_lock = Arc::new(futures::lock::Mutex::new(()));
+    fake_server.set_request_handler::<lsp::request::ExecuteCommand, _, _>({
+        let fake = fake_server.clone();
+        let lock = command_lock.clone();
+        move |params, _| {
+            assert_eq!(params.command, "the-command-for-code-action-1");
+            let fake = fake.clone();
+            let lock = lock.clone();
+            async move {
+                lock.lock().await;
+                fake.server
+                    .request::<lsp::request::ApplyWorkspaceEdit>(lsp::ApplyWorkspaceEditParams {
+                        label: None,
+                        edit: lsp::WorkspaceEdit {
+                            changes: Some(
+                                [(
+                                    lsp::Url::from_file_path(path!("/file.rs")).unwrap(),
+                                    vec![lsp::TextEdit {
+                                        range: lsp::Range::new(
+                                            lsp::Position::new(0, 0),
+                                            lsp::Position::new(0, 0),
+                                        ),
+                                        new_text: "applied-code-action-1-command\n".into(),
+                                    }],
+                                )]
+                                .into_iter()
+                                .collect(),
+                            ),
+                            ..Default::default()
+                        },
+                    })
+                    .await
+                    .into_response()
+                    .unwrap();
+                Ok(Some(json!(null)))
+            }
+        }
+    });
+
+    cx.executor().start_waiting();
+    editor
+        .update_in(cx, |editor, window, cx| {
+            editor.perform_format(
+                project.clone(),
+                FormatTrigger::Manual,
+                FormatTarget::Buffers,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await;
+    editor.update(cx, |editor, cx| {
+        assert_eq!(
+            editor.text(cx),
+            r#"
+                applied-code-action-2-edit
+                applied-code-action-1-command
+                applied-code-action-1-edit
+                applied-formatting
+                one
+                two
+                three
+            "#
+            .unindent()
+        );
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.undo(&Default::default(), window, cx);
+        assert_eq!(editor.text(cx), "one  \ntwo   \nthree");
+    });
+
+    // Perform a manual edit while waiting for an LSP command
+    // that's being run as part of a formatting code action.
+    let lock_guard = command_lock.lock().await;
+    let format = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.perform_format(
+                project.clone(),
+                FormatTrigger::Manual,
+                FormatTarget::Buffers,
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    cx.run_until_parked();
+    editor.update(cx, |editor, cx| {
+        assert_eq!(
+            editor.text(cx),
+            r#"
+                applied-code-action-1-edit
+                applied-formatting
+                one
+                two
+                three
+            "#
+            .unindent()
+        );
+
+        editor.buffer.update(cx, |buffer, cx| {
+            let ix = buffer.len(cx);
+            buffer.edit([(ix..ix, "edited\n")], None, cx);
+        });
+    });
+
+    // Allow the LSP command to proceed. Because the buffer was edited,
+    // the second code action will not be run.
+    drop(lock_guard);
+    format.await;
+    editor.update_in(cx, |editor, window, cx| {
+        assert_eq!(
+            editor.text(cx),
+            r#"
+                applied-code-action-1-command
+                applied-code-action-1-edit
+                applied-formatting
+                one
+                two
+                three
+                edited
+            "#
+            .unindent()
+        );
+
+        // The manual edit is undone first, because it is the last thing the user did
+        // (even though the command completed afterwards).
+        editor.undo(&Default::default(), window, cx);
+        assert_eq!(
+            editor.text(cx),
+            r#"
+                applied-code-action-1-command
+                applied-code-action-1-edit
+                applied-formatting
+                one
+                two
+                three
+            "#
+            .unindent()
+        );
+
+        // All the formatting (including the command, which completed after the manual edit)
+        // is undone together.
+        editor.undo(&Default::default(), window, cx);
+        assert_eq!(editor.text(cx), "one  \ntwo   \nthree");
+    });
 }
 
 #[gpui::test]
@@ -8374,7 +9546,7 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
         })
         .unwrap();
     fake_server
-        .handle_request::<lsp::request::CodeActionRequest, _, _>(move |params, _| async move {
+        .set_request_handler::<lsp::request::CodeActionRequest, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
                 lsp::Url::from_file_path(path!("/file.ts")).unwrap()
@@ -8421,7 +9593,7 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
         )
     });
     // Ensure we don't lock if code action hangs.
-    fake_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
+    fake_server.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
         move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
@@ -8470,7 +9642,7 @@ async fn test_concurrent_format_requests(cx: &mut TestAppContext) {
     // The format request takes a long time. When it completes, it inserts
     // a newline and an indent before the `.`
     cx.lsp
-        .handle_request::<lsp::request::Formatting, _, _>(move |_, cx| {
+        .set_request_handler::<lsp::request::Formatting, _, _>(move |_, cx| {
             let executor = cx.background_executor().clone();
             async move {
                 executor.timer(Duration::from_millis(100)).await;
@@ -8554,44 +9726,51 @@ async fn test_strip_whitespace_and_format_via_lsp(cx: &mut TestAppContext) {
         });
 
     // Handle formatting requests to the language server.
-    cx.lsp.handle_request::<lsp::request::Formatting, _, _>({
-        let buffer_changes = buffer_changes.clone();
-        move |_, _| {
-            // When formatting is requested, trailing whitespace has already been stripped,
-            // and the trailing newline has already been added.
-            assert_eq!(
-                &buffer_changes.lock()[1..],
-                &[
-                    (
-                        lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 4)),
-                        "".into()
-                    ),
-                    (
-                        lsp::Range::new(lsp::Position::new(2, 5), lsp::Position::new(2, 6)),
-                        "".into()
-                    ),
-                    (
-                        lsp::Range::new(lsp::Position::new(3, 4), lsp::Position::new(3, 4)),
-                        "\n".into()
-                    ),
-                ]
-            );
+    cx.lsp
+        .set_request_handler::<lsp::request::Formatting, _, _>({
+            let buffer_changes = buffer_changes.clone();
+            move |_, _| {
+                // When formatting is requested, trailing whitespace has already been stripped,
+                // and the trailing newline has already been added.
+                assert_eq!(
+                    &buffer_changes.lock()[1..],
+                    &[
+                        (
+                            lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 4)),
+                            "".into()
+                        ),
+                        (
+                            lsp::Range::new(lsp::Position::new(2, 5), lsp::Position::new(2, 6)),
+                            "".into()
+                        ),
+                        (
+                            lsp::Range::new(lsp::Position::new(3, 4), lsp::Position::new(3, 4)),
+                            "\n".into()
+                        ),
+                    ]
+                );
 
-            // Insert blank lines between each line of the buffer.
-            async move {
-                Ok(Some(vec![
-                    lsp::TextEdit {
-                        range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 0)),
-                        new_text: "\n".into(),
-                    },
-                    lsp::TextEdit {
-                        range: lsp::Range::new(lsp::Position::new(2, 0), lsp::Position::new(2, 0)),
-                        new_text: "\n".into(),
-                    },
-                ]))
+                // Insert blank lines between each line of the buffer.
+                async move {
+                    Ok(Some(vec![
+                        lsp::TextEdit {
+                            range: lsp::Range::new(
+                                lsp::Position::new(1, 0),
+                                lsp::Position::new(1, 0),
+                            ),
+                            new_text: "\n".into(),
+                        },
+                        lsp::TextEdit {
+                            range: lsp::Range::new(
+                                lsp::Position::new(2, 0),
+                                lsp::Position::new(2, 0),
+                            ),
+                            new_text: "\n".into(),
+                        },
+                    ]))
+                }
             }
-        }
-    });
+        });
 
     // After formatting the buffer, the trailing whitespace is stripped,
     // a newline is appended, and the edits provided by the language server
@@ -9240,6 +10419,659 @@ async fn test_signature_help(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_completion_mode(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                resolve_provider: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    struct Run {
+        run_description: &'static str,
+        initial_state: String,
+        buffer_marked_text: String,
+        completion_text: &'static str,
+        expected_with_insert_mode: String,
+        expected_with_replace_mode: String,
+        expected_with_replace_subsequence_mode: String,
+        expected_with_replace_suffix_mode: String,
+    }
+
+    let runs = [
+        Run {
+            run_description: "Start of word matches completion text",
+            initial_state: "before ediˇ after".into(),
+            buffer_marked_text: "before <edi|> after".into(),
+            completion_text: "editor",
+            expected_with_insert_mode: "before editorˇ after".into(),
+            expected_with_replace_mode: "before editorˇ after".into(),
+            expected_with_replace_subsequence_mode: "before editorˇ after".into(),
+            expected_with_replace_suffix_mode: "before editorˇ after".into(),
+        },
+        Run {
+            run_description: "Accept same text at the middle of the word",
+            initial_state: "before ediˇtor after".into(),
+            buffer_marked_text: "before <edi|tor> after".into(),
+            completion_text: "editor",
+            expected_with_insert_mode: "before editorˇtor after".into(),
+            expected_with_replace_mode: "before editorˇ after".into(),
+            expected_with_replace_subsequence_mode: "before editorˇ after".into(),
+            expected_with_replace_suffix_mode: "before editorˇ after".into(),
+        },
+        Run {
+            run_description: "End of word matches completion text -- cursor at end",
+            initial_state: "before torˇ after".into(),
+            buffer_marked_text: "before <tor|> after".into(),
+            completion_text: "editor",
+            expected_with_insert_mode: "before editorˇ after".into(),
+            expected_with_replace_mode: "before editorˇ after".into(),
+            expected_with_replace_subsequence_mode: "before editorˇ after".into(),
+            expected_with_replace_suffix_mode: "before editorˇ after".into(),
+        },
+        Run {
+            run_description: "End of word matches completion text -- cursor at start",
+            initial_state: "before ˇtor after".into(),
+            buffer_marked_text: "before <|tor> after".into(),
+            completion_text: "editor",
+            expected_with_insert_mode: "before editorˇtor after".into(),
+            expected_with_replace_mode: "before editorˇ after".into(),
+            expected_with_replace_subsequence_mode: "before editorˇ after".into(),
+            expected_with_replace_suffix_mode: "before editorˇ after".into(),
+        },
+        Run {
+            run_description: "Prepend text containing whitespace",
+            initial_state: "pˇfield: bool".into(),
+            buffer_marked_text: "<p|field>: bool".into(),
+            completion_text: "pub ",
+            expected_with_insert_mode: "pub ˇfield: bool".into(),
+            expected_with_replace_mode: "pub ˇ: bool".into(),
+            expected_with_replace_subsequence_mode: "pub ˇfield: bool".into(),
+            expected_with_replace_suffix_mode: "pub ˇfield: bool".into(),
+        },
+        Run {
+            run_description: "Add element to start of list",
+            initial_state: "[element_ˇelement_2]".into(),
+            buffer_marked_text: "[<element_|element_2>]".into(),
+            completion_text: "element_1",
+            expected_with_insert_mode: "[element_1ˇelement_2]".into(),
+            expected_with_replace_mode: "[element_1ˇ]".into(),
+            expected_with_replace_subsequence_mode: "[element_1ˇelement_2]".into(),
+            expected_with_replace_suffix_mode: "[element_1ˇelement_2]".into(),
+        },
+        Run {
+            run_description: "Add element to start of list -- first and second elements are equal",
+            initial_state: "[elˇelement]".into(),
+            buffer_marked_text: "[<el|element>]".into(),
+            completion_text: "element",
+            expected_with_insert_mode: "[elementˇelement]".into(),
+            expected_with_replace_mode: "[elementˇ]".into(),
+            expected_with_replace_subsequence_mode: "[elementˇelement]".into(),
+            expected_with_replace_suffix_mode: "[elementˇ]".into(),
+        },
+        Run {
+            run_description: "Ends with matching suffix",
+            initial_state: "SubˇError".into(),
+            buffer_marked_text: "<Sub|Error>".into(),
+            completion_text: "SubscriptionError",
+            expected_with_insert_mode: "SubscriptionErrorˇError".into(),
+            expected_with_replace_mode: "SubscriptionErrorˇ".into(),
+            expected_with_replace_subsequence_mode: "SubscriptionErrorˇ".into(),
+            expected_with_replace_suffix_mode: "SubscriptionErrorˇ".into(),
+        },
+        Run {
+            run_description: "Suffix is a subsequence -- contiguous",
+            initial_state: "SubˇErr".into(),
+            buffer_marked_text: "<Sub|Err>".into(),
+            completion_text: "SubscriptionError",
+            expected_with_insert_mode: "SubscriptionErrorˇErr".into(),
+            expected_with_replace_mode: "SubscriptionErrorˇ".into(),
+            expected_with_replace_subsequence_mode: "SubscriptionErrorˇ".into(),
+            expected_with_replace_suffix_mode: "SubscriptionErrorˇErr".into(),
+        },
+        Run {
+            run_description: "Suffix is a subsequence -- non-contiguous -- replace intended",
+            initial_state: "Suˇscrirr".into(),
+            buffer_marked_text: "<Su|scrirr>".into(),
+            completion_text: "SubscriptionError",
+            expected_with_insert_mode: "SubscriptionErrorˇscrirr".into(),
+            expected_with_replace_mode: "SubscriptionErrorˇ".into(),
+            expected_with_replace_subsequence_mode: "SubscriptionErrorˇ".into(),
+            expected_with_replace_suffix_mode: "SubscriptionErrorˇscrirr".into(),
+        },
+        Run {
+            run_description: "Suffix is a subsequence -- non-contiguous -- replace unintended",
+            initial_state: "foo(indˇix)".into(),
+            buffer_marked_text: "foo(<ind|ix>)".into(),
+            completion_text: "node_index",
+            expected_with_insert_mode: "foo(node_indexˇix)".into(),
+            expected_with_replace_mode: "foo(node_indexˇ)".into(),
+            expected_with_replace_subsequence_mode: "foo(node_indexˇix)".into(),
+            expected_with_replace_suffix_mode: "foo(node_indexˇix)".into(),
+        },
+    ];
+
+    for run in runs {
+        let run_variations = [
+            (LspInsertMode::Insert, run.expected_with_insert_mode),
+            (LspInsertMode::Replace, run.expected_with_replace_mode),
+            (
+                LspInsertMode::ReplaceSubsequence,
+                run.expected_with_replace_subsequence_mode,
+            ),
+            (
+                LspInsertMode::ReplaceSuffix,
+                run.expected_with_replace_suffix_mode,
+            ),
+        ];
+
+        for (lsp_insert_mode, expected_text) in run_variations {
+            eprintln!(
+                "run = {:?}, mode = {lsp_insert_mode:.?}",
+                run.run_description,
+            );
+
+            update_test_language_settings(&mut cx, |settings| {
+                settings.defaults.completions = Some(CompletionSettings {
+                    lsp_insert_mode,
+                    words: WordsCompletionMode::Disabled,
+                    lsp: true,
+                    lsp_fetch_timeout_ms: 0,
+                });
+            });
+
+            cx.set_state(&run.initial_state);
+            cx.update_editor(|editor, window, cx| {
+                editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+            });
+
+            let counter = Arc::new(AtomicUsize::new(0));
+            handle_completion_request_with_insert_and_replace(
+                &mut cx,
+                &run.buffer_marked_text,
+                vec![run.completion_text],
+                counter.clone(),
+            )
+            .await;
+            cx.condition(|editor, _| editor.context_menu_visible())
+                .await;
+            assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
+
+            let apply_additional_edits = cx.update_editor(|editor, window, cx| {
+                editor
+                    .confirm_completion(&ConfirmCompletion::default(), window, cx)
+                    .unwrap()
+            });
+            cx.assert_editor_state(&expected_text);
+            handle_resolve_completion_request(&mut cx, None).await;
+            apply_additional_edits.await.unwrap();
+        }
+    }
+}
+
+#[gpui::test]
+async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                resolve_provider: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    let initial_state = "SubˇError";
+    let buffer_marked_text = "<Sub|Error>";
+    let completion_text = "SubscriptionError";
+    let expected_with_insert_mode = "SubscriptionErrorˇError";
+    let expected_with_replace_mode = "SubscriptionErrorˇ";
+
+    update_test_language_settings(&mut cx, |settings| {
+        settings.defaults.completions = Some(CompletionSettings {
+            words: WordsCompletionMode::Disabled,
+            // set the opposite here to ensure that the action is overriding the default behavior
+            lsp_insert_mode: LspInsertMode::Insert,
+            lsp: true,
+            lsp_fetch_timeout_ms: 0,
+        });
+    });
+
+    cx.set_state(initial_state);
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+    });
+
+    let counter = Arc::new(AtomicUsize::new(0));
+    handle_completion_request_with_insert_and_replace(
+        &mut cx,
+        &buffer_marked_text,
+        vec![completion_text],
+        counter.clone(),
+    )
+    .await;
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
+
+    let apply_additional_edits = cx.update_editor(|editor, window, cx| {
+        editor
+            .confirm_completion_replace(&ConfirmCompletionReplace, window, cx)
+            .unwrap()
+    });
+    cx.assert_editor_state(&expected_with_replace_mode);
+    handle_resolve_completion_request(&mut cx, None).await;
+    apply_additional_edits.await.unwrap();
+
+    update_test_language_settings(&mut cx, |settings| {
+        settings.defaults.completions = Some(CompletionSettings {
+            words: WordsCompletionMode::Disabled,
+            // set the opposite here to ensure that the action is overriding the default behavior
+            lsp_insert_mode: LspInsertMode::Replace,
+            lsp: true,
+            lsp_fetch_timeout_ms: 0,
+        });
+    });
+
+    cx.set_state(initial_state);
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+    });
+    handle_completion_request_with_insert_and_replace(
+        &mut cx,
+        &buffer_marked_text,
+        vec![completion_text],
+        counter.clone(),
+    )
+    .await;
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    assert_eq!(counter.load(atomic::Ordering::Acquire), 2);
+
+    let apply_additional_edits = cx.update_editor(|editor, window, cx| {
+        editor
+            .confirm_completion_insert(&ConfirmCompletionInsert, window, cx)
+            .unwrap()
+    });
+    cx.assert_editor_state(&expected_with_insert_mode);
+    handle_resolve_completion_request(&mut cx, None).await;
+    apply_additional_edits.await.unwrap();
+}
+
+#[gpui::test]
+async fn test_completion_replacing_surrounding_text_with_multicursors(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                resolve_provider: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    // scenario: surrounding text matches completion text
+    let completion_text = "to_offset";
+    let initial_state = indoc! {"
+        1. buf.to_offˇsuffix
+        2. buf.to_offˇsuf
+        3. buf.to_offˇfix
+        4. buf.to_offˇ
+        5. into_offˇensive
+        6. ˇsuffix
+        7. let ˇ //
+        8. aaˇzz
+        9. buf.to_off«zzzzzˇ»suffix
+        10. buf.«ˇzzzzz»suffix
+        11. to_off«ˇzzzzz»
+
+        buf.to_offˇsuffix  // newest cursor
+    "};
+    let completion_marked_buffer = indoc! {"
+        1. buf.to_offsuffix
+        2. buf.to_offsuf
+        3. buf.to_offfix
+        4. buf.to_off
+        5. into_offensive
+        6. suffix
+        7. let  //
+        8. aazz
+        9. buf.to_offzzzzzsuffix
+        10. buf.zzzzzsuffix
+        11. to_offzzzzz
+
+        buf.<to_off|suffix>  // newest cursor
+    "};
+    let expected = indoc! {"
+        1. buf.to_offsetˇ
+        2. buf.to_offsetˇsuf
+        3. buf.to_offsetˇfix
+        4. buf.to_offsetˇ
+        5. into_offsetˇensive
+        6. to_offsetˇsuffix
+        7. let to_offsetˇ //
+        8. aato_offsetˇzz
+        9. buf.to_offsetˇ
+        10. buf.to_offsetˇsuffix
+        11. to_offsetˇ
+
+        buf.to_offsetˇ  // newest cursor
+    "};
+    cx.set_state(initial_state);
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+    });
+    handle_completion_request_with_insert_and_replace(
+        &mut cx,
+        completion_marked_buffer,
+        vec![completion_text],
+        Arc::new(AtomicUsize::new(0)),
+    )
+    .await;
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    let apply_additional_edits = cx.update_editor(|editor, window, cx| {
+        editor
+            .confirm_completion_replace(&ConfirmCompletionReplace, window, cx)
+            .unwrap()
+    });
+    cx.assert_editor_state(expected);
+    handle_resolve_completion_request(&mut cx, None).await;
+    apply_additional_edits.await.unwrap();
+
+    // scenario: surrounding text matches surroundings of newest cursor, inserting at the end
+    let completion_text = "foo_and_bar";
+    let initial_state = indoc! {"
+        1. ooanbˇ
+        2. zooanbˇ
+        3. ooanbˇz
+        4. zooanbˇz
+        5. ooanˇ
+        6. oanbˇ
+
+        ooanbˇ
+    "};
+    let completion_marked_buffer = indoc! {"
+        1. ooanb
+        2. zooanb
+        3. ooanbz
+        4. zooanbz
+        5. ooan
+        6. oanb
+
+        <ooanb|>
+    "};
+    let expected = indoc! {"
+        1. foo_and_barˇ
+        2. zfoo_and_barˇ
+        3. foo_and_barˇz
+        4. zfoo_and_barˇz
+        5. ooanfoo_and_barˇ
+        6. oanbfoo_and_barˇ
+
+        foo_and_barˇ
+    "};
+    cx.set_state(initial_state);
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+    });
+    handle_completion_request_with_insert_and_replace(
+        &mut cx,
+        completion_marked_buffer,
+        vec![completion_text],
+        Arc::new(AtomicUsize::new(0)),
+    )
+    .await;
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    let apply_additional_edits = cx.update_editor(|editor, window, cx| {
+        editor
+            .confirm_completion_replace(&ConfirmCompletionReplace, window, cx)
+            .unwrap()
+    });
+    cx.assert_editor_state(expected);
+    handle_resolve_completion_request(&mut cx, None).await;
+    apply_additional_edits.await.unwrap();
+
+    // scenario: surrounding text matches surroundings of newest cursor, inserted at the middle
+    // (expects the same as if it was inserted at the end)
+    let completion_text = "foo_and_bar";
+    let initial_state = indoc! {"
+        1. ooˇanb
+        2. zooˇanb
+        3. ooˇanbz
+        4. zooˇanbz
+
+        ooˇanb
+    "};
+    let completion_marked_buffer = indoc! {"
+        1. ooanb
+        2. zooanb
+        3. ooanbz
+        4. zooanbz
+
+        <oo|anb>
+    "};
+    let expected = indoc! {"
+        1. foo_and_barˇ
+        2. zfoo_and_barˇ
+        3. foo_and_barˇz
+        4. zfoo_and_barˇz
+
+        foo_and_barˇ
+    "};
+    cx.set_state(initial_state);
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+    });
+    handle_completion_request_with_insert_and_replace(
+        &mut cx,
+        completion_marked_buffer,
+        vec![completion_text],
+        Arc::new(AtomicUsize::new(0)),
+    )
+    .await;
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    let apply_additional_edits = cx.update_editor(|editor, window, cx| {
+        editor
+            .confirm_completion_replace(&ConfirmCompletionReplace, window, cx)
+            .unwrap()
+    });
+    cx.assert_editor_state(expected);
+    handle_resolve_completion_request(&mut cx, None).await;
+    apply_additional_edits.await.unwrap();
+}
+
+// This used to crash
+#[gpui::test]
+async fn test_completion_in_multibuffer_with_replace_range(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let buffer_text = indoc! {"
+        fn main() {
+            10.satu;
+
+            //
+            // separate cursors so they open in different excerpts (manually reproducible)
+            //
+
+            10.satu20;
+        }
+    "};
+    let multibuffer_text_with_selections = indoc! {"
+        fn main() {
+            10.satuˇ;
+
+            //
+
+            //
+
+            10.satuˇ20;
+        }
+    "};
+    let expected_multibuffer = indoc! {"
+        fn main() {
+            10.saturating_sub()ˇ;
+
+            //
+
+            //
+
+            10.saturating_sub()ˇ;
+        }
+    "};
+
+    let first_excerpt_end = buffer_text.find("//").unwrap() + 3;
+    let second_excerpt_end = buffer_text.rfind("//").unwrap() - 4;
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": buffer_text,
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    resolve_provider: None,
+                    ..lsp::CompletionOptions::default()
+                }),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/a/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let multi_buffer = cx.new(|cx| {
+        let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
+        multi_buffer.push_excerpts(
+            buffer.clone(),
+            [ExcerptRange::new(0..first_excerpt_end)],
+            cx,
+        );
+        multi_buffer.push_excerpts(
+            buffer.clone(),
+            [ExcerptRange::new(second_excerpt_end..buffer_text.len())],
+            cx,
+        );
+        multi_buffer
+    });
+
+    let editor = workspace
+        .update(cx, |_, window, cx| {
+            cx.new(|cx| {
+                Editor::new(
+                    EditorMode::Full {
+                        scale_ui_elements_with_buffer_font_size: false,
+                        show_active_line_background: false,
+                        sized_by_content: false,
+                    },
+                    multi_buffer.clone(),
+                    Some(project.clone()),
+                    window,
+                    cx,
+                )
+            })
+        })
+        .unwrap();
+
+    let pane = workspace
+        .update(cx, |workspace, _, _| workspace.active_pane().clone())
+        .unwrap();
+    pane.update_in(cx, |pane, window, cx| {
+        pane.add_item(Box::new(editor.clone()), true, true, None, window, cx);
+    });
+
+    let fake_server = fake_servers.next().await.unwrap();
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(None, window, cx, |s| {
+            s.select_ranges([
+                Point::new(1, 11)..Point::new(1, 11),
+                Point::new(7, 11)..Point::new(7, 11),
+            ])
+        });
+
+        assert_text_with_selections(editor, multibuffer_text_with_selections, cx);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+    });
+
+    fake_server
+        .set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
+            let completion_item = lsp::CompletionItem {
+                label: "saturating_sub()".into(),
+                text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
+                    lsp::InsertReplaceEdit {
+                        new_text: "saturating_sub()".to_owned(),
+                        insert: lsp::Range::new(
+                            lsp::Position::new(7, 7),
+                            lsp::Position::new(7, 11),
+                        ),
+                        replace: lsp::Range::new(
+                            lsp::Position::new(7, 7),
+                            lsp::Position::new(7, 13),
+                        ),
+                    },
+                )),
+                ..lsp::CompletionItem::default()
+            };
+
+            Ok(Some(lsp::CompletionResponse::Array(vec![completion_item])))
+        })
+        .next()
+        .await
+        .unwrap();
+
+    cx.condition(&editor, |editor, _| editor.context_menu_visible())
+        .await;
+
+    editor
+        .update_in(cx, |editor, window, cx| {
+            editor
+                .confirm_completion_replace(&ConfirmCompletionReplace, window, cx)
+                .unwrap()
+        })
+        .await
+        .unwrap();
+
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(editor, expected_multibuffer, cx);
+    })
+}
+
+#[gpui::test]
 async fn test_completion(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -9425,9 +11257,7 @@ async fn test_completion(cx: &mut TestAppContext) {
     cx.set_state("editorˇ");
     cx.simulate_keystroke(".");
     assert!(cx.editor(|e, _, _| e.context_menu.borrow_mut().is_none()));
-    cx.simulate_keystroke("c");
-    cx.simulate_keystroke("l");
-    cx.simulate_keystroke("o");
+    cx.simulate_keystrokes("c l o");
     cx.assert_editor_state("editor.cloˇ");
     assert!(cx.editor(|e, _, _| e.context_menu.borrow_mut().is_none()));
     cx.update_editor(|editor, window, cx| {
@@ -9462,6 +11292,7 @@ async fn test_word_completion(cx: &mut TestAppContext) {
             words: WordsCompletionMode::Fallback,
             lsp: true,
             lsp_fetch_timeout_ms: 10,
+            lsp_insert_mode: LspInsertMode::Insert,
         });
     });
 
@@ -9557,6 +11388,7 @@ async fn test_word_completions_do_not_duplicate_lsp_ones(cx: &mut TestAppContext
             words: WordsCompletionMode::Enabled,
             lsp: true,
             lsp_fetch_timeout_ms: 0,
+            lsp_insert_mode: LspInsertMode::Insert,
         });
     });
 
@@ -9619,6 +11451,7 @@ async fn test_word_completions_continue_on_typing(cx: &mut TestAppContext) {
             words: WordsCompletionMode::Disabled,
             lsp: true,
             lsp_fetch_timeout_ms: 0,
+            lsp_insert_mode: LspInsertMode::Insert,
         });
     });
 
@@ -9691,6 +11524,7 @@ async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
             words: WordsCompletionMode::Fallback,
             lsp: false,
             lsp_fetch_timeout_ms: 0,
+            lsp_insert_mode: LspInsertMode::Insert,
         });
     });
 
@@ -9743,6 +11577,20 @@ async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
             panic!("expected completion menu to be open");
         }
     });
+}
+
+fn gen_text_edit(params: &CompletionParams, text: &str) -> Option<lsp::CompletionTextEdit> {
+    let position = || lsp::Position {
+        line: params.text_document_position.position.line,
+        character: params.text_document_position.position.character,
+    };
+    Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+        range: lsp::Range {
+            start: position(),
+            end: position(),
+        },
+        new_text: text.to_string(),
+    }))
 }
 
 #[gpui::test]
@@ -9839,42 +11687,18 @@ async fn test_multiline_completion(cx: &mut TestAppContext) {
     let multiline_description = "d\ne\nf\n";
     let multiline_detail_2 = "g\nh\ni\n";
 
-    let mut completion_handle =
-        fake_server.handle_request::<lsp::request::Completion, _, _>(move |params, _| async move {
+    let mut completion_handle = fake_server.set_request_handler::<lsp::request::Completion, _, _>(
+        move |params, _| async move {
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
                     label: multiline_label.to_string(),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        range: lsp::Range {
-                            start: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                            end: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                        },
-                        new_text: "new_text_1".to_string(),
-                    })),
+                    text_edit: gen_text_edit(&params, "new_text_1"),
                     ..lsp::CompletionItem::default()
                 },
                 lsp::CompletionItem {
                     label: "single line label 1".to_string(),
                     detail: Some(multiline_detail.to_string()),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        range: lsp::Range {
-                            start: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                            end: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                        },
-                        new_text: "new_text_2".to_string(),
-                    })),
+                    text_edit: gen_text_edit(&params, "new_text_2"),
                     ..lsp::CompletionItem::default()
                 },
                 lsp::CompletionItem {
@@ -9883,37 +11707,13 @@ async fn test_multiline_completion(cx: &mut TestAppContext) {
                         description: Some(multiline_description.to_string()),
                         detail: None,
                     }),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        range: lsp::Range {
-                            start: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                            end: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                        },
-                        new_text: "new_text_2".to_string(),
-                    })),
+                    text_edit: gen_text_edit(&params, "new_text_2"),
                     ..lsp::CompletionItem::default()
                 },
                 lsp::CompletionItem {
                     label: multiline_label_2.to_string(),
                     detail: Some(multiline_detail_2.to_string()),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        range: lsp::Range {
-                            start: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                            end: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                        },
-                        new_text: "new_text_3".to_string(),
-                    })),
+                    text_edit: gen_text_edit(&params, "new_text_3"),
                     ..lsp::CompletionItem::default()
                 },
                 lsp::CompletionItem {
@@ -9921,23 +11721,12 @@ async fn test_multiline_completion(cx: &mut TestAppContext) {
                     detail: Some(
                         "Details with many     spaces and \t but without newlines".to_string(),
                     ),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        range: lsp::Range {
-                            start: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                            end: lsp::Position {
-                                line: params.text_document_position.position.line,
-                                character: params.text_document_position.position.character,
-                            },
-                        },
-                        new_text: "new_text_4".to_string(),
-                    })),
+                    text_edit: gen_text_edit(&params, "new_text_4"),
                     ..lsp::CompletionItem::default()
                 },
             ])))
-        });
+        },
+    );
 
     editor.update_in(cx, |editor, window, cx| {
         cx.focus_self(window);
@@ -9979,7 +11768,6 @@ async fn test_multiline_completion(cx: &mut TestAppContext) {
                         "Adjusted completion items should still keep their filter ranges for the entire label. Item: {completion:?}"
                     );
                 }
-
         } else {
             panic!("expected completion menu to be open");
         }
@@ -10001,7 +11789,7 @@ async fn test_completion_page_up_down_keys(cx: &mut TestAppContext) {
     )
     .await;
     cx.lsp
-        .handle_request::<lsp::request::Completion, _, _>(move |_, _| async move {
+        .set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
                     label: "first".into(),
@@ -10054,12 +11842,11 @@ async fn test_completion_page_up_down_keys(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_completion_sort(cx: &mut TestAppContext) {
+async fn test_as_is_completions(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorLspTestContext::new_rust(
         lsp::ServerCapabilities {
             completion_provider: Some(lsp::CompletionOptions {
-                trigger_characters: Some(vec![".".to_string()]),
                 ..Default::default()
             }),
             ..Default::default()
@@ -10068,41 +11855,34 @@ async fn test_completion_sort(cx: &mut TestAppContext) {
     )
     .await;
     cx.lsp
-        .handle_request::<lsp::request::Completion, _, _>(move |_, _| async move {
+        .set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
-                    label: "Range".into(),
-                    sort_text: Some("a".into()),
-                    ..Default::default()
-                },
-                lsp::CompletionItem {
-                    label: "r".into(),
-                    sort_text: Some("b".into()),
-                    ..Default::default()
-                },
-                lsp::CompletionItem {
-                    label: "ret".into(),
-                    sort_text: Some("c".into()),
-                    ..Default::default()
-                },
-                lsp::CompletionItem {
-                    label: "return".into(),
-                    sort_text: Some("d".into()),
-                    ..Default::default()
-                },
-                lsp::CompletionItem {
-                    label: "slice".into(),
-                    sort_text: Some("d".into()),
+                    label: "unsafe".into(),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: lsp::Range {
+                            start: lsp::Position {
+                                line: 1,
+                                character: 2,
+                            },
+                            end: lsp::Position {
+                                line: 1,
+                                character: 3,
+                            },
+                        },
+                        new_text: "unsafe".to_string(),
+                    })),
+                    insert_text_mode: Some(lsp::InsertTextMode::AS_IS),
                     ..Default::default()
                 },
             ])))
         });
-    cx.set_state("rˇ");
+    cx.set_state("fn a() {}\n  nˇ");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, window, cx| {
         editor.show_completions(
             &ShowCompletions {
-                trigger: Some("r".into()),
+                trigger: Some("\n".into()),
             },
             window,
             cx,
@@ -10110,17 +11890,11 @@ async fn test_completion_sort(cx: &mut TestAppContext) {
     });
     cx.executor().run_until_parked();
 
-    cx.update_editor(|editor, _, _| {
-        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
-        {
-            assert_eq!(
-                completion_menu_entries(&menu),
-                &["r", "ret", "Range", "return"]
-            );
-        } else {
-            panic!("expected completion menu to be open");
-        }
+    cx.update_editor(|editor, window, cx| {
+        editor.confirm_completion(&Default::default(), window, cx)
     });
+    cx.executor().run_until_parked();
+    cx.assert_editor_state("fn a() {}\n  unsafeˇ");
 }
 
 #[gpui::test]
@@ -10140,7 +11914,7 @@ async fn test_no_duplicated_completion_requests(cx: &mut TestAppContext) {
     )
     .await;
 
-    cx.set_state(indoc! {"fn main() { let a = 2ˇ; }"});
+    cx.set_state("fn main() { let a = 2ˇ; }");
     cx.simulate_keystroke(".");
     let completion_item = lsp::CompletionItem {
         label: "Some".into(),
@@ -10186,7 +11960,7 @@ async fn test_no_duplicated_completion_requests(cx: &mut TestAppContext) {
     let closure_completion_item = completion_item.clone();
     let counter = Arc::new(AtomicUsize::new(0));
     let counter_clone = counter.clone();
-    let mut request = cx.handle_request::<lsp::request::Completion, _, _>(move |_, _, _| {
+    let mut request = cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, _, _| {
         let task_completion_item = closure_completion_item.clone();
         counter_clone.fetch_add(1, atomic::Ordering::Release);
         async move {
@@ -10198,16 +11972,14 @@ async fn test_no_duplicated_completion_requests(cx: &mut TestAppContext) {
 
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
-    cx.assert_editor_state(indoc! {"fn main() { let a = 2.ˇ; }"});
+    cx.assert_editor_state("fn main() { let a = 2.ˇ; }");
     assert!(request.next().await.is_some());
     assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
 
-    cx.simulate_keystroke("S");
-    cx.simulate_keystroke("o");
-    cx.simulate_keystroke("m");
+    cx.simulate_keystrokes("S o m");
     cx.condition(|editor, _| editor.context_menu_visible())
         .await;
-    cx.assert_editor_state(indoc! {"fn main() { let a = 2.Somˇ; }"});
+    cx.assert_editor_state("fn main() { let a = 2.Somˇ; }");
     assert!(request.next().await.is_some());
     assert!(request.next().await.is_some());
     assert!(request.next().await.is_some());
@@ -10743,14 +12515,8 @@ fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
         multibuffer.push_excerpts(
             buffer.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(0, 4),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(1, 0)..Point::new(1, 4),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(0, 4)),
+                ExcerptRange::new(Point::new(1, 0)..Point::new(1, 4)),
             ],
             cx,
         );
@@ -10816,10 +12582,7 @@ fn test_editing_overlapping_excerpts(cx: &mut TestAppContext) {
     );
     let excerpt_ranges = markers.into_iter().map(|marker| {
         let context = excerpt_ranges.remove(&marker).unwrap()[0].clone();
-        ExcerptRange {
-            context,
-            primary: None,
-        }
+        ExcerptRange::new(context.clone())
     });
     let buffer = cx.new(|cx| Buffer::local(initial_text, cx));
     let multibuffer = cx.new(|cx| {
@@ -10887,14 +12650,8 @@ fn test_refresh_selections(cx: &mut TestAppContext) {
             .push_excerpts(
                 buffer.clone(),
                 [
-                    ExcerptRange {
-                        context: Point::new(0, 0)..Point::new(1, 4),
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: Point::new(1, 0)..Point::new(2, 4),
-                        primary: None,
-                    },
+                    ExcerptRange::new(Point::new(0, 0)..Point::new(1, 4)),
+                    ExcerptRange::new(Point::new(1, 0)..Point::new(2, 4)),
                 ],
                 cx,
             )
@@ -10978,14 +12735,8 @@ fn test_refresh_selections_while_selecting_with_mouse(cx: &mut TestAppContext) {
             .push_excerpts(
                 buffer.clone(),
                 [
-                    ExcerptRange {
-                        context: Point::new(0, 0)..Point::new(1, 4),
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: Point::new(1, 0)..Point::new(2, 4),
-                        primary: None,
-                    },
+                    ExcerptRange::new(Point::new(0, 0)..Point::new(1, 4)),
+                    ExcerptRange::new(Point::new(1, 0)..Point::new(2, 4)),
                 ],
                 cx,
             )
@@ -11414,7 +13165,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
             Editor::from_state_proto(
                 workspace_entity,
                 ViewId {
-                    creator: Default::default(),
+                    creator: CollaboratorId::PeerId(PeerId::default()),
                     id: 0,
                 },
                 &mut state_message,
@@ -11453,37 +13204,22 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
     // Insert some excerpts.
     leader.update(cx, |leader, cx| {
         leader.buffer.update(cx, |multibuffer, cx| {
-            let excerpt_ids = multibuffer.push_excerpts(
+            multibuffer.set_excerpts_for_path(
+                PathKey::namespaced(1, Arc::from(Path::new("b.txt"))),
                 buffer_1.clone(),
-                [
-                    ExcerptRange {
-                        context: 1..6,
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: 12..15,
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: 0..3,
-                        primary: None,
-                    },
+                vec![
+                    Point::row_range(0..3),
+                    Point::row_range(1..6),
+                    Point::row_range(12..15),
                 ],
+                0,
                 cx,
             );
-            multibuffer.insert_excerpts_after(
-                excerpt_ids[0],
+            multibuffer.set_excerpts_for_path(
+                PathKey::namespaced(1, Arc::from(Path::new("a.txt"))),
                 buffer_2.clone(),
-                [
-                    ExcerptRange {
-                        context: 8..12,
-                        primary: None,
-                    },
-                    ExcerptRange {
-                        context: 0..6,
-                        primary: None,
-                    },
-                ],
+                vec![Point::row_range(0..6), Point::row_range(8..12)],
+                0,
                 cx,
             );
         });
@@ -11516,7 +13252,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
             Editor::from_state_proto(
                 workspace_entity,
                 ViewId {
-                    creator: Default::default(),
+                    creator: CollaboratorId::PeerId(PeerId::default()),
                     id: 0,
                 },
                 &mut state_message,
@@ -11664,316 +13400,6 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
         fn func(abc def: i32) -> ˇu32 {
         }
     "});
-}
-
-#[gpui::test]
-async fn cycle_through_same_place_diagnostics(
-    executor: BackgroundExecutor,
-    cx: &mut TestAppContext,
-) {
-    init_test(cx, |_| {});
-
-    let mut cx = EditorTestContext::new(cx).await;
-    let lsp_store =
-        cx.update_editor(|editor, _, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
-
-    cx.set_state(indoc! {"
-        ˇfn func(abc def: i32) -> u32 {
-        }
-    "});
-
-    cx.update(|_, cx| {
-        lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store
-                .update_diagnostics(
-                    LanguageServerId(0),
-                    lsp::PublishDiagnosticsParams {
-                        uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
-                        version: None,
-                        diagnostics: vec![
-                            lsp::Diagnostic {
-                                range: lsp::Range::new(
-                                    lsp::Position::new(0, 11),
-                                    lsp::Position::new(0, 12),
-                                ),
-                                severity: Some(lsp::DiagnosticSeverity::ERROR),
-                                ..Default::default()
-                            },
-                            lsp::Diagnostic {
-                                range: lsp::Range::new(
-                                    lsp::Position::new(0, 12),
-                                    lsp::Position::new(0, 15),
-                                ),
-                                severity: Some(lsp::DiagnosticSeverity::ERROR),
-                                ..Default::default()
-                            },
-                            lsp::Diagnostic {
-                                range: lsp::Range::new(
-                                    lsp::Position::new(0, 12),
-                                    lsp::Position::new(0, 15),
-                                ),
-                                severity: Some(lsp::DiagnosticSeverity::ERROR),
-                                ..Default::default()
-                            },
-                            lsp::Diagnostic {
-                                range: lsp::Range::new(
-                                    lsp::Position::new(0, 25),
-                                    lsp::Position::new(0, 28),
-                                ),
-                                severity: Some(lsp::DiagnosticSeverity::ERROR),
-                                ..Default::default()
-                            },
-                        ],
-                    },
-                    &[],
-                    cx,
-                )
-                .unwrap()
-        });
-    });
-    executor.run_until_parked();
-
-    //// Backward
-
-    // Fourth diagnostic
-    cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
-    });
-    cx.assert_editor_state(indoc! {"
-        fn func(abc def: i32) -> ˇu32 {
-        }
-    "});
-
-    // Third diagnostic
-    cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
-    });
-    cx.assert_editor_state(indoc! {"
-        fn func(abc ˇdef: i32) -> u32 {
-        }
-    "});
-
-    // Second diagnostic, same place
-    cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
-    });
-    cx.assert_editor_state(indoc! {"
-        fn func(abc ˇdef: i32) -> u32 {
-        }
-    "});
-
-    // First diagnostic
-    cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
-    });
-    cx.assert_editor_state(indoc! {"
-        fn func(abcˇ def: i32) -> u32 {
-        }
-    "});
-
-    // Wrapped over, fourth diagnostic
-    cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
-    });
-    cx.assert_editor_state(indoc! {"
-        fn func(abc def: i32) -> ˇu32 {
-        }
-    "});
-
-    cx.update_editor(|editor, window, cx| {
-        editor.move_to_beginning(&MoveToBeginning, window, cx);
-    });
-    cx.assert_editor_state(indoc! {"
-        ˇfn func(abc def: i32) -> u32 {
-        }
-    "});
-
-    //// Forward
-
-    // First diagnostic
-    cx.update_editor(|editor, window, cx| {
-        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
-    });
-    cx.assert_editor_state(indoc! {"
-        fn func(abcˇ def: i32) -> u32 {
-        }
-    "});
-
-    // Second diagnostic
-    cx.update_editor(|editor, window, cx| {
-        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
-    });
-    cx.assert_editor_state(indoc! {"
-        fn func(abc ˇdef: i32) -> u32 {
-        }
-    "});
-
-    // Third diagnostic, same place
-    cx.update_editor(|editor, window, cx| {
-        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
-    });
-    cx.assert_editor_state(indoc! {"
-        fn func(abc ˇdef: i32) -> u32 {
-        }
-    "});
-
-    // Fourth diagnostic
-    cx.update_editor(|editor, window, cx| {
-        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
-    });
-    cx.assert_editor_state(indoc! {"
-        fn func(abc def: i32) -> ˇu32 {
-        }
-    "});
-
-    // Wrapped around, first diagnostic
-    cx.update_editor(|editor, window, cx| {
-        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
-    });
-    cx.assert_editor_state(indoc! {"
-        fn func(abcˇ def: i32) -> u32 {
-        }
-    "});
-}
-
-#[gpui::test]
-async fn active_diagnostics_dismiss_after_invalidation(
-    executor: BackgroundExecutor,
-    cx: &mut TestAppContext,
-) {
-    init_test(cx, |_| {});
-
-    let mut cx = EditorTestContext::new(cx).await;
-    let lsp_store =
-        cx.update_editor(|editor, _, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
-
-    cx.set_state(indoc! {"
-        ˇfn func(abc def: i32) -> u32 {
-        }
-    "});
-
-    let message = "Something's wrong!";
-    cx.update(|_, cx| {
-        lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store
-                .update_diagnostics(
-                    LanguageServerId(0),
-                    lsp::PublishDiagnosticsParams {
-                        uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
-                        version: None,
-                        diagnostics: vec![lsp::Diagnostic {
-                            range: lsp::Range::new(
-                                lsp::Position::new(0, 11),
-                                lsp::Position::new(0, 12),
-                            ),
-                            severity: Some(lsp::DiagnosticSeverity::ERROR),
-                            message: message.to_string(),
-                            ..Default::default()
-                        }],
-                    },
-                    &[],
-                    cx,
-                )
-                .unwrap()
-        });
-    });
-    executor.run_until_parked();
-
-    cx.update_editor(|editor, window, cx| {
-        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
-        assert_eq!(
-            editor
-                .active_diagnostics
-                .as_ref()
-                .map(|diagnostics_group| diagnostics_group.primary_message.as_str()),
-            Some(message),
-            "Should have a diagnostics group activated"
-        );
-    });
-    cx.assert_editor_state(indoc! {"
-        fn func(abcˇ def: i32) -> u32 {
-        }
-    "});
-
-    cx.update(|_, cx| {
-        lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store
-                .update_diagnostics(
-                    LanguageServerId(0),
-                    lsp::PublishDiagnosticsParams {
-                        uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
-                        version: None,
-                        diagnostics: Vec::new(),
-                    },
-                    &[],
-                    cx,
-                )
-                .unwrap()
-        });
-    });
-    executor.run_until_parked();
-    cx.update_editor(|editor, _, _| {
-        assert_eq!(
-            editor.active_diagnostics, None,
-            "After no diagnostics set to the editor, no diagnostics should be active"
-        );
-    });
-    cx.assert_editor_state(indoc! {"
-        fn func(abcˇ def: i32) -> u32 {
-        }
-    "});
-
-    cx.update_editor(|editor, window, cx| {
-        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
-        assert_eq!(
-            editor.active_diagnostics, None,
-            "Should be no diagnostics to go to and activate"
-        );
-    });
-    cx.assert_editor_state(indoc! {"
-        fn func(abcˇ def: i32) -> u32 {
-        }
-    "});
-}
-
-#[gpui::test]
-async fn test_diagnostics_with_links(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    let mut cx = EditorTestContext::new(cx).await;
-
-    cx.set_state(indoc! {"
-        fn func(abˇc def: i32) -> u32 {
-        }
-    "});
-    let lsp_store =
-        cx.update_editor(|editor, _, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
-
-    cx.update(|_, cx| {
-        lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.update_diagnostics(
-                LanguageServerId(0),
-                lsp::PublishDiagnosticsParams {
-                    uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
-                    version: None,
-                    diagnostics: vec![lsp::Diagnostic {
-                        range: lsp::Range::new(lsp::Position::new(0, 8), lsp::Position::new(0, 12)),
-                        severity: Some(lsp::DiagnosticSeverity::ERROR),
-                        message: "we've had problems with <https://link.one>, and <https://link.two> is broken".to_string(),
-                        ..Default::default()
-                    }],
-                },
-                &[],
-                cx,
-            )
-        })
-    }).unwrap();
-    cx.run_until_parked();
-    cx.update_editor(|editor, window, cx| {
-        hover_popover::hover(editor, &Default::default(), window, cx)
-    });
-    cx.run_until_parked();
-    cx.update_editor(|editor, _, _| assert!(editor.hover_state.diagnostic_popover.is_some()))
 }
 
 #[gpui::test]
@@ -12291,21 +13717,23 @@ async fn test_on_type_formatting_not_triggered(cx: &mut TestAppContext) {
     cx.executor().start_waiting();
     let fake_server = fake_servers.next().await.unwrap();
 
-    fake_server.handle_request::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
-        assert_eq!(
-            params.text_document_position.text_document.uri,
-            lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
-        );
-        assert_eq!(
-            params.text_document_position.position,
-            lsp::Position::new(0, 21),
-        );
+    fake_server.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(
+        |params, _| async move {
+            assert_eq!(
+                params.text_document_position.text_document.uri,
+                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+            );
+            assert_eq!(
+                params.text_document_position.position,
+                lsp::Position::new(0, 21),
+            );
 
-        Ok(Some(vec![lsp::TextEdit {
-            new_text: "]".to_string(),
-            range: lsp::Range::new(lsp::Position::new(0, 22), lsp::Position::new(0, 22)),
-        }]))
-    });
+            Ok(Some(vec![lsp::TextEdit {
+                new_text: "]".to_string(),
+                range: lsp::Range::new(lsp::Position::new(0, 22), lsp::Position::new(0, 22)),
+            }]))
+        },
+    );
 
     editor_handle.update_in(cx, |editor, window, cx| {
         window.focus(&editor.focus_handle(cx));
@@ -12368,7 +13796,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
             })),
             initializer: Some(Box::new(move |fake_server| {
                 let task_restarts = Arc::clone(&closure_restarts);
-                fake_server.handle_request::<lsp::request::Shutdown, _, _>(move |_, _| {
+                fake_server.set_request_handler::<lsp::request::Shutdown, _, _>(move |_, _| {
                     task_restarts.fetch_add(1, atomic::Ordering::Release);
                     futures::future::ready(Ok(()))
                 });
@@ -12410,6 +13838,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                 initialization_options: Some(json!({
                     "some other init value": false
                 })),
+                enable_lsp_tasks: false,
             },
         );
     });
@@ -12429,6 +13858,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                 initialization_options: Some(json!({
                     "anotherInitValue": false
                 })),
+                enable_lsp_tasks: false,
             },
         );
     });
@@ -12448,6 +13878,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                 initialization_options: Some(json!({
                     "anotherInitValue": false
                 })),
+                enable_lsp_tasks: false,
             },
         );
     });
@@ -12465,6 +13896,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                 binary: None,
                 settings: None,
                 initialization_options: None,
+                enable_lsp_tasks: false,
             },
         );
     });
@@ -12493,7 +13925,7 @@ async fn test_completions_with_additional_edits(cx: &mut TestAppContext) {
     )
     .await;
 
-    cx.set_state(indoc! {"fn main() { let a = 2ˇ; }"});
+    cx.set_state("fn main() { let a = 2ˇ; }");
     cx.simulate_keystroke(".");
     let completion_item = lsp::CompletionItem {
         label: "some".into(),
@@ -12537,7 +13969,7 @@ async fn test_completions_with_additional_edits(cx: &mut TestAppContext) {
     };
 
     let closure_completion_item = completion_item.clone();
-    let mut request = cx.handle_request::<lsp::request::Completion, _, _>(move |_, _, _| {
+    let mut request = cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, _, _| {
         let task_completion_item = closure_completion_item.clone();
         async move {
             Ok(Some(lsp::CompletionResponse::Array(vec![
@@ -12555,9 +13987,9 @@ async fn test_completions_with_additional_edits(cx: &mut TestAppContext) {
             .confirm_completion(&ConfirmCompletion::default(), window, cx)
             .unwrap()
     });
-    cx.assert_editor_state(indoc! {"fn main() { let a = 2.Some(2)ˇ; }"});
+    cx.assert_editor_state("fn main() { let a = 2.Some(2)ˇ; }");
 
-    cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| {
+    cx.set_request_handler::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| {
         let task_completion_item = completion_item.clone();
         async move { Ok(task_completion_item) }
     })
@@ -12565,7 +13997,7 @@ async fn test_completions_with_additional_edits(cx: &mut TestAppContext) {
     .await
     .unwrap();
     apply_additional_edits.await.unwrap();
-    cx.assert_editor_state(indoc! {"fn main() { let a = Some(2)ˇ; }"});
+    cx.assert_editor_state("fn main() { let a = Some(2)ˇ; }");
 }
 
 #[gpui::test]
@@ -12585,7 +14017,7 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(cx: &mut
     )
     .await;
 
-    cx.set_state(indoc! {"fn main() { let a = 2ˇ; }"});
+    cx.set_state("fn main() { let a = 2ˇ; }");
     cx.simulate_keystroke(".");
 
     let item1 = lsp::CompletionItem {
@@ -12613,7 +14045,7 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(cx: &mut
     };
 
     let item1 = item1.clone();
-    cx.handle_request::<lsp::request::Completion, _, _>({
+    cx.set_request_handler::<lsp::request::Completion, _, _>({
         let item1 = item1.clone();
         move |_, _, _| {
             let item1 = item1.clone();
@@ -12646,7 +14078,7 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(cx: &mut
         }
     });
 
-    cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>({
+    cx.set_request_handler::<lsp::request::ResolveCompletionItem, _, _>({
         let item1 = item1.clone();
         move |_, item_to_resolve, _| {
             let item1 = item1.clone();
@@ -12704,6 +14136,148 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(cx: &mut
 }
 
 #[gpui::test]
+async fn test_context_menus_hide_hover_popover(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+            code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+            completion_provider: Some(lsp::CompletionOptions {
+                resolve_provider: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+    cx.set_state(indoc! {"
+        struct TestStruct {
+            field: i32
+        }
+
+        fn mainˇ() {
+            let unused_var = 42;
+            let test_struct = TestStruct { field: 42 };
+        }
+    "});
+    let symbol_range = cx.lsp_range(indoc! {"
+        struct TestStruct {
+            field: i32
+        }
+
+        «fn main»() {
+            let unused_var = 42;
+            let test_struct = TestStruct { field: 42 };
+        }
+    "});
+    let mut hover_requests =
+        cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| async move {
+            Ok(Some(lsp::Hover {
+                contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                    kind: lsp::MarkupKind::Markdown,
+                    value: "Function documentation".to_string(),
+                }),
+                range: Some(symbol_range),
+            }))
+        });
+
+    // Case 1: Test that code action menu hide hover popover
+    cx.dispatch_action(Hover);
+    hover_requests.next().await;
+    cx.condition(|editor, _| editor.hover_state.visible()).await;
+    let mut code_action_requests = cx.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
+        move |_, _, _| async move {
+            Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                lsp::CodeAction {
+                    title: "Remove unused variable".to_string(),
+                    kind: Some(CodeActionKind::QUICKFIX),
+                    edit: Some(lsp::WorkspaceEdit {
+                        changes: Some(
+                            [(
+                                lsp::Url::from_file_path(path!("/file.rs")).unwrap(),
+                                vec![lsp::TextEdit {
+                                    range: lsp::Range::new(
+                                        lsp::Position::new(5, 4),
+                                        lsp::Position::new(5, 27),
+                                    ),
+                                    new_text: "".to_string(),
+                                }],
+                            )]
+                            .into_iter()
+                            .collect(),
+                        ),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )]))
+        },
+    );
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_code_actions(
+            &ToggleCodeActions {
+                deployed_from_indicator: None,
+                quick_launch: false,
+            },
+            window,
+            cx,
+        );
+    });
+    code_action_requests.next().await;
+    cx.run_until_parked();
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, _, _| {
+        assert!(
+            !editor.hover_state.visible(),
+            "Hover popover should be hidden when code action menu is shown"
+        );
+        // Hide code actions
+        editor.context_menu.take();
+    });
+
+    // Case 2: Test that code completions hide hover popover
+    cx.dispatch_action(Hover);
+    hover_requests.next().await;
+    cx.condition(|editor, _| editor.hover_state.visible()).await;
+    let counter = Arc::new(AtomicUsize::new(0));
+    let mut completion_requests =
+        cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, _, _| {
+            let counter = counter.clone();
+            async move {
+                counter.fetch_add(1, atomic::Ordering::Release);
+                Ok(Some(lsp::CompletionResponse::Array(vec![
+                    lsp::CompletionItem {
+                        label: "main".into(),
+                        kind: Some(lsp::CompletionItemKind::FUNCTION),
+                        detail: Some("() -> ()".to_string()),
+                        ..Default::default()
+                    },
+                    lsp::CompletionItem {
+                        label: "TestStruct".into(),
+                        kind: Some(lsp::CompletionItemKind::STRUCT),
+                        detail: Some("struct TestStruct".to_string()),
+                        ..Default::default()
+                    },
+                ])))
+            }
+        });
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+    });
+    completion_requests.next().await;
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, _, _| {
+        assert!(
+            !editor.hover_state.visible(),
+            "Hover popover should be hidden when completion menu is shown"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_completions_resolve_happens_once(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -12720,7 +14294,7 @@ async fn test_completions_resolve_happens_once(cx: &mut TestAppContext) {
     )
     .await;
 
-    cx.set_state(indoc! {"fn main() { let a = 2ˇ; }"});
+    cx.set_state("fn main() { let a = 2ˇ; }");
     cx.simulate_keystroke(".");
 
     let unresolved_item_1 = lsp::CompletionItem {
@@ -12793,7 +14367,7 @@ async fn test_completions_resolve_happens_once(cx: &mut TestAppContext) {
         })
         .detach();
 
-    cx.handle_request::<lsp::request::Completion, _, _>(move |_, _, _| {
+    cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, _, _| {
         let unresolved_item_1 = unresolved_item_1.clone();
         let unresolved_item_2 = unresolved_item_2.clone();
         async move {
@@ -12924,13 +14498,13 @@ async fn test_completions_default_resolve_data_handling(cx: &mut TestAppContext)
     )
     .await;
 
-    cx.set_state(indoc! {"fn main() { let a = 2ˇ; }"});
+    cx.set_state("fn main() { let a = 2ˇ; }");
     cx.simulate_keystroke(".");
 
     let completion_data = default_data.clone();
     let completion_characters = default_commit_characters.clone();
     let completion_items = items.clone();
-    cx.handle_request::<lsp::request::Completion, _, _>(move |_, _, _| {
+    cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, _, _| {
         let default_data = completion_data.clone();
         let default_commit_characters = completion_characters.clone();
         let items = completion_items.clone();
@@ -13069,7 +14643,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
     .await;
 
     cx.lsp
-        .handle_request::<lsp::request::Completion, _, _>(move |_, _| async move {
+        .set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
                     label: "bg-blue".into(),
@@ -13655,54 +15229,27 @@ async fn test_multibuffer_reverts(cx: &mut TestAppContext) {
         multibuffer.push_excerpts(
             buffer_1.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 4),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
             ],
             cx,
         );
         multibuffer.push_excerpts(
             buffer_2.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 4),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
             ],
             cx,
         );
         multibuffer.push_excerpts(
             buffer_3.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 4),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
             ],
             cx,
         );
@@ -13822,54 +15369,27 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut TestAppContext) {
         multibuffer.push_excerpts(
             buffer_1.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 4),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
             ],
             cx,
         );
         multibuffer.push_excerpts(
             buffer_2.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 4),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
             ],
             cx,
         );
         multibuffer.push_excerpts(
             buffer_3.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 4),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
             ],
             cx,
         );
@@ -13891,7 +15411,7 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut TestAppContext) {
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
     let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             multi_buffer,
             Some(project.clone()),
             window,
@@ -14322,54 +15842,27 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut TestAppContext) {
         multibuffer.push_excerpts(
             buffer_1.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 3),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 3)),
             ],
             cx,
         );
         multibuffer.push_excerpts(
             buffer_2.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 3),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 3)),
             ],
             cx,
         );
         multibuffer.push_excerpts(
             buffer_3.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 3),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 3)),
             ],
             cx,
         );
@@ -14377,7 +15870,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut TestAppContext) {
     });
 
     let editor =
-        cx.add_window(|window, cx| Editor::new(EditorMode::Full, multi_buffer, None, window, cx));
+        cx.add_window(|window, cx| Editor::new(EditorMode::full(), multi_buffer, None, window, cx));
     editor
         .update(cx, |editor, _window, cx| {
             for (buffer, diff_base) in [
@@ -14478,18 +15971,9 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut TestAppContext) {
         multibuffer.push_excerpts(
             buffer.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(2, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(4, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 0),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0)),
+                ExcerptRange::new(Point::new(4, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 0)),
             ],
             cx,
         );
@@ -14497,7 +15981,7 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut TestAppContext) {
     });
 
     let editor =
-        cx.add_window(|window, cx| Editor::new(EditorMode::Full, multi_buffer, None, window, cx));
+        cx.add_window(|window, cx| Editor::new(EditorMode::full(), multi_buffer, None, window, cx));
     editor
         .update(cx, |editor, _window, cx| {
             let diff = cx.new(|cx| BufferDiff::new_with_base_text(base, &buffer, cx));
@@ -15527,7 +17011,7 @@ async fn test_indent_guide_tabs(cx: &mut TestAppContext) {
     assert_indent_guides(
         0..6,
         vec![
-            indent_guide(buffer_id, 1, 6, 0),
+            indent_guide(buffer_id, 1, 5, 0),
             indent_guide(buffer_id, 3, 4, 1),
         ],
         None,
@@ -16042,7 +17526,7 @@ async fn test_display_diff_hunks(cx: &mut TestAppContext) {
         for buffer in &buffers {
             let snapshot = buffer.read(cx).snapshot();
             multibuffer.set_excerpts_for_path(
-                PathKey::namespaced("", buffer.read(cx).file().unwrap().path().clone()),
+                PathKey::namespaced(0, buffer.read(cx).file().unwrap().path().clone()),
                 buffer.clone(),
                 vec![text::Anchor::MIN.to_point(&snapshot)..text::Anchor::MAX.to_point(&snapshot)],
                 DEFAULT_MULTIBUFFER_CONTEXT,
@@ -16053,7 +17537,7 @@ async fn test_display_diff_hunks(cx: &mut TestAppContext) {
     });
 
     let editor = cx.add_window(|window, cx| {
-        Editor::new(EditorMode::Full, multibuffer, Some(project), window, cx)
+        Editor::new(EditorMode::full(), multibuffer, Some(project), window, cx)
     });
     cx.run_until_parked();
 
@@ -16358,26 +17842,31 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut TestApp
     .await;
 
     let set_up_lsp_handlers = |empty_go_to_definition: bool, cx: &mut EditorLspTestContext| {
-        let go_to_definition = cx.lsp.handle_request::<lsp::request::GotoDefinition, _, _>(
-            move |params, _| async move {
-                if empty_go_to_definition {
-                    Ok(None)
-                } else {
-                    Ok(Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location {
-                        uri: params.text_document_position_params.text_document.uri,
-                        range: lsp::Range::new(lsp::Position::new(4, 3), lsp::Position::new(4, 6)),
-                    })))
-                }
-            },
-        );
-        let references =
-            cx.lsp
-                .handle_request::<lsp::request::References, _, _>(move |params, _| async move {
-                    Ok(Some(vec![lsp::Location {
-                        uri: params.text_document_position.text_document.uri,
-                        range: lsp::Range::new(lsp::Position::new(0, 8), lsp::Position::new(0, 11)),
-                    }]))
-                });
+        let go_to_definition = cx
+            .lsp
+            .set_request_handler::<lsp::request::GotoDefinition, _, _>(
+                move |params, _| async move {
+                    if empty_go_to_definition {
+                        Ok(None)
+                    } else {
+                        Ok(Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location {
+                            uri: params.text_document_position_params.text_document.uri,
+                            range: lsp::Range::new(
+                                lsp::Position::new(4, 3),
+                                lsp::Position::new(4, 6),
+                            ),
+                        })))
+                    }
+                },
+            );
+        let references = cx
+            .lsp
+            .set_request_handler::<lsp::request::References, _, _>(move |params, _| async move {
+                Ok(Some(vec![lsp::Location {
+                    uri: params.text_document_position.text_document.uri,
+                    range: lsp::Range::new(lsp::Position::new(0, 8), lsp::Position::new(0, 11)),
+                }]))
+            });
         (go_to_definition, references)
     };
 
@@ -16466,6 +17955,69 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut TestApp
 }
 
 #[gpui::test]
+async fn test_goto_definition_no_fallback(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        let mut editor_settings = EditorSettings::get_global(cx).clone();
+        editor_settings.go_to_definition_fallback = GoToDefinitionFallback::None;
+        EditorSettings::override_global(editor_settings, cx);
+    });
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            definition_provider: Some(lsp::OneOf::Left(true)),
+            references_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+    let original_state = r#"fn one() {
+        let mut a = ˇtwo();
+    }
+
+    fn two() {}"#
+        .unindent();
+    cx.set_state(&original_state);
+
+    let mut go_to_definition = cx
+        .lsp
+        .set_request_handler::<lsp::request::GotoDefinition, _, _>(
+            move |_, _| async move { Ok(None) },
+        );
+    let _references = cx
+        .lsp
+        .set_request_handler::<lsp::request::References, _, _>(move |_, _| async move {
+            panic!("Should not call for references with no go to definition fallback")
+        });
+
+    let navigated = cx
+        .update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+        .await
+        .expect("Failed to navigate to lookup references");
+    go_to_definition
+        .next()
+        .await
+        .expect("Should have called the go_to_definition handler");
+
+    assert_eq!(
+        navigated,
+        Navigated::No,
+        "Should have navigated to references as a fallback after empty GoToDefinition response"
+    );
+    cx.assert_editor_state(&original_state);
+    let editors = cx.update_workspace(|workspace, _, cx| {
+        workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
+    });
+    cx.update_editor(|_, _, _| {
+        assert_eq!(
+            editors.len(),
+            1,
+            "After unsuccessful fallback, no other editor should have been opened"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -16502,7 +18054,7 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
 
     let editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             multi_buffer,
             Some(project.clone()),
             window,
@@ -16601,54 +18153,27 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
         multi_buffer.push_excerpts(
             buffer_1.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 4),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
             ],
             cx,
         );
         multi_buffer.push_excerpts(
             buffer_2.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 4),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
             ],
             cx,
         );
         multi_buffer.push_excerpts(
             buffer_3.clone(),
             [
-                ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(3, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
-                    primary: None,
-                },
-                ExcerptRange {
-                    context: Point::new(9, 0)..Point::new(10, 4),
-                    primary: None,
-                },
+                ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0)),
+                ExcerptRange::new(Point::new(5, 0)..Point::new(7, 0)),
+                ExcerptRange::new(Point::new(9, 0)..Point::new(10, 4)),
             ],
             cx,
         );
@@ -16656,7 +18181,7 @@ async fn test_folding_buffers(cx: &mut TestAppContext) {
     });
     let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             multi_buffer.clone(),
             Some(project.clone()),
             window,
@@ -16795,26 +18320,17 @@ async fn test_folding_buffers_with_one_excerpt(cx: &mut TestAppContext) {
         let mut multi_buffer = MultiBuffer::new(ReadWrite);
         multi_buffer.push_excerpts(
             buffer_1.clone(),
-            [ExcerptRange {
-                context: Point::new(0, 0)..Point::new(3, 0),
-                primary: None,
-            }],
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0))],
             cx,
         );
         multi_buffer.push_excerpts(
             buffer_2.clone(),
-            [ExcerptRange {
-                context: Point::new(0, 0)..Point::new(3, 0),
-                primary: None,
-            }],
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0))],
             cx,
         );
         multi_buffer.push_excerpts(
             buffer_3.clone(),
-            [ExcerptRange {
-                context: Point::new(0, 0)..Point::new(3, 0),
-                primary: None,
-            }],
+            [ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0))],
             cx,
         );
         multi_buffer
@@ -16822,7 +18338,7 @@ async fn test_folding_buffers_with_one_excerpt(cx: &mut TestAppContext) {
 
     let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             multi_buffer,
             Some(project.clone()),
             window,
@@ -16927,21 +18443,20 @@ async fn test_folding_buffer_when_multibuffer_has_only_one_excerpt(cx: &mut Test
         let mut multi_buffer = MultiBuffer::new(ReadWrite);
         multi_buffer.push_excerpts(
             buffer_1.clone(),
-            [ExcerptRange {
-                context: Point::new(0, 0)
+            [ExcerptRange::new(
+                Point::new(0, 0)
                     ..Point::new(
                         sample_text.chars().filter(|&c| c == '\n').count() as u32 + 1,
                         0,
                     ),
-                primary: None,
-            }],
+            )],
             cx,
         );
         multi_buffer
     });
     let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             multi_buffer,
             Some(project.clone()),
             window,
@@ -16991,7 +18506,7 @@ async fn test_multi_buffer_navigation_with_folded_buffers(cx: &mut TestAppContex
             ],
             cx,
         );
-        let mut editor = Editor::new(EditorMode::Full, multi_buffer.clone(), None, window, cx);
+        let mut editor = Editor::new(EditorMode::full(), multi_buffer.clone(), None, window, cx);
 
         let buffer_ids = multi_buffer.read(cx).excerpt_buffer_ids();
         // fold all but the second buffer, so that we test navigating between two
@@ -17303,7 +18818,7 @@ async fn assert_highlighted_edits(
 ) {
     let window = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple(text, cx);
-        Editor::new(EditorMode::Full, buffer, None, window, cx)
+        Editor::new(EditorMode::full(), buffer, None, window, cx)
     });
     let cx = &mut VisualTestContext::from_window(*window, cx);
 
@@ -17358,18 +18873,28 @@ async fn assert_highlighted_edits(
 
 #[track_caller]
 fn assert_breakpoint(
-    breakpoints: &BTreeMap<Arc<Path>, Vec<SerializedBreakpoint>>,
+    breakpoints: &BTreeMap<Arc<Path>, Vec<SourceBreakpoint>>,
     path: &Arc<Path>,
-    expected: Vec<(u32, BreakpointKind)>,
+    expected: Vec<(u32, Breakpoint)>,
 ) {
     if expected.len() == 0usize {
-        assert!(!breakpoints.contains_key(path));
+        assert!(!breakpoints.contains_key(path), "{}", path.display());
     } else {
         let mut breakpoint = breakpoints
             .get(path)
             .unwrap()
             .into_iter()
-            .map(|breakpoint| (breakpoint.position, breakpoint.kind.clone()))
+            .map(|breakpoint| {
+                (
+                    breakpoint.row,
+                    Breakpoint {
+                        message: breakpoint.message.clone(),
+                        state: breakpoint.state,
+                        condition: breakpoint.condition.clone(),
+                        hit_condition: breakpoint.hit_condition.clone(),
+                    },
+                )
+            })
             .collect::<Vec<_>>();
 
         breakpoint.sort_by_key(|(cached_position, _)| *cached_position);
@@ -17385,7 +18910,15 @@ fn add_log_breakpoint_at_cursor(
     cx: &mut Context<Editor>,
 ) {
     let (anchor, bp) = editor
-        .breakpoint_at_cursor_head(window, cx)
+        .breakpoints_at_cursors(window, cx)
+        .first()
+        .and_then(|(anchor, bp)| {
+            if let Some(bp) = bp {
+                Some((*anchor, bp.clone()))
+            } else {
+                None
+            }
+        })
         .unwrap_or_else(|| {
             let cursor_position: Point = editor.selections.newest(cx).head();
 
@@ -17395,14 +18928,12 @@ fn add_log_breakpoint_at_cursor(
                 .buffer_snapshot
                 .anchor_before(Point::new(cursor_position.row, 0));
 
-            let kind = BreakpointKind::Log(Arc::from(log_message));
-
-            (breakpoint_position, Breakpoint { kind })
+            (breakpoint_position, Breakpoint::new_log(&log_message))
         });
 
     editor.edit_breakpoint_at_anchor(
         anchor,
-        bp.kind,
+        bp,
         BreakpointEditAction::EditLogMessage(log_message.into()),
         cx,
     );
@@ -17453,7 +18984,7 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
 
     let (editor, cx) = cx.add_window_view(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             MultiBuffer::build_from_buffer(buffer, cx),
             Some(project.clone()),
             window,
@@ -17482,7 +19013,7 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -17490,7 +19021,10 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
     assert_breakpoint(
         &breakpoints,
         &abs_path,
-        vec![(0, BreakpointKind::Standard), (3, BreakpointKind::Standard)],
+        vec![
+            (0, Breakpoint::new_standard()),
+            (3, Breakpoint::new_standard()),
+        ],
     );
 
     editor.update_in(cx, |editor, window, cx| {
@@ -17504,12 +19038,16 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
     assert_eq!(1, breakpoints.len());
-    assert_breakpoint(&breakpoints, &abs_path, vec![(3, BreakpointKind::Standard)]);
+    assert_breakpoint(
+        &breakpoints,
+        &abs_path,
+        vec![(3, Breakpoint::new_standard())],
+    );
 
     editor.update_in(cx, |editor, window, cx| {
         editor.move_to_end(&MoveToEnd, window, cx);
@@ -17522,7 +19060,7 @@ async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -17563,7 +19101,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
 
     let (editor, cx) = cx.add_window_view(|window, cx| {
         Editor::new(
-            EditorMode::Full,
+            EditorMode::full(),
             MultiBuffer::build_from_buffer(buffer, cx),
             Some(project.clone()),
             window,
@@ -17589,14 +19127,14 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
     assert_breakpoint(
         &breakpoints,
         &abs_path,
-        vec![(0, BreakpointKind::Log("hello world".into()))],
+        vec![(0, Breakpoint::new_log("hello world"))],
     );
 
     // Removing a log message from a log breakpoint should remove it
@@ -17610,7 +19148,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -17630,14 +19168,17 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
     assert_breakpoint(
         &breakpoints,
         &abs_path,
-        vec![(0, BreakpointKind::Standard), (3, BreakpointKind::Standard)],
+        vec![
+            (0, Breakpoint::new_standard()),
+            (3, Breakpoint::new_standard()),
+        ],
     );
 
     editor.update_in(cx, |editor, window, cx| {
@@ -17650,7 +19191,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -17658,8 +19199,8 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
         &breakpoints,
         &abs_path,
         vec![
-            (0, BreakpointKind::Standard),
-            (3, BreakpointKind::Log("hello world".into())),
+            (0, Breakpoint::new_standard()),
+            (3, Breakpoint::new_log("hello world")),
         ],
     );
 
@@ -17673,7 +19214,7 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
             .as_ref()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -17681,8 +19222,171 @@ async fn test_log_breakpoint_editing(cx: &mut TestAppContext) {
         &breakpoints,
         &abs_path,
         vec![
-            (0, BreakpointKind::Standard),
-            (3, BreakpointKind::Log("hello Earth !!".into())),
+            (0, Breakpoint::new_standard()),
+            (3, Breakpoint::new_log("hello Earth!!")),
+        ],
+    );
+}
+
+/// This also tests that Editor::breakpoint_at_cursor_head is working properly
+/// we had some issues where we wouldn't find a breakpoint at Point {row: 0, col: 0}
+/// or when breakpoints were placed out of order. This tests for a regression too
+#[gpui::test]
+async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let sample_text = "First line\nSecond line\nThird line\nFourth line".to_string();
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": sample_text,
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": sample_text,
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+    let worktree_id = workspace
+        .update(cx, |workspace, _window, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        })
+        .unwrap();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, "main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            MultiBuffer::build_from_buffer(buffer, cx),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    let project_path = editor.update(cx, |editor, cx| editor.project_path(cx).unwrap());
+    let abs_path = project.read_with(cx, |project, cx| {
+        project
+            .absolute_path(&project_path, cx)
+            .map(|path_buf| Arc::from(path_buf.to_owned()))
+            .unwrap()
+    });
+
+    // assert we can add breakpoint on the first line
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+        editor.move_up(&MoveUp, window, cx);
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
+    });
+
+    let breakpoints = editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .all_source_breakpoints(cx)
+            .clone()
+    });
+
+    assert_eq!(1, breakpoints.len());
+    assert_breakpoint(
+        &breakpoints,
+        &abs_path,
+        vec![
+            (0, Breakpoint::new_standard()),
+            (2, Breakpoint::new_standard()),
+            (3, Breakpoint::new_standard()),
+        ],
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_beginning(&MoveToBeginning, window, cx);
+        editor.disable_breakpoint(&actions::DisableBreakpoint, window, cx);
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.disable_breakpoint(&actions::DisableBreakpoint, window, cx);
+        // Disabling a breakpoint that doesn't exist should do nothing
+        editor.move_up(&MoveUp, window, cx);
+        editor.move_up(&MoveUp, window, cx);
+        editor.disable_breakpoint(&actions::DisableBreakpoint, window, cx);
+    });
+
+    let breakpoints = editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .all_source_breakpoints(cx)
+            .clone()
+    });
+
+    let disable_breakpoint = {
+        let mut bp = Breakpoint::new_standard();
+        bp.state = BreakpointState::Disabled;
+        bp
+    };
+
+    assert_eq!(1, breakpoints.len());
+    assert_breakpoint(
+        &breakpoints,
+        &abs_path,
+        vec![
+            (0, disable_breakpoint.clone()),
+            (2, Breakpoint::new_standard()),
+            (3, disable_breakpoint.clone()),
+        ],
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_beginning(&MoveToBeginning, window, cx);
+        editor.enable_breakpoint(&actions::EnableBreakpoint, window, cx);
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.enable_breakpoint(&actions::EnableBreakpoint, window, cx);
+        editor.move_up(&MoveUp, window, cx);
+        editor.disable_breakpoint(&actions::DisableBreakpoint, window, cx);
+    });
+
+    let breakpoints = editor.update(cx, |editor, cx| {
+        editor
+            .breakpoint_store()
+            .as_ref()
+            .unwrap()
+            .read(cx)
+            .all_source_breakpoints(cx)
+            .clone()
+    });
+
+    assert_eq!(1, breakpoints.len());
+    assert_breakpoint(
+        &breakpoints,
+        &abs_path,
+        vec![
+            (0, Breakpoint::new_standard()),
+            (2, disable_breakpoint),
+            (3, Breakpoint::new_standard()),
         ],
     );
 }
@@ -17713,19 +19417,21 @@ async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
         );
     });
 
-    let mut prepare_rename_handler =
-        cx.handle_request::<lsp::request::PrepareRenameRequest, _, _>(move |_, _, _| async move {
-            Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range {
-                start: lsp::Position {
-                    line: 0,
-                    character: 7,
-                },
-                end: lsp::Position {
-                    line: 0,
-                    character: 10,
-                },
-            })))
-        });
+    let mut prepare_rename_handler = cx
+        .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(
+            move |_, _, _| async move {
+                Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range {
+                    start: lsp::Position {
+                        line: 0,
+                        character: 7,
+                    },
+                    end: lsp::Position {
+                        line: 0,
+                        character: 10,
+                    },
+                })))
+            },
+        );
     let prepare_rename_task = cx
         .update_editor(|e, window, cx| e.rename(&Rename, window, cx))
         .expect("Prepare rename was not started");
@@ -17733,7 +19439,7 @@ async fn test_rename_with_duplicate_edits(cx: &mut TestAppContext) {
     prepare_rename_task.await.expect("Prepare rename failed");
 
     let mut rename_handler =
-        cx.handle_request::<lsp::request::Rename, _, _>(move |url, _, _| async move {
+        cx.set_request_handler::<lsp::request::Rename, _, _>(move |url, _, _| async move {
             let edit = lsp::TextEdit {
                 range: lsp::Range {
                     start: lsp::Position {
@@ -17795,7 +19501,7 @@ async fn test_rename_without_prepare(cx: &mut TestAppContext) {
         .expect("Prepare rename failed");
 
     let mut rename_handler =
-        cx.handle_request::<lsp::request::Rename, _, _>(move |url, _, _| async move {
+        cx.set_request_handler::<lsp::request::Rename, _, _>(move |url, _, _| async move {
             let edit = lsp::TextEdit {
                 range: lsp::Range {
                     start: lsp::Position {
@@ -17946,7 +19652,7 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
         .unwrap();
 
     fake_server
-        .handle_request::<lsp::request::CodeLensRequest, _, _>(|_, _| async move {
+        .set_request_handler::<lsp::request::CodeLensRequest, _, _>(|_, _| async move {
             Ok(Some(vec![
                 lsp::CodeLens {
                     range: lsp::Range::default(),
@@ -18002,17 +19708,19 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
 
     // Resolving the code action does not populate its edits. In absence of
     // edits, we must execute the given command.
-    fake_server.handle_request::<lsp::request::CodeLensResolve, _, _>(|mut lens, _| async move {
-        let lens_command = lens.command.as_mut().expect("should have a command");
-        assert_eq!(lens_command.title, "Code lens command");
-        lens_command.arguments = Some(vec![json!("the-argument")]);
-        Ok(lens)
-    });
+    fake_server.set_request_handler::<lsp::request::CodeLensResolve, _, _>(
+        |mut lens, _| async move {
+            let lens_command = lens.command.as_mut().expect("should have a command");
+            assert_eq!(lens_command.title, "Code lens command");
+            lens_command.arguments = Some(vec![json!("the-argument")]);
+            Ok(lens)
+        },
+    );
 
     // While executing the command, the language server sends the editor
     // a `workspaceEdit` request.
     fake_server
-        .handle_request::<lsp::request::ExecuteCommand, _, _>({
+        .set_request_handler::<lsp::request::ExecuteCommand, _, _>({
             let fake = fake_server.clone();
             move |params, _| {
                 assert_eq!(params.command, "_the/command");
@@ -18042,6 +19750,7 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
                             },
                         )
                         .await
+                        .into_response()
                         .unwrap();
                     Ok(Some(json!(null)))
                 }
@@ -18061,243 +19770,1066 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
     });
 }
 
-mod autoclose_tags {
-    use super::*;
-    use language::language_settings::JsxTagAutoCloseSettings;
-    use languages::language;
+#[gpui::test]
+async fn test_editor_restore_data_different_in_panes(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
 
-    async fn test_setup(cx: &mut TestAppContext) -> EditorTestContext {
-        init_test(cx, |settings| {
-            settings.defaults.jsx_tag_auto_close = Some(JsxTagAutoCloseSettings { enabled: true });
+    let fs = FakeFs::new(cx.executor());
+    let main_text = r#"fn main() {
+println!("1");
+println!("2");
+println!("3");
+println!("4");
+println!("5");
+}"#;
+    let lib_text = "mod foo {}";
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "lib.rs": lib_text,
+            "main.rs": main_text,
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let (workspace, cx) =
+        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let worktree_id = workspace.update(cx, |workspace, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let expected_ranges = vec![
+        Point::new(0, 0)..Point::new(0, 0),
+        Point::new(1, 0)..Point::new(1, 1),
+        Point::new(2, 0)..Point::new(2, 2),
+        Point::new(3, 0)..Point::new(3, 3),
+    ];
+
+    let pane_1 = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    let editor_1 = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, "main.rs"),
+                Some(pane_1.downgrade()),
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+    pane_1.update(cx, |pane, cx| {
+        let open_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+        open_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                main_text,
+                "Original main.rs text on initial open",
+            );
+            assert_eq!(
+                editor
+                    .selections
+                    .all::<Point>(cx)
+                    .into_iter()
+                    .map(|s| s.range())
+                    .collect::<Vec<_>>(),
+                vec![Point::zero()..Point::zero()],
+                "Default selections on initial open",
+            );
+        })
+    });
+    editor_1.update_in(cx, |editor, window, cx| {
+        editor.change_selections(None, window, cx, |s| {
+            s.select_ranges(expected_ranges.clone());
         });
+    });
 
-        let mut cx = EditorTestContext::new(cx).await;
-        cx.update_buffer(|buffer, cx| {
-            let language = language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into());
+    let pane_2 = workspace.update_in(cx, |workspace, window, cx| {
+        workspace.split_pane(pane_1.clone(), SplitDirection::Right, window, cx)
+    });
+    let editor_2 = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, "main.rs"),
+                Some(pane_2.downgrade()),
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+    pane_2.update(cx, |pane, cx| {
+        let open_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+        open_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                main_text,
+                "Original main.rs text on initial open in another panel",
+            );
+            assert_eq!(
+                editor
+                    .selections
+                    .all::<Point>(cx)
+                    .into_iter()
+                    .map(|s| s.range())
+                    .collect::<Vec<_>>(),
+                vec![Point::zero()..Point::zero()],
+                "Default selections on initial open in another panel",
+            );
+        })
+    });
 
-            buffer.set_language(Some(language), cx)
+    editor_2.update_in(cx, |editor, window, cx| {
+        editor.fold_ranges(expected_ranges.clone(), false, window, cx);
+    });
+
+    let _other_editor_1 = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, "lib.rs"),
+                Some(pane_1.downgrade()),
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+    pane_1
+        .update_in(cx, |pane, window, cx| {
+            pane.close_inactive_items(&CloseInactiveItems::default(), window, cx)
+                .unwrap()
+        })
+        .await
+        .unwrap();
+    drop(editor_1);
+    pane_1.update(cx, |pane, cx| {
+        pane.active_item()
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap()
+            .update(cx, |editor, cx| {
+                assert_eq!(
+                    editor.display_text(cx),
+                    lib_text,
+                    "Other file should be open and active",
+                );
+            });
+        assert_eq!(pane.items().count(), 1, "No other editors should be open");
+    });
+
+    let _other_editor_2 = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, "lib.rs"),
+                Some(pane_2.downgrade()),
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+    pane_2
+        .update_in(cx, |pane, window, cx| {
+            pane.close_inactive_items(&CloseInactiveItems::default(), window, cx)
+                .unwrap()
+        })
+        .await
+        .unwrap();
+    drop(editor_2);
+    pane_2.update(cx, |pane, cx| {
+        let open_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+        open_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                lib_text,
+                "Other file should be open and active in another panel too",
+            );
         });
+        assert_eq!(
+            pane.items().count(),
+            1,
+            "No other editors should be open in another pane",
+        );
+    });
 
-        cx
+    let _editor_1_reopened = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, "main.rs"),
+                Some(pane_1.downgrade()),
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+    let _editor_2_reopened = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, "main.rs"),
+                Some(pane_2.downgrade()),
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+    pane_1.update(cx, |pane, cx| {
+        let open_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+        open_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                main_text,
+                "Previous editor in the 1st panel had no extra text manipulations and should get none on reopen",
+            );
+            assert_eq!(
+                editor
+                    .selections
+                    .all::<Point>(cx)
+                    .into_iter()
+                    .map(|s| s.range())
+                    .collect::<Vec<_>>(),
+                expected_ranges,
+                "Previous editor in the 1st panel had selections and should get them restored on reopen",
+            );
+        })
+    });
+    pane_2.update(cx, |pane, cx| {
+        let open_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+        open_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                r#"fn main() {
+⋯rintln!("1");
+⋯intln!("2");
+⋯ntln!("3");
+println!("4");
+println!("5");
+}"#,
+                "Previous editor in the 2nd pane had folds and should restore those on reopen in the same pane",
+            );
+            assert_eq!(
+                editor
+                    .selections
+                    .all::<Point>(cx)
+                    .into_iter()
+                    .map(|s| s.range())
+                    .collect::<Vec<_>>(),
+                vec![Point::zero()..Point::zero()],
+                "Previous editor in the 2nd pane had no selections changed hence should restore none",
+            );
+        })
+    });
+}
+
+#[gpui::test]
+async fn test_editor_does_not_restore_data_when_turned_off(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    let main_text = r#"fn main() {
+println!("1");
+println!("2");
+println!("3");
+println!("4");
+println!("5");
+}"#;
+    let lib_text = "mod foo {}";
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "lib.rs": lib_text,
+            "main.rs": main_text,
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let (workspace, cx) =
+        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let worktree_id = workspace.update(cx, |workspace, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    let editor = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, "main.rs"),
+                Some(pane.downgrade()),
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+    pane.update(cx, |pane, cx| {
+        let open_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+        open_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                main_text,
+                "Original main.rs text on initial open",
+            );
+        })
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.fold_ranges(vec![Point::new(0, 0)..Point::new(0, 0)], false, window, cx);
+    });
+
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store.update_user_settings::<WorkspaceSettings>(cx, |s| {
+            s.restore_on_file_reopen = Some(false);
+        });
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.fold_ranges(
+            vec![
+                Point::new(1, 0)..Point::new(1, 1),
+                Point::new(2, 0)..Point::new(2, 2),
+                Point::new(3, 0)..Point::new(3, 3),
+            ],
+            false,
+            window,
+            cx,
+        );
+    });
+    pane.update_in(cx, |pane, window, cx| {
+        pane.close_all_items(&CloseAllItems::default(), window, cx)
+            .unwrap()
+    })
+    .await
+    .unwrap();
+    pane.update(cx, |pane, _| {
+        assert!(pane.active_item().is_none());
+    });
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store.update_user_settings::<WorkspaceSettings>(cx, |s| {
+            s.restore_on_file_reopen = Some(true);
+        });
+    });
+
+    let _editor_reopened = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, "main.rs"),
+                Some(pane.downgrade()),
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+    pane.update(cx, |pane, cx| {
+        let open_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+        open_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                main_text,
+                "No folds: even after enabling the restoration, previous editor's data should not be saved to be used for the restoration"
+            );
+        })
+    });
+}
+
+#[gpui::test]
+async fn test_hide_mouse_context_menu_on_modal_opened(cx: &mut TestAppContext) {
+    struct EmptyModalView {
+        focus_handle: gpui::FocusHandle,
+    }
+    impl EventEmitter<DismissEvent> for EmptyModalView {}
+    impl Render for EmptyModalView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
+            div()
+        }
+    }
+    impl Focusable for EmptyModalView {
+        fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
+            self.focus_handle.clone()
+        }
+    }
+    impl workspace::ModalView for EmptyModalView {}
+    fn new_empty_modal_view(cx: &App) -> EmptyModalView {
+        EmptyModalView {
+            focus_handle: cx.focus_handle(),
+        }
     }
 
-    macro_rules! check {
-        ($name:ident, $initial:literal + $input:literal => $expected:expr) => {
-            #[gpui::test]
-            async fn $name(cx: &mut TestAppContext) {
-                let mut cx = test_setup(cx).await;
-                cx.set_state($initial);
-                cx.run_until_parked();
+    init_test(cx, |_| {});
 
-                cx.update_editor(|editor, window, cx| {
-                    editor.handle_input($input, window, cx);
-                });
-                cx.run_until_parked();
-                cx.assert_editor_state($expected);
-            }
-        };
-    }
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let buffer = cx.update(|cx| MultiBuffer::build_simple("hello world!", cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+    let editor = cx.new_window_entity(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            buffer,
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+    workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+        })
+        .unwrap();
+    editor.update_in(cx, |editor, window, cx| {
+        editor.open_context_menu(&OpenContextMenu, window, cx);
+        assert!(editor.mouse_context_menu.is_some());
+    });
+    workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.toggle_modal(window, cx, |_, cx| new_empty_modal_view(cx));
+        })
+        .unwrap();
+    cx.read(|cx| {
+        assert!(editor.read(cx).mouse_context_menu.is_none());
+    });
+}
 
-    check!(
-        test_basic,
-        "<divˇ" + ">" => "<div>ˇ</div>"
-    );
+#[gpui::test]
+async fn test_html_linked_edits_on_completion(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
 
-    check!(
-        test_basic_nested,
-        "<div><divˇ</div>" + ">" => "<div><div>ˇ</div></div>"
-    );
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.html"), Default::default())
+        .await;
 
-    check!(
-        test_basic_ignore_already_closed,
-        "<div><divˇ</div></div>" + ">" => "<div><div>ˇ</div></div>"
-    );
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
 
-    check!(
-        test_doesnt_autoclose_closing_tag,
-        "</divˇ" + ">" => "</div>ˇ"
-    );
-
-    check!(
-        test_jsx_attr,
-        "<div attr={</div>}ˇ" + ">" => "<div attr={</div>}>ˇ</div>"
-    );
-
-    check!(
-        test_ignores_closing_tags_in_expr_block,
-        "<div><divˇ{</div>}</div>" + ">" => "<div><div>ˇ</div>{</div>}</div>"
-    );
-
-    check!(
-        test_doesnt_autoclose_on_gt_in_expr,
-        "<div attr={1 ˇ" + ">" => "<div attr={1 >ˇ"
-    );
-
-    check!(
-        test_ignores_closing_tags_with_different_tag_names,
-        "<div><divˇ</div></span>" + ">" => "<div><div>ˇ</div></div></span>"
-    );
-
-    check!(
-        test_autocloses_in_jsx_expression,
-        "<div>{<divˇ}</div>" + ">" => "<div>{<div>ˇ</div>}</div>"
-    );
-
-    check!(
-        test_doesnt_autoclose_already_closed_in_jsx_expression,
-        "<div>{<divˇ</div>}</div>" + ">" => "<div>{<div>ˇ</div>}</div>"
-    );
-
-    check!(
-        test_autocloses_fragment,
-        "<ˇ" + ">" => "<>ˇ</>"
-    );
-
-    check!(
-        test_does_not_include_type_argument_in_autoclose_tag_name,
-        "<Component<T> attr={boolean_value}ˇ" + ">" => "<Component<T> attr={boolean_value}>ˇ</Component>"
-    );
-
-    check!(
-        test_does_not_autoclose_doctype,
-        "<!DOCTYPE htmlˇ" + ">" => "<!DOCTYPE html>ˇ"
-    );
-
-    check!(
-        test_does_not_autoclose_comment,
-        "<!-- comment --ˇ" + ">" => "<!-- comment -->ˇ"
-    );
-
-    check!(
-        test_multi_cursor_autoclose_same_tag,
-        r#"
-        <divˇ
-        <divˇ
-        "#
-        + ">" =>
-        r#"
-        <div>ˇ</div>
-        <div>ˇ</div>
-        "#
-    );
-
-    check!(
-        test_multi_cursor_autoclose_different_tags,
-        r#"
-        <divˇ
-        <spanˇ
-        "#
-        + ">" =>
-        r#"
-        <div>ˇ</div>
-        <span>ˇ</span>
-        "#
-    );
-
-    check!(
-        test_multi_cursor_autoclose_some_dont_autoclose_others,
-        r#"
-        <divˇ
-        <div /ˇ
-        <spanˇ</span>
-        <!DOCTYPE htmlˇ
-        </headˇ
-        <Component<T>ˇ
-        ˇ
-        "#
-        + ">" =>
-        r#"
-        <div>ˇ</div>
-        <div />ˇ
-        <span>ˇ</span>
-        <!DOCTYPE html>ˇ
-        </head>ˇ
-        <Component<T>>ˇ</Component>
-        >ˇ
-        "#
-    );
-
-    check!(
-        test_doesnt_mess_up_trailing_text,
-        "<divˇfoobar" + ">" => "<div>ˇ</div>foobar"
-    );
-
-    #[gpui::test]
-    async fn test_multibuffer(cx: &mut TestAppContext) {
-        init_test(cx, |settings| {
-            settings.defaults.jsx_tag_auto_close = Some(JsxTagAutoCloseSettings { enabled: true });
-        });
-
-        let buffer_a = cx.new(|cx| {
-            let mut buf = language::Buffer::local("<div", cx);
-            buf.set_language(
-                Some(language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into())),
-                cx,
-            );
-            buf
-        });
-        let buffer_b = cx.new(|cx| {
-            let mut buf = language::Buffer::local("<pre", cx);
-            buf.set_language(
-                Some(language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into())),
-                cx,
-            );
-            buf
-        });
-        let buffer_c = cx.new(|cx| {
-            let buf = language::Buffer::local("<span", cx);
-            buf
-        });
-        let buffer = cx.new(|cx| {
-            let mut buf = MultiBuffer::new(language::Capability::ReadWrite);
-            buf.push_excerpts(
-                buffer_a,
-                [ExcerptRange {
-                    context: text::Anchor::MIN..text::Anchor::MAX,
-                    primary: None,
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    let html_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "HTML".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["html".to_string()],
+                ..LanguageMatcher::default()
+            },
+            brackets: BracketPairConfig {
+                pairs: vec![BracketPair {
+                    start: "<".into(),
+                    end: ">".into(),
+                    close: true,
+                    ..Default::default()
                 }],
-                cx,
-            );
-            buf.push_excerpts(
-                buffer_b,
-                [ExcerptRange {
-                    context: text::Anchor::MIN..text::Anchor::MAX,
-                    primary: None,
-                }],
-                cx,
-            );
-            buf.push_excerpts(
-                buffer_c,
-                [ExcerptRange {
-                    context: text::Anchor::MIN..text::Anchor::MAX,
-                    primary: None,
-                }],
-                cx,
-            );
-            buf
-        });
-        let editor = cx.add_window(|window, cx| build_editor(buffer.clone(), window, cx));
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_html::LANGUAGE.into()),
+    ));
+    language_registry.add(html_language);
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "HTML",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    resolve_provider: Some(true),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
 
-        let mut cx = EditorTestContext::for_editor(editor, cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-        cx.update_editor(|editor, window, cx| {
-            editor.change_selections(None, window, cx, |selections| {
-                selections.select(vec![
-                    Selection::from_offset(4),
-                    Selection::from_offset(9),
-                    Selection::from_offset(15),
-                ])
+    let worktree_id = workspace
+        .update(cx, |workspace, _window, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
             })
-        });
-        cx.run_until_parked();
+        })
+        .unwrap();
+    project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/file.html"), cx)
+        })
+        .await
+        .unwrap();
+    let editor = workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.open_path((worktree_id, "file.html"), None, true, window, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
 
-        cx.update_editor(|editor, window, cx| {
-            editor.handle_input(">", window, cx);
+    let fake_server = fake_servers.next().await.unwrap();
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text("<ad></ad>", window, cx);
+        editor.change_selections(None, window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 3)..Point::new(0, 3)]);
         });
-        cx.run_until_parked();
+        let Some((buffer, _)) = editor
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(editor.selections.newest_anchor().start, cx)
+        else {
+            panic!("Failed to get buffer for selection position");
+        };
+        let buffer = buffer.read(cx);
+        let buffer_id = buffer.remote_id();
+        let opening_range =
+            buffer.anchor_before(Point::new(0, 1))..buffer.anchor_after(Point::new(0, 3));
+        let closing_range =
+            buffer.anchor_before(Point::new(0, 6))..buffer.anchor_after(Point::new(0, 8));
+        let mut linked_ranges = HashMap::default();
+        linked_ranges.insert(
+            buffer_id,
+            vec![(opening_range.clone(), vec![closing_range.clone()])],
+        );
+        editor.linked_edit_ranges = LinkedEditingRanges(linked_ranges);
+    });
+    let mut completion_handle =
+        fake_server.set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "head".to_string(),
+                    text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
+                        lsp::InsertReplaceEdit {
+                            new_text: "head".to_string(),
+                            insert: lsp::Range::new(
+                                lsp::Position::new(0, 1),
+                                lsp::Position::new(0, 3),
+                            ),
+                            replace: lsp::Range::new(
+                                lsp::Position::new(0, 1),
+                                lsp::Position::new(0, 3),
+                            ),
+                        },
+                    )),
+                    ..Default::default()
+                },
+            ])))
+        });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+    });
+    cx.run_until_parked();
+    completion_handle.next().await.unwrap();
+    editor.update(cx, |editor, _| {
+        assert!(
+            editor.context_menu_visible(),
+            "Completion menu should be visible"
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.confirm_completion(&ConfirmCompletion::default(), window, cx)
+    });
+    cx.executor().run_until_parked();
+    editor.update(cx, |editor, cx| {
+        assert_eq!(editor.text(cx), "<head></head>");
+    });
+}
 
-        cx.assert_editor_state("<div>ˇ</div>\n<pre>ˇ</pre>\n<span>ˇ");
-    }
+#[gpui::test]
+async fn test_invisible_worktree_servers(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "a": {
+                "main.rs": "fn main() {}",
+            },
+            "foo": {
+                "bar": {
+                    "external_file.rs": "pub mod external {}",
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/root/a").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let _fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            ..FakeLspAdapter::default()
+        },
+    );
+    let (workspace, cx) =
+        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let worktree_id = workspace.update(cx, |workspace, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let assert_language_servers_count =
+        |expected: usize, context: &str, cx: &mut VisualTestContext| {
+            project.update(cx, |project, cx| {
+                let current = project
+                    .lsp_store()
+                    .read(cx)
+                    .as_local()
+                    .unwrap()
+                    .language_servers
+                    .len();
+                assert_eq!(expected, current, "{context}");
+            });
+        };
+
+    assert_language_servers_count(
+        0,
+        "No servers should be running before any file is open",
+        cx,
+    );
+    let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    let main_editor = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, "main.rs"),
+                Some(pane.downgrade()),
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+    pane.update(cx, |pane, cx| {
+        let open_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+        open_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                "fn main() {}",
+                "Original main.rs text on initial open",
+            );
+        });
+        assert_eq!(open_editor, main_editor);
+    });
+    assert_language_servers_count(1, "First *.rs file starts a language server", cx);
+
+    let external_editor = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from("/root/foo/bar/external_file.rs"),
+                OpenOptions::default(),
+                window,
+                cx,
+            )
+        })
+        .await
+        .expect("opening external file")
+        .downcast::<Editor>()
+        .expect("downcasted external file's open element to editor");
+    pane.update(cx, |pane, cx| {
+        let open_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+        open_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                "pub mod external {}",
+                "External file is open now",
+            );
+        });
+        assert_eq!(open_editor, external_editor);
+    });
+    assert_language_servers_count(
+        1,
+        "Second, external, *.rs file should join the existing server",
+        cx,
+    );
+
+    pane.update_in(cx, |pane, window, cx| {
+        pane.close_active_item(&CloseActiveItem::default(), window, cx)
+    })
+    .unwrap()
+    .await
+    .unwrap();
+    pane.update_in(cx, |pane, window, cx| {
+        pane.navigate_backward(window, cx);
+    });
+    cx.run_until_parked();
+    pane.update(cx, |pane, cx| {
+        let open_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
+        open_editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                "pub mod external {}",
+                "External file is open now",
+            );
+        });
+    });
+    assert_language_servers_count(
+        1,
+        "After closing and reopening (with navigate back) of an external file, no extra language servers should appear",
+        cx,
+    );
+
+    cx.update(|_, cx| {
+        workspace::reload(&workspace::Reload::default(), cx);
+    });
+    assert_language_servers_count(
+        1,
+        "After reloading the worktree with local and external files opened, only one project should be started",
+        cx,
+    );
+}
+
+#[gpui::test]
+async fn test_tab_in_leading_whitespace_auto_indents_for_python(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = languages::language("python", tree_sitter_python::LANGUAGE.into());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // test cursor move to start of each line on tab
+    // for `if`, `elif`, `else`, `while`, `with` and `for`
+    cx.set_state(indoc! {"
+        def main():
+        ˇ    for item in items:
+        ˇ        while item.active:
+        ˇ            if item.value > 10:
+        ˇ                continue
+        ˇ            elif item.value < 0:
+        ˇ                break
+        ˇ            else:
+        ˇ                with item.context() as ctx:
+        ˇ                    yield count
+        ˇ        else:
+        ˇ            log('while else')
+        ˇ    else:
+        ˇ        log('for else')
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+        def main():
+            ˇfor item in items:
+                ˇwhile item.active:
+                    ˇif item.value > 10:
+                        ˇcontinue
+                    ˇelif item.value < 0:
+                        ˇbreak
+                    ˇelse:
+                        ˇwith item.context() as ctx:
+                            ˇyield count
+                ˇelse:
+                    ˇlog('while else')
+            ˇelse:
+                ˇlog('for else')
+    "});
+    // test relative indent is preserved when tab
+    // for `if`, `elif`, `else`, `while`, `with` and `for`
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+        def main():
+                ˇfor item in items:
+                    ˇwhile item.active:
+                        ˇif item.value > 10:
+                            ˇcontinue
+                        ˇelif item.value < 0:
+                            ˇbreak
+                        ˇelse:
+                            ˇwith item.context() as ctx:
+                                ˇyield count
+                    ˇelse:
+                        ˇlog('while else')
+                ˇelse:
+                    ˇlog('for else')
+    "});
+
+    // test cursor move to start of each line on tab
+    // for `try`, `except`, `else`, `finally`, `match` and `def`
+    cx.set_state(indoc! {"
+        def main():
+        ˇ    try:
+        ˇ       fetch()
+        ˇ    except ValueError:
+        ˇ       handle_error()
+        ˇ    else:
+        ˇ        match value:
+        ˇ            case _:
+        ˇ    finally:
+        ˇ        def status():
+        ˇ            return 0
+    "});
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+        def main():
+            ˇtry:
+                ˇfetch()
+            ˇexcept ValueError:
+                ˇhandle_error()
+            ˇelse:
+                ˇmatch value:
+                    ˇcase _:
+            ˇfinally:
+                ˇdef status():
+                    ˇreturn 0
+    "});
+    // test relative indent is preserved when tab
+    // for `try`, `except`, `else`, `finally`, `match` and `def`
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state(indoc! {"
+        def main():
+                ˇtry:
+                    ˇfetch()
+                ˇexcept ValueError:
+                    ˇhandle_error()
+                ˇelse:
+                    ˇmatch value:
+                        ˇcase _:
+                ˇfinally:
+                    ˇdef status():
+                        ˇreturn 0
+    "});
+}
+
+#[gpui::test]
+async fn test_outdent_after_input_for_python(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = languages::language("python", tree_sitter_python::LANGUAGE.into());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // test `else` auto outdents when typed inside `if` block
+    cx.set_state(indoc! {"
+        def main():
+            if i == 2:
+                return
+                ˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("else:", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        def main():
+            if i == 2:
+                return
+            else:ˇ
+    "});
+
+    // test `except` auto outdents when typed inside `try` block
+    cx.set_state(indoc! {"
+        def main():
+            try:
+                i = 2
+                ˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("except:", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        def main():
+            try:
+                i = 2
+            except:ˇ
+    "});
+
+    // test `else` auto outdents when typed inside `except` block
+    cx.set_state(indoc! {"
+        def main():
+            try:
+                i = 2
+            except:
+                j = 2
+                ˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("else:", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        def main():
+            try:
+                i = 2
+            except:
+                j = 2
+            else:ˇ
+    "});
+
+    // test `finally` auto outdents when typed inside `else` block
+    cx.set_state(indoc! {"
+        def main():
+            try:
+                i = 2
+            except:
+                j = 2
+            else:
+                k = 2
+                ˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("finally:", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        def main():
+            try:
+                i = 2
+            except:
+                j = 2
+            else:
+                k = 2
+            finally:ˇ
+    "});
+
+    // TODO: test `except` auto outdents when typed inside `try` block right after for block
+    // cx.set_state(indoc! {"
+    //     def main():
+    //         try:
+    //             for i in range(n):
+    //                 pass
+    //             ˇ
+    // "});
+    // cx.update_editor(|editor, window, cx| {
+    //     editor.handle_input("except:", window, cx);
+    // });
+    // cx.assert_editor_state(indoc! {"
+    //     def main():
+    //         try:
+    //             for i in range(n):
+    //                 pass
+    //         except:ˇ
+    // "});
+
+    // TODO: test `else` auto outdents when typed inside `except` block right after for block
+    // cx.set_state(indoc! {"
+    //     def main():
+    //         try:
+    //             i = 2
+    //         except:
+    //             for i in range(n):
+    //                 pass
+    //             ˇ
+    // "});
+    // cx.update_editor(|editor, window, cx| {
+    //     editor.handle_input("else:", window, cx);
+    // });
+    // cx.assert_editor_state(indoc! {"
+    //     def main():
+    //         try:
+    //             i = 2
+    //         except:
+    //             for i in range(n):
+    //                 pass
+    //         else:ˇ
+    // "});
+
+    // TODO: test `finally` auto outdents when typed inside `else` block right after for block
+    // cx.set_state(indoc! {"
+    //     def main():
+    //         try:
+    //             i = 2
+    //         except:
+    //             j = 2
+    //         else:
+    //             for i in range(n):
+    //                 pass
+    //             ˇ
+    // "});
+    // cx.update_editor(|editor, window, cx| {
+    //     editor.handle_input("finally:", window, cx);
+    // });
+    // cx.assert_editor_state(indoc! {"
+    //     def main():
+    //         try:
+    //             i = 2
+    //         except:
+    //             j = 2
+    //         else:
+    //             for i in range(n):
+    //                 pass
+    //         finally:ˇ
+    // "});
+
+    // test `else` stays at correct indent when typed after `for` block
+    cx.set_state(indoc! {"
+        def main():
+            for i in range(10):
+                if i == 3:
+                    break
+            ˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("else:", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        def main():
+            for i in range(10):
+                if i == 3:
+                    break
+            else:ˇ
+    "});
+}
+
+#[gpui::test]
+async fn test_indent_on_newline_for_python(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_language_settings(cx, |settings| {
+        settings.defaults.extend_comment_on_newline = Some(false);
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = languages::language("python", tree_sitter_python::LANGUAGE.into());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // test correct indent after newline on comment
+    cx.set_state(indoc! {"
+        # COMMENT:ˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Newline, window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        # COMMENT:
+        ˇ
+    "});
+
+    // test correct indent after newline in curly brackets
+    cx.set_state(indoc! {"
+        {ˇ}
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Newline, window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc! {"
+        {
+            ˇ
+        }
+    "});
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
@@ -18319,9 +20851,9 @@ fn assert_selection_ranges(marked_text: &str, editor: &mut Editor, cx: &mut Cont
 pub fn handle_signature_help_request(
     cx: &mut EditorLspTestContext,
     mocked_response: lsp::SignatureHelp,
-) -> impl Future<Output = ()> {
+) -> impl Future<Output = ()> + use<> {
     let mut request =
-        cx.handle_request::<lsp::request::SignatureHelpRequest, _, _>(move |_, _, _| {
+        cx.set_request_handler::<lsp::request::SignatureHelpRequest, _, _>(move |_, _, _| {
             let mocked_response = mocked_response.clone();
             async move { Ok(Some(mocked_response)) }
         });
@@ -18333,7 +20865,10 @@ pub fn handle_signature_help_request(
 
 /// Handle completion request passing a marked string specifying where the completion
 /// should be triggered from using '|' character, what range should be replaced, and what completions
-/// should be returned using '<' and '>' to delimit the range
+/// should be returned using '<' and '>' to delimit the range.
+///
+/// Also see `handle_completion_request_with_insert_and_replace`.
+#[track_caller]
 pub fn handle_completion_request(
     cx: &mut EditorLspTestContext,
     marked_string: &str,
@@ -18352,30 +20887,91 @@ pub fn handle_completion_request(
     let replace_range =
         cx.to_lsp_range(marked_ranges.remove(&replace_range_marker).unwrap()[0].clone());
 
-    let mut request = cx.handle_request::<lsp::request::Completion, _, _>(move |url, params, _| {
-        let completions = completions.clone();
-        counter.fetch_add(1, atomic::Ordering::Release);
-        async move {
-            assert_eq!(params.text_document_position.text_document.uri, url.clone());
-            assert_eq!(
-                params.text_document_position.position,
-                complete_from_position
-            );
-            Ok(Some(lsp::CompletionResponse::Array(
-                completions
-                    .iter()
-                    .map(|completion_text| lsp::CompletionItem {
-                        label: completion_text.to_string(),
-                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                            range: replace_range,
-                            new_text: completion_text.to_string(),
-                        })),
-                        ..Default::default()
-                    })
-                    .collect(),
-            )))
-        }
-    });
+    let mut request =
+        cx.set_request_handler::<lsp::request::Completion, _, _>(move |url, params, _| {
+            let completions = completions.clone();
+            counter.fetch_add(1, atomic::Ordering::Release);
+            async move {
+                assert_eq!(params.text_document_position.text_document.uri, url.clone());
+                assert_eq!(
+                    params.text_document_position.position,
+                    complete_from_position
+                );
+                Ok(Some(lsp::CompletionResponse::Array(
+                    completions
+                        .iter()
+                        .map(|completion_text| lsp::CompletionItem {
+                            label: completion_text.to_string(),
+                            text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                range: replace_range,
+                                new_text: completion_text.to_string(),
+                            })),
+                            ..Default::default()
+                        })
+                        .collect(),
+                )))
+            }
+        });
+
+    async move {
+        request.next().await;
+    }
+}
+
+/// Similar to `handle_completion_request`, but a [`CompletionTextEdit::InsertAndReplace`] will be
+/// given instead, which also contains an `insert` range.
+///
+/// This function uses the cursor position to mimic what Rust-Analyzer provides as the `insert` range,
+/// that is, `replace_range.start..cursor_pos`.
+pub fn handle_completion_request_with_insert_and_replace(
+    cx: &mut EditorLspTestContext,
+    marked_string: &str,
+    completions: Vec<&'static str>,
+    counter: Arc<AtomicUsize>,
+) -> impl Future<Output = ()> {
+    let complete_from_marker: TextRangeMarker = '|'.into();
+    let replace_range_marker: TextRangeMarker = ('<', '>').into();
+    let (_, mut marked_ranges) = marked_text_ranges_by(
+        marked_string,
+        vec![complete_from_marker.clone(), replace_range_marker.clone()],
+    );
+
+    let complete_from_position =
+        cx.to_lsp(marked_ranges.remove(&complete_from_marker).unwrap()[0].start);
+    let replace_range =
+        cx.to_lsp_range(marked_ranges.remove(&replace_range_marker).unwrap()[0].clone());
+
+    let mut request =
+        cx.set_request_handler::<lsp::request::Completion, _, _>(move |url, params, _| {
+            let completions = completions.clone();
+            counter.fetch_add(1, atomic::Ordering::Release);
+            async move {
+                assert_eq!(params.text_document_position.text_document.uri, url.clone());
+                assert_eq!(
+                    params.text_document_position.position, complete_from_position,
+                    "marker `|` position doesn't match",
+                );
+                Ok(Some(lsp::CompletionResponse::Array(
+                    completions
+                        .iter()
+                        .map(|completion_text| lsp::CompletionItem {
+                            label: completion_text.to_string(),
+                            text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
+                                lsp::InsertReplaceEdit {
+                                    insert: lsp::Range {
+                                        start: replace_range.start,
+                                        end: complete_from_position,
+                                    },
+                                    replace: replace_range,
+                                    new_text: completion_text.to_string(),
+                                },
+                            )),
+                            ..Default::default()
+                        })
+                        .collect(),
+                )))
+            }
+        });
 
     async move {
         request.next().await;
@@ -18398,7 +20994,7 @@ fn handle_resolve_completion_request(
     });
 
     let mut request =
-        cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| {
+        cx.set_request_handler::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| {
             let edits = edits.clone();
             async move {
                 Ok(lsp::CompletionItem {

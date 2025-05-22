@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Context as _, Result};
-use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
-use http_client::{http, AsyncBody, HttpClient, Method, Request as HttpRequest};
+use anyhow::{Context as _, Result};
+use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
+use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
 use serde::{Deserialize, Serialize};
-use serde_json::{value::RawValue, Value};
+use serde_json::{Value, value::RawValue};
 use std::{convert::TryFrom, sync::Arc, time::Duration};
 
 pub const LMSTUDIO_API_URL: &str = "http://localhost:1234/api/v0";
@@ -25,7 +25,7 @@ impl TryFrom<String> for Role {
             "assistant" => Ok(Self::Assistant),
             "system" => Ok(Self::System),
             "tool" => Ok(Self::Tool),
-            _ => Err(anyhow!("invalid role '{value}'")),
+            _ => anyhow::bail!("invalid role '{value}'"),
         }
     }
 }
@@ -221,6 +221,14 @@ pub enum CompatibilityType {
     Mlx,
 }
 
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct ResponseMessageDelta {
+    pub role: Option<Role>,
+    pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCallChunk>>,
+}
+
 pub async fn complete(
     client: &dyn HttpClient,
     api_url: &str,
@@ -245,11 +253,11 @@ pub async fn complete(
         let mut body = Vec::new();
         response.body_mut().read_to_end(&mut body).await?;
         let body_str = std::str::from_utf8(&body)?;
-        Err(anyhow!(
+        anyhow::bail!(
             "Failed to connect to API: {} {}",
             response.status(),
             body_str
-        ))
+        );
     }
 }
 
@@ -296,12 +304,11 @@ pub async fn stream_chat_completion(
     } else {
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
-
-        Err(anyhow!(
+        anyhow::bail!(
             "Failed to connect to LM Studio API: {} {}",
             response.status(),
             body,
-        ))
+        );
     }
 }
 
@@ -323,17 +330,15 @@ pub async fn get_models(
     let mut body = String::new();
     response.body_mut().read_to_string(&mut body).await?;
 
-    if response.status().is_success() {
-        let response: ListModelsResponse =
-            serde_json::from_str(&body).context("Unable to parse LM Studio models response")?;
-        Ok(response.data)
-    } else {
-        Err(anyhow!(
-            "Failed to connect to LM Studio API: {} {}",
-            response.status(),
-            body,
-        ))
-    }
+    anyhow::ensure!(
+        response.status().is_success(),
+        "Failed to connect to LM Studio API: {} {}",
+        response.status(),
+        body,
+    );
+    let response: ListModelsResponse =
+        serde_json::from_str(&body).context("Unable to parse LM Studio models response")?;
+    Ok(response.data)
 }
 
 /// Sends an empty request to LM Studio to trigger loading the model
@@ -359,11 +364,10 @@ pub async fn preload_model(client: Arc<dyn HttpClient>, api_url: &str, model: &s
     } else {
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
-
-        Err(anyhow!(
+        anyhow::bail!(
             "Failed to connect to LM Studio API: {} {}",
             response.status(),
             body,
-        ))
+        );
     }
 }

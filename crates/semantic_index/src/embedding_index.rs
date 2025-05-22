@@ -3,12 +3,12 @@ use crate::{
     embedding::{Embedding, EmbeddingProvider, TextToEmbed},
     indexing::{IndexingEntryHandle, IndexingEntrySet},
 };
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result};
 use collections::Bound;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use fs::MTime;
-use futures::{stream::StreamExt, FutureExt as _};
+use futures::{FutureExt as _, stream::StreamExt};
 use futures_batch::ChunksTimeoutStreamExt;
 use gpui::{App, AppContext as _, Entity, Task};
 use heed::types::{SerdeBincode, Str};
@@ -56,7 +56,10 @@ impl EmbeddingIndex {
         &self.db
     }
 
-    pub fn index_entries_changed_on_disk(&self, cx: &App) -> impl Future<Output = Result<()>> {
+    pub fn index_entries_changed_on_disk(
+        &self,
+        cx: &App,
+    ) -> impl Future<Output = Result<()>> + use<> {
         if !cx.is_staff() {
             return async move { Ok(()) }.boxed();
         }
@@ -78,7 +81,7 @@ impl EmbeddingIndex {
         &self,
         updated_entries: UpdatedEntriesSet,
         cx: &App,
-    ) -> impl Future<Output = Result<()>> {
+    ) -> impl Future<Output = Result<()>> + use<> {
         if !cx.is_staff() {
             return async move { Ok(()) }.boxed();
         }
@@ -419,7 +422,7 @@ impl EmbeddingIndex {
                 .context("failed to create read transaction")?;
             Ok(db
                 .get(&tx, &db_key_for_path(&path))?
-                .ok_or_else(|| anyhow!("no such path"))?
+                .context("no such path")?
                 .chunks
                 .clone())
         })

@@ -8,6 +8,8 @@ use sea_orm::entity::prelude::*;
 pub enum UsageMeasure {
     RequestsPerMinute,
     TokensPerMinute,
+    InputTokensPerMinute,
+    OutputTokensPerMinute,
     TokensPerDay,
 }
 

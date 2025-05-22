@@ -3,9 +3,10 @@ mod settings;
 
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
-use git::repository::GitRepository;
+use anyhow::Context as _;
+use anyhow::Result;
 use git::GitHostingProviderRegistry;
+use git::repository::GitRepository;
 use gpui::App;
 use url::Url;
 use util::maybe;
@@ -58,7 +59,7 @@ pub fn get_host_from_git_remote_url(remote_url: &str) -> Result<String> {
             .ok()
             .and_then(|remote_url| remote_url.host_str().map(|host| host.to_string()))
     })
-    .ok_or_else(|| anyhow!("URL has no host"))
+    .context("URL has no host")
 }
 
 #[cfg(test)]

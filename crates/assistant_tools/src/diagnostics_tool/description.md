@@ -14,3 +14,8 @@ To get diagnostics for a specific file:
 To get a project-wide diagnostic summary:
 {}
 </example>
+
+<guidelines>
+- If you think you can fix a diagnostic, make 1-2 attempts and then give up.
+- Don't remove code you've generated just because you can't fix an error. The user can help you fix it.
+</guidelines>

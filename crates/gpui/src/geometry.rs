@@ -804,7 +804,7 @@ where
     ///
     /// # Arguments
     ///
-    /// * `upper_left` - A `Point<T>` representing the top left corner of the rectangle.
+    /// * `top_left` - A `Point<T>` representing the top left corner of the rectangle.
     /// * `bottom_right` - A `Point<T>` representing the bottom right corner of the rectangle.
     ///
     /// # Returns
@@ -815,22 +815,22 @@ where
     ///
     /// ```
     /// # use gpui::{Bounds, Point};
-    /// let upper_left = Point { x: 0, y: 0 };
+    /// let top_left = Point { x: 0, y: 0 };
     /// let bottom_right = Point { x: 10, y: 10 };
-    /// let bounds = Bounds::from_corners(upper_left, bottom_right);
+    /// let bounds = Bounds::from_corners(top_left, bottom_right);
     ///
-    /// assert_eq!(bounds.origin, upper_left);
+    /// assert_eq!(bounds.origin, top_left);
     /// assert_eq!(bounds.size.width, 10);
     /// assert_eq!(bounds.size.height, 10);
     /// ```
-    pub fn from_corners(upper_left: Point<T>, bottom_right: Point<T>) -> Self {
+    pub fn from_corners(top_left: Point<T>, bottom_right: Point<T>) -> Self {
         let origin = Point {
-            x: upper_left.x.clone(),
-            y: upper_left.y.clone(),
+            x: top_left.x.clone(),
+            y: top_left.y.clone(),
         };
         let size = Size {
-            width: bottom_right.x - upper_left.x,
-            height: bottom_right.y - upper_left.y,
+            width: bottom_right.x - top_left.x,
+            height: bottom_right.y - top_left.y,
         };
         Bounds { origin, size }
     }
@@ -1386,6 +1386,44 @@ where
             && point.x <= self.origin.x.clone() + self.size.width.clone()
             && point.y >= self.origin.y
             && point.y <= self.origin.y.clone() + self.size.height.clone()
+    }
+
+    /// Checks if this bounds is completely contained within another bounds.
+    ///
+    /// This method determines whether the current bounds is entirely enclosed by the given bounds.
+    /// A bounds is considered to be contained within another if its origin (top-left corner) and
+    /// its bottom-right corner are both contained within the other bounds.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - A reference to another `Bounds` that might contain this bounds.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if this bounds is completely inside the other bounds, `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use gpui::{Bounds, Point, Size};
+    /// let outer_bounds = Bounds {
+    ///     origin: Point { x: 0, y: 0 },
+    ///     size: Size { width: 20, height: 20 },
+    /// };
+    /// let inner_bounds = Bounds {
+    ///     origin: Point { x: 5, y: 5 },
+    ///     size: Size { width: 10, height: 10 },
+    /// };
+    /// let overlapping_bounds = Bounds {
+    ///     origin: Point { x: 15, y: 15 },
+    ///     size: Size { width: 10, height: 10 },
+    /// };
+    ///
+    /// assert!(inner_bounds.is_contained_within(&outer_bounds));
+    /// assert!(!overlapping_bounds.is_contained_within(&outer_bounds));
+    /// ```
+    pub fn is_contained_within(&self, other: &Self) -> bool {
+        other.contains(&self.origin) && other.contains(&self.bottom_right())
     }
 
     /// Applies a function to the origin and size of the bounds, producing a new `Bounds<U>`.
@@ -2165,21 +2203,15 @@ where
 }
 
 impl Corners<AbsoluteLength> {
-    /// Converts the `AbsoluteLength` to `Pixels` based on the provided size and rem size, ensuring the resulting
-    /// `Pixels` do not exceed half of the minimum of the provided size's width and height.
-    ///
-    /// This method is particularly useful when dealing with corner radii, where the radius in pixels should not
-    /// exceed half the size of the box it applies to, to avoid the corners overlapping.
+    /// Converts the `AbsoluteLength` to `Pixels` based on the provided rem size.
     ///
     /// # Arguments
     ///
-    /// * `size` - The `Size<Pixels>` against which the minimum allowable radius is determined.
     /// * `rem_size` - The size of one REM unit in pixels, used for conversion if the `AbsoluteLength` is in REMs.
     ///
     /// # Returns
     ///
-    /// Returns a `Corners<Pixels>` instance with each corner's length converted to pixels and clamped to the
-    /// minimum allowable radius based on the provided size.
+    /// Returns a `Corners<Pixels>` instance with each corner's length converted to pixels.
     ///
     /// # Examples
     ///
@@ -2191,23 +2223,20 @@ impl Corners<AbsoluteLength> {
     ///     bottom_right: AbsoluteLength::Pixels(Pixels(30.0)),
     ///     bottom_left: AbsoluteLength::Rems(Rems(2.0)),
     /// };
-    /// let size = Size { width: Pixels(100.0), height: Pixels(50.0) };
     /// let rem_size = Pixels(16.0);
     /// let corners_in_pixels = corners.to_pixels(size, rem_size);
     ///
-    /// // The resulting corners should not exceed half the size of the smallest dimension (50.0 / 2.0 = 25.0).
     /// assert_eq!(corners_in_pixels.top_left, Pixels(15.0));
     /// assert_eq!(corners_in_pixels.top_right, Pixels(16.0)); // 1 rem converted to pixels
-    /// assert_eq!(corners_in_pixels.bottom_right, Pixels(30.0).min(Pixels(25.0))); // Clamped to 25.0
-    /// assert_eq!(corners_in_pixels.bottom_left, Pixels(32.0).min(Pixels(25.0))); // 2 rems converted to pixels and clamped to 25.0
+    /// assert_eq!(corners_in_pixels.bottom_right, Pixels(30.0));
+    /// assert_eq!(corners_in_pixels.bottom_left, Pixels(32.0)); // 2 rems converted to pixels
     /// ```
-    pub fn to_pixels(&self, size: Size<Pixels>, rem_size: Pixels) -> Corners<Pixels> {
-        let max = size.width.min(size.height) / 2.;
+    pub fn to_pixels(&self, rem_size: Pixels) -> Corners<Pixels> {
         Corners {
-            top_left: self.top_left.to_pixels(rem_size).min(max),
-            top_right: self.top_right.to_pixels(rem_size).min(max),
-            bottom_right: self.bottom_right.to_pixels(rem_size).min(max),
-            bottom_left: self.bottom_left.to_pixels(rem_size).min(max),
+            top_left: self.top_left.to_pixels(rem_size),
+            top_right: self.top_right.to_pixels(rem_size),
+            bottom_right: self.bottom_right.to_pixels(rem_size),
+            bottom_left: self.bottom_left.to_pixels(rem_size),
         }
     }
 }
@@ -2260,6 +2289,27 @@ impl Corners<Pixels> {
             .max(self.top_right)
             .max(self.bottom_right)
             .max(self.bottom_left)
+    }
+}
+
+impl<T: Div<f32, Output = T> + Ord + Clone + Default + Debug> Corners<T> {
+    /// Clamps corner radii to be less than or equal to half the shortest side of a quad.
+    ///
+    /// # Arguments
+    ///
+    /// * `size` - The size of the quad which limits the size of the corner radii.
+    ///
+    /// # Returns
+    ///
+    /// Corner radii values clamped to fit.
+    pub fn clamp_radii_for_quad_size(self, size: Size<T>) -> Corners<T> {
+        let max = cmp::min(size.width, size.height) / 2.;
+        Corners {
+            top_left: cmp::min(self.top_left, max.clone()),
+            top_right: cmp::min(self.top_right, max.clone()),
+            bottom_right: cmp::min(self.bottom_right, max.clone()),
+            bottom_left: cmp::min(self.bottom_left, max),
+        }
     }
 }
 
@@ -2468,7 +2518,7 @@ impl std::fmt::Display for Pixels {
     }
 }
 
-impl std::ops::Div for Pixels {
+impl Div for Pixels {
     type Output = f32;
 
     fn div(self, rhs: Self) -> Self::Output {
@@ -2497,18 +2547,10 @@ impl std::ops::Rem for Pixels {
 }
 
 impl Mul<f32> for Pixels {
-    type Output = Pixels;
+    type Output = Self;
 
-    fn mul(self, other: f32) -> Pixels {
-        Pixels(self.0 * other)
-    }
-}
-
-impl Mul<usize> for Pixels {
-    type Output = Pixels;
-
-    fn mul(self, other: usize) -> Pixels {
-        Pixels(self.0 * other as f32)
+    fn mul(self, rhs: f32) -> Self {
+        Self(self.0 * rhs)
     }
 }
 
@@ -2516,13 +2558,29 @@ impl Mul<Pixels> for f32 {
     type Output = Pixels;
 
     fn mul(self, rhs: Pixels) -> Self::Output {
-        Pixels(self * rhs.0)
+        rhs * self
+    }
+}
+
+impl Mul<usize> for Pixels {
+    type Output = Self;
+
+    fn mul(self, rhs: usize) -> Self {
+        self * (rhs as f32)
+    }
+}
+
+impl Mul<Pixels> for usize {
+    type Output = Pixels;
+
+    fn mul(self, rhs: Pixels) -> Pixels {
+        rhs * self
     }
 }
 
 impl MulAssign<f32> for Pixels {
-    fn mul_assign(&mut self, other: f32) {
-        self.0 *= other;
+    fn mul_assign(&mut self, rhs: f32) {
+        self.0 *= rhs;
     }
 }
 
@@ -2602,7 +2660,6 @@ impl Pixels {
     /// Returns:
     /// * `1.0` if the value is positive
     /// * `-1.0` if the value is negative
-    /// * `0.0` if the value is zero
     pub fn signum(&self) -> f32 {
         self.0.signum()
     }
@@ -2614,14 +2671,6 @@ impl Pixels {
     /// A f64 value of the `Pixels`.
     pub fn to_f64(self) -> f64 {
         self.0 as f64
-    }
-}
-
-impl Mul<Pixels> for Pixels {
-    type Output = Pixels;
-
-    fn mul(self, rhs: Pixels) -> Self::Output {
-        Pixels(self.0 * rhs.0)
     }
 }
 
@@ -2821,7 +2870,7 @@ impl From<usize> for DevicePixels {
 /// a single logical pixel may correspond to multiple physical pixels. By using `ScaledPixels`,
 /// dimensions and positions can be specified in a way that scales appropriately across different
 /// display resolutions.
-#[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, DivAssign, PartialEq)]
 #[repr(transparent)]
 pub struct ScaledPixels(pub(crate) f32);
 
@@ -2846,6 +2895,18 @@ impl ScaledPixels {
 }
 
 impl Eq for ScaledPixels {}
+
+impl PartialOrd for ScaledPixels {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ScaledPixels {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        self.0.total_cmp(&other.0)
+    }
+}
 
 impl Debug for ScaledPixels {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -2874,6 +2935,72 @@ impl From<ScaledPixels> for f64 {
 impl From<ScaledPixels> for u32 {
     fn from(pixels: ScaledPixels) -> Self {
         pixels.0 as u32
+    }
+}
+
+impl Div for ScaledPixels {
+    type Output = f32;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        self.0 / rhs.0
+    }
+}
+
+impl std::ops::DivAssign for ScaledPixels {
+    fn div_assign(&mut self, rhs: Self) {
+        *self = Self(self.0 / rhs.0);
+    }
+}
+
+impl std::ops::RemAssign for ScaledPixels {
+    fn rem_assign(&mut self, rhs: Self) {
+        self.0 %= rhs.0;
+    }
+}
+
+impl std::ops::Rem for ScaledPixels {
+    type Output = Self;
+
+    fn rem(self, rhs: Self) -> Self {
+        Self(self.0 % rhs.0)
+    }
+}
+
+impl Mul<f32> for ScaledPixels {
+    type Output = Self;
+
+    fn mul(self, rhs: f32) -> Self {
+        Self(self.0 * rhs)
+    }
+}
+
+impl Mul<ScaledPixels> for f32 {
+    type Output = ScaledPixels;
+
+    fn mul(self, rhs: ScaledPixels) -> Self::Output {
+        rhs * self
+    }
+}
+
+impl Mul<usize> for ScaledPixels {
+    type Output = Self;
+
+    fn mul(self, rhs: usize) -> Self {
+        self * (rhs as f32)
+    }
+}
+
+impl Mul<ScaledPixels> for usize {
+    type Output = ScaledPixels;
+
+    fn mul(self, rhs: ScaledPixels) -> ScaledPixels {
+        rhs * self
+    }
+}
+
+impl MulAssign<f32> for ScaledPixels {
+    fn mul_assign(&mut self, rhs: f32) {
+        self.0 *= rhs;
     }
 }
 

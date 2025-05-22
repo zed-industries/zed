@@ -66,11 +66,15 @@ impl Arena {
         where
             F: FnOnce() -> T,
         {
-            ptr::write(ptr, f());
+            unsafe {
+                ptr::write(ptr, f());
+            }
         }
 
         unsafe fn drop<T>(ptr: *mut u8) {
-            std::ptr::drop_in_place(ptr.cast::<T>());
+            unsafe {
+                std::ptr::drop_in_place(ptr.cast::<T>());
+            }
         }
 
         unsafe {

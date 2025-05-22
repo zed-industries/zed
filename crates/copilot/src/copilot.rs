@@ -3,31 +3,29 @@ mod copilot_completion_provider;
 pub mod request;
 mod sign_in;
 
+use crate::sign_in::initiate_sign_in_within_workspace;
 use ::fs::Fs;
-use anyhow::{anyhow, Context as _, Result};
-use async_compression::futures::bufread::GzipDecoder;
-use async_tar::Archive;
+use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
-use futures::{channel::oneshot, future::Shared, Future, FutureExt, TryFutureExt};
+use futures::{Future, FutureExt, TryFutureExt, channel::oneshot, future::Shared};
 use gpui::{
-    actions, App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Task,
-    WeakEntity,
+    App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Task,
+    WeakEntity, actions,
 };
-use http_client::github::get_release_by_tag_name;
 use http_client::HttpClient;
 use language::language_settings::CopilotSettings;
 use language::{
-    language_settings::{all_language_settings, language_settings, EditPredictionProvider},
-    point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16,
-    ToPointUtf16,
+    Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16, ToPointUtf16,
+    language_settings::{EditPredictionProvider, all_language_settings, language_settings},
+    point_from_lsp, point_to_lsp,
 };
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 use request::StatusNotification;
 use settings::SettingsStore;
-use smol::{fs, io::BufReader, stream::StreamExt};
+use sign_in::{reinstall_and_sign_in_within_workspace, sign_out_within_workspace};
 use std::{
     any::TypeId,
     env,
@@ -37,10 +35,11 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{fs::remove_matching, maybe, ResultExt};
+use util::{ResultExt, fs::remove_matching};
+use workspace::Workspace;
 
 pub use crate::copilot_completion_provider::CopilotCompletionProvider;
-pub use crate::sign_in::{initiate_sign_in, CopilotCodeVerification};
+pub use crate::sign_in::{CopilotCodeVerification, initiate_sign_in, reinstall_and_sign_in};
 
 actions!(
     copilot,
@@ -61,11 +60,11 @@ pub fn init(
     node_runtime: NodeRuntime,
     cx: &mut App,
 ) {
-    copilot_chat::init(fs, http.clone(), cx);
+    copilot_chat::init(fs.clone(), http.clone(), cx);
 
     let copilot = cx.new({
         let node_runtime = node_runtime.clone();
-        move |cx| Copilot::start(new_server_id, http, node_runtime, cx)
+        move |cx| Copilot::start(new_server_id, fs, node_runtime, cx)
     });
     Copilot::set_global(copilot.clone(), cx);
     cx.observe(&copilot, |handle, cx| {
@@ -103,27 +102,25 @@ pub fn init(
     })
     .detach();
 
-    cx.on_action(|_: &SignIn, cx| {
-        if let Some(copilot) = Copilot::global(cx) {
-            copilot
-                .update(cx, |copilot, cx| copilot.sign_in(cx))
-                .detach_and_log_err(cx);
-        }
-    });
-    cx.on_action(|_: &SignOut, cx| {
-        if let Some(copilot) = Copilot::global(cx) {
-            copilot
-                .update(cx, |copilot, cx| copilot.sign_out(cx))
-                .detach_and_log_err(cx);
-        }
-    });
-    cx.on_action(|_: &Reinstall, cx| {
-        if let Some(copilot) = Copilot::global(cx) {
-            copilot
-                .update(cx, |copilot, cx| copilot.reinstall(cx))
-                .detach();
-        }
-    });
+    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+        workspace.register_action(|workspace, _: &SignIn, window, cx| {
+            if let Some(copilot) = Copilot::global(cx) {
+                let is_reinstall = false;
+                initiate_sign_in_within_workspace(workspace, copilot, is_reinstall, window, cx);
+            }
+        });
+        workspace.register_action(|workspace, _: &Reinstall, window, cx| {
+            if let Some(copilot) = Copilot::global(cx) {
+                reinstall_and_sign_in_within_workspace(workspace, copilot, window, cx);
+            }
+        });
+        workspace.register_action(|workspace, _: &SignOut, _window, cx| {
+            if let Some(copilot) = Copilot::global(cx) {
+                sign_out_within_workspace(workspace, copilot, cx);
+            }
+        });
+    })
+    .detach();
 }
 
 enum CopilotServer {
@@ -136,21 +133,20 @@ enum CopilotServer {
 impl CopilotServer {
     fn as_authenticated(&mut self) -> Result<&mut RunningCopilotServer> {
         let server = self.as_running()?;
-        if matches!(server.sign_in_status, SignInStatus::Authorized { .. }) {
-            Ok(server)
-        } else {
-            Err(anyhow!("must sign in before using copilot"))
-        }
+        anyhow::ensure!(
+            matches!(server.sign_in_status, SignInStatus::Authorized { .. }),
+            "must sign in before using copilot"
+        );
+        Ok(server)
     }
 
     fn as_running(&mut self) -> Result<&mut RunningCopilotServer> {
         match self {
-            CopilotServer::Starting { .. } => Err(anyhow!("copilot is still starting")),
-            CopilotServer::Disabled => Err(anyhow!("copilot is disabled")),
-            CopilotServer::Error(error) => Err(anyhow!(
-                "copilot was not started because of an error: {}",
-                error
-            )),
+            CopilotServer::Starting { .. } => anyhow::bail!("copilot is still starting"),
+            CopilotServer::Disabled => anyhow::bail!("copilot is disabled"),
+            CopilotServer::Error(error) => {
+                anyhow::bail!("copilot was not started because of an error: {error}")
+            }
             CopilotServer::Running(server) => Ok(server),
         }
     }
@@ -282,7 +278,7 @@ impl RegisteredBuffer {
                                         content_changes,
                                     },
                                 )
-                                .log_err();
+                                .ok();
                         }
                         let _ = done_tx.send((buffer.snapshot_version, buffer.snapshot.clone()));
                         Some(())
@@ -305,7 +301,7 @@ pub struct Completion {
 }
 
 pub struct Copilot {
-    http: Arc<dyn HttpClient>,
+    fs: Arc<dyn Fs>,
     node_runtime: NodeRuntime,
     server: CopilotServer,
     buffers: HashSet<WeakEntity<Buffer>>,
@@ -337,13 +333,13 @@ impl Copilot {
 
     fn start(
         new_server_id: LanguageServerId,
-        http: Arc<dyn HttpClient>,
+        fs: Arc<dyn Fs>,
         node_runtime: NodeRuntime,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut this = Self {
             server_id: new_server_id,
-            http,
+            fs,
             node_runtime,
             server: CopilotServer::Disabled,
             buffers: Default::default(),
@@ -355,7 +351,10 @@ impl Copilot {
         this
     }
 
-    fn shutdown_language_server(&mut self, _cx: &mut Context<Self>) -> impl Future<Output = ()> {
+    fn shutdown_language_server(
+        &mut self,
+        _cx: &mut Context<Self>,
+    ) -> impl Future<Output = ()> + use<> {
         let shutdown = match mem::replace(&mut self.server, CopilotServer::Disabled) {
             CopilotServer::Running(server) => Some(Box::pin(async move { server.lsp.shutdown() })),
             _ => None,
@@ -384,14 +383,14 @@ impl Copilot {
             return;
         }
         let server_id = self.server_id;
-        let http = self.http.clone();
+        let fs = self.fs.clone();
         let node_runtime = self.node_runtime.clone();
         let env = self.build_env(&language_settings.edit_predictions.copilot);
         let start_task = cx
             .spawn(async move |this, cx| {
                 Self::start_language_server(
                     server_id,
-                    http,
+                    fs,
                     node_runtime,
                     env,
                     this,
@@ -431,6 +430,7 @@ impl Copilot {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn fake(cx: &mut gpui::TestAppContext) -> (Entity<Self>, lsp::FakeLanguageServer) {
+        use fs::FakeFs;
         use lsp::FakeLanguageServer;
         use node_runtime::NodeRuntime;
 
@@ -445,11 +445,10 @@ impl Copilot {
             Default::default(),
             &mut cx.to_async(),
         );
-        let http = http_client::FakeHttpClient::create(|_| async { unreachable!() });
         let node_runtime = NodeRuntime::unavailable();
         let this = cx.new(|cx| Self {
             server_id: LanguageServerId(0),
-            http: http.clone(),
+            fs: FakeFs::new(cx.background_executor().clone()),
             node_runtime,
             server: CopilotServer::Running(RunningCopilotServer {
                 lsp: Arc::new(server),
@@ -464,7 +463,7 @@ impl Copilot {
 
     async fn start_language_server(
         new_server_id: LanguageServerId,
-        http: Arc<dyn HttpClient>,
+        fs: Arc<dyn Fs>,
         node_runtime: NodeRuntime,
         env: Option<HashMap<String, String>>,
         this: WeakEntity<Self>,
@@ -472,7 +471,7 @@ impl Copilot {
         cx: &mut AsyncApp,
     ) {
         let start_language_server = async {
-            let server_path = get_copilot_lsp(http).await?;
+            let server_path = get_copilot_lsp(fs, node_runtime.clone()).await?;
             let node_path = node_runtime.binary_path().await?;
             let arguments: Vec<OsString> = vec![server_path.into(), "--stdio".into()];
             let binary = LanguageServerBinary {
@@ -506,9 +505,23 @@ impl Copilot {
             let configuration = lsp::DidChangeConfigurationParams {
                 settings: Default::default(),
             };
+
+            let editor_info = request::SetEditorInfoParams {
+                editor_info: request::EditorInfo {
+                    name: "zed".into(),
+                    version: env!("CARGO_PKG_VERSION").into(),
+                },
+                editor_plugin_info: request::EditorPluginInfo {
+                    name: "zed-copilot".into(),
+                    version: "0.0.1".into(),
+                },
+            };
+            let editor_info_json = serde_json::to_value(&editor_info)?;
+
             let server = cx
                 .update(|cx| {
-                    let params = server.default_initialize_params(cx);
+                    let mut params = server.default_initialize_params(cx);
+                    params.initialization_options = Some(editor_info_json);
                     server.initialize(params, configuration.into(), cx)
                 })?
                 .await?;
@@ -517,20 +530,15 @@ impl Copilot {
                 .request::<request::CheckStatus>(request::CheckStatusParams {
                     local_checks_only: false,
                 })
-                .await?;
+                .await
+                .into_response()
+                .context("copilot: check status")?;
 
             server
-                .request::<request::SetEditorInfo>(request::SetEditorInfoParams {
-                    editor_info: request::EditorInfo {
-                        name: "zed".into(),
-                        version: env!("CARGO_PKG_VERSION").into(),
-                    },
-                    editor_plugin_info: request::EditorPluginInfo {
-                        name: "zed-copilot".into(),
-                        version: "0.0.1".into(),
-                    },
-                })
-                .await?;
+                .request::<request::SetEditorInfo>(editor_info)
+                .await
+                .into_response()
+                .context("copilot: set editor info")?;
 
             anyhow::Ok((server, status))
         };
@@ -559,7 +567,7 @@ impl Copilot {
         .ok();
     }
 
-    pub fn sign_in(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    pub(crate) fn sign_in(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         if let CopilotServer::Running(server) = &mut self.server {
             let task = match &server.sign_in_status {
                 SignInStatus::Authorized { .. } => Task::ready(Ok(())).shared(),
@@ -576,7 +584,9 @@ impl Copilot {
                                     .request::<request::SignInInitiate>(
                                         request::SignInInitiateParams {},
                                     )
-                                    .await?;
+                                    .await
+                                    .into_response()
+                                    .context("copilot sign-in")?;
                                 match sign_in {
                                     request::SignInInitiateResult::AlreadySignedIn { user } => {
                                         Ok(request::SignInStatus::Ok { user: Some(user) })
@@ -604,7 +614,9 @@ impl Copilot {
                                                     user_code: flow.user_code,
                                                 },
                                             )
-                                            .await?;
+                                            .await
+                                            .into_response()
+                                            .context("copilot: sign in confirm")?;
                                         Ok(response)
                                     }
                                 }
@@ -635,7 +647,7 @@ impl Copilot {
                 }
             };
 
-            cx.background_spawn(task.map_err(|err| anyhow!("{:?}", err)))
+            cx.background_spawn(task.map_err(|err| anyhow!("{err:?}")))
         } else {
             // If we're downloading, wait until download is finished
             // If we're in a stuck state, display to the user
@@ -643,7 +655,7 @@ impl Copilot {
         }
     }
 
-    pub fn sign_out(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    pub(crate) fn sign_out(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         self.update_sign_in_status(request::SignInStatus::NotSignedIn, cx);
         match &self.server {
             CopilotServer::Running(RunningCopilotServer { lsp: server, .. }) => {
@@ -651,7 +663,9 @@ impl Copilot {
                 cx.background_spawn(async move {
                     server
                         .request::<request::SignOut>(request::SignOutParams {})
-                        .await?;
+                        .await
+                        .into_response()
+                        .context("copilot: sign in confirm")?;
                     anyhow::Ok(())
                 })
             }
@@ -663,17 +677,17 @@ impl Copilot {
         }
     }
 
-    pub fn reinstall(&mut self, cx: &mut Context<Self>) -> Task<()> {
+    pub(crate) fn reinstall(&mut self, cx: &mut Context<Self>) -> Shared<Task<()>> {
         let language_settings = all_language_settings(None, cx);
         let env = self.build_env(&language_settings.edit_predictions.copilot);
         let start_task = cx
             .spawn({
-                let http = self.http.clone();
+                let fs = self.fs.clone();
                 let node_runtime = self.node_runtime.clone();
                 let server_id = self.server_id;
                 async move |this, cx| {
                     clear_copilot_dir().await;
-                    Self::start_language_server(server_id, http, node_runtime, env, this, false, cx)
+                    Self::start_language_server(server_id, fs, node_runtime, env, this, false, cx)
                         .await
                 }
             })
@@ -685,7 +699,7 @@ impl Copilot {
 
         cx.notify();
 
-        cx.background_spawn(start_task)
+        start_task
     }
 
     pub fn language_server(&self) -> Option<&Arc<LanguageServer>> {
@@ -728,7 +742,7 @@ impl Copilot {
                                 },
                             },
                         )
-                        .log_err();
+                        .ok();
 
                     RegisteredBuffer {
                         uri,
@@ -823,7 +837,7 @@ impl Copilot {
                             text_document: lsp::TextDocumentIdentifier::new(buffer.uri),
                         },
                     )
-                    .log_err();
+                    .ok();
             }
         }
     }
@@ -868,7 +882,10 @@ impl Copilot {
                     uuid: completion.uuid.clone(),
                 });
         cx.background_spawn(async move {
-            request.await?;
+            request
+                .await
+                .into_response()
+                .context("copilot: notify accepted")?;
             Ok(())
         })
     }
@@ -892,7 +909,10 @@ impl Copilot {
                         .collect(),
                 });
         cx.background_spawn(async move {
-            request.await?;
+            request
+                .await
+                .into_response()
+                .context("copilot: notify rejected")?;
             Ok(())
         })
     }
@@ -952,7 +972,9 @@ impl Copilot {
                         version: version.try_into().unwrap(),
                     },
                 })
-                .await?;
+                .await
+                .into_response()
+                .context("copilot: get completions")?;
             let completions = result
                 .completions
                 .into_iter()
@@ -1056,73 +1078,33 @@ async fn clear_copilot_config_dir() {
     remove_matching(copilot_chat::copilot_chat_config_dir(), |_| true).await
 }
 
-async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
-    const SERVER_PATH: &str = "dist/language-server.js";
+async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::Result<PathBuf> {
+    const PACKAGE_NAME: &str = "@github/copilot-language-server";
+    const SERVER_PATH: &str =
+        "node_modules/@github/copilot-language-server/dist/language-server.js";
 
-    ///Check for the latest copilot language server and download it if we haven't already
-    async fn fetch_latest(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
-        let release =
-            get_release_by_tag_name("zed-industries/copilot", "v0.7.0", http.clone()).await?;
+    let latest_version = node_runtime
+        .npm_package_latest_version(PACKAGE_NAME)
+        .await?;
+    let server_path = paths::copilot_dir().join(SERVER_PATH);
 
-        let version_dir = &paths::copilot_dir().join(format!("copilot-{}", release.tag_name));
+    fs.create_dir(paths::copilot_dir()).await?;
 
-        fs::create_dir_all(version_dir).await?;
-        let server_path = version_dir.join(SERVER_PATH);
-
-        if fs::metadata(&server_path).await.is_err() {
-            // Copilot LSP looks for this dist dir specifically, so lets add it in.
-            let dist_dir = version_dir.join("dist");
-            fs::create_dir_all(dist_dir.as_path()).await?;
-
-            let url = &release
-                .assets
-                .first()
-                .context("Github release for copilot contained no assets")?
-                .browser_download_url;
-
-            let mut response = http
-                .get(url, Default::default(), true)
-                .await
-                .context("error downloading copilot release")?;
-            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
-            let archive = Archive::new(decompressed_bytes);
-            archive.unpack(dist_dir).await?;
-
-            remove_matching(paths::copilot_dir(), |entry| entry != version_dir).await;
-        }
-
-        Ok(server_path)
+    let should_install = node_runtime
+        .should_install_npm_package(
+            PACKAGE_NAME,
+            &server_path,
+            paths::copilot_dir(),
+            &latest_version,
+        )
+        .await;
+    if should_install {
+        node_runtime
+            .npm_install_packages(paths::copilot_dir(), &[(PACKAGE_NAME, &latest_version)])
+            .await?;
     }
 
-    match fetch_latest(http).await {
-        ok @ Result::Ok(..) => ok,
-        e @ Err(..) => {
-            e.log_err();
-            // Fetch a cached binary, if it exists
-            maybe!(async {
-                let mut last_version_dir = None;
-                let mut entries = fs::read_dir(paths::copilot_dir()).await?;
-                while let Some(entry) = entries.next().await {
-                    let entry = entry?;
-                    if entry.file_type().await?.is_dir() {
-                        last_version_dir = Some(entry.path());
-                    }
-                }
-                let last_version_dir =
-                    last_version_dir.ok_or_else(|| anyhow!("no cached binary"))?;
-                let server_path = last_version_dir.join(SERVER_PATH);
-                if server_path.exists() {
-                    Ok(server_path)
-                } else {
-                    Err(anyhow!(
-                        "missing executable in directory {:?}",
-                        last_version_dir
-                    ))
-                }
-            })
-            .await
-        }
-    }
+    Ok(server_path)
 }
 
 #[cfg(test)]
@@ -1220,7 +1202,7 @@ mod tests {
         );
 
         // Ensure all previously-registered buffers are closed when signing out.
-        lsp.handle_request::<request::SignOut, _, _>(|_, _| async {
+        lsp.set_request_handler::<request::SignOut, _, _>(|_, _| async {
             Ok(request::SignOutResult {})
         });
         copilot
@@ -1243,7 +1225,7 @@ mod tests {
         );
 
         // Ensure all previously-registered buffers are re-opened when signing in.
-        lsp.handle_request::<request::SignInInitiate, _, _>(|_, _| async {
+        lsp.set_request_handler::<request::SignInInitiate, _, _>(|_, _| async {
             Ok(request::SignInInitiateResult::AlreadySignedIn {
                 user: "user-1".into(),
             })
@@ -1313,10 +1295,6 @@ mod tests {
         }
 
         fn file_name<'a>(&'a self, _: &'a App) -> &'a std::ffi::OsStr {
-            unimplemented!()
-        }
-
-        fn as_any(&self) -> &dyn std::any::Any {
             unimplemented!()
         }
 

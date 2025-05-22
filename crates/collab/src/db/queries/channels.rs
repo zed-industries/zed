@@ -1,7 +1,8 @@
 use super::*;
+use anyhow::Context as _;
 use rpc::{
-    proto::{channel_member::Kind, ChannelBufferVersion, VectorClockEntry},
     ErrorCode, ErrorCodeExt,
+    proto::{ChannelBufferVersion, VectorClockEntry, channel_member::Kind},
 };
 use sea_orm::{DbBackend, TryGetableMany};
 
@@ -647,11 +648,8 @@ impl Database {
                         .and(channel_member::Column::UserId.eq(for_user)),
                 )
                 .one(&*tx)
-                .await?;
-
-            let Some(membership) = membership else {
-                Err(anyhow!("no such member"))?
-            };
+                .await?
+                .context("no such member")?;
 
             let mut update = membership.into_active_model();
             update.role = ActiveValue::Set(role);

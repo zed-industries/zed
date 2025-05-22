@@ -1,4 +1,4 @@
-use crate::{px, size, Bounds, DisplayId, Pixels, PlatformDisplay};
+use crate::{Bounds, DisplayId, Pixels, PlatformDisplay, px, size};
 use anyhow::Result;
 use cocoa::{
     appkit::NSScreen,
@@ -65,7 +65,7 @@ impl MacDisplay {
 }
 
 #[link(name = "ApplicationServices", kind = "framework")]
-extern "C" {
+unsafe extern "C" {
     fn CGDisplayCreateUUIDFromDisplayID(display: CGDirectDisplayID) -> CFUUIDRef;
 }
 

@@ -3,20 +3,25 @@ mod input_handler;
 pub use lsp_types::request::*;
 pub use lsp_types::*;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
-use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, Future, FutureExt};
+use futures::{
+    AsyncRead, AsyncWrite, Future, FutureExt,
+    channel::oneshot::{self, Canceled},
+    io::BufWriter,
+    select,
+};
 use gpui::{App, AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
 use notification::DidChangeWorkspaceFolders;
 use parking_lot::{Mutex, RwLock};
 use postage::{barrier, prelude::Stream};
 use schemars::{
-    gen::SchemaGenerator,
-    schema::{InstanceType, Schema, SchemaObject},
     JsonSchema,
+    r#gen::SchemaGenerator,
+    schema::{InstanceType, Schema, SchemaObject},
 };
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::{json, value::RawValue, Value};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::{Value, json, value::RawValue};
 use smol::{
     channel,
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -32,14 +37,14 @@ use std::{
     path::PathBuf,
     pin::Pin,
     sync::{
-        atomic::{AtomicI32, Ordering::SeqCst},
         Arc, Weak,
+        atomic::{AtomicI32, Ordering::SeqCst},
     },
     task::Poll,
     time::{Duration, Instant},
 };
 use std::{path::Path, process::Stdio};
-use util::{ResultExt, TryFutureExt};
+use util::{ConnectionResult, ResultExt, TryFutureExt};
 
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
@@ -259,7 +264,7 @@ struct Error {
     message: String,
 }
 
-pub trait LspRequestFuture<O>: Future<Output = O> {
+pub trait LspRequestFuture<O>: Future<Output = ConnectionResult<O>> {
     fn id(&self) -> i32;
 }
 
@@ -284,7 +289,10 @@ impl<F: Future> Future for LspRequest<F> {
     }
 }
 
-impl<F: Future> LspRequestFuture<F::Output> for LspRequest<F> {
+impl<F, O> LspRequestFuture<O> for LspRequest<F>
+where
+    F: Future<Output = ConnectionResult<O>>,
+{
     fn id(&self) -> i32 {
         self.id
     }
@@ -344,7 +352,7 @@ impl LanguageServer {
         let stdout = server.stdout.take().unwrap();
         let stderr = server.stderr.take().unwrap();
         let root_uri = Url::from_file_path(&working_dir)
-            .map_err(|_| anyhow!("{} is not a valid URI", working_dir.display()))?;
+            .map_err(|()| anyhow!("{working_dir:?} is not a valid URI"))?;
         let server = Self::new_internal(
             server_id,
             server_name,
@@ -704,8 +712,15 @@ impl LanguageServer {
                             }),
                             insert_replace_support: Some(true),
                             label_details_support: Some(true),
+                            insert_text_mode_support: Some(InsertTextModeSupport {
+                                value_set: vec![
+                                    InsertTextMode::AS_IS,
+                                    InsertTextMode::ADJUST_INDENTATION,
+                                ],
+                            }),
                             ..Default::default()
                         }),
+                        insert_text_mode: Some(InsertTextMode::ADJUST_INDENTATION),
                         completion_list: Some(CompletionListCapability {
                             item_defaults: Some(vec![
                                 "commitCharacters".to_owned(),
@@ -774,6 +789,10 @@ impl LanguageServer {
                     code_lens: Some(CodeLensClientCapabilities {
                         dynamic_registration: Some(false),
                     }),
+                    document_symbol: Some(DocumentSymbolClientCapabilities {
+                        hierarchical_document_symbol_support: Some(true),
+                        ..DocumentSymbolClientCapabilities::default()
+                    }),
                     ..TextDocumentClientCapabilities::default()
                 }),
                 experimental: Some(json!({
@@ -813,7 +832,17 @@ impl LanguageServer {
         cx: &App,
     ) -> Task<Result<Arc<Self>>> {
         cx.spawn(async move |_| {
-            let response = self.request::<request::Initialize>(params).await?;
+            let response = self
+                .request::<request::Initialize>(params)
+                .await
+                .into_response()
+                .with_context(|| {
+                    format!(
+                        "initializing server {}, id {}",
+                        self.name(),
+                        self.server_id()
+                    )
+                })?;
             if let Some(info) = response.server_info {
                 self.process_name = info.name.into();
             }
@@ -826,7 +855,7 @@ impl LanguageServer {
     }
 
     /// Sends a shutdown request to the language server process and prepares the [`LanguageServer`] to be dropped.
-    pub fn shutdown(&self) -> Option<impl 'static + Send + Future<Output = Option<()>>> {
+    pub fn shutdown(&self) -> Option<impl 'static + Send + Future<Output = Option<()>> + use<>> {
         if let Some(tasks) = self.io_tasks.lock().take() {
             let response_handlers = self.response_handlers.clone();
             let next_id = AtomicI32::new(self.next_id.load(SeqCst));
@@ -852,7 +881,13 @@ impl LanguageServer {
 
                     select! {
                         request_result = shutdown_request.fuse() => {
-                            request_result?;
+                            match request_result {
+                                ConnectionResult::Timeout => {
+                                    log::warn!("timeout waiting for language server {name} to shutdown");
+                                },
+                                ConnectionResult::ConnectionReset => {},
+                                ConnectionResult::Result(r) => r?,
+                            }
                         }
 
                         _ = timer => {
@@ -1073,7 +1108,7 @@ impl LanguageServer {
     pub fn request<T: request::Request>(
         &self,
         params: T::Params,
-    ) -> impl LspRequestFuture<Result<T::Result>>
+    ) -> impl LspRequestFuture<T::Result> + use<T>
     where
         T::Result: 'static + Send,
     {
@@ -1086,15 +1121,16 @@ impl LanguageServer {
         )
     }
 
-    fn request_internal<T: request::Request>(
+    fn request_internal<T>(
         next_id: &AtomicI32,
         response_handlers: &Mutex<Option<HashMap<RequestId, ResponseHandler>>>,
         outbound_tx: &channel::Sender<String>,
         executor: &BackgroundExecutor,
         params: T::Params,
-    ) -> impl LspRequestFuture<Result<T::Result>>
+    ) -> impl LspRequestFuture<T::Result> + use<T>
     where
         T::Result: 'static + Send,
+        T: request::Request,
     {
         let id = next_id.fetch_add(1, SeqCst);
         let message = serde_json::to_string(&Request {
@@ -1109,7 +1145,7 @@ impl LanguageServer {
         let handle_response = response_handlers
             .lock()
             .as_mut()
-            .ok_or_else(|| anyhow!("server shut down"))
+            .context("server shut down")
             .map(|handlers| {
                 let executor = executor.clone();
                 handlers.insert(
@@ -1142,8 +1178,12 @@ impl LanguageServer {
         let mut timeout = executor.timer(LSP_REQUEST_TIMEOUT).fuse();
         let started = Instant::now();
         LspRequest::new(id, async move {
-            handle_response?;
-            send?;
+            if let Err(e) = handle_response {
+                return ConnectionResult::Result(Err(e));
+            }
+            if let Err(e) = send {
+                return ConnectionResult::Result(Err(e));
+            }
 
             let cancel_on_drop = util::defer(move || {
                 if let Some(outbound_tx) = outbound_tx.upgrade() {
@@ -1153,7 +1193,7 @@ impl LanguageServer {
                             id: NumberOrString::Number(id),
                         },
                     )
-                    .log_err();
+                    .ok();
                 }
             });
 
@@ -1163,12 +1203,18 @@ impl LanguageServer {
                     let elapsed = started.elapsed();
                     log::trace!("Took {elapsed:?} to receive response to {method:?} id {id}");
                     cancel_on_drop.abort();
-                    response?
+                    match response {
+                        Ok(response_result) => ConnectionResult::Result(response_result),
+                        Err(Canceled) => {
+                            log::error!("Server reset connection for a request {method:?} id {id}");
+                            ConnectionResult::ConnectionReset
+                        },
+                    }
                 }
 
                 _ = timeout => {
                     log::error!("Cancelled LSP request task for {method:?} id {id} which took over {LSP_REQUEST_TIMEOUT:?}");
-                    anyhow::bail!("LSP request timeout");
+                    ConnectionResult::Timeout
                 }
             }
         })
@@ -1223,7 +1269,7 @@ impl LanguageServer {
                     removed: vec![],
                 },
             };
-            self.notify::<DidChangeWorkspaceFolders>(&params).log_err();
+            self.notify::<DidChangeWorkspaceFolders>(&params).ok();
         }
     }
     /// Add new workspace folder to the list.
@@ -1253,7 +1299,7 @@ impl LanguageServer {
                     }],
                 },
             };
-            self.notify::<DidChangeWorkspaceFolders>(&params).log_err();
+            self.notify::<DidChangeWorkspaceFolders>(&params).ok();
         }
     }
     pub fn set_workspace_folders(&self, folders: BTreeSet<Url>) {
@@ -1282,7 +1328,7 @@ impl LanguageServer {
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent { added, removed },
             };
-            self.notify::<DidChangeWorkspaceFolders>(&params).log_err();
+            self.notify::<DidChangeWorkspaceFolders>(&params).ok();
         }
     }
 
@@ -1300,14 +1346,14 @@ impl LanguageServer {
         self.notify::<notification::DidOpenTextDocument>(&DidOpenTextDocumentParams {
             text_document: TextDocumentItem::new(uri, language_id, version, initial_text),
         })
-        .log_err();
+        .ok();
     }
 
     pub fn unregister_buffer(&self, uri: Url) {
         self.notify::<notification::DidCloseTextDocument>(&DidCloseTextDocumentParams {
             text_document: TextDocumentIdentifier::new(uri),
         })
-        .log_err();
+        .ok();
     }
 }
 
@@ -1440,7 +1486,7 @@ impl FakeLanguageServer {
             }),
             notifications_rx,
         };
-        fake.handle_request::<request::Initialize, _, _>({
+        fake.set_request_handler::<request::Initialize, _, _>({
             let capabilities = capabilities;
             move |_, _| {
                 let capabilities = capabilities.clone();
@@ -1479,6 +1525,7 @@ impl LanguageServer {
             document_formatting_provider: Some(OneOf::Left(true)),
             document_range_formatting_provider: Some(OneOf::Left(true)),
             definition_provider: Some(OneOf::Left(true)),
+            workspace_symbol_provider: Some(OneOf::Left(true)),
             implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
             type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
             ..Default::default()
@@ -1494,7 +1541,7 @@ impl FakeLanguageServer {
     }
 
     /// See [`LanguageServer::request`].
-    pub async fn request<T>(&self, params: T::Params) -> Result<T::Result>
+    pub async fn request<T>(&self, params: T::Params) -> ConnectionResult<T::Result>
     where
         T: request::Request,
         T::Result: 'static + Send,
@@ -1524,7 +1571,7 @@ impl FakeLanguageServer {
     }
 
     /// Registers a handler for a specific kind of request. Removes any existing handler for specified request type.
-    pub fn handle_request<T, F, Fut>(
+    pub fn set_request_handler<T, F, Fut>(
         &self,
         mut handler: F,
     ) -> futures::channel::mpsc::UnboundedReceiver<()>
@@ -1596,6 +1643,7 @@ impl FakeLanguageServer {
             token: NumberOrString::String(token.clone()),
         })
         .await
+        .into_response()
         .unwrap();
         self.notify::<notification::Progress>(&ProgressParams {
             token: NumberOrString::String(token),
@@ -1699,7 +1747,7 @@ mod tests {
             "file://b/c"
         );
 
-        fake.handle_request::<request::Shutdown, _, _>(|_, _| async move { Ok(()) });
+        fake.set_request_handler::<request::Shutdown, _, _>(|_, _| async move { Ok(()) });
 
         drop(server);
         fake.receive_notification::<notification::Exit>().await;

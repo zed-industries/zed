@@ -2,20 +2,28 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
-use anyhow::{anyhow, Result};
+use anyhow::Context as _;
+use anyhow::{Result, anyhow};
 use chrono::DateTime;
 use collections::HashSet;
 use fs::Fs;
-use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
-use gpui::{prelude::*, App, AsyncApp, Global};
+use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
+use gpui::{App, AsyncApp, Global, prelude::*};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use itertools::Itertools;
 use paths::home_dir;
 use serde::{Deserialize, Serialize};
 use settings::watch_config_dir;
-use strum::EnumIter;
 
 pub const COPILOT_CHAT_COMPLETION_URL: &str = "https://api.githubcopilot.com/chat/completions";
 pub const COPILOT_CHAT_AUTH_URL: &str = "https://api.github.com/copilot_internal/v2/token";
+pub const COPILOT_CHAT_MODELS_URL: &str = "https://api.githubcopilot.com/models";
+
+// Copilot's base model; defined by Microsoft in premium requests table
+// This will be moved to the front of the Copilot model list, and will be used for
+// 'fast' requests (e.g. title generation)
+// https://docs.github.com/en/copilot/managing-copilot/monitoring-usage-and-entitlements/about-premium-requests
+const DEFAULT_MODEL_ID: &str = "gpt-4.1";
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -25,91 +33,130 @@ pub enum Role {
     System,
 }
 
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
-pub enum Model {
-    #[default]
-    #[serde(alias = "gpt-4o", rename = "gpt-4o-2024-05-13")]
-    Gpt4o,
-    #[serde(alias = "gpt-4", rename = "gpt-4")]
-    Gpt4,
-    #[serde(alias = "gpt-3.5-turbo", rename = "gpt-3.5-turbo")]
-    Gpt3_5Turbo,
-    #[serde(alias = "o1", rename = "o1")]
-    O1,
-    #[serde(alias = "o1-mini", rename = "o3-mini")]
-    O3Mini,
-    #[serde(alias = "claude-3-5-sonnet", rename = "claude-3.5-sonnet")]
-    Claude3_5Sonnet,
-    #[serde(alias = "claude-3-7-sonnet", rename = "claude-3.7-sonnet")]
-    Claude3_7Sonnet,
-    #[serde(alias = "gemini-2.0-flash", rename = "gemini-2.0-flash-001")]
-    Gemini20Flash,
+#[derive(Deserialize)]
+struct ModelSchema {
+    #[serde(deserialize_with = "deserialize_models_skip_errors")]
+    data: Vec<Model>,
+}
+
+fn deserialize_models_skip_errors<'de, D>(deserializer: D) -> Result<Vec<Model>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw_values = Vec::<serde_json::Value>::deserialize(deserializer)?;
+    let models = raw_values
+        .into_iter()
+        .filter_map(|value| match serde_json::from_value::<Model>(value) {
+            Ok(model) => Some(model),
+            Err(err) => {
+                log::warn!("GitHub Copilot Chat model failed to deserialize: {:?}", err);
+                None
+            }
+        })
+        .collect();
+
+    Ok(models)
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct Model {
+    capabilities: ModelCapabilities,
+    id: String,
+    name: String,
+    policy: Option<ModelPolicy>,
+    vendor: ModelVendor,
+    model_picker_enabled: bool,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
+struct ModelCapabilities {
+    family: String,
+    #[serde(default)]
+    limits: ModelLimits,
+    supports: ModelSupportedFeatures,
+}
+
+#[derive(Default, Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
+struct ModelLimits {
+    #[serde(default)]
+    max_context_window_tokens: usize,
+    #[serde(default)]
+    max_output_tokens: usize,
+    #[serde(default)]
+    max_prompt_tokens: usize,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
+struct ModelPolicy {
+    state: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
+struct ModelSupportedFeatures {
+    #[serde(default)]
+    streaming: bool,
+    #[serde(default)]
+    tool_calls: bool,
+    #[serde(default)]
+    parallel_tool_calls: bool,
+    #[serde(default)]
+    vision: bool,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub enum ModelVendor {
+    // Azure OpenAI should have no functional difference from OpenAI in Copilot Chat
+    #[serde(alias = "Azure OpenAI")]
+    OpenAI,
+    Google,
+    Anthropic,
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
+#[serde(tag = "type")]
+pub enum ChatMessagePart {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image_url")]
+    Image { image_url: ImageUrl },
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
+pub struct ImageUrl {
+    pub url: String,
 }
 
 impl Model {
     pub fn uses_streaming(&self) -> bool {
-        match self {
-            Self::Gpt4o
-            | Self::Gpt4
-            | Self::Gpt3_5Turbo
-            | Self::Claude3_5Sonnet
-            | Self::Claude3_7Sonnet => true,
-            Self::O3Mini | Self::O1 | Self::Gemini20Flash => false,
-        }
+        self.capabilities.supports.streaming
     }
 
-    pub fn from_id(id: &str) -> Result<Self> {
-        match id {
-            "gpt-4o" => Ok(Self::Gpt4o),
-            "gpt-4" => Ok(Self::Gpt4),
-            "gpt-3.5-turbo" => Ok(Self::Gpt3_5Turbo),
-            "o1" => Ok(Self::O1),
-            "o3-mini" => Ok(Self::O3Mini),
-            "claude-3-5-sonnet" => Ok(Self::Claude3_5Sonnet),
-            "claude-3-7-sonnet" => Ok(Self::Claude3_7Sonnet),
-            "gemini-2.0-flash-001" => Ok(Self::Gemini20Flash),
-            _ => Err(anyhow!("Invalid model id: {}", id)),
-        }
+    pub fn id(&self) -> &str {
+        self.id.as_str()
     }
 
-    pub fn id(&self) -> &'static str {
-        match self {
-            Self::Gpt3_5Turbo => "gpt-3.5-turbo",
-            Self::Gpt4 => "gpt-4",
-            Self::Gpt4o => "gpt-4o",
-            Self::O3Mini => "o3-mini",
-            Self::O1 => "o1",
-            Self::Claude3_5Sonnet => "claude-3-5-sonnet",
-            Self::Claude3_7Sonnet => "claude-3-7-sonnet",
-            Self::Gemini20Flash => "gemini-2.0-flash-001",
-        }
-    }
-
-    pub fn display_name(&self) -> &'static str {
-        match self {
-            Self::Gpt3_5Turbo => "GPT-3.5",
-            Self::Gpt4 => "GPT-4",
-            Self::Gpt4o => "GPT-4o",
-            Self::O3Mini => "o3-mini",
-            Self::O1 => "o1",
-            Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
-            Self::Claude3_7Sonnet => "Claude 3.7 Sonnet",
-            Self::Gemini20Flash => "Gemini 2.0 Flash",
-        }
+    pub fn display_name(&self) -> &str {
+        self.name.as_str()
     }
 
     pub fn max_token_count(&self) -> usize {
-        match self {
-            Self::Gpt4o => 64_000,
-            Self::Gpt4 => 32_768,
-            Self::Gpt3_5Turbo => 12_288,
-            Self::O3Mini => 64_000,
-            Self::O1 => 20_000,
-            Self::Claude3_5Sonnet => 200_000,
-            Self::Claude3_7Sonnet => 90_000,
-            Model::Gemini20Flash => 128_000,
-        }
+        self.capabilities.limits.max_prompt_tokens
+    }
+
+    pub fn supports_tools(&self) -> bool {
+        self.capabilities.supports.tool_calls
+    }
+
+    pub fn vendor(&self) -> ModelVendor {
+        self.vendor
+    }
+
+    pub fn supports_vision(&self) -> bool {
+        self.capabilities.supports.vision
+    }
+
+    pub fn supports_parallel_tool_calls(&self) -> bool {
+        self.capabilities.supports.parallel_tool_calls
     }
 }
 
@@ -119,34 +166,107 @@ pub struct Request {
     pub n: usize,
     pub stream: bool,
     pub temperature: f32,
-    pub model: Model,
+    pub model: String,
     pub messages: Vec<ChatMessage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<Tool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
 }
 
-impl Request {
-    pub fn new(model: Model, messages: Vec<ChatMessage>) -> Self {
-        Self {
-            intent: true,
-            n: 1,
-            stream: model.uses_streaming(),
-            temperature: 0.1,
-            model,
-            messages,
+#[derive(Serialize, Deserialize)]
+pub struct Function {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Tool {
+    Function { function: Function },
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolChoice {
+    Auto,
+    Any,
+    None,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "role", rename_all = "lowercase")]
+pub enum ChatMessage {
+    Assistant {
+        content: ChatMessageContent,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tool_calls: Vec<ToolCall>,
+    },
+    User {
+        content: ChatMessageContent,
+    },
+    System {
+        content: String,
+    },
+    Tool {
+        content: ChatMessageContent,
+        tool_call_id: String,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ChatMessageContent {
+    Plain(String),
+    Multipart(Vec<ChatMessagePart>),
+}
+
+impl ChatMessageContent {
+    pub fn empty() -> Self {
+        ChatMessageContent::Multipart(vec![])
+    }
+}
+
+impl From<Vec<ChatMessagePart>> for ChatMessageContent {
+    fn from(mut parts: Vec<ChatMessagePart>) -> Self {
+        if let [ChatMessagePart::Text { text }] = parts.as_mut_slice() {
+            ChatMessageContent::Plain(std::mem::take(text))
+        } else {
+            ChatMessageContent::Multipart(parts)
         }
     }
 }
 
+impl From<String> for ChatMessageContent {
+    fn from(text: String) -> Self {
+        ChatMessageContent::Plain(text)
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct ChatMessage {
-    pub role: Role,
-    pub content: String,
+pub struct ToolCall {
+    pub id: String,
+    #[serde(flatten)]
+    pub content: ToolCallContent,
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ToolCallContent {
+    Function { function: FunctionContent },
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct FunctionContent {
+    pub name: String,
+    pub arguments: String,
 }
 
 #[derive(Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub struct ResponseEvent {
     pub choices: Vec<ResponseChoice>,
-    pub created: u64,
     pub id: String,
 }
 
@@ -162,6 +282,21 @@ pub struct ResponseChoice {
 pub struct ResponseDelta {
     pub content: Option<String>,
     pub role: Option<Role>,
+    #[serde(default)]
+    pub tool_calls: Vec<ToolCallChunk>,
+}
+
+#[derive(Deserialize, Debug, Eq, PartialEq)]
+pub struct ToolCallChunk {
+    pub index: usize,
+    pub id: Option<String>,
+    pub function: Option<FunctionChunk>,
+}
+
+#[derive(Deserialize, Debug, Eq, PartialEq)]
+pub struct FunctionChunk {
+    pub name: Option<String>,
+    pub arguments: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -188,8 +323,8 @@ impl TryFrom<ApiTokenResponse> for ApiToken {
     type Error = anyhow::Error;
 
     fn try_from(response: ApiTokenResponse) -> Result<Self, Self::Error> {
-        let expires_at = DateTime::from_timestamp(response.expires_at, 0)
-            .ok_or_else(|| anyhow!("invalid expires_at"))?;
+        let expires_at =
+            DateTime::from_timestamp(response.expires_at, 0).context("invalid expires_at")?;
 
         Ok(Self {
             api_key: response.token,
@@ -205,6 +340,7 @@ impl Global for GlobalCopilotChat {}
 pub struct CopilotChat {
     oauth_token: Option<String>,
     api_token: Option<ApiToken>,
+    models: Option<Vec<Model>>,
     client: Arc<dyn HttpClient>,
 }
 
@@ -241,31 +377,56 @@ impl CopilotChat {
         let config_paths: HashSet<PathBuf> = copilot_chat_config_paths().into_iter().collect();
         let dir_path = copilot_chat_config_dir();
 
-        cx.spawn(async move |cx| {
-            let mut parent_watch_rx = watch_config_dir(
-                cx.background_executor(),
-                fs.clone(),
-                dir_path.clone(),
-                config_paths,
-            );
-            while let Some(contents) = parent_watch_rx.next().await {
-                let oauth_token = extract_oauth_token(contents);
-                cx.update(|cx| {
-                    if let Some(this) = Self::global(cx).as_ref() {
-                        this.update(cx, |this, cx| {
-                            this.oauth_token = oauth_token;
-                            cx.notify();
-                        });
+        cx.spawn({
+            let client = client.clone();
+            async move |cx| {
+                let mut parent_watch_rx = watch_config_dir(
+                    cx.background_executor(),
+                    fs.clone(),
+                    dir_path.clone(),
+                    config_paths,
+                );
+                while let Some(contents) = parent_watch_rx.next().await {
+                    let oauth_token = extract_oauth_token(contents);
+                    cx.update(|cx| {
+                        if let Some(this) = Self::global(cx).as_ref() {
+                            this.update(cx, |this, cx| {
+                                this.oauth_token = oauth_token.clone();
+                                cx.notify();
+                            });
+                        }
+                    })?;
+
+                    if let Some(ref oauth_token) = oauth_token {
+                        let api_token = request_api_token(oauth_token, client.clone()).await?;
+                        cx.update(|cx| {
+                            if let Some(this) = Self::global(cx).as_ref() {
+                                this.update(cx, |this, cx| {
+                                    this.api_token = Some(api_token.clone());
+                                    cx.notify();
+                                });
+                            }
+                        })?;
+                        let models = get_models(api_token.api_key, client.clone()).await?;
+                        cx.update(|cx| {
+                            if let Some(this) = Self::global(cx).as_ref() {
+                                this.update(cx, |this, cx| {
+                                    this.models = Some(models);
+                                    cx.notify();
+                                });
+                            }
+                        })?;
                     }
-                })?;
+                }
+                anyhow::Ok(())
             }
-            anyhow::Ok(())
         })
         .detach_and_log_err(cx);
 
         Self {
             oauth_token: None,
             api_token: None,
+            models: None,
             client,
         }
     }
@@ -274,13 +435,19 @@ impl CopilotChat {
         self.oauth_token.is_some()
     }
 
+    pub fn models(&self) -> Option<&[Model]> {
+        self.models.as_deref()
+    }
+
     pub async fn stream_completion(
         request: Request,
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
-        let Some(this) = cx.update(|cx| Self::global(cx)).ok().flatten() else {
-            return Err(anyhow!("Copilot chat is not enabled"));
-        };
+        let this = cx
+            .update(|cx| Self::global(cx))
+            .ok()
+            .flatten()
+            .context("Copilot chat is not enabled")?;
 
         let (oauth_token, api_token, client) = this.read_with(&cx, |this, _| {
             (
@@ -290,7 +457,7 @@ impl CopilotChat {
             )
         })?;
 
-        let oauth_token = oauth_token.ok_or_else(|| anyhow!("No OAuth token available"))?;
+        let oauth_token = oauth_token.context("No OAuth token available")?;
 
         let token = match api_token {
             Some(api_token) if api_token.remaining_seconds() > 5 * 60 => api_token.clone(),
@@ -306,6 +473,62 @@ impl CopilotChat {
 
         stream_completion(client.clone(), token.api_key, request).await
     }
+}
+
+async fn get_models(api_token: String, client: Arc<dyn HttpClient>) -> Result<Vec<Model>> {
+    let all_models = request_models(api_token, client).await?;
+
+    let mut models: Vec<Model> = all_models
+        .into_iter()
+        .filter(|model| {
+            // Ensure user has access to the model; Policy is present only for models that must be
+            // enabled in the GitHub dashboard
+            model.model_picker_enabled
+                && model
+                    .policy
+                    .as_ref()
+                    .is_none_or(|policy| policy.state == "enabled")
+        })
+        // The first model from the API response, in any given family, appear to be the non-tagged
+        // models, which are likely the best choice (e.g. gpt-4o rather than gpt-4o-2024-11-20)
+        .dedup_by(|a, b| a.capabilities.family == b.capabilities.family)
+        .collect();
+
+    if let Some(default_model_position) =
+        models.iter().position(|model| model.id == DEFAULT_MODEL_ID)
+    {
+        let default_model = models.remove(default_model_position);
+        models.insert(0, default_model);
+    }
+
+    Ok(models)
+}
+
+async fn request_models(api_token: String, client: Arc<dyn HttpClient>) -> Result<Vec<Model>> {
+    let request_builder = HttpRequest::builder()
+        .method(Method::GET)
+        .uri(COPILOT_CHAT_MODELS_URL)
+        .header("Authorization", format!("Bearer {}", api_token))
+        .header("Content-Type", "application/json")
+        .header("Copilot-Integration-Id", "vscode-chat");
+
+    let request = request_builder.body(AsyncBody::empty())?;
+
+    let mut response = client.send(request).await?;
+
+    anyhow::ensure!(
+        response.status().is_success(),
+        "Failed to request models: {}",
+        response.status()
+    );
+    let mut body = Vec::new();
+    response.body_mut().read_to_end(&mut body).await?;
+
+    let body_str = std::str::from_utf8(&body)?;
+
+    let models = serde_json::from_str::<ModelSchema>(body_str)?.data;
+
+    Ok(models)
 }
 
 async fn request_api_token(oauth_token: &str, client: Arc<dyn HttpClient>) -> Result<ApiToken> {
@@ -332,8 +555,7 @@ async fn request_api_token(oauth_token: &str, client: Arc<dyn HttpClient>) -> Re
         response.body_mut().read_to_end(&mut body).await?;
 
         let body_str = std::str::from_utf8(&body)?;
-
-        Err(anyhow!("Failed to request API token: {}", body_str))
+        anyhow::bail!("Failed to request API token: {body_str}");
     }
 }
 
@@ -359,6 +581,15 @@ async fn stream_completion(
     api_key: String,
     request: Request,
 ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
+    let is_vision_request = request.messages.last().map_or(false, |message| match message {
+        ChatMessage::User { content }
+        | ChatMessage::Assistant { content, .. }
+        | ChatMessage::Tool { content, .. } => {
+            matches!(content, ChatMessageContent::Multipart(parts) if parts.iter().any(|part| matches!(part, ChatMessagePart::Image { .. })))
+        }
+        _ => false,
+    });
+
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(COPILOT_CHAT_COMPLETION_URL)
@@ -371,22 +602,24 @@ async fn stream_completion(
         )
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
-        .header("Copilot-Integration-Id", "vscode-chat");
+        .header("Copilot-Integration-Id", "vscode-chat")
+        .header("Copilot-Vision-Request", is_vision_request.to_string());
 
     let is_streaming = request.stream;
 
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let json = serde_json::to_string(&request)?;
+    let request = request_builder.body(AsyncBody::from(json))?;
     let mut response = client.send(request).await?;
 
     if !response.status().is_success() {
         let mut body = Vec::new();
         response.body_mut().read_to_end(&mut body).await?;
         let body_str = std::str::from_utf8(&body)?;
-        return Err(anyhow!(
+        anyhow::bail!(
             "Failed to connect to API: {} {}",
             response.status(),
             body_str
-        ));
+        );
     }
 
     if is_streaming {
@@ -403,9 +636,7 @@ async fn stream_completion(
 
                         match serde_json::from_str::<ResponseEvent>(line) {
                             Ok(response) => {
-                                if response.choices.is_empty()
-                                    || response.choices.first().unwrap().finish_reason.is_some()
-                                {
+                                if response.choices.is_empty() {
                                     None
                                 } else {
                                     Some(Ok(response))
@@ -425,5 +656,84 @@ async fn stream_completion(
         let response: ResponseEvent = serde_json::from_str(body_str)?;
 
         Ok(futures::stream::once(async move { Ok(response) }).boxed())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resilient_model_schema_deserialize() {
+        let json = r#"{
+              "data": [
+                {
+                  "capabilities": {
+                    "family": "gpt-4",
+                    "limits": {
+                      "max_context_window_tokens": 32768,
+                      "max_output_tokens": 4096,
+                      "max_prompt_tokens": 32768
+                    },
+                    "object": "model_capabilities",
+                    "supports": { "streaming": true, "tool_calls": true },
+                    "tokenizer": "cl100k_base",
+                    "type": "chat"
+                  },
+                  "id": "gpt-4",
+                  "model_picker_enabled": false,
+                  "name": "GPT 4",
+                  "object": "model",
+                  "preview": false,
+                  "vendor": "Azure OpenAI",
+                  "version": "gpt-4-0613"
+                },
+                {
+                    "some-unknown-field": 123
+                },
+                {
+                  "capabilities": {
+                    "family": "claude-3.7-sonnet",
+                    "limits": {
+                      "max_context_window_tokens": 200000,
+                      "max_output_tokens": 16384,
+                      "max_prompt_tokens": 90000,
+                      "vision": {
+                        "max_prompt_image_size": 3145728,
+                        "max_prompt_images": 1,
+                        "supported_media_types": ["image/jpeg", "image/png", "image/webp"]
+                      }
+                    },
+                    "object": "model_capabilities",
+                    "supports": {
+                      "parallel_tool_calls": true,
+                      "streaming": true,
+                      "tool_calls": true,
+                      "vision": true
+                    },
+                    "tokenizer": "o200k_base",
+                    "type": "chat"
+                  },
+                  "id": "claude-3.7-sonnet",
+                  "model_picker_enabled": true,
+                  "name": "Claude 3.7 Sonnet",
+                  "object": "model",
+                  "policy": {
+                    "state": "enabled",
+                    "terms": "Enable access to the latest Claude 3.7 Sonnet model from Anthropic. [Learn more about how GitHub Copilot serves Claude 3.7 Sonnet](https://docs.github.com/copilot/using-github-copilot/using-claude-sonnet-in-github-copilot)."
+                  },
+                  "preview": false,
+                  "vendor": "Anthropic",
+                  "version": "claude-3.7-sonnet"
+                }
+              ],
+              "object": "list"
+            }"#;
+
+        let schema: ModelSchema = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(schema.data.len(), 2);
+        assert_eq!(schema.data[0].id, "gpt-4");
+        assert_eq!(schema.data[1].id, "claude-3.7-sonnet");
     }
 }

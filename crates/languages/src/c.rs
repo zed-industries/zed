@@ -1,14 +1,15 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
 use futures::StreamExt;
-use gpui::AsyncApp;
-use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
+use gpui::{App, AsyncApp};
+use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
-use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
+use lsp::{DiagnosticTag, InitializeParams, LanguageServerBinary, LanguageServerName};
+use project::lsp_store::clangd_ext;
 use serde_json::json;
-use smol::fs::{self, File};
+use smol::{fs, io::BufReader};
 use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
-use util::{fs::remove_matching, maybe, merge_json_value_into, ResultExt};
+use util::{ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into};
 
 pub struct CLspAdapter;
 
@@ -31,7 +32,7 @@ impl super::LspAdapter for CLspAdapter {
         let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
         Some(LanguageServerBinary {
             path,
-            arguments: vec![],
+            arguments: Vec::new(),
             env: None,
         })
     }
@@ -53,7 +54,7 @@ impl super::LspAdapter for CLspAdapter {
             .assets
             .iter()
             .find(|asset| asset.name == asset_name)
-            .ok_or_else(|| anyhow!("no asset found matching {:?}", asset_name))?;
+            .with_context(|| format!("no asset found matching {asset_name:?}"))?;
         let version = GitHubLspBinaryVersion {
             name: release.tag_name,
             url: asset.browser_download_url.clone(),
@@ -68,7 +69,6 @@ impl super::LspAdapter for CLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
-        let zip_path = container_dir.join(format!("clangd_{}.zip", version.name));
         let version_dir = container_dir.join(format!("clangd_{}", version.name));
         let binary_path = version_dir.join("bin/clangd");
 
@@ -78,32 +78,31 @@ impl super::LspAdapter for CLspAdapter {
                 .get(&version.url, Default::default(), true)
                 .await
                 .context("error downloading release")?;
-            let mut file = File::create(&zip_path).await?;
-            if !response.status().is_success() {
-                Err(anyhow!(
-                    "download failed with status {}",
-                    response.status().to_string()
-                ))?;
-            }
-            futures::io::copy(response.body_mut(), &mut file).await?;
-
-            let unzip_status = util::command::new_smol_command("unzip")
-                .current_dir(&container_dir)
-                .arg(&zip_path)
-                .output()
-                .await?
-                .status;
-            if !unzip_status.success() {
-                Err(anyhow!("failed to unzip clangd archive"))?;
-            }
-
+            anyhow::ensure!(
+                response.status().is_success(),
+                "download failed with status {}",
+                response.status().to_string()
+            );
+            extract_zip(&container_dir, BufReader::new(response.body_mut()))
+                .await
+                .with_context(|| format!("unzipping clangd archive to {container_dir:?}"))?;
             remove_matching(&container_dir, |entry| entry != version_dir).await;
+
+            // todo("windows")
+            #[cfg(not(windows))]
+            {
+                fs::set_permissions(
+                    &binary_path,
+                    <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
+                )
+                .await?;
+            }
         }
 
         Ok(LanguageServerBinary {
             path: binary_path,
             env: None,
-            arguments: vec![],
+            arguments: Vec::new(),
         })
     }
 
@@ -272,6 +271,7 @@ impl super::LspAdapter for CLspAdapter {
     fn prepare_initialize_params(
         &self,
         mut original: InitializeParams,
+        _: &App,
     ) -> Result<InitializeParams> {
         let experimental = json!({
             "textDocument": {
@@ -279,10 +279,9 @@ impl super::LspAdapter for CLspAdapter {
                     // enable clangd's dot-to-arrow feature.
                     "editsNearCursor": true
                 },
-                // TODO: inactiveRegions support needs an implementation in clangd_ext.rs
-                // "inactiveRegionsCapabilities": {
-                //     "inactiveRegions": true,
-                // }
+                "inactiveRegionsCapabilities": {
+                    "inactiveRegions": true,
+                }
             }
         });
         if let Some(ref mut original_experimental) = original.capabilities.experimental {
@@ -291,6 +290,40 @@ impl super::LspAdapter for CLspAdapter {
             original.capabilities.experimental = Some(experimental);
         }
         Ok(original)
+    }
+
+    fn process_diagnostics(
+        &self,
+        params: &mut lsp::PublishDiagnosticsParams,
+        server_id: LanguageServerId,
+        buffer: Option<&'_ Buffer>,
+    ) {
+        if let Some(buffer) = buffer {
+            let snapshot = buffer.snapshot();
+            let inactive_regions = buffer
+                .get_diagnostics(server_id)
+                .into_iter()
+                .flat_map(|v| v.iter())
+                .filter(|diag| clangd_ext::is_inactive_region(&diag.diagnostic))
+                .map(move |diag| {
+                    let range =
+                        language::range_to_lsp(diag.range.to_point_utf16(&snapshot)).unwrap();
+                    let mut tags = Vec::with_capacity(1);
+                    if diag.diagnostic.is_unnecessary {
+                        tags.push(DiagnosticTag::UNNECESSARY);
+                    }
+                    lsp::Diagnostic {
+                        range,
+                        severity: Some(diag.diagnostic.severity),
+                        source: diag.diagnostic.source.clone(),
+                        tags: Some(tags),
+                        message: diag.diagnostic.message.clone(),
+                        code: diag.diagnostic.code.clone(),
+                        ..Default::default()
+                    }
+                });
+            params.diagnostics.extend(inactive_regions);
+        }
     }
 }
 
@@ -304,20 +337,17 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
                 last_clangd_dir = Some(entry.path());
             }
         }
-        let clangd_dir = last_clangd_dir.ok_or_else(|| anyhow!("no cached binary"))?;
+        let clangd_dir = last_clangd_dir.context("no cached binary")?;
         let clangd_bin = clangd_dir.join("bin/clangd");
-        if clangd_bin.exists() {
-            Ok(LanguageServerBinary {
-                path: clangd_bin,
-                env: None,
-                arguments: vec![],
-            })
-        } else {
-            Err(anyhow!(
-                "missing clangd binary in directory {:?}",
-                clangd_dir
-            ))
-        }
+        anyhow::ensure!(
+            clangd_bin.exists(),
+            "missing clangd binary in directory {clangd_dir:?}"
+        );
+        Ok(LanguageServerBinary {
+            path: clangd_bin,
+            env: None,
+            arguments: Vec::new(),
+        })
     })
     .await
     .log_err()
@@ -326,7 +356,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
 #[cfg(test)]
 mod tests {
     use gpui::{AppContext as _, BorrowAppContext, TestAppContext};
-    use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
+    use language::{AutoindentMode, Buffer, language_settings::AllLanguageSettings};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
 

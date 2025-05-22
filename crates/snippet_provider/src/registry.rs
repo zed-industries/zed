@@ -5,7 +5,7 @@ use collections::HashMap;
 use gpui::{App, Global, ReadGlobal, UpdateGlobal};
 use parking_lot::RwLock;
 
-use crate::{file_stem_to_key, Snippet, SnippetKind};
+use crate::{Snippet, SnippetKind, file_stem_to_key};
 
 struct GlobalSnippetRegistry(Arc<SnippetRegistry>);
 
@@ -37,7 +37,7 @@ impl SnippetRegistry {
     }
 
     pub fn register_snippets(&self, file_path: &Path, contents: &str) -> Result<()> {
-        let snippets_in_file: crate::format::VSSnippetsFile =
+        let snippets_in_file: crate::format::VsSnippetsFile =
             serde_json_lenient::from_str(contents)?;
         let kind = file_path
             .file_stem()

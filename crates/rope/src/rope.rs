@@ -1428,10 +1428,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use Bias::{Left, Right};
     use rand::prelude::*;
     use std::{cmp::Ordering, env, io::Read};
     use util::RandomCharIter;
-    use Bias::{Left, Right};
 
     #[ctor::ctor]
     fn init_logger() {
@@ -1674,7 +1674,7 @@ mod tests {
                 chunks.seek(offset);
 
                 for _ in 0..5 {
-                    if rng.gen() {
+                    if rng.r#gen() {
                         let expected_next_line_start = expected[offset..end_ix]
                             .find('\n')
                             .map(|newline_ix| offset + newline_ix + 1);
@@ -1763,7 +1763,7 @@ mod tests {
                     }
 
                     assert!((start_ix..=end_ix).contains(&chunks.offset()));
-                    if rng.gen() {
+                    if rng.r#gen() {
                         offset = rng.gen_range(start_ix..=end_ix);
                         while !expected.is_char_boundary(offset) {
                             offset -= 1;
@@ -1900,12 +1900,14 @@ mod tests {
                 let correct_substring = &text[start..end];
 
                 // Test that correct range returns true
-                assert!(rope
-                    .chunks_in_range(range.clone())
-                    .equals_str(correct_substring));
-                assert!(rope
-                    .reversed_chunks_in_range(range.clone())
-                    .equals_str(correct_substring));
+                assert!(
+                    rope.chunks_in_range(range.clone())
+                        .equals_str(correct_substring)
+                );
+                assert!(
+                    rope.reversed_chunks_in_range(range.clone())
+                        .equals_str(correct_substring)
+                );
 
                 // Test that all other ranges return false (unless they happen to match)
                 for other_start in 0..text.len() {
@@ -1919,12 +1921,16 @@ mod tests {
                         if other_substring == correct_substring {
                             continue;
                         }
-                        assert!(!rope
-                            .chunks_in_range(range.clone())
-                            .equals_str(other_substring));
-                        assert!(!rope
-                            .reversed_chunks_in_range(range.clone())
-                            .equals_str(other_substring));
+                        assert!(
+                            !rope
+                                .chunks_in_range(range.clone())
+                                .equals_str(other_substring)
+                        );
+                        assert!(
+                            !rope
+                                .reversed_chunks_in_range(range.clone())
+                                .equals_str(other_substring)
+                        );
                     }
                 }
             }

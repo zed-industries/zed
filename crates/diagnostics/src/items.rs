@@ -6,10 +6,12 @@ use gpui::{
     WeakEntity, Window,
 };
 use language::Diagnostic;
-use ui::{h_flex, prelude::*, Button, ButtonLike, Color, Icon, IconName, Label, Tooltip};
-use workspace::{item::ItemHandle, StatusItemView, ToolbarItemEvent, Workspace};
+use project::project_settings::ProjectSettings;
+use settings::Settings;
+use ui::{Button, ButtonLike, Color, Icon, IconName, Label, Tooltip, h_flex, prelude::*};
+use workspace::{StatusItemView, ToolbarItemEvent, Workspace, item::ItemHandle};
 
-use crate::{Deploy, ProjectDiagnosticsEditor};
+use crate::{Deploy, IncludeWarnings, ProjectDiagnosticsEditor};
 
 pub struct DiagnosticIndicator {
     summary: project::DiagnosticSummary,
@@ -22,6 +24,11 @@ pub struct DiagnosticIndicator {
 
 impl Render for DiagnosticIndicator {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let indicator = h_flex().gap_2();
+        if !ProjectSettings::get_global(cx).diagnostics.button {
+            return indicator;
+        }
+
         let diagnostic_indicator = match (self.summary.error_count, self.summary.warning_count) {
             (0, 0) => h_flex().map(|this| {
                 this.child(
@@ -84,8 +91,7 @@ impl Render for DiagnosticIndicator {
             None
         };
 
-        h_flex()
-            .gap_2()
+        indicator
             .child(
                 ButtonLike::new("diagnostic-indicator")
                     .child(diagnostic_indicator)
@@ -94,6 +100,11 @@ impl Render for DiagnosticIndicator {
                     })
                     .on_click(cx.listener(|this, _, window, cx| {
                         if let Some(workspace) = this.workspace.upgrade() {
+                            if this.summary.error_count == 0 && this.summary.warning_count > 0 {
+                                cx.update_default_global(
+                                    |show_warnings: &mut IncludeWarnings, _| show_warnings.0 = true,
+                                );
+                            }
                             workspace.update(cx, |workspace, cx| {
                                 ProjectDiagnosticsEditor::deploy(
                                     workspace,

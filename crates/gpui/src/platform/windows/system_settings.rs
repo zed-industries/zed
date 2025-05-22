@@ -2,10 +2,10 @@ use std::ffi::{c_uint, c_void};
 
 use ::util::ResultExt;
 use windows::Win32::UI::{
-    Shell::{SHAppBarMessage, ABM_GETSTATE, ABM_GETTASKBARPOS, ABS_AUTOHIDE, APPBARDATA},
+    Shell::{ABM_GETSTATE, ABM_GETTASKBARPOS, ABS_AUTOHIDE, APPBARDATA, SHAppBarMessage},
     WindowsAndMessaging::{
-        SystemParametersInfoW, SPI_GETWHEELSCROLLCHARS, SPI_GETWHEELSCROLLLINES,
-        SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+        SPI_GETWHEELSCROLLCHARS, SPI_GETWHEELSCROLLLINES, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+        SystemParametersInfoW,
     },
 };
 

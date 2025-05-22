@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use gpui::{
-    actions, div, img, prelude::*, px, rgb, size, App, AppContext, Application, AssetSource,
-    Bounds, Context, ImageSource, KeyBinding, Menu, MenuItem, Point, SharedString, SharedUri,
-    TitlebarOptions, Window, WindowBounds, WindowOptions,
+    App, AppContext, Application, AssetSource, Bounds, Context, ImageSource, KeyBinding, Menu,
+    MenuItem, Point, SharedString, SharedUri, TitlebarOptions, Window, WindowBounds, WindowOptions,
+    actions, div, img, prelude::*, px, rgb, size,
 };
 use reqwest_client::ReqwestClient;
 

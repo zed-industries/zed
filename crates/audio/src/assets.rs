@@ -1,11 +1,11 @@
 use std::{io::Cursor, sync::Arc};
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use collections::HashMap;
 use gpui::{App, AssetSource, Global};
 use rodio::{
-    source::{Buffered, SamplesConverter},
     Decoder, Source,
+    source::{Buffered, SamplesConverter},
 };
 
 type Sound = Buffered<SamplesConverter<Decoder<Cursor<Vec<u8>>>, f32>>;
@@ -35,7 +35,7 @@ impl SoundRegistry {
         cx.set_global(GlobalSoundRegistry(SoundRegistry::new(source)));
     }
 
-    pub fn get(&self, name: &str) -> Result<impl Source<Item = f32>> {
+    pub fn get(&self, name: &str) -> Result<impl Source<Item = f32> + use<>> {
         if let Some(wav) = self.cache.lock().get(name) {
             return Ok(wav.clone());
         }
@@ -44,8 +44,8 @@ impl SoundRegistry {
         let bytes = self
             .assets
             .load(&path)?
-            .map(Ok)
-            .unwrap_or_else(|| Err(anyhow::anyhow!("No such asset available")))?
+            .map(anyhow::Ok)
+            .with_context(|| format!("No asset available for path {path}"))??
             .into_owned();
         let cursor = Cursor::new(bytes);
         let source = Decoder::new(cursor)?.convert_samples::<f32>().buffered();

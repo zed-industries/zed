@@ -1,11 +1,11 @@
 use std::str;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Context as _, Result};
 use collections::HashMap;
 use futures::{
-    channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
     AsyncBufReadExt, AsyncRead, AsyncReadExt as _,
+    channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded},
 };
 use gpui::{BackgroundExecutor, Task};
 use log::warn;
@@ -13,7 +13,7 @@ use parking_lot::Mutex;
 use smol::io::BufReader;
 
 use crate::{
-    AnyNotification, AnyResponse, IoHandler, IoKind, RequestId, ResponseHandler, CONTENT_LEN_HEADER,
+    AnyNotification, AnyResponse, CONTENT_LEN_HEADER, IoHandler, IoKind, RequestId, ResponseHandler,
 };
 
 const HEADER_DELIMITER: &[u8; 4] = b"\r\n\r\n";
@@ -35,7 +35,7 @@ where
         }
 
         if reader.read_until(b'\n', buffer).await? == 0 {
-            return Err(anyhow!("cannot read LSP message headers"));
+            anyhow::bail!("cannot read LSP message headers");
         }
     }
 }
@@ -82,7 +82,7 @@ impl LspStdoutHandler {
                 .split('\n')
                 .find(|line| line.starts_with(CONTENT_LEN_HEADER))
                 .and_then(|line| line.strip_prefix(CONTENT_LEN_HEADER))
-                .ok_or_else(|| anyhow!("invalid LSP message header {headers:?}"))?
+                .with_context(|| format!("invalid LSP message header {headers:?}"))?
                 .trim_end()
                 .parse()?;
 

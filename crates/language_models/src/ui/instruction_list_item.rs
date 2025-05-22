@@ -1,5 +1,5 @@
 use gpui::{AnyElement, IntoElement, ParentElement, SharedString};
-use ui::{prelude::*, ListItem};
+use ui::{ListItem, prelude::*};
 
 /// A reusable list item component for adding LLM provider configuration instructions
 pub struct InstructionListItem {
@@ -38,8 +38,10 @@ impl IntoElement for InstructionListItem {
             (self.button_label, self.button_link)
         {
             let link = button_link.clone();
+            let unique_id = SharedString::from(format!("{}-button", self.label));
+
             h_flex().flex_wrap().child(Label::new(self.label)).child(
-                Button::new("link-button", button_label)
+                Button::new(unique_id, button_label)
                     .style(ButtonStyle::Subtle)
                     .icon(IconName::ArrowUpRight)
                     .icon_size(IconSize::XSmall)

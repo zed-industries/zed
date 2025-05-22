@@ -1,11 +1,11 @@
 use std::path::Path;
 use std::time::Duration;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use collections::HashMap;
 use sea_orm::ConnectOptions;
-use sqlx::migrate::{Migrate, Migration, MigrationSource};
 use sqlx::Connection;
+use sqlx::migrate::{Migrate, Migration, MigrationSource};
 
 /// Runs the database migrations for the specified database.
 pub async fn run_database_migrations(
@@ -30,12 +30,11 @@ pub async fn run_database_migrations(
     for migration in migrations {
         match applied_migrations.get(&migration.version) {
             Some(applied_migration) => {
-                if migration.checksum != applied_migration.checksum {
-                    Err(anyhow!(
-                        "checksum mismatch for applied migration {}",
-                        migration.description
-                    ))?;
-                }
+                anyhow::ensure!(
+                    migration.checksum == applied_migration.checksum,
+                    "checksum mismatch for applied migration {}",
+                    migration.description
+                );
             }
             None => {
                 let elapsed = connection.apply(&migration).await?;
