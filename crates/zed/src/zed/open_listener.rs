@@ -17,7 +17,9 @@ use language::Point;
 use recent_projects::{SshSettings, open_ssh_project};
 use remote::SshConnectionOptions;
 use settings::Settings;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -148,10 +150,17 @@ impl OpenListener {
     }
 }
 
+fn get_env_var_as<T: FromStr>(key: impl AsRef<OsStr>) -> Result<Option<T>, T::Err> {
+    match std::env::var(key) {
+        Ok(val) => val.parse::<T>().map(Some),
+        Err(_) => Ok(None),
+    }
+}
+
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub fn listen_for_cli_connections(opener: OpenListener) -> Result<()> {
     use release_channel::RELEASE_CHANNEL_NAME;
-    use std::os::unix::net::UnixDatagram;
+    use std::os::unix::{fs, net::UnixDatagram};
 
     let sock_path = paths::data_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL_NAME));
     // remove the socket if the process listening on it has died
@@ -160,7 +169,18 @@ pub fn listen_for_cli_connections(opener: OpenListener) -> Result<()> {
             std::fs::remove_file(&sock_path)?;
         }
     }
+
     let listener = UnixDatagram::bind(&sock_path)?;
+    if nix::unistd::geteuid() == 0.into() {
+        let sudo_uid = get_env_var_as("SUDO_UID")?;
+        let sudo_gid = get_env_var_as("SUDO_GID")?;
+
+        // change socket's owner and group if running with sudo
+        if sudo_uid.is_some() && sudo_gid.is_some() {
+            fs::chown(&sock_path, sudo_uid, sudo_gid)?;
+        }
+    }
+
     thread::spawn(move || {
         let mut buf = [0u8; 1024];
         while let Ok(len) = listener.recv(&mut buf) {
