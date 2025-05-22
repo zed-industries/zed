@@ -423,6 +423,13 @@ async fn test_handle_start_debugging_request(
         }
     });
 
+    let sessions = workspace
+        .update(cx, |workspace, _window, cx| {
+            let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+            debug_panel.read(cx).sessions()
+        })
+        .unwrap();
+    assert_eq!(sessions.len(), 1);
     client
         .fake_reverse_request::<StartDebugging>(StartDebuggingRequestArguments {
             request: StartDebuggingRequestArgumentsRequest::Launch,
@@ -435,20 +442,42 @@ async fn test_handle_start_debugging_request(
     workspace
         .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+
+            // Active session does not change on spawn.
             let active_session = debug_panel
                 .read(cx)
                 .active_session()
                 .unwrap()
                 .read(cx)
                 .session(cx);
-            let parent_session = active_session.read(cx).parent_session().unwrap();
+
+            assert_eq!(active_session, sessions[0].read(cx).session(cx));
+            assert!(active_session.read(cx).parent_session().is_none());
+
+            let current_sessions = debug_panel.read(cx).sessions();
+            assert_eq!(current_sessions.len(), 2);
+            assert_eq!(current_sessions[0], sessions[0]);
+
+            let parent_session = current_sessions[1]
+                .read(cx)
+                .session(cx)
+                .read(cx)
+                .parent_session()
+                .unwrap();
+            assert_eq!(parent_session, &sessions[0].read(cx).session(cx));
+
+            // We should preserve the original binary (params to spawn process etc.) except for launch params
+            // (as they come from reverse spawn request).
             let mut original_binary = parent_session.read(cx).binary().clone();
             original_binary.request_args = StartDebuggingRequestArguments {
                 request: StartDebuggingRequestArgumentsRequest::Launch,
                 configuration: fake_config.clone(),
             };
 
-            assert_eq!(active_session.read(cx).binary(), &original_binary);
+            assert_eq!(
+                current_sessions[1].read(cx).session(cx).read(cx).binary(),
+                &original_binary
+            );
         })
         .unwrap();
 
