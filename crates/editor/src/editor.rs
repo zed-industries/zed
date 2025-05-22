@@ -5746,10 +5746,14 @@ impl Editor {
         self.refresh_code_actions(window, cx);
     }
 
-    pub fn available_code_actions(
-        &self,
-    ) -> Option<&(language::Location, Rc<[AvailableCodeAction]>)> {
-        self.available_code_actions.as_ref()
+    pub fn code_actions_enabled(&self, cx: &App) -> bool {
+        EditorSettings::get_global(cx).toolbar.code_actions
+    }
+
+    pub fn available_code_actions(&self) -> Option<Rc<[AvailableCodeAction]>> {
+        self.available_code_actions
+            .as_ref()
+            .map(|(_, actions)| actions.clone())
     }
 
     fn refresh_code_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<()> {
