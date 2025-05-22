@@ -7,6 +7,7 @@ use dap::adapters::{
 };
 use extension::{Extension, WorktreeDelegate};
 use gpui::AsyncApp;
+use task::{DebugScenario, ZedDebugConfig};
 
 pub(crate) struct ExtensionDapAdapter {
     extension: Arc<dyn Extension>,
@@ -60,6 +61,10 @@ impl DebugAdapter for ExtensionDapAdapter {
         self.debug_adapter_name.as_ref().into()
     }
 
+    fn dap_schema(&self) -> serde_json::Value {
+        serde_json::Value::Null
+    }
+
     async fn get_binary(
         &self,
         delegate: &Arc<dyn DapDelegate>,
@@ -75,5 +80,9 @@ impl DebugAdapter for ExtensionDapAdapter {
                 Arc::new(WorktreeDelegateAdapter(delegate.clone())),
             )
             .await
+    }
+
+    fn config_from_zed_format(&self, _zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
+        Err(anyhow::anyhow!("DAP extensions are not implemented yet"))
     }
 }

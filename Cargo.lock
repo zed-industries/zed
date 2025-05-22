@@ -3002,6 +3002,7 @@ dependencies = [
  "context_server",
  "ctor",
  "dap",
+ "dap_adapters",
  "dashmap 6.1.0",
  "debugger_ui",
  "derive_more",
@@ -4180,6 +4181,8 @@ dependencies = [
  "dap",
  "extension",
  "gpui",
+ "serde_json",
+ "task",
  "workspace-hack",
 ]
 
@@ -8891,6 +8894,7 @@ dependencies = [
  "async-tar",
  "async-trait",
  "collections",
+ "dap",
  "futures 0.3.31",
  "gpui",
  "http_client",
@@ -17063,6 +17067,7 @@ dependencies = [
  "rust-embed",
  "serde",
  "serde_json",
+ "serde_json_lenient",
  "smol",
  "take-until",
  "tempfile",
