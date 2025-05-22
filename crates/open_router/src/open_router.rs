@@ -102,9 +102,6 @@ impl Model {
         self.supports_tools.unwrap_or(false)
     }
 
-    /// Indicates whether the model supports parallel tool calls.
-    /// Currently, this always returns `false` as the functionality is not implemented.
-    /// This may serve as a placeholder for future enhancements.
     pub fn supports_parallel_tool_calls(&self) -> bool {
         false
     }
@@ -122,7 +119,6 @@ pub struct Request {
     pub temperature: f32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
-    /// Whether to enable parallel function calling during tool use.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parallel_tool_calls: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -361,10 +357,7 @@ pub async fn stream_completion(
             .filter_map(|line| async move {
                 match line {
                     Ok(line) => {
-                        // Handle SSE comments that OpenRouter sends to prevent connection timeouts
                         if line.starts_with(':') {
-                            // This is a comment line (e.g., ": OPENROUTER PROCESSING")
-                            // We can ignore it per SSE specs
                             return None;
                         }
 
@@ -372,12 +365,9 @@ pub async fn stream_completion(
                         if line == "[DONE]" {
                             None
                         } else {
-                            // For OpenRouter, directly parse the stream event rather than expecting
-                            // an untagged enum like OpenAI
                             match serde_json::from_str::<ResponseStreamEvent>(line) {
                                 Ok(response) => Some(Ok(response)),
                                 Err(error) => {
-                                    // Try to parse as an error message
                                     #[derive(Deserialize)]
                                     struct ErrorResponse {
                                         error: String,
@@ -386,7 +376,6 @@ pub async fn stream_completion(
                                     match serde_json::from_str::<ErrorResponse>(line) {
                                         Ok(err_response) => Some(Err(anyhow!(err_response.error))),
                                         Err(_) => {
-                                            // Check if it's an empty line or other non-JSON content
                                             if line.trim().is_empty() {
                                                 None
                                             } else {
@@ -460,7 +449,6 @@ pub async fn list_models(client: &dyn HttpClient, api_url: &str) -> Result<Vec<M
         let response: ListModelsResponse =
             serde_json::from_str(&body).context("Unable to parse OpenRouter models response")?;
 
-        // Convert ModelEntry vector to Model vector
         let models = response
             .data
             .into_iter()

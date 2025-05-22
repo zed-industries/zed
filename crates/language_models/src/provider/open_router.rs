@@ -219,7 +219,6 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
         let mut models_from_api = self.state.read(cx).available_models.clone();
         let mut settings_models = Vec::new();
 
-        // Add models from settings
         for model in &AllLanguageModelSettings::get_global(cx)
             .open_router
             .available_models
@@ -232,7 +231,6 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
             });
         }
 
-        // Override any API models with settings models
         for settings_model in &settings_models {
             if let Some(pos) = models_from_api
                 .iter()
@@ -439,7 +437,7 @@ pub fn into_open_router(
                     };
 
                     messages.push(open_router::RequestMessage::Tool {
-                        content: content.into(),
+                        content: content,
                         tool_call_id: tool_result.tool_use_id.to_string(),
                     });
                 }
@@ -455,7 +453,6 @@ pub fn into_open_router(
         temperature: request.temperature.unwrap_or(0.4),
         max_tokens: max_output_tokens,
         parallel_tool_calls: if model.supports_parallel_tool_calls() && !request.tools.is_empty() {
-            // Disable parallel tool calls, as the Agent currently expects a maximum of one per turn.
             Some(false)
         } else {
             None
@@ -604,8 +601,6 @@ pub fn count_open_router_tokens(
             })
             .collect::<Vec<_>>();
 
-        // OpenRouter serves a variety of models, but we'll use o200k_base for token counting
-        // This is the encoding used by modern OpenAI models like GPT-4o
         tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages)
     })
     .boxed()
@@ -638,7 +633,6 @@ impl ConfigurationView {
                     .update(cx, |state, cx| state.authenticate(cx))
                     .log_err()
                 {
-                    // We don't log an error, because "not signed in" is also an error.
                     let _ = task.await;
                 }
 
