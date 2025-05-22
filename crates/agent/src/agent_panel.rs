@@ -2004,7 +2004,7 @@ impl AgentPanel {
             )
             .child(
                 Label::new(
-                    "Use your own API keys, upgrade to Zed Pro or send us an email for a free trial.",
+                    "Use your own API keys, upgrade to Zed Pro or send an email to billing-support@zed.dev.",
                 )
                 .color(Color::Muted),
             )
