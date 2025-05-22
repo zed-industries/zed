@@ -825,6 +825,7 @@ impl AnthropicEventMapper {
                         "end_turn" => StopReason::EndTurn,
                         "max_tokens" => StopReason::MaxTokens,
                         "tool_use" => StopReason::ToolUse,
+                        "refusal" => StopReason::Refusal,
                         _ => {
                             log::error!("Unexpected anthropic stop_reason: {stop_reason}");
                             StopReason::EndTurn
