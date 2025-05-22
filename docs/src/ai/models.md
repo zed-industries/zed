@@ -4,9 +4,11 @@ Zed’s plans offer hosted versions of major LLM’s, generally with higher rate
 
 | Model             | Provider  | Max Mode | Context Window | Price per Prompt | Price per Request |
 | ----------------- | --------- | -------- | -------------- | ---------------- | ----------------- |
-| Claude 3.5 Sonnet | Anthropic | ❌       | 60k            | $0.04            | N/A               |
-| Claude 3.7 Sonnet | Anthropic | ❌       | 120k           | $0.04            | N/A               |
+| Claude 3.5 Sonnet | Anthropic | ❌        | 60k            | $0.04            | N/A               |
+| Claude 3.7 Sonnet | Anthropic | ❌        | 120k           | $0.04            | N/A               |
 | Claude 3.7 Sonnet | Anthropic | ✅       | 200k           | N/A              | $0.05             |
+| Claude 4 Sonnet   | Anthropic | ❌        | 120k           | $0.04            | N/A               |
+| Claude 4 Sonnet   | Anthropic | ✅       | 200k           | N/A              | $0.05             |
 
 ## Usage {#usage}
 
