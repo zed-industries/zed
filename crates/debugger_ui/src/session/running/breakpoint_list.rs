@@ -1,5 +1,6 @@
 use std::{
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -95,6 +96,21 @@ impl BreakpointList {
         })
     }
 
+    fn toggle_line_breakpoint(&mut self, path: Arc<Path>, row: u32, cx: &mut Context<Self>) {
+        self.breakpoint_store.update(cx, |breakpoint_store, cx| {
+            if let Some((buffer, breakpoint)) = breakpoint_store.breakpoint_at_row(&path, row, cx) {
+                breakpoint_store.toggle_breakpoint(
+                    buffer,
+                    breakpoint,
+                    BreakpointEditAction::InvertState,
+                    cx,
+                );
+            } else {
+                log::error!("Couldn't find breakpoint at row event though it exists: row {row}")
+            }
+        })
+    }
+
     fn select_ix(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
         self.selected_ix = ix;
         if let Some(ix) = ix {
@@ -160,6 +176,23 @@ impl BreakpointList {
             None
         };
         self.select_ix(ix, cx);
+    }
+
+    fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(entry) = self.selected_ix.and_then(|ix| self.breakpoints.get_mut(ix)) else {
+            return;
+        };
+
+        match &mut entry.kind {
+            BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
+                let path = line_breakpoint.breakpoint.path.clone();
+                let row = line_breakpoint.breakpoint.row;
+                self.toggle_line_breakpoint(path, row, cx);
+            }
+            BreakpointEntryKind::ExceptionBreakpoint(breakpoint) => {
+                //
+            }
+        }
     }
 
     fn hide_scrollbar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -359,21 +392,8 @@ impl LineBreakpoint {
                 let weak = weak.clone();
                 let path = path.clone();
                 move |_, _, cx| {
-                    weak.update(cx, |this, cx| {
-                        this.breakpoint_store.update(cx, |this, cx| {
-                            if let Some((buffer, breakpoint)) =
-                                this.breakpoint_at_row(&path, row, cx)
-                            {
-                                this.toggle_breakpoint(
-                                    buffer,
-                                    breakpoint,
-                                    BreakpointEditAction::InvertState,
-                                    cx,
-                                );
-                            } else {
-                                log::error!("Couldn't find breakpoint at row event though it exists: row {row}")
-                            }
-                        })
+                    weak.update(cx, |breakpoint_list, cx| {
+                        breakpoint_list.toggle_line_breakpoint(path.clone(), row, cx);
                     })
                     .ok();
                 }
@@ -401,21 +421,8 @@ impl LineBreakpoint {
                 let weak = weak.clone();
                 let path = path.clone();
                 move |_, _, cx| {
-                    weak.update(cx, |this, cx| {
-                        this.breakpoint_store.update(cx, |this, cx| {
-                            if let Some((buffer, breakpoint)) =
-                                this.breakpoint_at_row(&path, row, cx)
-                            {
-                                this.toggle_breakpoint(
-                                    buffer,
-                                    breakpoint,
-                                    BreakpointEditAction::Toggle,
-                                    cx,
-                                );
-                            } else {
-                                log::error!("Couldn't find breakpoint at row event though it exists: row {row}")
-                            }
-                        })
+                    weak.update(cx, |breakpoint_list, cx| {
+                        breakpoint_list.toggle_line_breakpoint(path.clone(), row, cx);
                     })
                     .ok();
                 }
@@ -491,13 +498,12 @@ impl LineBreakpoint {
                                 .size(LabelSize::Small)
                                 .line_height_style(ui::LineHeightStyle::UiLabel)
                         })),
-                )
-                // .child(
-                //     Label::new(line)
-                //         .size(LabelSize::XSmall)
-                //         .color(Color::Muted)
-                //         .line_height_style(ui::LineHeightStyle::UiLabel),
-                // ),
+                ), // .child(
+                   //     Label::new(line)
+                   //         .size(LabelSize::XSmall)
+                   //         .color(Color::Muted)
+                   //         .line_height_style(ui::LineHeightStyle::UiLabel),
+                   // ),
         )
     }
 }
