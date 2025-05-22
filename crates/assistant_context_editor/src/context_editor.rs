@@ -1646,10 +1646,8 @@ impl ContextEditor {
         if selection.is_empty() {
             let point = buffer.offset_to_point(selection.start);
             let line_start = buffer.point_to_offset(Point::new(point.row, 0));
-            let line_end = buffer.point_to_offset(cmp::min(
-                Point::new(point.row + 1, 0),
-                buffer.max_point(),
-            ));
+            let line_end =
+                buffer.point_to_offset(cmp::min(Point::new(point.row + 1, 0), buffer.max_point()));
 
             for chunk in buffer.text_for_range(line_start..line_end) {
                 text.push_str(chunk);
