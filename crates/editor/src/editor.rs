@@ -6524,8 +6524,8 @@ impl Editor {
                 }
 
                 // Store the transaction ID and selections before applying the edit
-                let transaction_id_prev = self.buffer.read_with(cx, |b, cx| b.last_transaction_id(cx));
-                let selections_prev = self.selections.disjoint_anchors();
+                let transaction_id_prev =
+                    self.buffer.read_with(cx, |b, cx| b.last_transaction_id(cx));
 
                 let snapshot = self.buffer.read(cx).snapshot(cx);
                 let last_edit_end = edits.last().unwrap().0.end.bias_right(&snapshot);
@@ -6534,17 +6534,20 @@ impl Editor {
                     buffer.edit(edits.iter().cloned(), None, cx)
                 });
 
-                // Check if there's a new transaction and store the previous selections
-                if let Some(transaction_id_now) = self.buffer.read_with(cx, |b, cx| b.last_transaction_id(cx)) {
+                self.change_selections(None, window, cx, |s| {
+                    s.select_anchor_ranges([last_edit_end..last_edit_end]);
+                });
+
+                let selections = self.selections.disjoint_anchors();
+                if let Some(transaction_id_now) =
+                    self.buffer.read_with(cx, |b, cx| b.last_transaction_id(cx))
+                {
                     let has_new_transaction = transaction_id_prev != Some(transaction_id_now);
                     if has_new_transaction {
-                        self.selection_history.insert_transaction(transaction_id_now, selections_prev);
+                        self.selection_history
+                            .insert_transaction(transaction_id_now, selections);
                     }
                 }
-
-                self.change_selections(None, window, cx, |s| {
-                    s.select_anchor_ranges([last_edit_end..last_edit_end])
-                });
 
                 self.update_visible_inline_completion(window, cx);
                 if self.active_inline_completion.is_none() {

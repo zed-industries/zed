@@ -6471,7 +6471,7 @@ async fn test_undo_inline_completion_scrolls_to_edit_pos(cx: &mut TestAppContext
     cx.assert_editor_state(indoc! {"
         line 1
         line 2
-        linˇe 3
+        lineˇ 3
         line 4
         line 5
         line 6
