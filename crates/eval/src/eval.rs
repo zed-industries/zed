@@ -34,7 +34,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, LazyLock};
-use util::ResultExt as _;
+use util::{ConnectionResult, ResultExt as _};
 
 static CARGO_MANIFEST_DIR: LazyLock<PathBuf> =
     LazyLock::new(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")));
@@ -143,6 +143,13 @@ fn main() {
 
         cx.spawn(async move |cx| {
             authenticate_task.await.unwrap();
+
+            match app_state.client.authenticate_and_connect(true, cx).await {
+                ConnectionResult::Timeout => panic!("Timeout while trying to authenticate_and_connect"),
+                ConnectionResult::ConnectionReset => panic!("Connection reset while trying to authenticate_and_connect"),
+                ConnectionResult::Result(Err(err)) => panic!("Error while trying to authenticate_and_connect: {err:?}"),
+                ConnectionResult::Result(Ok(())) => {}
+            }
 
             let mut examples = Vec::new();
 
