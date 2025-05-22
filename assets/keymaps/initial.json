@@ -15,7 +15,7 @@
   {
     "context": "Editor && vim_mode == insert && !menu",
     "bindings": {
-      // "j k": "vim::SwitchToNormalMode"
+      // "j k": ["workspace::SendKeystrokes", "escape"]
     }
   }
 ]
