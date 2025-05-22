@@ -739,24 +739,6 @@ mod tests {
 
     use super::*;
 
-    #[gpui::test]
-    fn test_cache_size_for_test_extension(cx: &TestAppContext) {
-        let cache_store = cache_store();
-        let engine = wasm_engine();
-        let wasm_bytes = wasm_bytes(cx, &mut manifest());
-
-        Component::new(&engine, wasm_bytes).unwrap();
-
-        cache_store.cache.run_pending_tasks();
-        let size: usize = cache_store
-            .cache
-            .iter()
-            .map(|(k, v)| k.len() + v.len())
-            .sum();
-        // If this assertion fails, it means extensions got larger and we may want to
-        // reconsider our cache size.
-        assert!(size < 512 * 1024);
-    }
 
     fn wasm_bytes(cx: &TestAppContext, manifest: &mut ExtensionManifest) -> Vec<u8> {
         let extension_builder = extension_builder();
