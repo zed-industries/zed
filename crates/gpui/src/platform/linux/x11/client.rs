@@ -890,6 +890,7 @@ impl X11Client {
                 }
             }
             Event::KeyPress(event) => {
+                println!("KeyPress: {:?}", event);
                 let window = self.get_window(event.event)?;
                 let mut state = self.0.borrow_mut();
 
@@ -958,6 +959,7 @@ impl X11Client {
                 }));
             }
             Event::KeyRelease(event) => {
+                println!("KeyRelease: {:?}", event);
                 let window = self.get_window(event.event)?;
                 let mut state = self.0.borrow_mut();
 
