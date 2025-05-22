@@ -1698,7 +1698,7 @@ impl Thread {
                                     project.set_agent_location(None, cx);
                                 });
 
-                                cx.emit (ThreadEvent::ShowError(ThreadError::Message {
+                                cx.emit(ThreadEvent::ShowError(ThreadError::Message {
                                     header: "Language model refusal".into(),
                                     message: "Model refused to generate content for safety reasons.".into(),
                                 }));
