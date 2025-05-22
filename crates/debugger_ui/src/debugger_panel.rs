@@ -82,7 +82,7 @@ impl DebugPanel {
             let thread_picker_menu_handle = PopoverMenuHandle::default();
             let session_picker_menu_handle = PopoverMenuHandle::default();
 
-             Self {
+            Self {
                 size: px(300.),
                 sessions: vec![],
                 active_session: None,

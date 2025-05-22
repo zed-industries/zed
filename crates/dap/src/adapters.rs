@@ -22,7 +22,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{ZedDebugConfig, DebugScenario, TcpArgumentsTemplate};
+use task::{DebugScenario, TcpArgumentsTemplate, ZedDebugConfig};
 use util::archive::extract_zip;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
