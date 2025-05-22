@@ -9,7 +9,7 @@ use std::{
 use ui::{Label, prelude::*};
 use util::{ResultExt as _, command::new_smol_command};
 
-use crate::interactivity_inspector::InteractivityInspector;
+use crate::div_inspector::DivInspector;
 
 // todo!
 //
@@ -26,7 +26,7 @@ use crate::interactivity_inspector::InteractivityInspector;
 //
 // Motivations:
 //
-// * No need for InteractivityInspector to keep track of InspectorElementId to detect if it changes
+// * No need for DivInspector to keep track of InspectorElementId to detect if it changes
 // to rebuild Editor.
 //
 // * Can get invoked when inspected element changes instead of on render. This would allow things
@@ -55,15 +55,13 @@ pub fn init(cx: &mut App) {
 
     cx.set_inspector_renderer(render_inspector);
 
-    let interactivity_inspector = OnceCell::new();
+    let div_inspector = OnceCell::new();
     cx.register_inspector_element(move |id, state, window, cx| {
-        let interactivity_inspector = interactivity_inspector
-            .get_or_init(|| cx.new(|cx| InteractivityInspector::new(window, cx)));
-        interactivity_inspector.update(cx, |interactivity_inspector, cx| {
-            interactivity_inspector.update_inspected_element(&id, state, window, cx);
-            interactivity_inspector
-                .render(window, cx)
-                .into_any_element()
+        let div_inspector =
+            div_inspector.get_or_init(|| cx.new(|cx| DivInspector::new(window, cx)));
+        div_inspector.update(cx, |div_inspector, cx| {
+            div_inspector.update_inspected_element(&id, state, window, cx);
+            div_inspector.render(window, cx).into_any_element()
         })
     })
 }

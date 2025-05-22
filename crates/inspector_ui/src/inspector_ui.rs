@@ -1,7 +1,7 @@
 #[cfg(debug_assertions)]
-mod inspector;
+mod div_inspector;
 #[cfg(debug_assertions)]
-mod interactivity_inspector;
+mod inspector;
 
 #[cfg(debug_assertions)]
 pub use inspector::init;

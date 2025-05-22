@@ -5,8 +5,8 @@ use std::rc::Rc;
 use editor::{Editor, EditorEvent, EditorMode, MultiBuffer};
 use futures::{FutureExt as _, future::Shared};
 use gpui::{
-    App, AsyncWindowContext, Entity, InspectorElementId, InteractivityInspectorState, IntoElement,
-    Task, Window,
+    App, AsyncWindowContext, DivInspectorState, Entity, InspectorElementId, IntoElement, Task,
+    Window,
 };
 use language::Buffer;
 use language::language_settings::SoftWrap;
@@ -17,7 +17,7 @@ use util::ResultExt as _;
 use workspace::Workspace;
 
 // todo! rename back to DivInspector
-pub(crate) struct InteractivityInspector {
+pub(crate) struct DivInspector {
     id: Option<InspectorElementId>,
     project: Entity<Project>,
     style_buffer: Option<Entity<Buffer>>,
@@ -25,8 +25,8 @@ pub(crate) struct InteractivityInspector {
 }
 
 // todo! Remove unwraps
-impl InteractivityInspector {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> InteractivityInspector {
+impl DivInspector {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> DivInspector {
         let workspace = window.root::<Workspace>().flatten().unwrap();
         let project = workspace.read(cx).project().clone();
 
@@ -81,7 +81,7 @@ impl InteractivityInspector {
         })
         .detach();
 
-        InteractivityInspector {
+        DivInspector {
             id: None,
             project,
             style_buffer: None,
@@ -92,7 +92,7 @@ impl InteractivityInspector {
     pub fn update_inspected_element(
         &mut self,
         id: &InspectorElementId,
-        state: &InteractivityInspectorState,
+        state: &DivInspectorState,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -140,7 +140,7 @@ impl InteractivityInspector {
                             else {
                                 return;
                             };
-                            window.update_inspector_state::<InteractivityInspectorState, _>(
+                            window.update_inspector_state::<DivInspectorState, _>(
                                 &id,
                                 |state, _window| {
                                     if let Some(state) = state.as_mut() {
@@ -161,7 +161,7 @@ impl InteractivityInspector {
     }
 }
 
-impl Render for InteractivityInspector {
+impl Render for DivInspector {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(style_editor) = self.style_editor.as_ref() {
             v_flex()
