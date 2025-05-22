@@ -94,11 +94,14 @@ impl LinuxKeyboardMapper {
         keycode: Keycode,
         modifiers: &mut crate::Modifiers,
     ) -> Option<String> {
-        if is_alphabetic_key(keycode) || !modifiers.shift {
-            self.code_to_key.get(&keycode).cloned()
-        } else {
+        if let Some(key) = self.letters.get(&keycode) {
+            return Some(key.clone());
+        }
+        if modifiers.shift {
             modifiers.shift = false;
             self.code_to_shifted_key.get(&keycode).cloned()
+        } else {
+            self.code_to_key.get(&keycode).cloned()
         }
     }
 }
