@@ -64,13 +64,13 @@ impl DapRegistry {
         );
     }
 
-    pub fn adapters_schema(&self) -> task::AdapterSchemas {
+    pub async fn adapters_schema(&self) -> task::AdapterSchemas {
         let mut schemas = AdapterSchemas(vec![]);
 
         for (name, adapter) in self.0.read().adapters.iter() {
             schemas.0.push(AdapterSchema {
                 adapter: name.clone().into(),
-                schema: adapter.dap_schema(),
+                schema: adapter.dap_schema().await,
             });
         }
 

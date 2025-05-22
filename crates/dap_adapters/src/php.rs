@@ -101,7 +101,7 @@ impl PhpDebugAdapter {
 
 #[async_trait(?Send)]
 impl DebugAdapter for PhpDebugAdapter {
-    fn dap_schema(&self) -> serde_json::Value {
+    async fn dap_schema(&self) -> serde_json::Value {
         json!({
             "properties": {
                 "request": {
