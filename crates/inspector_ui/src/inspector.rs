@@ -4,10 +4,11 @@ use std::{
     cell::{OnceCell, RefCell},
     path::Path,
     rc::Rc,
-    sync::OnceLock,
+    sync::{Arc, OnceLock},
 };
 use ui::{Label, Tooltip, prelude::*};
 use util::{ResultExt as _, command::new_smol_command};
+use workspace::AppState;
 
 use crate::div_inspector::DivInspector;
 
@@ -33,7 +34,7 @@ use crate::div_inspector::DivInspector;
 // * GPUI just implement what's needed to implement an inspector, since so much of the inspector
 // logic is already outside GPUI (due to access to editor / theme / ui components / etc).
 
-pub fn init(cx: &mut App) {
+pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     // TODO: Instead toggle a global debug mode? Not all windows support the command pallete.
     cx.on_action(|_: &zed_actions::dev::ToggleInspector, cx| {
         let Some(active_window) = cx
@@ -51,17 +52,28 @@ pub fn init(cx: &mut App) {
         });
     });
 
-    cx.set_inspector_renderer(render_inspector);
+    // Project used for editor buffers + LSP support
+    let project = project::Project::local(
+        app_state.client.clone(),
+        app_state.node_runtime.clone(),
+        app_state.user_store.clone(),
+        app_state.languages.clone(),
+        app_state.fs.clone(),
+        None,
+        cx,
+    );
 
     let div_inspector = OnceCell::new();
     cx.register_inspector_element(move |id, state, window, cx| {
-        let div_inspector =
-            div_inspector.get_or_init(|| cx.new(|cx| DivInspector::new(window, cx)));
+        let div_inspector = div_inspector
+            .get_or_init(|| cx.new(|cx| DivInspector::new(project.clone(), window, cx)));
         div_inspector.update(cx, |div_inspector, cx| {
             div_inspector.update_inspected_element(&id, state, window, cx);
             div_inspector.render(window, cx).into_any_element()
         })
-    })
+    });
+
+    cx.set_inspector_renderer(render_inspector);
 }
 
 fn render_inspector(

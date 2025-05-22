@@ -7,7 +7,7 @@ mod inspector;
 pub use inspector::init;
 
 #[cfg(not(debug_assertions))]
-pub fn init(cx: &mut gpui::App) {
+pub fn init(_app_state: std::sync::Arc<AppState>, cx: &mut gpui::App) {
     use workspace::notifications::NotifyResultExt;
 
     cx.on_action(|_: &zed_actions::dev::ToggleInspector, cx| {

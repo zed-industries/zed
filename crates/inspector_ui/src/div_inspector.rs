@@ -26,31 +26,29 @@ pub(crate) struct DivInspector {
 
 // todo! Remove unwraps
 impl DivInspector {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> DivInspector {
-        let workspace = window.root::<Workspace>().flatten().unwrap();
-        let project = workspace.read(cx).project().clone();
-
-        let worktree_id = project
-            .read(cx)
-            .worktrees(cx)
-            .filter(|worktree| {
-                let worktree = worktree.read(cx);
-                !worktree.is_single_file() && worktree.is_local()
-            })
-            .next()
-            .unwrap()
-            .read(cx)
-            .id();
-        let project_path = ProjectPath {
-            worktree_id,
-            path: Path::new("zed-inspector-style.json").into(),
-        };
-
+    pub fn new(
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> DivInspector {
         // Load the buffer once, so it can then be used for each editor.
         cx.spawn_in(window, {
             let project = project.clone();
             async move |this, cx| {
-                // todo! Make a new project instead of needing the current window to be a workspace.
+                let worktree = project
+                    .update(cx, |project, cx| {
+                        project.create_worktree("/zed-inspector-style.json", false, cx)
+                    })
+                    .unwrap()
+                    .await
+                    .unwrap();
+
+                let project_path = worktree
+                    .read_with(cx, |worktree, cx| ProjectPath {
+                        worktree_id: worktree.id(),
+                        path: Path::new("").into(),
+                    })
+                    .unwrap();
 
                 let style_buffer = project
                     .update(cx, |project, cx| project.open_path(project_path, cx))
@@ -71,7 +69,7 @@ impl DivInspector {
                     if let Some(id) = this.id.clone() {
                         window.update_inspector_state(&id, |state, window| {
                             if let Some(state) = state.as_ref() {
-                                this.update_inspected_element(&id, state, window, cx)
+                                this.update_inspected_element(&id, state, window, cx);
                             }
                         });
                     }
