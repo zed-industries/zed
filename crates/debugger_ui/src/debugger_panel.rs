@@ -82,7 +82,7 @@ impl DebugPanel {
             let thread_picker_menu_handle = PopoverMenuHandle::default();
             let session_picker_menu_handle = PopoverMenuHandle::default();
 
-            let debug_panel = Self {
+            Self {
                 size: px(300.),
                 sessions: vec![],
                 active_session: None,
@@ -93,9 +93,7 @@ impl DebugPanel {
                 fs: workspace.app_state().fs.clone(),
                 thread_picker_menu_handle,
                 session_picker_menu_handle,
-            };
-
-            debug_panel
+            }
         })
     }
 
@@ -301,6 +299,7 @@ impl DebugPanel {
 
         cx.spawn(async move |_, cx| {
             if let Err(error) = task.await {
+                log::error!("{error}");
                 session
                     .update(cx, |session, cx| {
                         session
