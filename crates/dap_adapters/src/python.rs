@@ -201,7 +201,10 @@ impl DebugAdapter for PythonDebugAdapter {
     ) -> Result<StartDebuggingRequestArgumentsRequest> {
         let map = config.as_object().context("Config isn't an object")?;
 
-        let request_variant = map["request"].as_str().context("request is not valid")?;
+        let request_variant = map
+            .get("request")
+            .and_then(|val| val.as_str())
+            .context("request is not valid")?;
 
         match request_variant {
             "launch" => Ok(StartDebuggingRequestArgumentsRequest::Launch),
