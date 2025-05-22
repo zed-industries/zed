@@ -9,7 +9,9 @@ use std::{
     usize,
 };
 
-use dap::{DapRegistry, DebugRequest, adapters::DebugAdapterName};
+use dap::{
+    DapRegistry, DebugRequest, TelemetrySpawnLocation, adapters::DebugAdapterName, send_telemetry,
+};
 use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -240,6 +242,7 @@ impl NewSessionModal {
         let Some(task_contexts) = self.task_contexts(cx) else {
             return;
         };
+        send_telemetry(&config, TelemetrySpawnLocation::Custom, cx);
         let task_context = task_contexts.active_context().cloned().unwrap_or_default();
         let worktree_id = task_contexts.worktree();
         cx.spawn_in(window, async move |this, cx| {
@@ -277,8 +280,8 @@ impl NewSessionModal {
         })
     }
 
-    fn task_contexts<'a>(&self, cx: &'a mut Context<Self>) -> Option<&'a TaskContexts> {
-        self.launch_picker.read(cx).delegate.task_contexts.as_ref()
+    fn task_contexts(&self, cx: &App) -> Option<Arc<TaskContexts>> {
+        self.launch_picker.read(cx).delegate.task_contexts.clone()
     }
 
     fn adapter_drop_down_menu(
@@ -901,7 +904,7 @@ pub(super) struct DebugScenarioDelegate {
     matches: Vec<StringMatch>,
     prompt: String,
     debug_panel: WeakEntity<DebugPanel>,
-    task_contexts: Option<TaskContexts>,
+    task_contexts: Option<Arc<TaskContexts>>,
     divider_index: Option<usize>,
     last_used_candidate_index: Option<usize>,
 }
@@ -954,7 +957,7 @@ impl DebugScenarioDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) {
-        self.task_contexts = Some(task_contexts);
+        self.task_contexts = Some(Arc::new(task_contexts));
 
         let (recent, scenarios) = self
             .task_store
@@ -1090,6 +1093,7 @@ impl PickerDelegate for DebugScenarioDelegate {
             })
             .unwrap_or_default();
 
+        send_telemetry(&debug_scenario, TelemetrySpawnLocation::ScenarioList, cx);
         self.debug_panel
             .update(cx, |panel, cx| {
                 panel.start_session(debug_scenario, task_context, None, worktree_id, window, cx);
