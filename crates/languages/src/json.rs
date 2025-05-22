@@ -27,7 +27,10 @@ use std::{
     sync::Arc,
 };
 use task::{AdapterSchemas, TaskTemplate, TaskTemplates, VariableName};
-use util::{ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into};
+use util::{
+    ResultExt, archive::extract_zip, fs::remove_matching, maybe,
+    merge_json_value_into,
+};
 
 const SERVER_PATH: &str =
     "node_modules/vscode-langservers-extracted/bin/vscode-json-language-server";
