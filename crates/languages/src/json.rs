@@ -91,7 +91,64 @@ impl JsonLspAdapter {
         let snippets_schema = snippet_provider::format::VsSnippetsFile::generate_json_schema();
         let tsconfig_schema = serde_json::Value::from_str(TSCONFIG_SCHEMA).unwrap();
         let package_json_schema = serde_json::Value::from_str(PACKAGE_JSON_SCHEMA).unwrap();
-        let inspector_style_schema = generate_inspector_style_schema();
+
+        let mut schemas = serde_json::json!([
+            {
+                "fileMatch": ["tsconfig.json"],
+                "schema":tsconfig_schema
+            },
+            {
+                "fileMatch": ["package.json"],
+                "schema":package_json_schema
+            },
+            {
+                "fileMatch": [
+                    schema_file_match(paths::settings_file()),
+                    paths::local_settings_file_relative_path()
+                ],
+                "schema": settings_schema,
+            },
+            {
+                "fileMatch": [schema_file_match(paths::keymap_file())],
+                "schema": keymap_schema,
+            },
+            {
+                "fileMatch": [
+                    schema_file_match(paths::tasks_file()),
+                    paths::local_tasks_file_relative_path()
+                ],
+                "schema": tasks_schema,
+            },
+            {
+                "fileMatch": [
+                    schema_file_match(
+                        paths::snippets_dir()
+                            .join("*.json")
+                            .as_path()
+                    )
+                ],
+                "schema": snippets_schema,
+            },
+            {
+                "fileMatch": [
+                    schema_file_match(paths::debug_scenarios_file()),
+                    paths::local_debug_file_relative_path()
+                ],
+                "schema": debug_schema,
+            },
+        ]);
+
+        #[cfg(debug_assertions)]
+        {
+            schemas.as_array_mut().unwrap().push(serde_json::json!(
+                {
+                    "fileMatch": [
+                        "zed-inspector-style.json"
+                    ],
+                    "schema": generate_inspector_style_schema(),
+                }
+            ))
+        }
 
         // This can be viewed via `dev: open language server logs` -> `json-language-server` ->
         // `Server Info`
@@ -104,58 +161,7 @@ impl JsonLspAdapter {
                 {
                     "enable": true,
                 },
-                "schemas": [
-                    {
-                        "fileMatch": ["tsconfig.json"],
-                        "schema":tsconfig_schema
-                    },
-                    {
-                        "fileMatch": ["package.json"],
-                        "schema":package_json_schema
-                    },
-                    {
-                        "fileMatch": [
-                            schema_file_match(paths::settings_file()),
-                            paths::local_settings_file_relative_path()
-                        ],
-                        "schema": settings_schema,
-                    },
-                    {
-                        "fileMatch": [schema_file_match(paths::keymap_file())],
-                        "schema": keymap_schema,
-                    },
-                    {
-                        "fileMatch": [
-                            schema_file_match(paths::tasks_file()),
-                            paths::local_tasks_file_relative_path()
-                        ],
-                        "schema": tasks_schema,
-                    },
-                    {
-                        "fileMatch": [
-                            schema_file_match(
-                                paths::snippets_dir()
-                                    .join("*.json")
-                                    .as_path()
-                            )
-                        ],
-                        "schema": snippets_schema,
-                    },
-                    {
-                        "fileMatch": [
-                            schema_file_match(paths::debug_scenarios_file()),
-                            paths::local_debug_file_relative_path()
-                        ],
-                        "schema": debug_schema,
-
-                    },
-                    {
-                        "fileMatch": [
-                            "zed-inspector-style.json"
-                        ],
-                        "schema": inspector_style_schema,
-                    }
-                ]
+                "schemas": schemas
             }
         })
     }
