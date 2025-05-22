@@ -55,8 +55,7 @@ pub fn send_telemetry(scenario: &DebugScenario, location: TelemetrySpawnLocation
         .validate_config(&scenario.config)
         .ok()
         .map(serde_json::to_value)
-        .map(Result::ok)
-        .flatten();
+        .and_then(Result::ok);
     let dock = DebuggerSettings::get_global(cx).dock;
     telemetry::event!(
         "Debugger Session Started",
