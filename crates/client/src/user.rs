@@ -760,7 +760,7 @@ impl UserStore {
     pub fn current_user_account_too_young(&self) -> bool {
         // If they have paid, then we allow them to use all of the features
         if let Some(proto::Plan::ZedPro) = self.current_plan {
-            return true;
+            return false;
         }
         // If we have access to the profile age, we use that
         if let Some(account_created_at) = self
