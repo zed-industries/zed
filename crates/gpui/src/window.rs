@@ -603,6 +603,8 @@ impl Frame {
     pub(crate) fn clear(&mut self) {
         self.element_states.clear();
         self.accessed_element_states.clear();
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        self.inspector_state.clear();
         self.mouse_listeners.clear();
         self.dispatch_tree.clear();
         self.scene.clear();
@@ -612,11 +614,6 @@ impl Frame {
         self.hitboxes.clear();
         self.deferred_draws.clear();
         self.focus = None;
-
-        #[cfg(any(feature = "inspector", debug_assertions))]
-        {
-            self.inspector_state.clear();
-        }
     }
 
     pub(crate) fn hit_test(&self, position: Point<Pixels>) -> HitTest {
@@ -1888,15 +1885,8 @@ impl Window {
         let mut root_element = self.root.as_ref().unwrap().clone().into_any();
         root_element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
 
-        let _inspector_element: Option<AnyElement>;
         #[cfg(any(feature = "inspector", debug_assertions))]
-        {
-            _inspector_element = self.prepaint_inspector(_inspector_width, cx);
-        }
-        #[cfg(not(any(feature = "inspector", debug_assertions)))]
-        {
-            _inspector_element = None;
-        }
+        let inspector_element = self.prepaint_inspector(_inspector_width, cx);
 
         let mut sorted_deferred_draws =
             (0..self.next_frame.deferred_draws.len()).collect::<SmallVec<[_; 8]>>();
@@ -1928,9 +1918,7 @@ impl Window {
         root_element.paint(self, cx);
 
         #[cfg(any(feature = "inspector", debug_assertions))]
-        {
-            self.paint_inspector(_inspector_element, cx);
-        }
+        self.paint_inspector(inspector_element, cx);
 
         self.paint_deferred_draws(&sorted_deferred_draws, cx);
 
