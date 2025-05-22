@@ -1209,7 +1209,6 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     log::error!("Received keymap format {:?}, expected XkbV1", format);
                     return;
                 }
-                println!("Wayland Keymap changed");
                 let xkb_context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
                 let keymap = unsafe {
                     xkb::Keymap::new_from_fd(
@@ -1295,7 +1294,6 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 state: WEnum::Value(key_state),
                 ..
             } => {
-                println!("\n==> Wayland Key event: {:#?}", key_state);
                 state.serial_tracker.update(SerialKind::KeyPress, serial);
 
                 let focused_window = state.keyboard_focused_window.clone();
@@ -1309,7 +1307,6 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 let keycode = Keycode::from(key + MIN_KEYCODE);
                 let keysym = keymap_state.key_get_one_sym(keycode);
 
-                println!("is modifier key: {}", keysym.is_modifier_key());
                 match key_state {
                     wl_keyboard::KeyState::Pressed if !keysym.is_modifier_key() => {
                         let mut keystroke = Keystroke::from_xkb(
@@ -1318,7 +1315,6 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                             state.modifiers,
                             keycode,
                         );
-                        println!("Wayland Before {:#?}", keystroke);
                         if let Some(mut compose) = state.compose_state.take() {
                             compose.feed(keysym);
                             match compose.status() {
@@ -1359,7 +1355,6 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                             }
                             state.compose_state = Some(compose);
                         }
-                        println!("Wayland Key pressed: {:#?}", keystroke);
                         let input = PlatformInput::KeyDown(KeyDownEvent {
                             keystroke: keystroke.clone(),
                             is_held: false,
@@ -1416,7 +1411,6 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                             state.repeat.current_keycode = None;
                         }
 
-                        println!("\nWayland Key released: {:#?}", input);
                         drop(state);
                         focused_window.handle_input(input);
                     }

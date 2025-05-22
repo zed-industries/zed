@@ -986,7 +986,6 @@ impl X11Client {
                     locked_layout,
                 };
                 let keyboard_layout = LinuxKeyboardLayout::new(&xkb_state);
-                println!("X11 Keyboard layout: {:#?}", keyboard_layout.id());
                 state.xkb = xkb_state;
                 drop(state);
                 self.handle_keyboard_layout_change();
@@ -1068,14 +1067,12 @@ impl X11Client {
                     if keysym.is_modifier_key() {
                         return Some(());
                     }
-                    println!("X11 Before {:#?}", keystroke);
                     if let Some(mut compose_state) = state.compose_state.take() {
                         compose_state.feed(keysym);
                         match compose_state.status() {
                             xkbc::Status::Composed => {
                                 state.pre_edit_text.take();
                                 let key_char = compose_state.utf8();
-                                println!("    Composed: {:#?}", key_char);
                                 keystroke.key_char = key_char;
                                 if let Some(keysym) = compose_state.keysym() {
                                     keystroke.key = xkbc::keysym_get_name(keysym);
@@ -1088,13 +1085,11 @@ impl X11Client {
                                 let pre_edit =
                                     state.pre_edit_text.clone().unwrap_or(String::default());
                                 drop(state);
-                                println!("    Composing: {:#?}", pre_edit);
                                 window.handle_ime_preedit(pre_edit);
                                 state = self.0.borrow_mut();
                             }
                             xkbc::Status::Cancelled => {
                                 let pre_edit = state.pre_edit_text.take();
-                                println!("    Cancelled: {:#?}", pre_edit);
                                 drop(state);
                                 if let Some(pre_edit) = pre_edit {
                                     window.handle_ime_commit(pre_edit);
@@ -1112,7 +1107,6 @@ impl X11Client {
                     keystroke
                 };
                 drop(state);
-                println!("X11 Key pressed: {:#?}", keystroke);
                 window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
                     keystroke,
                     is_held: false,
@@ -1148,7 +1142,6 @@ impl X11Client {
                     }
                     keystroke
                 };
-                println!("\nX11 Key released: {:#?}", keystroke);
                 drop(state);
                 window.handle_input(PlatformInput::KeyUp(crate::KeyUpEvent { keystroke }));
             }
