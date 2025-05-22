@@ -278,7 +278,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
         let llm_api_token = self.state.read(cx).llm_api_token.clone();
-        let model = CloudModel::Anthropic(anthropic::Model::Claude3_7Sonnet);
+        let model = CloudModel::Anthropic(anthropic::Model::ClaudeSonnet4);
         Some(self.create_language_model(model, llm_api_token))
     }
 
@@ -291,8 +291,8 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     fn recommended_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let llm_api_token = self.state.read(cx).llm_api_token.clone();
         [
-            CloudModel::Anthropic(anthropic::Model::Claude3_7Sonnet),
-            CloudModel::Anthropic(anthropic::Model::Claude3_7SonnetThinking),
+            CloudModel::Anthropic(anthropic::Model::ClaudeSonnet4),
+            CloudModel::Anthropic(anthropic::Model::ClaudeSonnet4Thinking),
         ]
         .into_iter()
         .map(|model| self.create_language_model(model, llm_api_token.clone()))
