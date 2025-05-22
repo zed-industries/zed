@@ -123,7 +123,7 @@ Non-negative `float` values
 
 **Options**
 
-You can find the names of your currently installed extensions by listing the subfolders under the [extension installation location](./extensions/installing-extensions#installation-location):
+You can find the names of your currently installed extensions by listing the subfolders under the [extension installation location](./extensions/installing-extensions.md#installation-location):
 
 On MacOS:
 
