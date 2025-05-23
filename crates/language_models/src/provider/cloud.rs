@@ -273,7 +273,6 @@ impl State {
         let request = http_client::Request::builder()
             .method(Method::GET)
             .uri(http_client.build_zed_llm_url("/models", &[])?.as_ref())
-            .header("Content-Type", "application/json")
             .header("Authorization", format!("Bearer {token}"))
             .body(AsyncBody::empty())?;
         let mut response = http_client
