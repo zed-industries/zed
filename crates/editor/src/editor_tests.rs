@@ -3044,6 +3044,17 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
          */
          ˇtext
     "});
+
+        // Ensure if not comment block it doesn't
+        // add comment prefix on newline
+        cx.set_state(indoc! {"
+        * textˇ
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        * text
+        ˇ
+    "});
     }
     // Ensure that comment continuations can be disabled.
     update_test_language_settings(cx, |settings| {

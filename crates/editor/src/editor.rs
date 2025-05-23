@@ -4021,7 +4021,7 @@ impl Editor {
                                     .count();
 
                                 // It is safe to use a column from MultiBufferPoint in context of a single buffer ranges, because we're only ever looking at a single line at a time.
-                                let column = start_point.column as usize;
+                                let column = start_point.column;
                                 let cursor_is_after_start_tag = {
                                     let start_tag_len = start_tag.len();
                                     let start_tag_line = snapshot
@@ -4030,7 +4030,7 @@ impl Editor {
                                         .take(start_tag_len)
                                         .collect::<String>();
                                     if start_tag_line.starts_with(start_tag.as_ref()) {
-                                        num_of_whitespaces + start_tag_len <= column
+                                        num_of_whitespaces + start_tag_len <= column as usize
                                     } else {
                                         false
                                     }
@@ -4044,7 +4044,7 @@ impl Editor {
                                         .take(delimiter_trim.len())
                                         .collect::<String>();
                                     if delimiter_line.starts_with(delimiter_trim) {
-                                        num_of_whitespaces + delimiter_trim.len() <= column
+                                        num_of_whitespaces + delimiter_trim.len() <= column as usize
                                     } else {
                                         false
                                     }
