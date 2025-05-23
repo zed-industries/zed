@@ -18,7 +18,7 @@ use zed_llm_client::CompletionMode;
 pub struct LanguageModelImage {
     /// A base64-encoded PNG image.
     pub source: SharedString,
-    size: Size<DevicePixels>,
+    pub size: Size<DevicePixels>,
 }
 
 impl LanguageModelImage {
