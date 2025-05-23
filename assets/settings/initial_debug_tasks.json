@@ -25,8 +25,6 @@
     "adapter": "JavaScript",
     "request": "launch",
     "cwd": "$ZED_WORKTREE_ROOT",
-    "initialize_args": {
-      "console": "integratedTerminal"
-    }
+    "console": "integratedTerminal"
   }
 ]
