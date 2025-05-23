@@ -4005,6 +4005,13 @@ impl Editor {
                                     tab_size: len,
                                 } = language.documentation()?;
 
+                                let is_within_block_comment = buffer
+                                    .language_scope_at(start_point)
+                                    .is_some_and(|scope| scope.override_name() == Some("comment"));
+                                if !is_within_block_comment {
+                                    return None;
+                                }
+
                                 let (snapshot, range) =
                                     buffer.buffer_line_for_row(MultiBufferRow(start_point.row))?;
 
@@ -4013,6 +4020,8 @@ impl Editor {
                                     .take_while(|c| c.is_whitespace())
                                     .count();
 
+                                // It is safe to use a column from MultiBufferPoint in context of a single buffer ranges, because we're only ever looking at a single line at a time.
+                                let column = start_point.column;
                                 let cursor_is_after_start_tag = {
                                     let start_tag_len = start_tag.len();
                                     let start_tag_line = snapshot
@@ -4021,8 +4030,7 @@ impl Editor {
                                         .take(start_tag_len)
                                         .collect::<String>();
                                     if start_tag_line.starts_with(start_tag.as_ref()) {
-                                        num_of_whitespaces + start_tag_len
-                                            <= start_point.column as usize
+                                        num_of_whitespaces + start_tag_len <= column as usize
                                     } else {
                                         false
                                     }
@@ -4036,8 +4044,7 @@ impl Editor {
                                         .take(delimiter_trim.len())
                                         .collect::<String>();
                                     if delimiter_line.starts_with(delimiter_trim) {
-                                        num_of_whitespaces + delimiter_trim.len()
-                                            <= start_point.column as usize
+                                        num_of_whitespaces + delimiter_trim.len() <= column as usize
                                     } else {
                                         false
                                     }
@@ -4059,14 +4066,13 @@ impl Editor {
                                     }
 
                                     if let Some(end_tag_offset) = end_tag_offset {
-                                        let cursor_is_before_end_tag =
-                                            start_point.column <= end_tag_offset;
+                                        let cursor_is_before_end_tag = column <= end_tag_offset;
                                         if cursor_is_after_start_tag {
                                             if cursor_is_before_end_tag {
                                                 insert_extra_newline = true;
                                             }
                                             let cursor_is_at_start_of_end_tag =
-                                                start_point.column == end_tag_offset;
+                                                column == end_tag_offset;
                                             if cursor_is_at_start_of_end_tag {
                                                 indent_on_extra_newline.len = (*len).into();
                                             }
