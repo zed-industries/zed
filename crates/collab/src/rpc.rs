@@ -2748,6 +2748,7 @@ async fn make_update_user_plan_message(
     Ok(proto::UpdateUserPlan {
         plan: plan.into(),
         trial_started_at: billing_customer
+            .as_ref()
             .and_then(|billing_customer| billing_customer.trial_started_at)
             .map(|trial_started_at| trial_started_at.and_utc().timestamp() as u64),
         is_usage_based_billing_enabled: if is_staff {
@@ -2762,6 +2763,8 @@ async fn make_update_user_plan_message(
             }
         }),
         account_too_young: Some(account_too_young),
+        has_overdue_invoices: billing_customer
+            .map(|billing_customer| billing_customer.has_overdue_invoices),
         usage: usage.map(|usage| {
             let plan = match plan {
                 proto::Plan::Free => zed_llm_client::Plan::ZedFree,
@@ -4077,6 +4080,7 @@ async fn get_llm_api_token(
     let token = LlmTokenClaims::create(
         &user,
         session.is_staff(),
+        billing_customer,
         billing_preferences,
         &flags,
         billing_subscription,
