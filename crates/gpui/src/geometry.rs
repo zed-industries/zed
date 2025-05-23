@@ -378,6 +378,12 @@ impl<T: Clone + Default + Debug> Clone for Point<T> {
     }
 }
 
+impl<T: Default + Clone + Debug + Display> Display for Point<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "({}, {})", self.x, self.y)
+    }
+}
+
 /// A structure representing a two-dimensional size with width and height in a given unit.
 ///
 /// This struct is generic over the type `T`, which can be any type that implements `Clone`, `Default`, and `Debug`.
@@ -649,6 +655,12 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Size {{ {:?} × {:?} }}", self.width, self.height)
+    }
+}
+
+impl<T: Default + Clone + Debug + Display> Display for Size<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} × {}", self.width, self.height)
     }
 }
 
@@ -1503,6 +1515,18 @@ impl<T: PartialOrd + Default + Debug + Clone> Bounds<T> {
     /// Returns `true` if either the width or the height of the bounds is less than or equal to zero, indicating an empty area.
     pub fn is_empty(&self) -> bool {
         self.size.width <= T::default() || self.size.height <= T::default()
+    }
+}
+
+impl<T: Default + Clone + Debug + Display + Add<T, Output = T>> Display for Bounds<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} - {} (size {})",
+            self.origin,
+            self.bottom_right(),
+            self.size
+        )
     }
 }
 
@@ -2544,7 +2568,7 @@ impl MulAssign<f32> for Pixels {
     }
 }
 
-impl std::fmt::Display for Pixels {
+impl Display for Pixels {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}px", self.0)
     }
@@ -2888,7 +2912,7 @@ impl Ord for ScaledPixels {
 
 impl Debug for ScaledPixels {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} px (scaled)", self.0)
+        write!(f, "{}px (scaled)", self.0)
     }
 }
 
@@ -3010,7 +3034,7 @@ impl Mul<Pixels> for Rems {
     }
 }
 
-impl std::fmt::Display for Rems {
+impl Display for Rems {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}rem", self.0)
     }

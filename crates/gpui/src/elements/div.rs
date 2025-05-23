@@ -1220,6 +1220,10 @@ pub struct DivInspectorState {
     /// the modifications.
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub base_style: Box<StyleRefinement>,
+    /// Inspects the bounds of the element.
+    pub bounds: Bounds<Pixels>,
+    /// Size of the children of the element, or `bounds.size` if it has no children.
+    pub content_size: Size<Pixels>,
 }
 
 impl Styled for Div {
@@ -1475,6 +1479,8 @@ impl Interactivity {
                 } else {
                     *inspector_state = Some(DivInspectorState {
                         base_style: self.base_style.clone(),
+                        bounds: Default::default(),
+                        content_size: Default::default(),
                     })
                 }
             },
@@ -1547,6 +1553,19 @@ impl Interactivity {
         f: impl FnOnce(&Style, Point<Pixels>, Option<Hitbox>, &mut Window, &mut App) -> R,
     ) -> R {
         self.content_size = content_size;
+
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        window.with_inspector_state(
+            _inspector_id,
+            cx,
+            |inspector_state: &mut Option<DivInspectorState>, _window| {
+                if let Some(inspector_state) = inspector_state {
+                    inspector_state.bounds = bounds.clone();
+                    inspector_state.content_size = content_size.clone();
+                }
+            },
+        );
+
         if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
             window.set_focus_handle(focus_handle, cx);
         }

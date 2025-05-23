@@ -8,8 +8,7 @@ use language::Buffer;
 use language::language_settings::SoftWrap;
 use project::{Project, ProjectPath};
 use std::path::Path;
-use ui::prelude::*;
-use ui::{Label, LabelSize, v_flex};
+use ui::{Label, LabelSize, Tooltip, prelude::*, v_flex};
 
 /// Path used for unsaved buffer that contains style json. To support the json lanugage server, this
 /// matches the name used in the generated schemas.
@@ -17,7 +16,8 @@ const ZED_INSPECTOR_STYLE_PATH: &str = "/zed-inspector-style.json";
 
 pub(crate) struct DivInspector {
     project: Entity<Project>,
-    last_id: Option<InspectorElementId>,
+    inspector_id: Option<InspectorElementId>,
+    state: Option<DivInspectorState>,
     style_buffer: Option<Entity<Buffer>>,
     style_editor: Option<Entity<Editor>>,
     last_error: Option<SharedString>,
@@ -38,7 +38,8 @@ impl DivInspector {
 
         DivInspector {
             project,
-            last_id: None,
+            inspector_id: None,
+            state: None,
             style_buffer: None,
             style_editor: None,
             last_error: None,
@@ -72,13 +73,11 @@ impl DivInspector {
 
         this.update_in(cx, |this, window, cx| {
             this.style_buffer = Some(style_buffer);
-            // TODO: Avoid clone somehow
-            if let Some(id) = this.last_id.clone() {
-                // todo! Avoid cloning state by making this not need `cx`.
+            if let Some(id) = this.inspector_id.clone() {
                 let state =
                     window.with_inspector_state(Some(&id), cx, |state, _window| state.clone());
                 if let Some(state) = state {
-                    this.update_inspected_element(&id, &state, window, cx);
+                    this.update_inspected_element(&id, state, window, cx);
                 }
             }
         })?;
@@ -89,19 +88,23 @@ impl DivInspector {
     pub fn update_inspected_element(
         &mut self,
         id: &InspectorElementId,
-        state: &DivInspectorState,
+        state: DivInspectorState,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.last_id.as_ref() == Some(id) {
+        let base_style_json = serde_json::to_string_pretty(&state.base_style);
+        self.state = Some(state);
+
+        if self.inspector_id.as_ref() == Some(id) {
             return;
+        } else {
+            self.inspector_id = Some(id.clone());
         }
         let Some(style_buffer) = self.style_buffer.clone() else {
             return;
         };
-        self.last_id = Some(id.clone());
 
-        let base_style_json = match serde_json::to_string_pretty(&state.base_style) {
+        let base_style_json = match base_style_json {
             Ok(base_style_json) => base_style_json,
             Err(err) => {
                 self.style_editor = None;
@@ -168,24 +171,47 @@ impl DivInspector {
 
 impl Render for DivInspector {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if let Some(style_editor) = self.style_editor.as_ref() {
-            v_flex()
-                .size_full()
-                .gap_2()
-                .child(Label::new("Style").size(LabelSize::Large))
-                .child(div().h_128().child(style_editor.clone()))
-                .when_some(self.last_error.as_ref(), |this, last_error| {
-                    this.child(
-                        div()
-                            .w_full()
-                            .border_1()
-                            .border_color(Color::Error.color(cx))
-                            .child(Label::new(last_error)),
-                    )
-                })
-                .into_any_element()
-        } else {
-            Label::new("Loading...").into_any_element()
-        }
+        v_flex()
+            .size_full()
+            .gap_2()
+            .when_some(self.state.as_ref(), |this, state| {
+                this.child(Label::new("Layout").size(LabelSize::Large))
+                    .child(render_layout_state(state, cx))
+            })
+            .when_some(self.style_editor.as_ref(), |this, style_editor| {
+                this.child(Label::new("Style").size(LabelSize::Large))
+                    .child(div().h_128().child(style_editor.clone()))
+                    .when_some(self.last_error.as_ref(), |this, last_error| {
+                        this.child(
+                            div()
+                                .w_full()
+                                .border_1()
+                                .border_color(Color::Error.color(cx))
+                                .child(Label::new(last_error)),
+                        )
+                    })
+            })
+            .when_none(&self.style_editor, |this| {
+                this.child(Label::new("Loading..."))
+            })
+            .into_any_element()
     }
+}
+
+fn render_layout_state(state: &DivInspectorState, cx: &App) -> Div {
+    v_flex()
+        .child(
+            div()
+                .text_ui_sm(cx)
+                .child(format!("Bounds: {}", state.bounds)),
+        )
+        .when(state.content_size != state.bounds.size, |this| {
+            this.child(
+                div()
+                    .id("content-size")
+                    .text_ui_sm(cx)
+                    .tooltip(Tooltip::text("Size of the element's children"))
+                    .child(format!("Content size: {}", state.content_size)),
+            )
+        })
 }

@@ -1,5 +1,5 @@
 use anyhow::{Context as _, anyhow};
-use gpui::{App, InspectorElementId, IntoElement, Window};
+use gpui::{App, DivInspectorState, InspectorElementId, IntoElement, Window};
 use std::{cell::OnceCell, path::Path, sync::Arc};
 use ui::{Label, Tooltip, prelude::*};
 use util::{ResultExt as _, command::new_smol_command};
@@ -8,6 +8,9 @@ use workspace::AppState;
 use crate::div_inspector::DivInspector;
 
 // TODO: Show bounds / size info. On hover, highlight element
+//
+// TODO: Elements that are no longer rendering will still appear in the inspector. This isn't really
+// a bug, but would be good to surface this.
 //
 // TODO: Keep around changed element state, instead of only supporting modification of a single
 // element. Probably makes sense to surface this in the inspector UI as a list of elements that have
@@ -64,11 +67,11 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     );
 
     let div_inspector = OnceCell::new();
-    cx.register_inspector_element(move |id, state, window, cx| {
+    cx.register_inspector_element(move |id, state: &DivInspectorState, window, cx| {
         let div_inspector = div_inspector
             .get_or_init(|| cx.new(|cx| DivInspector::new(project.clone(), window, cx)));
         div_inspector.update(cx, |div_inspector, cx| {
-            div_inspector.update_inspected_element(&id, state, window, cx);
+            div_inspector.update_inspected_element(&id, state.clone(), window, cx);
             div_inspector.render(window, cx).into_any_element()
         })
     });
@@ -122,9 +125,7 @@ fn render_inspector(
             let source_location = inspector_id.path.source_location;
             this.child(
                 v_flex()
-                    .pb_2()
-                    .border_b_1()
-                    .border_color(colors.border_variant)
+                    .child(Label::new("Element ID").size(LabelSize::Large))
                     .child(
                         div()
                             .text_ui_sm(cx)
@@ -137,7 +138,9 @@ fn render_inspector(
                             .bg(colors.editor_foreground.opacity(0.025))
                             .underline()
                             .child(format!("{}", source_location))
-                            .tooltip(Tooltip::text("Run Zed cli to open this source location"))
+                            .tooltip(Tooltip::text(
+                                "Open this source location by running zed cli",
+                            ))
                             .on_click(move |_, _window, cx| {
                                 cx.background_spawn(open_zed_source_location(source_location))
                                     .detach_and_log_err(cx);
@@ -149,17 +152,7 @@ fn render_inspector(
                     ),
             )
         })
-        .children(
-            rendered_inspector_states
-                .into_iter()
-                .map(|e| {
-                    div()
-                        .child(e)
-                        .border_b_1()
-                        .border_color(colors.border_variant)
-                })
-                .collect::<Vec<_>>(),
-        )
+        .children(rendered_inspector_states)
 }
 
 // TODO: Move to some other crate (along with build.rs) and also use this in error notifications.
