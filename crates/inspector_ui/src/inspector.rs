@@ -9,6 +9,9 @@ use crate::div_inspector::DivInspector;
 
 // TODO: Show bounds / size info. On hover, highlight element
 //
+// TODO: instance_id disambiguation is broken with caching if the cached element doesn't have an
+// ElementId.
+//
 // TODO: Elements that are no longer rendering will still appear in the inspector. This isn't really
 // a bug, but would be good to surface this.
 //
@@ -93,15 +96,12 @@ fn render_inspector(
         .bg(colors.panel_background)
         .text_color(colors.text)
         .font(ui_font)
-        .p_2()
-        .gap_2()
         .border_l_1()
         .border_color(colors.border)
         .overflow_y_scroll()
         .child(
             h_flex()
-                .w_full()
-                .pb_2()
+                .p_2()
                 .border_b_1()
                 .border_color(colors.border_variant)
                 .child(
@@ -115,44 +115,60 @@ fn render_inspector(
                         }),
                 )
                 .child(
-                    h_flex()
-                        .w_full()
-                        .justify_end()
+                    div()
+                        .pl_2()
                         .child(Label::new("GPUI Inspector").size(LabelSize::Large)),
                 ),
         )
-        .when_some(inspector_id, |this, inspector_id| {
-            let source_location = inspector_id.path.source_location;
+        .child(
+            v_flex()
+                .p_2()
+                .gap_2()
+                .when_some(inspector_id, |this, inspector_id| {
+                    this.child(render_inspector_id(inspector_id, cx))
+                })
+                .children(rendered_inspector_states),
+        )
+}
+
+fn render_inspector_id(inspector_id: &InspectorElementId, cx: &App) -> Div {
+    let source_location = inspector_id.path.source_location;
+    v_flex()
+        .child(Label::new("Element ID").size(LabelSize::Large))
+        .when(inspector_id.instance_id != 0, |this| {
             this.child(
-                v_flex()
-                    .child(Label::new("Element ID").size(LabelSize::Large))
-                    .child(
-                        div()
-                            .text_ui_sm(cx)
-                            .child(inspector_id.path.global_id.to_string()),
-                    )
-                    .child(
-                        div()
-                            .id("source-location")
-                            .text_ui_sm(cx)
-                            .bg(colors.editor_foreground.opacity(0.025))
-                            .underline()
-                            .child(format!("{}", source_location))
-                            .tooltip(Tooltip::text(
-                                "Open this source location by running zed cli",
-                            ))
-                            .on_click(move |_, _window, cx| {
-                                cx.background_spawn(open_zed_source_location(source_location))
-                                    .detach_and_log_err(cx);
-                            }),
-                    )
-                    .child(
-                        Label::new(format!("Instance {}", inspector_id.instance_id))
-                            .size(LabelSize::Small),
-                    ),
+                div()
+                    .id("instance-id")
+                    .text_ui(cx)
+                    .tooltip(Tooltip::text(
+                        "Disambiguates elements from the same source location",
+                    ))
+                    .child(format!("Instance {}", inspector_id.instance_id)),
             )
         })
-        .children(rendered_inspector_states)
+        .child(
+            div()
+                .id("source-location")
+                .text_ui(cx)
+                .bg(cx.theme().colors().editor_foreground.opacity(0.025))
+                .underline()
+                .child(format!("{}", source_location))
+                .tooltip(Tooltip::text("Click to open by running zed cli"))
+                .on_click(move |_, _window, cx| {
+                    cx.background_spawn(open_zed_source_location(source_location))
+                        .detach_and_log_err(cx);
+                }),
+        )
+        .child(
+            div()
+                .id("global-id")
+                .text_ui(cx)
+                .min_h_12()
+                .tooltip(Tooltip::text(
+                    "GlobalElementId of the nearest ancestor with an ID",
+                ))
+                .child(inspector_id.path.global_id.to_string()),
+        )
 }
 
 // TODO: Move to some other crate (along with build.rs) and also use this in error notifications.

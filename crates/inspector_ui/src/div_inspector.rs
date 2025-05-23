@@ -175,21 +175,28 @@ impl Render for DivInspector {
             .size_full()
             .gap_2()
             .when_some(self.state.as_ref(), |this, state| {
-                this.child(Label::new("Layout").size(LabelSize::Large))
-                    .child(render_layout_state(state, cx))
+                this.child(
+                    v_flex()
+                        .child(Label::new("Layout").size(LabelSize::Large))
+                        .child(render_layout_state(state, cx)),
+                )
             })
             .when_some(self.style_editor.as_ref(), |this, style_editor| {
-                this.child(Label::new("Style").size(LabelSize::Large))
-                    .child(div().h_128().child(style_editor.clone()))
-                    .when_some(self.last_error.as_ref(), |this, last_error| {
-                        this.child(
-                            div()
-                                .w_full()
-                                .border_1()
-                                .border_color(Color::Error.color(cx))
-                                .child(Label::new(last_error)),
-                        )
-                    })
+                this.child(
+                    v_flex()
+                        .gap_2()
+                        .child(Label::new("Style").size(LabelSize::Large))
+                        .child(div().h_128().child(style_editor.clone()))
+                        .when_some(self.last_error.as_ref(), |this, last_error| {
+                            this.child(
+                                div()
+                                    .w_full()
+                                    .border_1()
+                                    .border_color(Color::Error.color(cx))
+                                    .child(Label::new(last_error)),
+                            )
+                        }),
+                )
             })
             .when_none(&self.style_editor, |this| {
                 this.child(Label::new("Loading..."))
@@ -200,16 +207,12 @@ impl Render for DivInspector {
 
 fn render_layout_state(state: &DivInspectorState, cx: &App) -> Div {
     v_flex()
-        .child(
-            div()
-                .text_ui_sm(cx)
-                .child(format!("Bounds: {}", state.bounds)),
-        )
+        .child(div().text_ui(cx).child(format!("Bounds: {}", state.bounds)))
         .when(state.content_size != state.bounds.size, |this| {
             this.child(
                 div()
                     .id("content-size")
-                    .text_ui_sm(cx)
+                    .text_ui(cx)
                     .tooltip(Tooltip::text("Size of the element's children"))
                     .child(format!("Content size: {}", state.content_size)),
             )
