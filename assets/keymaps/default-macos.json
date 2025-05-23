@@ -1,15 +1,4 @@
 [
-  // Moved before Standard macOS bindings so that `cmd-w` is not the last binding for
-  // `workspace::CloseWindow` and displayed/intercepted by macOS
-  {
-    "context": "PromptLibrary",
-    "use_key_equivalents": true,
-    "bindings": {
-      "cmd-n": "rules_library::NewRule",
-      "cmd-shift-s": "rules_library::ToggleDefaultRule",
-      "cmd-w": "workspace::CloseWindow"
-    }
-  },
   // Standard macOS bindings
   {
     "use_key_equivalents": true,
@@ -17,6 +6,7 @@
       "f4": "debugger::Start",
       "f5": "debugger::Continue",
       "shift-f5": "debugger::Stop",
+      "shift-cmd-f5": "debugger::Restart",
       "f6": "debugger::Pause",
       "f7": "debugger::StepOver",
       "f11": "debugger::StepInto",
@@ -380,6 +370,15 @@
     }
   },
   {
+    "context": "PromptLibrary",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-n": "rules_library::NewRule",
+      "cmd-shift-s": "rules_library::ToggleDefaultRule",
+      "cmd-w": "workspace::CloseWindow"
+    }
+  },
+  {
     "context": "BufferSearchBar",
     "use_key_equivalents": true,
     "bindings": {
@@ -624,6 +623,7 @@
       "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-shift-b": "outline_panel::ToggleFocus",
       "ctrl-shift-g": "git_panel::ToggleFocus",
+      "cmd-shift-d": "debug_panel::ToggleFocus",
       "cmd-?": "agent::ToggleFocus",
       "cmd-alt-s": "workspace::SaveAll",
       "cmd-k m": "language_selector::Toggle",
@@ -927,6 +927,13 @@
       "cmd-enter": "git::Commit",
       "cmd-shift-enter": "git::Amend",
       "alt-tab": "git::GenerateCommitMessage"
+    }
+  },
+  {
+    "context": "DebugPanel",
+    "bindings": {
+      "cmd-t": "debugger::ToggleThreadPicker",
+      "cmd-i": "debugger::ToggleSessionPicker"
     }
   },
   {

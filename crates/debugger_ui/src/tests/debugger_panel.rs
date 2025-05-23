@@ -24,14 +24,12 @@ use project::{
 };
 use serde_json::json;
 use std::{
-    collections::HashMap,
     path::Path,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
 };
-use task::LaunchRequest;
 use terminal_view::terminal_panel::TerminalPanel;
 use tests::{active_debug_session_panel, init_test, init_test_workspace};
 use util::path;
@@ -425,6 +423,13 @@ async fn test_handle_start_debugging_request(
         }
     });
 
+    let sessions = workspace
+        .update(cx, |workspace, _window, cx| {
+            let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+            debug_panel.read(cx).sessions()
+        })
+        .unwrap();
+    assert_eq!(sessions.len(), 1);
     client
         .fake_reverse_request::<StartDebugging>(StartDebuggingRequestArguments {
             request: StartDebuggingRequestArgumentsRequest::Launch,
@@ -437,20 +442,42 @@ async fn test_handle_start_debugging_request(
     workspace
         .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+
+            // Active session does not change on spawn.
             let active_session = debug_panel
                 .read(cx)
                 .active_session()
                 .unwrap()
                 .read(cx)
                 .session(cx);
-            let parent_session = active_session.read(cx).parent_session().unwrap();
+
+            assert_eq!(active_session, sessions[0].read(cx).session(cx));
+            assert!(active_session.read(cx).parent_session().is_none());
+
+            let current_sessions = debug_panel.read(cx).sessions();
+            assert_eq!(current_sessions.len(), 2);
+            assert_eq!(current_sessions[0], sessions[0]);
+
+            let parent_session = current_sessions[1]
+                .read(cx)
+                .session(cx)
+                .read(cx)
+                .parent_session()
+                .unwrap();
+            assert_eq!(parent_session, &sessions[0].read(cx).session(cx));
+
+            // We should preserve the original binary (params to spawn process etc.) except for launch params
+            // (as they come from reverse spawn request).
             let mut original_binary = parent_session.read(cx).binary().clone();
             original_binary.request_args = StartDebuggingRequestArguments {
                 request: StartDebuggingRequestArgumentsRequest::Launch,
                 configuration: fake_config.clone(),
             };
 
-            assert_eq!(active_session.read(cx).binary(), &original_binary);
+            assert_eq!(
+                current_sessions[1].read(cx).session(cx).read(cx).binary(),
+                &original_binary
+            );
         })
         .unwrap();
 
@@ -1388,16 +1415,15 @@ async fn test_we_send_arguments_from_user_config(
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let debug_definition = DebugTaskDefinition {
         adapter: "fake-adapter".into(),
-        request: dap::DebugRequest::Launch(LaunchRequest {
-            program: "main.rs".to_owned(),
-            args: vec!["arg1".to_owned(), "arg2".to_owned()],
-            cwd: Some(path!("/Random_path").into()),
-            env: HashMap::from_iter(vec![("KEY".to_owned(), "VALUE".to_owned())]),
+        config: json!({
+            "request": "launch",
+            "program": "main.rs".to_owned(),
+            "args": vec!["arg1".to_owned(), "arg2".to_owned()],
+            "cwd": path!("/Random_path"),
+            "env": json!({ "KEY": "VALUE" }),
         }),
         label: "test".into(),
-        initialize_args: None,
         tcp_connection: None,
-        stop_on_entry: None,
     };
 
     let launch_handler_called = Arc::new(AtomicBool::new(false));

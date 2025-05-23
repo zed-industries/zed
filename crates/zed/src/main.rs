@@ -519,6 +519,7 @@ fn main() {
             app_state.client.clone(),
             prompt_builder.clone(),
             app_state.languages.clone(),
+            false,
             cx,
         );
         assistant_tools::init(app_state.client.http_client(), cx);

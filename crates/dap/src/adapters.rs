@@ -1,5 +1,5 @@
 use ::fs::Fs;
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
@@ -22,7 +22,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{AttachRequest, DebugRequest, DebugScenario, LaunchRequest, TcpArgumentsTemplate};
+use task::{DebugScenario, TcpArgumentsTemplate, ZedDebugConfig};
 use util::archive::extract_zip;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -131,13 +131,12 @@ impl TcpArguments {
     derive(serde::Deserialize, serde::Serialize)
 )]
 pub struct DebugTaskDefinition {
+    /// The name of this debug task
     pub label: SharedString,
+    /// The debug adapter to use
     pub adapter: DebugAdapterName,
-    pub request: DebugRequest,
-    /// Additional initialization arguments to be sent on DAP initialization
-    pub initialize_args: Option<serde_json::Value>,
-    /// Whether to tell the debug adapter to stop on entry
-    pub stop_on_entry: Option<bool>,
+    /// The configuration to send to the debug adapter
+    pub config: serde_json::Value,
     /// Optional TCP connection information
     ///
     /// If provided, this will be used to connect to the debug adapter instead of
@@ -147,86 +146,34 @@ pub struct DebugTaskDefinition {
 }
 
 impl DebugTaskDefinition {
-    pub fn cwd(&self) -> Option<&Path> {
-        if let DebugRequest::Launch(config) = &self.request {
-            config.cwd.as_ref().map(Path::new)
-        } else {
-            None
-        }
-    }
-
     pub fn to_scenario(&self) -> DebugScenario {
         DebugScenario {
             label: self.label.clone(),
             adapter: self.adapter.clone().into(),
             build: None,
-            request: Some(self.request.clone()),
-            stop_on_entry: self.stop_on_entry,
             tcp_connection: self.tcp_connection.clone(),
-            initialize_args: self.initialize_args.clone(),
+            config: self.config.clone(),
         }
     }
 
     pub fn to_proto(&self) -> proto::DebugTaskDefinition {
         proto::DebugTaskDefinition {
-            adapter: self.adapter.to_string(),
-            request: Some(match &self.request {
-                DebugRequest::Launch(config) => {
-                    proto::debug_task_definition::Request::DebugLaunchRequest(
-                        proto::DebugLaunchRequest {
-                            program: config.program.clone(),
-                            cwd: config.cwd.as_ref().map(|c| c.to_string_lossy().to_string()),
-                            args: config.args.clone(),
-                            env: config
-                                .env
-                                .iter()
-                                .map(|(k, v)| (k.clone(), v.clone()))
-                                .collect(),
-                        },
-                    )
-                }
-                DebugRequest::Attach(attach_request) => {
-                    proto::debug_task_definition::Request::DebugAttachRequest(
-                        proto::DebugAttachRequest {
-                            process_id: attach_request.process_id.unwrap_or_default(),
-                        },
-                    )
-                }
-            }),
-            label: self.label.to_string(),
-            initialize_args: self.initialize_args.as_ref().map(|v| v.to_string()),
-            tcp_connection: self.tcp_connection.as_ref().map(|t| t.to_proto()),
-            stop_on_entry: self.stop_on_entry,
+            label: self.label.clone().into(),
+            config: self.config.to_string(),
+            tcp_connection: self.tcp_connection.clone().map(|v| v.to_proto()),
+            adapter: self.adapter.clone().0.into(),
         }
     }
 
     pub fn from_proto(proto: proto::DebugTaskDefinition) -> Result<Self> {
-        let request = proto.request.context("request is required")?;
         Ok(Self {
             label: proto.label.into(),
-            initialize_args: proto.initialize_args.map(|v| v.into()),
+            config: serde_json::from_str(&proto.config)?,
             tcp_connection: proto
                 .tcp_connection
                 .map(TcpArgumentsTemplate::from_proto)
                 .transpose()?,
-            stop_on_entry: proto.stop_on_entry,
             adapter: DebugAdapterName(proto.adapter.into()),
-            request: match request {
-                proto::debug_task_definition::Request::DebugAttachRequest(config) => {
-                    DebugRequest::Attach(AttachRequest {
-                        process_id: Some(config.process_id),
-                    })
-                }
-
-                proto::debug_task_definition::Request::DebugLaunchRequest(config) => {
-                    DebugRequest::Launch(LaunchRequest {
-                        program: config.program,
-                        cwd: config.cwd.map(|cwd| cwd.into()),
-                        args: config.args,
-                        env: Default::default(),
-                    })
-                }
-            },
         })
     }
 }
@@ -407,6 +354,8 @@ pub async fn fetch_latest_adapter_version_from_github(
 pub trait DebugAdapter: 'static + Send + Sync {
     fn name(&self) -> DebugAdapterName;
 
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario>;
+
     async fn get_binary(
         &self,
         delegate: &Arc<dyn DapDelegate>,
@@ -419,6 +368,26 @@ pub trait DebugAdapter: 'static + Send + Sync {
     fn adapter_language_name(&self) -> Option<LanguageName> {
         None
     }
+
+    fn validate_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<StartDebuggingRequestArgumentsRequest> {
+        let map = config.as_object().context("Config isn't an object")?;
+
+        let request_variant = map
+            .get("request")
+            .and_then(|val| val.as_str())
+            .context("request argument is not found or invalid")?;
+
+        match request_variant {
+            "launch" => Ok(StartDebuggingRequestArgumentsRequest::Launch),
+            "attach" => Ok(StartDebuggingRequestArgumentsRequest::Attach),
+            _ => Err(anyhow!("request must be either 'launch' or 'attach'")),
+        }
+    }
+
+    async fn dap_schema(&self) -> serde_json::Value;
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -432,29 +401,29 @@ impl FakeAdapter {
         Self {}
     }
 
-    fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
+    fn request_args(
+        &self,
+        task_definition: &DebugTaskDefinition,
+    ) -> StartDebuggingRequestArguments {
         use serde_json::json;
-        use task::DebugRequest;
+
+        let obj = task_definition.config.as_object().unwrap();
+
+        let request_variant = obj["request"].as_str().unwrap();
 
         let value = json!({
-            "request": match config.request {
-                DebugRequest::Launch(_) => "launch",
-                DebugRequest::Attach(_) => "attach",
-            },
-            "process_id": if let DebugRequest::Attach(attach_config) = &config.request {
-                attach_config.process_id
-            } else {
-                None
-            },
-            "raw_request": serde_json::to_value(config).unwrap()
+            "request": request_variant,
+            "process_id": obj.get("process_id"),
+            "raw_request": serde_json::to_value(task_definition).unwrap()
         });
-        let request = match config.request {
-            DebugRequest::Launch(_) => dap_types::StartDebuggingRequestArgumentsRequest::Launch,
-            DebugRequest::Attach(_) => dap_types::StartDebuggingRequestArgumentsRequest::Attach,
-        };
+
         StartDebuggingRequestArguments {
             configuration: value,
-            request,
+            request: match request_variant {
+                "launch" => dap_types::StartDebuggingRequestArgumentsRequest::Launch,
+                "attach" => dap_types::StartDebuggingRequestArgumentsRequest::Attach,
+                _ => unreachable!("Wrong fake adapter input for request field"),
+            },
         }
     }
 }
@@ -464,6 +433,41 @@ impl FakeAdapter {
 impl DebugAdapter for FakeAdapter {
     fn name(&self) -> DebugAdapterName {
         DebugAdapterName(Self::ADAPTER_NAME.into())
+    }
+
+    async fn dap_schema(&self) -> serde_json::Value {
+        serde_json::Value::Null
+    }
+
+    fn validate_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<StartDebuggingRequestArgumentsRequest> {
+        let request = config.as_object().unwrap()["request"].as_str().unwrap();
+
+        let request = match request {
+            "launch" => dap_types::StartDebuggingRequestArgumentsRequest::Launch,
+            "attach" => dap_types::StartDebuggingRequestArgumentsRequest::Attach,
+            _ => unreachable!("Wrong fake adapter input for request field"),
+        };
+
+        Ok(request)
+    }
+
+    fn adapter_language_name(&self) -> Option<LanguageName> {
+        None
+    }
+
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
+        let config = serde_json::to_value(zed_scenario.request).unwrap();
+
+        Ok(DebugScenario {
+            adapter: zed_scenario.adapter,
+            label: zed_scenario.label,
+            build: None,
+            config,
+            tcp_connection: None,
+        })
     }
 
     async fn get_binary(
@@ -479,7 +483,7 @@ impl DebugAdapter for FakeAdapter {
             connection: None,
             envs: HashMap::default(),
             cwd: None,
-            request_args: self.request_args(config),
+            request_args: self.request_args(&config),
         })
     }
 }

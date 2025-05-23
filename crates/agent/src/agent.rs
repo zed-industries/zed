@@ -117,6 +117,7 @@ pub fn init(
     client: Arc<Client>,
     prompt_builder: Arc<PromptBuilder>,
     language_registry: Arc<LanguageRegistry>,
+    is_eval: bool,
     cx: &mut App,
 ) {
     AssistantSettings::register(cx);
@@ -124,7 +125,11 @@ pub fn init(
 
     assistant_context_editor::init(client.clone(), cx);
     rules_library::init(cx);
-    init_language_model_settings(cx);
+    if !is_eval {
+        // Initializing the language model from the user settings messes with the eval, so we only initialize them when
+        // we're not running inside of the eval.
+        init_language_model_settings(cx);
+    }
     assistant_slash_command::init(cx);
     thread_store::init(cx);
     agent_panel::init(cx);

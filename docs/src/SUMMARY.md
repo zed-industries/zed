@@ -32,6 +32,7 @@
 - [Channels](./channels.md)
 - [Collaboration](./collaboration.md)
 - [Git](./git.md)
+- [Debugging (Beta)](./debugger.md)
 - [Tasks](./tasks.md)
 - [Remote Development](./remote-development.md)
 - [Environment Variables](./environment.md)

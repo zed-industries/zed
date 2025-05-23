@@ -195,10 +195,7 @@ impl DapStore {
                     .and_then(|s| s.binary.as_ref().map(PathBuf::from));
 
                 let delegate = self.delegate(&worktree, console, cx);
-                let cwd: Arc<Path> = definition
-                    .cwd()
-                    .unwrap_or(worktree.read(cx).abs_path().as_ref())
-                    .into();
+                let cwd: Arc<Path> = worktree.read(cx).abs_path().as_ref().into();
 
                 cx.spawn(async move |this, cx| {
                     let mut binary = adapter
@@ -416,9 +413,7 @@ impl DapStore {
                     })?
                     .await?;
 
-                if let Some(args) = definition.initialize_args {
-                    merge_json_value_into(args, &mut binary.request_args.configuration);
-                }
+                merge_json_value_into(definition.config, &mut binary.request_args.configuration);
 
                 session
                     .update(cx, |session, cx| {

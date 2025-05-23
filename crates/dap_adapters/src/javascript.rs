@@ -1,6 +1,9 @@
 use adapters::latest_github_release;
-use anyhow::Context as _;
-use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
+use anyhow::{Context as _, anyhow};
+use dap::{
+    StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
+    adapters::DebugTaskDefinition,
+};
 use gpui::AsyncApp;
 use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 use task::DebugRequest;
@@ -17,43 +20,6 @@ impl JsDebugAdapter {
     const ADAPTER_NAME: &'static str = "JavaScript";
     const ADAPTER_NPM_NAME: &'static str = "vscode-js-debug";
     const ADAPTER_PATH: &'static str = "js-debug/src/dapDebugServer.js";
-
-    fn request_args(&self, config: &DebugTaskDefinition) -> StartDebuggingRequestArguments {
-        let mut args = json!({
-            "type": "pwa-node",
-            "request": match config.request {
-                DebugRequest::Launch(_) => "launch",
-                DebugRequest::Attach(_) => "attach",
-            },
-        });
-        let map = args.as_object_mut().unwrap();
-        match &config.request {
-            DebugRequest::Attach(attach) => {
-                map.insert("processId".into(), attach.process_id.into());
-            }
-            DebugRequest::Launch(launch) => {
-                map.insert("program".into(), launch.program.clone().into());
-
-                if !launch.args.is_empty() {
-                    map.insert("args".into(), launch.args.clone().into());
-                }
-                if !launch.env.is_empty() {
-                    map.insert("env".into(), launch.env_json());
-                }
-
-                if let Some(stop_on_entry) = config.stop_on_entry {
-                    map.insert("stopOnEntry".into(), stop_on_entry.into());
-                }
-                if let Some(cwd) = launch.cwd.as_ref() {
-                    map.insert("cwd".into(), cwd.to_string_lossy().into_owned().into());
-                }
-            }
-        }
-        StartDebuggingRequestArguments {
-            configuration: args,
-            request: config.request.to_dap(),
-        }
-    }
 
     async fn fetch_latest_adapter_version(
         &self,
@@ -84,7 +50,7 @@ impl JsDebugAdapter {
     async fn get_installed_binary(
         &self,
         delegate: &Arc<dyn DapDelegate>,
-        config: &DebugTaskDefinition,
+        task_definition: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
@@ -102,7 +68,7 @@ impl JsDebugAdapter {
             .context("Couldn't find JavaScript dap directory")?
         };
 
-        let tcp_connection = config.tcp_connection.clone().unwrap_or_default();
+        let tcp_connection = task_definition.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
         Ok(DebugAdapterBinary {
@@ -120,14 +86,17 @@ impl JsDebugAdapter {
                 port.to_string(),
                 host.to_string(),
             ],
-            cwd: None,
+            cwd: Some(delegate.worktree_root_path().to_path_buf()),
             envs: HashMap::default(),
             connection: Some(adapters::TcpArguments {
                 host,
                 port,
                 timeout,
             }),
-            request_args: self.request_args(config),
+            request_args: StartDebuggingRequestArguments {
+                configuration: task_definition.config.clone(),
+                request: self.validate_config(&task_definition.config)?,
+            },
         })
     }
 }
@@ -136,6 +105,322 @@ impl JsDebugAdapter {
 impl DebugAdapter for JsDebugAdapter {
     fn name(&self) -> DebugAdapterName {
         DebugAdapterName(Self::ADAPTER_NAME.into())
+    }
+
+    fn validate_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<dap::StartDebuggingRequestArgumentsRequest> {
+        match config.get("request") {
+            Some(val) if val == "launch" => {
+                if config.get("program").is_none() {
+                    return Err(anyhow!("program is required"));
+                }
+                Ok(StartDebuggingRequestArgumentsRequest::Launch)
+            }
+            Some(val) if val == "attach" => {
+                if !config.get("processId").is_some_and(|val| val.is_u64()) {
+                    return Err(anyhow!("processId must be a number"));
+                }
+                Ok(StartDebuggingRequestArgumentsRequest::Attach)
+            }
+            _ => Err(anyhow!("missing or invalid request field in config")),
+        }
+    }
+
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
+        let mut args = json!({
+            "type": "pwa-node",
+            "request": match zed_scenario.request {
+                DebugRequest::Launch(_) => "launch",
+                DebugRequest::Attach(_) => "attach",
+            },
+        });
+
+        let map = args.as_object_mut().unwrap();
+        match &zed_scenario.request {
+            DebugRequest::Attach(attach) => {
+                map.insert("processId".into(), attach.process_id.into());
+            }
+            DebugRequest::Launch(launch) => {
+                map.insert("program".into(), launch.program.clone().into());
+
+                if !launch.args.is_empty() {
+                    map.insert("args".into(), launch.args.clone().into());
+                }
+                if !launch.env.is_empty() {
+                    map.insert("env".into(), launch.env_json());
+                }
+
+                if let Some(stop_on_entry) = zed_scenario.stop_on_entry {
+                    map.insert("stopOnEntry".into(), stop_on_entry.into());
+                }
+                if let Some(cwd) = launch.cwd.as_ref() {
+                    map.insert("cwd".into(), cwd.to_string_lossy().into_owned().into());
+                }
+            }
+        };
+
+        Ok(DebugScenario {
+            adapter: zed_scenario.adapter,
+            label: zed_scenario.label,
+            build: None,
+            config: args,
+            tcp_connection: None,
+        })
+    }
+
+    async fn dap_schema(&self) -> serde_json::Value {
+        json!({
+            "oneOf": [
+                {
+                    "allOf": [
+                        {
+                            "type": "object",
+                            "required": ["request"],
+                            "properties": {
+                                "request": {
+                                    "type": "string",
+                                    "enum": ["launch"],
+                                    "description": "Request to launch a new process"
+                                }
+                            }
+                        },
+                        {
+                            "type": "object",
+                            "properties": {
+                                "type": {
+                                    "type": "string",
+                                    "enum": ["pwa-node", "node", "chrome", "pwa-chrome", "edge", "pwa-edge"],
+                                    "description": "The type of debug session",
+                                    "default": "pwa-node"
+                                },
+                                "program": {
+                                    "type": "string",
+                                    "description": "Path to the program or file to debug"
+                                },
+                                "cwd": {
+                                    "type": "string",
+                                    "description": "Absolute path to the working directory of the program being debugged"
+                                },
+                                "args": {
+                                    "type": ["array", "string"],
+                                    "description": "Command line arguments passed to the program",
+                                    "items": {
+                                        "type": "string"
+                                    },
+                                    "default": []
+                                },
+                                "env": {
+                                    "type": "object",
+                                    "description": "Environment variables passed to the program",
+                                    "default": {}
+                                },
+                                "envFile": {
+                                    "type": ["string", "array"],
+                                    "description": "Path to a file containing environment variable definitions",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                },
+                                "stopOnEntry": {
+                                    "type": "boolean",
+                                    "description": "Automatically stop program after launch",
+                                    "default": false
+                                },
+                                "runtimeExecutable": {
+                                    "type": ["string", "null"],
+                                    "description": "Runtime to use, an absolute path or the name of a runtime available on PATH",
+                                    "default": "node"
+                                },
+                                "runtimeArgs": {
+                                    "type": ["array", "null"],
+                                    "description": "Arguments passed to the runtime executable",
+                                    "items": {
+                                        "type": "string"
+                                    },
+                                    "default": []
+                                },
+                                "outFiles": {
+                                    "type": "array",
+                                    "description": "Glob patterns for locating generated JavaScript files",
+                                    "items": {
+                                        "type": "string"
+                                    },
+                                    "default": ["${ZED_WORKTREE_ROOT}/**/*.js", "!**/node_modules/**"]
+                                },
+                                "sourceMaps": {
+                                    "type": "boolean",
+                                    "description": "Use JavaScript source maps if they exist",
+                                    "default": true
+                                },
+                                "sourceMapPathOverrides": {
+                                    "type": "object",
+                                    "description": "Rewrites the locations of source files from what the sourcemap says to their locations on disk",
+                                    "default": {}
+                                },
+                                "restart": {
+                                    "type": ["boolean", "object"],
+                                    "description": "Restart session after Node.js has terminated",
+                                    "default": false
+                                },
+                                "trace": {
+                                    "type": ["boolean", "object"],
+                                    "description": "Enables logging of the Debug Adapter",
+                                    "default": false
+                                },
+                                "console": {
+                                    "type": "string",
+                                    "enum": ["internalConsole", "integratedTerminal"],
+                                    "description": "Where to launch the debug target",
+                                    "default": "internalConsole"
+                                },
+                                // Browser-specific
+                                "url": {
+                                    "type": ["string", "null"],
+                                    "description": "Will navigate to this URL and attach to it (browser debugging)"
+                                },
+                                "webRoot": {
+                                    "type": "string",
+                                    "description": "Workspace absolute path to the webserver root",
+                                    "default": "${ZED_WORKTREE_ROOT}"
+                                },
+                                "userDataDir": {
+                                    "type": ["string", "boolean"],
+                                    "description": "Path to a custom Chrome user profile (browser debugging)",
+                                    "default": true
+                                },
+                                "skipFiles": {
+                                    "type": "array",
+                                    "description": "An array of glob patterns for files to skip when debugging",
+                                    "items": {
+                                        "type": "string"
+                                    },
+                                    "default": ["<node_internals>/**"]
+                                },
+                                "timeout": {
+                                    "type": "number",
+                                    "description": "Retry for this number of milliseconds to connect to the debug adapter",
+                                    "default": 10000
+                                },
+                                "resolveSourceMapLocations": {
+                                    "type": ["array", "null"],
+                                    "description": "A list of minimatch patterns for source map resolution",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            "required": ["program"]
+                        }
+                    ]
+                },
+                {
+                    "allOf": [
+                        {
+                            "type": "object",
+                            "required": ["request"],
+                            "properties": {
+                                "request": {
+                                    "type": "string",
+                                    "enum": ["attach"],
+                                    "description": "Request to attach to an existing process"
+                                }
+                            }
+                        },
+                        {
+                            "type": "object",
+                            "properties": {
+                                "type": {
+                                    "type": "string",
+                                    "enum": ["pwa-node", "node", "chrome", "pwa-chrome", "edge", "pwa-edge"],
+                                    "description": "The type of debug session",
+                                    "default": "pwa-node"
+                                },
+                                "processId": {
+                                    "type": ["string", "number"],
+                                    "description": "ID of process to attach to (Node.js debugging)"
+                                },
+                                "port": {
+                                    "type": "number",
+                                    "description": "Debug port to attach to",
+                                    "default": 9229
+                                },
+                                "address": {
+                                    "type": "string",
+                                    "description": "TCP/IP address of the process to be debugged",
+                                    "default": "localhost"
+                                },
+                                "restart": {
+                                    "type": ["boolean", "object"],
+                                    "description": "Restart session after Node.js has terminated",
+                                    "default": false
+                                },
+                                "sourceMaps": {
+                                    "type": "boolean",
+                                    "description": "Use JavaScript source maps if they exist",
+                                    "default": true
+                                },
+                                "sourceMapPathOverrides": {
+                                    "type": "object",
+                                    "description": "Rewrites the locations of source files from what the sourcemap says to their locations on disk",
+                                    "default": {}
+                                },
+                                "outFiles": {
+                                    "type": "array",
+                                    "description": "Glob patterns for locating generated JavaScript files",
+                                    "items": {
+                                        "type": "string"
+                                    },
+                                    "default": ["${ZED_WORKTREE_ROOT}/**/*.js", "!**/node_modules/**"]
+                                },
+                                "url": {
+                                    "type": "string",
+                                    "description": "Will search for a page with this URL and attach to it (browser debugging)"
+                                },
+                                "webRoot": {
+                                    "type": "string",
+                                    "description": "Workspace absolute path to the webserver root",
+                                    "default": "${ZED_WORKTREE_ROOT}"
+                                },
+                                "skipFiles": {
+                                    "type": "array",
+                                    "description": "An array of glob patterns for files to skip when debugging",
+                                    "items": {
+                                        "type": "string"
+                                    },
+                                    "default": ["<node_internals>/**"]
+                                },
+                                "timeout": {
+                                    "type": "number",
+                                    "description": "Retry for this number of milliseconds to connect to the debug adapter",
+                                    "default": 10000
+                                },
+                                "resolveSourceMapLocations": {
+                                    "type": ["array", "null"],
+                                    "description": "A list of minimatch patterns for source map resolution",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                },
+                                "remoteRoot": {
+                                    "type": ["string", "null"],
+                                    "description": "Path to the remote directory containing the program"
+                                },
+                                "localRoot": {
+                                    "type": ["string", "null"],
+                                    "description": "Path to the local directory containing the program"
+                                }
+                            },
+                            "oneOf": [
+                                { "required": ["processId"] },
+                                { "required": ["port"] }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        })
     }
 
     async fn get_binary(
