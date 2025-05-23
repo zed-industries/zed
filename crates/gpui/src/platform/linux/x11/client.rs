@@ -898,6 +898,7 @@ impl X11Client {
                 let keystroke = {
                     let code = event.detail.into();
                     let xkb_state = state.previous_xkb_state.clone();
+                    state.xkb.update_key(code, xkbc::KeyDirection::Down);
                     state.xkb.update_mask(
                         event.state.bits() as ModMask,
                         0,
@@ -967,6 +968,7 @@ impl X11Client {
                 let keystroke = {
                     let code = event.detail.into();
                     let xkb_state = state.previous_xkb_state.clone();
+                    state.xkb.update_key(code, xkbc::KeyDirection::Up);
                     state.xkb.update_mask(
                         event.state.bits() as ModMask,
                         0,

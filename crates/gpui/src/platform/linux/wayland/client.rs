@@ -1262,15 +1262,16 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 };
                 let focused_window = focused_window.clone();
 
-                let keymap_state = state.keymap_state.as_ref().unwrap();
+                let modifiers = state.modifiers.clone();
+                let keymap_state = state.keymap_state.as_mut().unwrap();
                 let keycode = Keycode::from(key + MIN_KEYCODE);
                 let keysym = keymap_state.key_get_one_sym(keycode);
 
                 println!("Key state: {key_state:?}");
                 match key_state {
                     wl_keyboard::KeyState::Pressed if !keysym.is_modifier_key() => {
-                        let mut keystroke =
-                            Keystroke::from_xkb(&keymap_state, state.modifiers, keycode);
+                        keymap_state.update_key(keycode, xkb::KeyDirection::Down);
+                        let mut keystroke = Keystroke::from_xkb(&keymap_state, modifiers, keycode);
                         println!("Key down: {keystroke:?}");
                         if let Some(mut compose) = state.compose_state.take() {
                             compose.feed(keysym);
@@ -1355,8 +1356,9 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                         focused_window.handle_input(input);
                     }
                     wl_keyboard::KeyState::Released if !keysym.is_modifier_key() => {
+                        keymap_state.update_key(keycode, xkb::KeyDirection::Up);
                         let input = PlatformInput::KeyUp(KeyUpEvent {
-                            keystroke: Keystroke::from_xkb(keymap_state, state.modifiers, keycode),
+                            keystroke: Keystroke::from_xkb(keymap_state, modifiers, keycode),
                         });
 
                         if state.repeat.current_keycode == Some(keycode) {
