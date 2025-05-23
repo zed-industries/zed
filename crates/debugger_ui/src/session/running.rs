@@ -866,6 +866,17 @@ impl RunningState {
                 let (command, args) =
                     builder.build(task.resolved.command.clone(), &task.resolved.args);
 
+                // Splitting the args correctly avoids some errors with cargo
+                let args = args
+                    .into_iter()
+                    .flat_map(|string| {
+                        string
+                            .split_whitespace()
+                            .map(|str| str.to_owned())
+                            .collect::<Vec<String>>()
+                    })
+                    .collect();
+
                 let task_with_shell = SpawnInTerminal {
                     command_label,
                     command,
@@ -917,12 +928,6 @@ impl RunningState {
             };
 
             if config_is_valid {
-                // Ok(DebugTaskDefinition {
-                //     label,
-                //     adapter: DebugAdapterName(adapter),
-                //     config,
-                //     tcp_connection,
-                // })
             } else if let Some((task, locator_name)) = build_output {
                 let locator_name =
                     locator_name.context("Could not find a valid locator for a build task")?;
