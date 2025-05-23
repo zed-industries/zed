@@ -54,9 +54,7 @@ impl DockMenuItem {
                 },
                 action,
             }),
-            _ => Err(anyhow::anyhow!(
-                "Only `MenuItem::Action` is supported for dock menu on Windows."
-            )),
+            _ => anyhow::bail!("Only `MenuItem::Action` is supported for dock menu on Windows."),
         }
     }
 }

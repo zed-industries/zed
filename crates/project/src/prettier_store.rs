@@ -761,8 +761,7 @@ pub(super) async fn format_with_prettier(
                 .log_err();
 
             Some(Err(anyhow!(
-                "{} failed to spawn: {error:#}",
-                prettier_description
+                "{prettier_description} failed to spawn: {error:#}"
             )))
         }
     }

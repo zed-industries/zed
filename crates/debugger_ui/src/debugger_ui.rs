@@ -45,6 +45,8 @@ actions!(
         FocusLoadedSources,
         FocusTerminal,
         ShowStackTrace,
+        ToggleThreadPicker,
+        ToggleSessionPicker,
     ]
 );
 
@@ -60,7 +62,16 @@ pub fn init(cx: &mut App) {
         cx.when_flag_enabled::<DebuggerFeatureFlag>(window, |workspace, _, _| {
             workspace
                 .register_action(|workspace, _: &ToggleFocus, window, cx| {
-                    workspace.toggle_panel_focus::<DebugPanel>(window, cx);
+                    let did_focus_panel = workspace.toggle_panel_focus::<DebugPanel>(window, cx);
+                    if !did_focus_panel {
+                        return;
+                    };
+                    let Some(panel) = workspace.panel::<DebugPanel>(cx) else {
+                        return;
+                    };
+                    panel.update(cx, |panel, cx| {
+                        panel.focus_active_item(window, cx);
+                    })
                 })
                 .register_action(|workspace, _: &Pause, _, cx| {
                     if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
@@ -81,6 +92,17 @@ pub fn init(cx: &mut App) {
                                 .map(|session| session.read(cx).running_state().clone())
                         }) {
                             active_item.update(cx, |item, cx| item.restart_session(cx))
+                        }
+                    }
+                })
+                .register_action(|workspace, _: &Continue, _, cx| {
+                    if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
+                        if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
+                            panel
+                                .active_session()
+                                .map(|session| session.read(cx).running_state().clone())
+                        }) {
+                            active_item.update(cx, |item, cx| item.continue_thread(cx))
                         }
                     }
                 })

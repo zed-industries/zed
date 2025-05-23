@@ -86,7 +86,6 @@ dependencies = [
  "jsonschema",
  "language",
  "language_model",
- "language_model_selector",
  "log",
  "lsp",
  "markdown",
@@ -491,6 +490,7 @@ dependencies = [
  "collections",
  "context_server",
  "editor",
+ "feature_flags",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -498,17 +498,18 @@ dependencies = [
  "indexed_docs",
  "language",
  "language_model",
- "language_model_selector",
  "languages",
  "log",
  "multi_buffer",
  "open_ai",
+ "ordered-float 2.10.1",
  "parking_lot",
  "paths",
  "picker",
  "pretty_assertions",
  "project",
  "prompt_store",
+ "proto",
  "rand 0.8.5",
  "regex",
  "rope",
@@ -545,6 +546,7 @@ dependencies = [
  "language_model",
  "lmstudio",
  "log",
+ "mistral",
  "ollama",
  "open_ai",
  "paths",
@@ -609,7 +611,6 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
- "terminal_view",
  "text",
  "toml 0.8.20",
  "ui",
@@ -686,6 +687,7 @@ dependencies = [
  "portable-pty",
  "pretty_assertions",
  "project",
+ "prompt_store",
  "rand 0.8.5",
  "regex",
  "reqwest_client",
@@ -2832,6 +2834,7 @@ dependencies = [
  "rand 0.8.5",
  "release_channel",
  "rpc",
+ "rustls-pki-types",
  "schemars",
  "serde",
  "serde_json",
@@ -2846,6 +2849,7 @@ dependencies = [
  "tiny_http",
  "tokio",
  "tokio-native-tls",
+ "tokio-rustls 0.26.2",
  "tokio-socks",
  "url",
  "util",
@@ -2997,6 +3001,7 @@ dependencies = [
  "context_server",
  "ctor",
  "dap",
+ "dap_adapters",
  "dashmap 6.1.0",
  "debugger_ui",
  "derive_more",
@@ -3632,9 +3637,12 @@ dependencies = [
  "gimli",
  "hashbrown 0.14.5",
  "log",
+ "postcard",
  "regalloc2",
  "rustc-hash 2.1.1",
  "serde",
+ "serde_derive",
+ "sha2",
  "smallvec",
  "target-lexicon 0.13.2",
 ]
@@ -4021,6 +4029,7 @@ dependencies = [
  "smallvec",
  "smol",
  "task",
+ "telemetry",
  "util",
  "workspace-hack",
 ]
@@ -4044,10 +4053,12 @@ dependencies = [
  "dap",
  "futures 0.3.31",
  "gpui",
+ "json_dotpath",
  "language",
  "paths",
  "serde",
  "serde_json",
+ "smol",
  "task",
  "util",
  "workspace-hack",
@@ -4171,6 +4182,8 @@ dependencies = [
  "dap",
  "extension",
  "gpui",
+ "serde_json",
+ "task",
  "workspace-hack",
 ]
 
@@ -4392,6 +4405,15 @@ name = "diff"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56254986775e3233ffa9c4d7d3faaf6d36a2c09d30b20687e9f88bc8bafc16c8"
+
+[[package]]
+name = "diffy"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b545b8c50194bdd008283985ab0b31dba153cfd5b3066a92770634fbc0d7d291"
+dependencies = [
+ "nu-ansi-term 0.50.1",
+]
 
 [[package]]
 name = "digest"
@@ -4657,6 +4679,7 @@ dependencies = [
  "command_palette_hooks",
  "convert_case 0.8.0",
  "ctor",
+ "dap",
  "db",
  "emojis",
  "env_logger 0.11.8",
@@ -4981,6 +5004,7 @@ dependencies = [
  "clap",
  "client",
  "collections",
+ "debug_adapter_extension",
  "dirs 4.0.0",
  "dotenv",
  "env_logger 0.11.8",
@@ -5011,6 +5035,7 @@ dependencies = [
  "shellexpand 2.1.2",
  "smol",
  "telemetry",
+ "terminal_view",
  "toml 0.8.20",
  "unindent",
  "util",
@@ -5136,6 +5161,7 @@ dependencies = [
  "async-trait",
  "client",
  "collections",
+ "criterion",
  "ctor",
  "dap",
  "env_logger 0.11.8",
@@ -5148,10 +5174,12 @@ dependencies = [
  "language_extension",
  "log",
  "lsp",
+ "moka",
  "node_runtime",
  "parking_lot",
  "paths",
  "project",
+ "rand 0.8.5",
  "release_channel",
  "remote",
  "reqwest_client",
@@ -5901,6 +5929,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "54614a3312934d066701a80f20f15fa3b56d67ac7722b39eea5b4c9dd1d66c94"
 dependencies = [
  "thread_local",
+]
+
+[[package]]
+name = "generator"
+version = "0.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d18470a76cb7f8ff746cf1f7470914f900252ec36bbc40b569d74b1258446827"
+dependencies = [
+ "cc",
+ "cfg-if",
+ "libc",
+ "log",
+ "rustversion",
+ "windows 0.61.1",
 ]
 
 [[package]]
@@ -7944,6 +7986,7 @@ dependencies = [
  "editor",
  "file_icons",
  "gpui",
+ "language",
  "log",
  "project",
  "schemars",
@@ -8527,6 +8570,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "json_dotpath"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dbdcfef3cf5591f0cef62da413ae795e3d1f5a00936ccec0b2071499a32efd1a"
+dependencies = [
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "jsonschema"
 version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8667,6 +8722,7 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
+ "diffy",
  "ec4rs",
  "env_logger 0.11.8",
  "fs",
@@ -8762,25 +8818,6 @@ dependencies = [
  "util",
  "workspace-hack",
  "zed_llm_client",
-]
-
-[[package]]
-name = "language_model_selector"
-version = "0.1.0"
-dependencies = [
- "collections",
- "feature_flags",
- "futures 0.3.31",
- "fuzzy",
- "gpui",
- "language_model",
- "log",
- "ordered-float 2.10.1",
- "picker",
- "proto",
- "ui",
- "workspace-hack",
- "zed_actions",
 ]
 
 [[package]]
@@ -8890,6 +8927,7 @@ dependencies = [
  "async-tar",
  "async-trait",
  "collections",
+ "dap",
  "futures 0.3.31",
  "gpui",
  "http_client",
@@ -9362,6 +9400,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "loom"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "419e0dc8046cb947daa77eb95ae174acfbddb7673b4151f56d1eed8e93fbfaca"
+dependencies = [
+ "cfg-if",
+ "generator",
+ "scoped-tls",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "loop9"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9539,6 +9590,7 @@ dependencies = [
  "async-recursion 1.1.1",
  "collections",
  "editor",
+ "fs",
  "gpui",
  "language",
  "linkify",
@@ -9860,6 +9912,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "moka"
+version = "0.12.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a9321642ca94a4282428e6ea4af8cc2ca4eac48ac7a6a4ea8f33f76d0ce70926"
+dependencies = [
+ "crossbeam-channel",
+ "crossbeam-epoch",
+ "crossbeam-utils",
+ "loom",
+ "parking_lot",
+ "portable-atomic",
+ "rustc_version",
+ "smallvec",
+ "tagptr",
+ "thiserror 1.0.69",
+ "uuid",
+]
+
+[[package]]
 name = "msvc_spectre_libs"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10056,7 +10127,6 @@ dependencies = [
  "async-tar",
  "async-trait",
  "async-watch",
- "async_zip",
  "futures 0.3.31",
  "http_client",
  "log",
@@ -10065,9 +10135,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
- "tempfile",
  "util",
- "walkdir",
  "which 6.0.3",
  "workspace-hack",
 ]
@@ -10170,6 +10238,15 @@ checksum = "77a8165726e8236064dbb45459242600304b42a5ea24ee2948e18e023bf7ba84"
 dependencies = [
  "overload",
  "winapi",
+]
+
+[[package]]
+name = "nu-ansi-term"
+version = "0.50.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4a28e057d01f97e61255210fcff094d74ed0466038633e95017f5beb68e4399"
+dependencies = [
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -12795,6 +12872,7 @@ dependencies = [
  "hashbrown 0.15.3",
  "log",
  "rustc-hash 2.1.1",
+ "serde",
  "smallvec",
 ]
 
@@ -12903,6 +12981,7 @@ dependencies = [
  "clock",
  "dap",
  "dap_adapters",
+ "debug_adapter_extension",
  "env_logger 0.11.8",
  "extension",
  "extension_host",
@@ -13595,11 +13674,12 @@ dependencies = [
 
 [[package]]
 name = "rustls-pki-types"
-version = "1.11.0"
+version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "917ce264624a4b4db1c364dcc35bfca9ded014d0a958cd47ad3e960e988ea51c"
+checksum = "229a4a4c221013e7e1f1a043678c5cc39fe5171437c88fb47151a21e6f5b5c79"
 dependencies = [
  "web-time",
+ "zeroize",
 ]
 
 [[package]]
@@ -15445,6 +15525,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "tagptr"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b2093cf4c8eb1e67749a6762251bc9cd836b6fc171623bd0a9d324d37af2417"
+
+[[package]]
 name = "take-until"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15627,6 +15713,7 @@ name = "terminal_view"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assistant_slash_command",
  "async-recursion 1.1.1",
  "breadcrumbs",
  "client",
@@ -15827,16 +15914,15 @@ dependencies = [
 
 [[package]]
 name = "tiktoken-rs"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44075987ee2486402f0808505dd65692163d243a337fc54363d49afac41087f6"
+checksum = "25563eeba904d770acf527e8b370fe9a5547bacd20ff84a0b6c3bc41288e5625"
 dependencies = [
  "anyhow",
- "base64 0.21.7",
+ "base64 0.22.1",
  "bstr",
  "fancy-regex 0.13.0",
  "lazy_static",
- "parking_lot",
  "regex",
  "rustc-hash 1.1.0",
 ]
@@ -16361,7 +16447,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8189decb5ac0fa7bc8b96b7cb9b2701d60d48805aca84a238004d665fcc4008"
 dependencies = [
  "matchers",
- "nu-ansi-term",
+ "nu-ansi-term 0.46.0",
  "once_cell",
  "regex",
  "serde",
@@ -17000,6 +17086,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-fs",
+ "async_zip",
  "collections",
  "dirs 4.0.0",
  "dunce",
@@ -17015,12 +17102,14 @@ dependencies = [
  "rust-embed",
  "serde",
  "serde_json",
+ "serde_json_lenient",
  "smol",
  "take-until",
  "tempfile",
  "tendril",
  "unicase",
  "util_macros",
+ "walkdir",
  "workspace-hack",
 ]
 
@@ -17554,6 +17643,7 @@ dependencies = [
  "postcard",
  "psm",
  "pulley-interpreter",
+ "rayon",
  "rustix 0.38.44",
  "semver",
  "serde",
@@ -19107,6 +19197,7 @@ dependencies = [
  "aho-corasick",
  "anstream",
  "arrayvec",
+ "async-compression",
  "async-std",
  "async-tungstenite",
  "aws-config",
@@ -19139,7 +19230,9 @@ dependencies = [
  "core-foundation 0.9.4",
  "core-foundation-sys",
  "coreaudio-sys",
+ "cranelift-codegen",
  "crc32fast",
+ "crossbeam-epoch",
  "crossbeam-utils",
  "crypto-common",
  "deranged",
@@ -19215,6 +19308,7 @@ dependencies = [
  "rand 0.9.1",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
+ "regalloc2",
  "regex",
  "regex-automata 0.4.9",
  "regex-syntax 0.8.5",
@@ -19619,7 +19713,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.188.0"
+version = "0.189.0"
 dependencies = [
  "activity_indicator",
  "agent",
@@ -19651,6 +19745,7 @@ dependencies = [
  "dap",
  "dap_adapters",
  "db",
+ "debug_adapter_extension",
  "debugger_tools",
  "debugger_ui",
  "diagnostics",
@@ -19814,9 +19909,9 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.8.1"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16d993fc42f9ec43ab76fa46c6eb579a66e116bb08cd2bc9a67f3afcaa05d39d"
+checksum = "9be71e2f9b271e1eb8eb3e0d986075e770d1a0a299fb036abc3f1fc13a2fa7eb"
 dependencies = [
  "anyhow",
  "serde",

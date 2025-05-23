@@ -81,7 +81,6 @@ members = [
     "crates/language",
     "crates/language_extension",
     "crates/language_model",
-    "crates/language_model_selector",
     "crates/language_models",
     "crates/language_selector",
     "crates/language_tools",
@@ -289,7 +288,6 @@ journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_extension = { path = "crates/language_extension" }
 language_model = { path = "crates/language_model" }
-language_model_selector = { path = "crates/language_model_selector" }
 language_models = { path = "crates/language_models" }
 language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
@@ -432,6 +430,7 @@ convert_case = "0.8.0"
 core-foundation = "0.10.0"
 core-foundation-sys = "0.8.6"
 core-video = { version = "0.4.3", features = ["metal"] }
+criterion = { version = "0.5", features = ["html_reports"] }
 ctor = "0.4.0"
 dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "be69a016ba710191b9fdded28c8b042af4b617f7" }
 dashmap = "6.0"
@@ -466,6 +465,7 @@ indoc = "2"
 inventory = "0.3.19"
 itertools = "0.14.0"
 jj-lib = { git = "https://github.com/jj-vcs/jj", rev = "e18eb8e05efaa153fad5ef46576af145bba1807f" }
+json_dotpath = "1.1"
 jsonschema = "0.30.0"
 jsonwebtoken = "9.3"
 jupyter-protocol = { git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
@@ -478,6 +478,7 @@ lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "c9c189
 markup5ever_rcdom = "0.3.0"
 metal = "0.29"
 mlua = { version = "0.10", features = ["lua54", "vendored", "async", "send"] }
+moka = { version = "0.12.10", features = ["sync"] }
 naga = { version = "25.0", features = ["wgsl-in"] }
 nanoid = "0.4"
 nbformat = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
@@ -558,7 +559,7 @@ sysinfo = "0.31.0"
 take-until = "0.2.0"
 tempfile = "3.20.0"
 thiserror = "2.0.12"
-tiktoken-rs = "0.6.0"
+tiktoken-rs = "0.7.0"
 time = { version = "0.3", features = [
     "macros",
     "parsing",
@@ -601,7 +602,7 @@ unindent = "0.2.0"
 url = "2.2"
 urlencoding = "2.1.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
-walkdir = "2.3"
+walkdir = "2.5"
 wasi-preview1-component-adapter-provider = "29"
 wasm-encoder = "0.221"
 wasmparser = "0.221"
@@ -611,12 +612,14 @@ wasmtime = { version = "29", default-features = false, features = [
     "runtime",
     "cranelift",
     "component-model",
+    "incremental-cache",
+    "parallel-compilation",
 ] }
 wasmtime-wasi = "29"
 which = "6.0.0"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
-zed_llm_client = "0.8.1"
+zed_llm_client = "0.8.2"
 zstd = "0.11"
 
 [workspace.dependencies.async-stripe]

@@ -5,7 +5,7 @@ use crate::{
     TextStyle, TooltipId, WhiteSpace, Window, WrappedLine, WrappedLineLayout,
     register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
-use anyhow::anyhow;
+use anyhow::Context as _;
 use smallvec::SmallVec;
 use std::{
     cell::{Cell, RefCell},
@@ -426,7 +426,7 @@ impl TextLayout {
         let mut element_state = self.0.borrow_mut();
         let element_state = element_state
             .as_mut()
-            .ok_or_else(|| anyhow!("measurement has not been performed on {}", text))
+            .with_context(|| format!("measurement has not been performed on {text}"))
             .unwrap();
         element_state.bounds = Some(bounds);
     }
@@ -435,11 +435,11 @@ impl TextLayout {
         let element_state = self.0.borrow();
         let element_state = element_state
             .as_ref()
-            .ok_or_else(|| anyhow!("measurement has not been performed on {}", text))
+            .with_context(|| format!("measurement has not been performed on {text}"))
             .unwrap();
         let bounds = element_state
             .bounds
-            .ok_or_else(|| anyhow!("prepaint has not been performed on {:?}", text))
+            .with_context(|| format!("prepaint has not been performed on {text}"))
             .unwrap();
 
         let line_height = element_state.line_height;

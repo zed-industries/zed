@@ -5,8 +5,9 @@ use async_trait::async_trait;
 use dap::adapters::{
     DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition,
 };
-use extension::Extension;
+use extension::{Extension, WorktreeDelegate};
 use gpui::AsyncApp;
+use task::{DebugScenario, ZedDebugConfig};
 
 pub(crate) struct ExtensionDapAdapter {
     extension: Arc<dyn Extension>,
@@ -25,15 +26,48 @@ impl ExtensionDapAdapter {
     }
 }
 
+/// An adapter that allows an [`dap::adapters::DapDelegate`] to be used as a [`WorktreeDelegate`].
+struct WorktreeDelegateAdapter(pub Arc<dyn DapDelegate>);
+
+#[async_trait]
+impl WorktreeDelegate for WorktreeDelegateAdapter {
+    fn id(&self) -> u64 {
+        self.0.worktree_id().to_proto()
+    }
+
+    fn root_path(&self) -> String {
+        self.0.worktree_root_path().to_string_lossy().to_string()
+    }
+
+    async fn read_text_file(&self, path: PathBuf) -> Result<String> {
+        self.0.read_text_file(path).await
+    }
+
+    async fn which(&self, binary_name: String) -> Option<String> {
+        self.0
+            .which(binary_name.as_ref())
+            .await
+            .map(|path| path.to_string_lossy().to_string())
+    }
+
+    async fn shell_env(&self) -> Vec<(String, String)> {
+        self.0.shell_env().await.into_iter().collect()
+    }
+}
+
 #[async_trait(?Send)]
 impl DebugAdapter for ExtensionDapAdapter {
     fn name(&self) -> DebugAdapterName {
         self.debug_adapter_name.as_ref().into()
     }
 
+    async fn dap_schema(&self) -> serde_json::Value {
+        self.extension.get_dap_schema().await.unwrap_or_default()
+    }
+
     async fn get_binary(
         &self,
-        _: &dyn DapDelegate,
+        delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         _cx: &mut AsyncApp,
@@ -43,7 +77,12 @@ impl DebugAdapter for ExtensionDapAdapter {
                 self.debug_adapter_name.clone(),
                 config.clone(),
                 user_installed_path,
+                Arc::new(WorktreeDelegateAdapter(delegate.clone())),
             )
             .await
+    }
+
+    fn config_from_zed_format(&self, _zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
+        Err(anyhow::anyhow!("DAP extensions are not implemented yet"))
     }
 }

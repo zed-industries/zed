@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use dap::{DapLocator, DebugRequest, adapters::DebugAdapterName};
 use gpui::SharedString;
@@ -82,19 +82,16 @@ impl DapLocator for CargoLocator {
                 task_template,
                 locator_name: Some(self.name()),
             }),
-            request: None,
-            initialize_args: None,
+            config: serde_json::Value::Null,
             tcp_connection: None,
-            stop_on_entry: None,
         })
     }
 
     async fn run(&self, build_config: SpawnInTerminal) -> Result<DebugRequest> {
-        let Some(cwd) = build_config.cwd.clone() else {
-            return Err(anyhow!(
-                "Couldn't get cwd from debug config which is needed for locators"
-            ));
-        };
+        let cwd = build_config
+            .cwd
+            .clone()
+            .context("Couldn't get cwd from debug config which is needed for locators")?;
         let builder = ShellBuilder::new(true, &build_config.shell).non_interactive();
         let (program, args) = builder.build(
             "cargo".into(),
@@ -119,9 +116,7 @@ impl DapLocator for CargoLocator {
         }
 
         let status = child.status().await?;
-        if !status.success() {
-            return Err(anyhow::anyhow!("Cargo command failed"));
-        }
+        anyhow::ensure!(status.success(), "Cargo command failed");
 
         let executables = output
             .lines()
@@ -133,9 +128,10 @@ impl DapLocator for CargoLocator {
                     .map(String::from)
             })
             .collect::<Vec<_>>();
-        if executables.is_empty() {
-            return Err(anyhow!("Couldn't get executable in cargo locator"));
-        };
+        anyhow::ensure!(
+            !executables.is_empty(),
+            "Couldn't get executable in cargo locator"
+        );
         let is_test = build_config.args.first().map_or(false, |arg| arg == "test");
 
         let mut test_name = None;
@@ -161,7 +157,7 @@ impl DapLocator for CargoLocator {
         };
 
         let Some(executable) = executable.or_else(|| executables.first().cloned()) else {
-            return Err(anyhow!("Couldn't get executable in cargo locator"));
+            anyhow::bail!("Couldn't get executable in cargo locator");
         };
 
         let args = test_name.into_iter().collect();

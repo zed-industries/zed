@@ -1,7 +1,7 @@
 # Configuration
 
 There are various aspects about the Agent Panel that you can customize.
-All of them can be seen by either visiting [the Configuring Zed page](/configuring-zed.md#agent) or by running the `zed: open default settings` action and searching for `"agent"`.
+All of them can be seen by either visiting [the Configuring Zed page](./configuring-zed.md#agent) or by running the `zed: open default settings` action and searching for `"agent"`.
 Alternatively, you can also visit the panel's Settings view by running the `agent: open configuration` action or going to the top-right menu and hitting "Settings".
 
 ## LLM Providers
@@ -9,16 +9,17 @@ Alternatively, you can also visit the panel's Settings view by running the `agen
 Zed supports multiple large language model providers.
 Here's an overview of the supported providers and tool call support:
 
-| Provider                                        | Tool Use Supported |
-| ----------------------------------------------- | ------------------ |
-| [Anthropic](#anthropic)                         | ✅                 |
-| [GitHub Copilot Chat](#github-copilot-chat)     | In Some Cases      |
-| [Google AI](#google-ai)                         | ✅                 |
-| [Ollama](#ollama)                               | ✅                 |
-| [OpenAI](#openai)                               | ✅                 |
-| [DeepSeek](#deepseek)                           | 🚫                 |
-| [OpenAI API Compatible](#openai-api-compatible) | 🚫                 |
-| [LM Studio](#lmstudio)                          | 🚫                 |
+| Provider                                        | Tool Use Supported                                                                                                                                                          |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Anthropic](#anthropic)                         | ✅                                                                                                                                                                          |
+| [GitHub Copilot Chat](#github-copilot-chat)     | For Some Models ([link](https://github.com/zed-industries/zed/blob/9e0330ba7d848755c9734bf456c716bddf0973f3/crates/language_models/src/provider/copilot_chat.rs#L189-L198)) |
+| [Google AI](#google-ai)                         | ✅                                                                                                                                                                          |
+| [Mistral](#mistral)                             | ✅                                                                                                                                                                          |
+| [Ollama](#ollama)                               | ✅                                                                                                                                                                          |
+| [OpenAI](#openai)                               | ✅                                                                                                                                                                          |
+| [DeepSeek](#deepseek)                           | 🚫                                                                                                                                                                          |
+| [OpenAI API Compatible](#openai-api-compatible) | 🚫                                                                                                                                                                          |
+| [LM Studio](#lmstudio)                          | 🚫                                                                                                                                                                          |
 
 ## Use Your Own Keys {#use-your-own-keys}
 
@@ -127,6 +128,44 @@ By default Zed will use `stable` versions of models, but you can use specific ve
 ```
 
 Custom models will be listed in the model dropdown in the Agent Panel.
+
+### Mistral {#mistral}
+
+> 🔨Supports tool use
+
+1. Visit the Mistral platform and [create an API key](https://console.mistral.ai/api-keys/)
+2. Open the configuration view (`assistant: show configuration`) and navigate to the Mistral section
+3. Enter your Mistral API key
+
+The Mistral API key will be saved in your keychain.
+
+Zed will also use the `MISTRAL_API_KEY` environment variable if it's defined.
+
+#### Mistral Custom Models {#mistral-custom-models}
+
+The Zed Assistant comes pre-configured with several Mistral models (codestral-latest, mistral-large-latest, mistral-medium-latest, mistral-small-latest, open-mistral-nemo, and open-codestral-mamba). All the default models support tool use. If you wish to use alternate models or customize their parameters, you can do so by adding the following to your Zed `settings.json`:
+
+```json
+{
+  "language_models": {
+    "mistral": {
+      "api_url": "https://api.mistral.ai/v1",
+      "available_models": [
+        {
+          "name": "mistral-tiny-latest",
+          "display_name": "Mistral Tiny",
+          "max_tokens": 32000,
+          "max_output_tokens": 4096,
+          "max_completion_tokens": 1024,
+          "supports_tools": true
+        }
+      ]
+    }
+  }
+}
+```
+
+Custom models will be listed in the model dropdown in the assistant panel.
 
 ### Ollama {#ollama}
 

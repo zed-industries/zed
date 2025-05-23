@@ -421,7 +421,7 @@ fn initialize_panels(
                         workspace.update_in(cx, |workspace, window, cx| {
                             workspace.add_panel(debug_panel, window, cx);
                         })?;
-                        Result::<_, anyhow::Error>::Ok(())
+                        anyhow::Ok(())
                     },
                 )
                 .detach()
@@ -503,7 +503,7 @@ fn register_actions(
                     directories: true,
                     multiple: true,
                 },
-                DirectoryLister::Project(workspace.project().clone()),
+                DirectoryLister::Local(workspace.app_state().fs.clone()),
                 window,
                 cx,
             );
@@ -515,11 +515,42 @@ fn register_actions(
 
                 if let Some(task) = this
                     .update_in(cx, |this, window, cx| {
-                        if this.project().read(cx).is_local() {
-                            this.open_workspace_for_paths(false, paths, window, cx)
-                        } else {
-                            open_new_ssh_project_from_project(this, paths, window, cx)
-                        }
+                        this.open_workspace_for_paths(false, paths, window, cx)
+                    })
+                    .log_err()
+                {
+                    task.await.log_err();
+                }
+            })
+            .detach()
+        })
+        .register_action(|workspace, action: &zed_actions::OpenRemote, window, cx| {
+            if !action.from_existing_connection {
+                cx.propagate();
+                return;
+            }
+            // You need existing remote connection to open it this way
+            if workspace.project().read(cx).is_local() {
+                return;
+            }
+            telemetry::event!("Project Opened");
+            let paths = workspace.prompt_for_open_path(
+                PathPromptOptions {
+                    files: true,
+                    directories: true,
+                    multiple: true,
+                },
+                DirectoryLister::Project(workspace.project().clone()),
+                window,
+                cx,
+            );
+            cx.spawn_in(window, async move |this, cx| {
+                let Some(paths) = paths.await.log_err().flatten() else {
+                    return;
+                };
+                if let Some(task) = this
+                    .update_in(cx, |this, window, cx| {
+                        open_new_ssh_project_from_project(this, paths, window, cx)
                     })
                     .log_err()
                 {
@@ -4264,6 +4295,7 @@ mod tests {
                 app_state.client.clone(),
                 prompt_builder.clone(),
                 app_state.languages.clone(),
+                false,
                 cx,
             );
             repl::init(app_state.fs.clone(), cx);

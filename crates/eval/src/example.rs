@@ -177,12 +177,10 @@ impl ExampleContext {
 
     fn log_assertion<T>(&mut self, result: Result<T>, message: String) -> Result<T> {
         if let Some(max) = self.meta.max_assertions {
-            if self.assertions.run_count() > max {
-                return Err(anyhow!(
-                    "More assertions were run than the stated max_assertions of {}",
-                    max
-                ));
-            }
+            anyhow::ensure!(
+                self.assertions.run_count() <= max,
+                "More assertions were run than the stated max_assertions of {max}"
+            );
         }
 
         self.assertions.ran.push(RanAssertion {
@@ -232,6 +230,10 @@ impl ExampleContext {
                     }
                     Ok(StopReason::MaxTokens) => {
                         tx.try_send(Err(anyhow!("Exceeded maximum tokens"))).ok();
+                    }
+                    Ok(StopReason::Refusal) => {
+                        tx.try_send(Err(anyhow!("Model refused to generate content")))
+                            .ok();
                     }
                     Err(err) => {
                         tx.try_send(Err(anyhow!(err.clone()))).ok();
@@ -319,7 +321,7 @@ impl ExampleContext {
                     }
                 }
                 _ = self.app.background_executor().timer(THREAD_EVENT_TIMEOUT).fuse() => {
-                    return Err(anyhow!("Agentic loop stalled - waited {:?} without any events", THREAD_EVENT_TIMEOUT));
+                    anyhow::bail!("Agentic loop stalled - waited {THREAD_EVENT_TIMEOUT:?} without any events");
                 }
             }
         }

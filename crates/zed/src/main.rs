@@ -4,7 +4,7 @@
 mod reliability;
 mod zed;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use clap::{Parser, command};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{Client, ProxySettings, UserStore, parse_zed_link};
@@ -419,6 +419,7 @@ fn main() {
         .detach();
         let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
 
+        debug_adapter_extension::init(extension_host_proxy.clone(), cx);
         language::init(cx);
         language_extension::init(extension_host_proxy.clone(), languages.clone());
         languages::init(languages.clone(), node_runtime.clone(), cx);
@@ -518,6 +519,7 @@ fn main() {
             app_state.client.clone(),
             prompt_builder.clone(),
             app_state.languages.clone(),
+            false,
             cx,
         );
         assistant_tools::init(app_state.client.http_client(), cx);
@@ -1073,7 +1075,7 @@ fn parse_url_arg(arg: &str, cx: &App) -> Result<String> {
             {
                 Ok(arg.into())
             } else {
-                Err(anyhow!("error parsing path argument: {}", error))
+                anyhow::bail!("error parsing path argument: {error}")
             }
         }
     }

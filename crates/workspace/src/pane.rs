@@ -156,6 +156,8 @@ pub struct DeploySearch {
     pub replace_enabled: bool,
     #[serde(default)]
     pub included_files: Option<String>,
+    #[serde(default)]
+    pub excluded_files: Option<String>,
 }
 
 impl_actions!(
@@ -203,6 +205,7 @@ impl DeploySearch {
         Self {
             replace_enabled: false,
             included_files: None,
+            excluded_files: None,
         }
     }
 }
@@ -1449,10 +1452,7 @@ impl Pane {
             }
         });
         if dirty_project_item_ids.is_empty() {
-            if item.is_singleton(cx) && item.is_dirty(cx) {
-                return false;
-            }
-            return true;
+            return !(item.is_singleton(cx) && item.is_dirty(cx));
         }
 
         for open_item in workspace.items(cx) {
@@ -1465,11 +1465,7 @@ impl Pane {
             let other_project_item_ids = open_item.project_item_model_ids(cx);
             dirty_project_item_ids.retain(|id| !other_project_item_ids.contains(id));
         }
-        if dirty_project_item_ids.is_empty() {
-            return true;
-        }
-
-        false
+        return dirty_project_item_ids.is_empty();
     }
 
     pub(super) fn file_names_for_prompt(
@@ -3121,6 +3117,7 @@ fn default_render_tab_bar_buttons(
                                 DeploySearch {
                                     replace_enabled: false,
                                     included_files: None,
+                                    excluded_files: None,
                                 }
                                 .boxed_clone(),
                             )

@@ -1,7 +1,9 @@
-use anyhow::{Context, bail};
+use anyhow::{Context as _, bail};
 use schemars::{JsonSchema, SchemaGenerator, schema::Schema};
-use serde::de::{self, Visitor};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{
+    Deserialize, Deserializer, Serialize, Serializer,
+    de::{self, Visitor},
+};
 use std::{
     fmt::{self, Display, Formatter},
     hash::{Hash, Hasher},

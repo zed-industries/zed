@@ -490,14 +490,14 @@ impl<T: 'static> Drop for PendingEntitySubscription<T> {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Deserialize, Debug)]
 pub struct TelemetrySettings {
     pub diagnostics: bool,
     pub metrics: bool,
 }
 
 /// Control what info is collected by Zed.
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct TelemetrySettingsContent {
     /// Send debug info like crash reports.
     ///
@@ -515,25 +515,7 @@ impl settings::Settings for TelemetrySettings {
     type FileContent = TelemetrySettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        Ok(Self {
-            diagnostics: sources
-                .user
-                .as_ref()
-                .or(sources.server.as_ref())
-                .and_then(|v| v.diagnostics)
-                .unwrap_or(
-                    sources
-                        .default
-                        .diagnostics
-                        .ok_or_else(Self::missing_default)?,
-                ),
-            metrics: sources
-                .user
-                .as_ref()
-                .or(sources.server.as_ref())
-                .and_then(|v| v.metrics)
-                .unwrap_or(sources.default.metrics.ok_or_else(Self::missing_default)?),
-        })
+        sources.json_merge()
     }
 
     fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
@@ -729,9 +711,10 @@ impl Client {
         let id = (TypeId::of::<T>(), remote_id);
 
         let mut state = self.handler_set.lock();
-        if state.entities_by_type_and_remote_id.contains_key(&id) {
-            return Err(anyhow!("already subscribed to entity"));
-        }
+        anyhow::ensure!(
+            !state.entities_by_type_and_remote_id.contains_key(&id),
+            "already subscribed to entity"
+        );
 
         state
             .entities_by_type_and_remote_id
@@ -980,10 +963,7 @@ impl Client {
                         hello_message_type_name
                     )
                 })?;
-            let peer_id = hello
-                .payload
-                .peer_id
-                .ok_or_else(|| anyhow!("invalid peer id"))?;
+            let peer_id = hello.payload.peer_id.context("invalid peer id")?;
             Ok(peer_id)
         };
 
@@ -1093,22 +1073,19 @@ impl Client {
             }
 
             let response = http.get(&url, Default::default(), false).await?;
-            let collab_url = if response.status().is_redirection() {
-                response
-                    .headers()
-                    .get("Location")
-                    .ok_or_else(|| anyhow!("missing location header in /rpc response"))?
-                    .to_str()
-                    .map_err(EstablishConnectionError::other)?
-                    .to_string()
-            } else {
-                Err(anyhow!(
-                    "unexpected /rpc response status {}",
-                    response.status()
-                ))?
-            };
-
-            Url::parse(&collab_url).context("invalid rpc url")
+            anyhow::ensure!(
+                response.status().is_redirection(),
+                "unexpected /rpc response status {}",
+                response.status()
+            );
+            let collab_url = response
+                .headers()
+                .get("Location")
+                .context("missing location header in /rpc response")?
+                .to_str()
+                .map_err(EstablishConnectionError::other)?
+                .to_string();
+            Url::parse(&collab_url).with_context(|| format!("parsing colab rpc url {collab_url}"))
         }
     }
 
@@ -1150,7 +1127,7 @@ impl Client {
             let rpc_host = rpc_url
                 .host_str()
                 .zip(rpc_url.port_or_known_default())
-                .ok_or_else(|| anyhow!("missing host in rpc url"))?;
+                .context("missing host in rpc url")?;
 
             let stream = {
                 let handle = cx.update(|cx| gpui_tokio::Tokio::handle(cx)).ok().unwrap();
@@ -1305,16 +1282,13 @@ impl Client {
                                     )
                                     .context("failed to respond to login http request")?;
                                     return Ok((
-                                        user_id
-                                            .ok_or_else(|| anyhow!("missing user_id parameter"))?,
-                                        access_token.ok_or_else(|| {
-                                            anyhow!("missing access_token parameter")
-                                        })?,
+                                        user_id.context("missing user_id parameter")?,
+                                        access_token.context("missing access_token parameter")?,
                                     ));
                                 }
                             }
 
-                            Err(anyhow!("didn't receive login redirect"))
+                            anyhow::bail!("didn't receive login redirect");
                         })
                         .await?;
 
@@ -1432,13 +1406,12 @@ impl Client {
         let mut response = http.send(request).await?;
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
-        if !response.status().is_success() {
-            Err(anyhow!(
-                "admin user request failed {} - {}",
-                response.status().as_u16(),
-                body,
-            ))?;
-        }
+        anyhow::ensure!(
+            response.status().is_success(),
+            "admin user request failed {} - {}",
+            response.status().as_u16(),
+            body,
+        );
         let response: AuthenticatedUserResponse = serde_json::from_str(&body)?;
 
         // Use the admin API token to authenticate as the impersonated user.
@@ -1475,7 +1448,7 @@ impl Client {
         if let Status::Connected { connection_id, .. } = *self.status().borrow() {
             Ok(connection_id)
         } else {
-            Err(anyhow!("not connected"))
+            anyhow::bail!("not connected");
         }
     }
 

@@ -3,7 +3,7 @@ use crate::{
     GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams, SUBPIXEL_VARIANTS,
     ShapedGlyph, ShapedRun, SharedString, Size, point, size,
 };
-use anyhow::{Context as _, Ok, Result, anyhow};
+use anyhow::{Context as _, Ok, Result};
 use collections::HashMap;
 use cosmic_text::{
     Attrs, AttrsList, CacheKey, Family, Font as CosmicTextFont, FontFeatures as CosmicFontFeatures,
@@ -232,7 +232,7 @@ impl CosmicTextSystemState {
             let font = self
                 .font_system
                 .get_font(font_id)
-                .ok_or_else(|| anyhow!("Could not load font"))?;
+                .context("Could not load font")?;
 
             // HACK: To let the storybook run and render Windows caption icons. We should actually do better font fallback.
             let allowed_bad_font_names = [
@@ -309,7 +309,7 @@ impl CosmicTextSystemState {
         glyph_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
         if glyph_bounds.size.width.0 == 0 || glyph_bounds.size.height.0 == 0 {
-            Err(anyhow!("glyph bounds are empty"))
+            anyhow::bail!("glyph bounds are empty");
         } else {
             let bitmap_size = glyph_bounds.size;
             let font = &self.loaded_fonts[params.font_id.0].font;
@@ -469,7 +469,7 @@ impl TryFrom<&FontFeatures> for CosmicFontFeatures {
                 .0
                 .as_bytes()
                 .try_into()
-                .map_err(|_| anyhow!("Incorrect feature flag format"))?;
+                .context("Incorrect feature flag format")?;
 
             let tag = cosmic_text::FeatureTag::new(&name_bytes);
 

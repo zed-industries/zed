@@ -52,7 +52,6 @@ itertools.workspace = true
 jsonschema.workspace = true
 language.workspace = true
 language_model.workspace = true
-language_model_selector.workspace = true
 log.workspace = true
 lsp.workspace = true
 markdown.workspace = true

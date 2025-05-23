@@ -3,7 +3,7 @@ use crate::{
     pane_group::element::pane_axis,
     workspace_settings::{PaneSplitDirectionHorizontal, PaneSplitDirectionVertical},
 };
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use call::{ActiveCall, ParticipantLocation};
 use collections::HashMap;
 use gpui::{
@@ -58,7 +58,7 @@ impl PaneGroup {
                     self.root = Member::new_axis(old_pane.clone(), new_pane.clone(), direction);
                     Ok(())
                 } else {
-                    Err(anyhow!("Pane not found"))
+                    anyhow::bail!("Pane not found");
                 }
             }
             Member::Axis(axis) => axis.split(old_pane, new_pane, direction),
@@ -538,7 +538,7 @@ impl PaneAxis {
                 }
             }
         }
-        Err(anyhow!("Pane not found"))
+        anyhow::bail!("Pane not found");
     }
 
     fn remove(&mut self, pane_to_remove: &Entity<Pane>) -> Result<Option<Member>> {
@@ -579,7 +579,7 @@ impl PaneAxis {
                 Ok(None)
             }
         } else {
-            Err(anyhow!("Pane not found"))
+            anyhow::bail!("Pane not found");
         }
     }
 
