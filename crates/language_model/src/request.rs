@@ -148,34 +148,63 @@ pub struct LanguageModelToolResult {
     pub output: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Hash)]
-#[serde(untagged)]
+#[derive(Debug, Clone, Serialize, Eq, PartialEq, Hash)]
 pub enum LanguageModelToolResultContent {
     Text(Arc<str>),
     Image(LanguageModelImage),
-    WrappedText(WrappedTextContent),
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Hash)]
-pub struct WrappedTextContent {
-    #[serde(rename = "type")]
-    pub content_type: String,
-    pub text: Arc<str>,
+impl<'de> Deserialize<'de> for LanguageModelToolResultContent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+
+        let value = serde_json::Value::deserialize(deserializer)?;
+
+        // Models can provide these responses in several styles. Try each in order.
+
+        // 1. Try as plain string
+        if let Ok(text) = serde_json::from_value::<String>(value.clone()) {
+            return Ok(Self::Text(Arc::from(text)));
+        }
+
+        // 2. Try as object with fields including "type": "text" as well as "text": "..."
+        if let Some(obj) = value.as_object() {
+            if let (Some(type_value), Some(text_value)) = (obj.get("type"), obj.get("text")) {
+                if type_value.as_str() == Some("text") {
+                    if let Some(text) = text_value.as_str() {
+                        return Ok(Self::Text(Arc::from(text)));
+                    }
+                }
+            }
+
+            // 3. Try as Image (object with "source" and "size" fields)
+            if let Ok(image) = serde_json::from_value::<LanguageModelImage>(value.clone()) {
+                return Ok(Self::Image(image));
+            }
+        }
+
+        // If none of the variants match, return an error with the problematic JSON
+        Err(D::Error::custom(format!(
+            "Unable to deserialize LanguageModelToolResultContent from JSON. Expected the JSON to be either a string, an object with \"type\" and \"text\" fields, or an image object with \"source\" and \"size\" fields. Got: {}",
+            serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string())
+        )))
+    }
 }
 
 impl LanguageModelToolResultContent {
     pub fn to_str(&self) -> Option<&str> {
         match self {
-            Self::Text(text) | Self::WrappedText(WrappedTextContent { text, .. }) => Some(&text),
+            Self::Text(text) => Some(&text),
             Self::Image(_) => None,
         }
     }
 
     pub fn is_empty(&self) -> bool {
         match self {
-            Self::Text(text) | Self::WrappedText(WrappedTextContent { text, .. }) => {
-                text.chars().all(|c| c.is_whitespace())
-            }
+            Self::Text(text) => text.chars().all(|c| c.is_whitespace()),
             Self::Image(_) => false,
         }
     }
@@ -293,4 +322,131 @@ pub struct LanguageModelRequest {
 pub struct LanguageModelResponseMessage {
     pub role: Option<Role>,
     pub content: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_language_model_tool_result_content_deserialization() {
+        // Test plain string deserialization
+        let json = r#""This is plain text""#;
+        let result: LanguageModelToolResultContent = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            result,
+            LanguageModelToolResultContent::Text("This is plain text".into())
+        );
+
+        // Test wrapped text with type "text"
+        let json = r#"{"type": "text", "text": "This is wrapped text"}"#;
+        let result: LanguageModelToolResultContent = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            result,
+            LanguageModelToolResultContent::Text("This is wrapped text".into())
+        );
+
+        // Test image deserialization
+        let json = r#"{
+            "source": "base64encodedimagedata",
+            "size": {
+                "width": 100,
+                "height": 200
+            }
+        }"#;
+        let result: LanguageModelToolResultContent = serde_json::from_str(json).unwrap();
+        match result {
+            LanguageModelToolResultContent::Image(image) => {
+                assert_eq!(image.source.as_ref(), "base64encodedimagedata");
+                assert_eq!(image.size.width.0, 100);
+                assert_eq!(image.size.height.0, 200);
+            }
+            _ => panic!("Expected Image variant"),
+        }
+
+        // Test that wrapped text with wrong type fails
+        let json = r#"{"type": "foobarbaz", "text": "This should fail"}"#;
+        let result: Result<LanguageModelToolResultContent, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+
+        // Test that malformed JSON fails
+        let json = r#"{"invalid": "structure"}"#;
+        let result: Result<LanguageModelToolResultContent, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+
+        // Test edge cases
+        let json = r#""""#; // Empty string
+        let result: LanguageModelToolResultContent = serde_json::from_str(json).unwrap();
+        assert_eq!(result, LanguageModelToolResultContent::Text("".into()));
+
+        // Test with extra fields in wrapped text (should be ignored)
+        let json = r#"{"type": "text", "text": "Hello", "extra": "field"}"#;
+        let result: LanguageModelToolResultContent = serde_json::from_str(json).unwrap();
+        assert_eq!(result, LanguageModelToolResultContent::Text("Hello".into()));
+    }
+
+    #[test]
+    fn test_language_model_tool_result_content_methods() {
+        // Test to_str()
+        let text_content = LanguageModelToolResultContent::Text("Hello".into());
+        assert_eq!(text_content.to_str(), Some("Hello"));
+
+        let image_content = LanguageModelToolResultContent::Image(LanguageModelImage::empty());
+        assert_eq!(image_content.to_str(), None);
+
+        // Test is_empty()
+        let empty_text = LanguageModelToolResultContent::Text("   \n\t  ".into());
+        assert!(empty_text.is_empty());
+
+        let non_empty_text = LanguageModelToolResultContent::Text("Hello".into());
+        assert!(!non_empty_text.is_empty());
+
+        let image = LanguageModelToolResultContent::Image(LanguageModelImage::empty());
+        assert!(!image.is_empty());
+    }
+
+    #[test]
+    fn test_language_model_tool_result_serialization() {
+        // Note: LanguageModelToolResultContent has asymmetric serialization/deserialization
+        // It serializes as {"Text": "..."} but deserializes from plain strings or wrapped format
+
+        // Test deserialization of a LanguageModelToolResult with plain text content
+        let json = r#"{
+            "tool_use_id": "test-id",
+            "tool_name": "test-tool",
+            "is_error": false,
+            "content": "Result text",
+            "output": {"key": "value"}
+        }"#;
+
+        let deserialized: LanguageModelToolResult = serde_json::from_str(json).unwrap();
+        assert_eq!(deserialized.tool_use_id.to_string(), "test-id");
+        assert_eq!(deserialized.tool_name.as_ref(), "test-tool");
+        assert_eq!(deserialized.is_error, false);
+        assert_eq!(
+            deserialized.content,
+            LanguageModelToolResultContent::Text("Result text".into())
+        );
+        assert_eq!(
+            deserialized.output,
+            Some(serde_json::json!({"key": "value"}))
+        );
+
+        // Test deserialization with wrapped text format
+        let json_wrapped = r#"{
+            "tool_use_id": "test-id2",
+            "tool_name": "test-tool2",
+            "is_error": true,
+            "content": {"type": "text", "text": "Wrapped result"},
+            "output": null
+        }"#;
+
+        let deserialized: LanguageModelToolResult = serde_json::from_str(json_wrapped).unwrap();
+        assert_eq!(
+            deserialized.content,
+            LanguageModelToolResultContent::Text("Wrapped result".into())
+        );
+        assert_eq!(deserialized.is_error, true);
+        assert_eq!(deserialized.output, None);
+    }
 }
