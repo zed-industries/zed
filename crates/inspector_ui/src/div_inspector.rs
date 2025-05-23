@@ -154,6 +154,7 @@ impl DivInspector {
                                     }
                                 },
                             );
+                            window.refresh();
                             this.last_error = None;
                         }
                         Err(err) => this.last_error = Some(err.to_string().into()),
