@@ -26,6 +26,8 @@ use workspace::{
 };
 use zed_actions::{assistant::InlineAssist, outline::ToggleOutline};
 
+const MAX_CODE_ACTION_MENU_LINES: u32 = 8;
+
 pub struct QuickActionBar {
     _inlay_hints_enabled_subscription: Option<Subscription>,
     active_item: Option<Box<dyn ItemHandle>>,
@@ -147,7 +149,7 @@ impl Render for QuickActionBar {
             let code_action_menu = editor.update(cx, |editor, cx| {
                 if editor.context_menu_deployed_from_quick_action_bar() {
                     if let Some(style) = editor.style() {
-                        editor.render_context_menu(&style, 8, window, cx)
+                        editor.render_context_menu(&style, MAX_CODE_ACTION_MENU_LINES, window, cx)
                     } else {
                         None
                     }
@@ -162,7 +164,9 @@ impl Render for QuickActionBar {
                         .style(ButtonStyle::Subtle)
                         .disabled(!has_available_code_actions)
                         .toggle_state(code_action_menu.is_some())
-                        .tooltip(Tooltip::text("Code Actions"))
+                        .when_none(&code_action_menu, |this| {
+                            this.tooltip(Tooltip::text("Code Actions"))
+                        })
                         .on_click({
                             let focus = focus.clone();
                             move |_, window, cx| {
@@ -181,8 +185,8 @@ impl Render for QuickActionBar {
                     deferred(
                         anchored()
                             .position_mode(AnchoredPositionMode::Local)
-                            .position(point(px(0.), px(24.)))
-                            .anchor(Corner::TopLeft)
+                            .position(point(px(20.), px(20.)))
+                            .anchor(Corner::TopRight)
                             .child(menu),
                     )
                 }))
