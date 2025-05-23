@@ -1183,7 +1183,7 @@ mod tests {
         fs.save(
             path!("/root/src/main.rs").as_ref(),
             &"initial content".into(),
-            Default::default(),
+            LineEnding::Unix,
         )
         .await
         .unwrap();
@@ -1337,7 +1337,7 @@ mod tests {
         fs.save(
             path!("/root/src/main.rs").as_ref(),
             &"initial content".into(),
-            Default::default(),
+            LineEnding::Unix,
         )
         .await
         .unwrap();
