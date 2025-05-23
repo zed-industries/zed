@@ -217,7 +217,7 @@ fn main() {
 
     let app_version = AppVersion::load(env!("CARGO_PKG_VERSION"));
     let app_commit_sha =
-        option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha(commit_sha.to_string()));
+        option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha::new(commit_sha.to_string()));
 
     if args.system_specs {
         let system_specs = feedback::system_specs::SystemSpecs::new_stateless(
