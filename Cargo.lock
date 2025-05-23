@@ -8700,6 +8700,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "shellexpand 2.1.2",
  "smallvec",
  "smol",
  "streaming-iterator",
