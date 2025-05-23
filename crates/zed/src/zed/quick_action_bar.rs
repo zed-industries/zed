@@ -165,7 +165,12 @@ impl Render for QuickActionBar {
                         .disabled(!has_available_code_actions)
                         .toggle_state(code_action_menu.is_some())
                         .when_none(&code_action_menu, |this| {
-                            this.tooltip(Tooltip::text("Code Actions"))
+                            this.when(has_available_code_actions, |this| {
+                                this.tooltip(Tooltip::text("Code Actions"))
+                            })
+                            .when(!has_available_code_actions, |this| {
+                                this.tooltip(Tooltip::text("No Code Actions Available"))
+                            })
                         })
                         .on_click({
                             let focus = focus.clone();
