@@ -127,6 +127,8 @@ pub struct ThemeSettings {
     pub ui_density: UiDensity,
     /// The amount of fading applied to unnecessary code.
     pub unnecessary_code_fade: f32,
+    /// Whether to disable ligatures on lines containing cursors.
+    pub buffer_ligature_disable_on_cursor_lines: bool,
 }
 
 impl ThemeSettings {
@@ -401,6 +403,9 @@ pub struct ThemeSettingsContent {
     #[serde(default)]
     #[schemars(default = "default_font_features")]
     pub buffer_font_features: Option<FontFeatures>,
+    /// Whether to disable ligatures on lines containing cursors.
+    #[serde(default)]
+    pub buffer_ligature_disable_on_cursor_lines: Option<bool>,
     /// The font size for the agent panel.
     #[serde(default)]
     pub agent_font_size: Option<f32>,
@@ -861,6 +866,9 @@ impl settings::Settings for ThemeSettings {
                 .unwrap_or_else(|| themes.get_icon_theme(DEFAULT_ICON_THEME_NAME).unwrap()),
             ui_density: defaults.ui_density.unwrap_or(UiDensity::Default),
             unnecessary_code_fade: defaults.unnecessary_code_fade.unwrap_or(0.0),
+            buffer_ligature_disable_on_cursor_lines: defaults
+                .buffer_ligature_disable_on_cursor_lines
+                .unwrap_or(false),
         };
 
         for value in sources
@@ -884,6 +892,9 @@ impl settings::Settings for ThemeSettings {
             }
             if let Some(value) = value.buffer_font_weight {
                 this.buffer_font.weight = clamp_font_weight(value);
+            }
+            if let Some(new_value) = value.buffer_ligature_disable_on_cursor_lines {
+                this.buffer_ligature_disable_on_cursor_lines = new_value;
             }
 
             if let Some(value) = value.ui_font_family.clone() {

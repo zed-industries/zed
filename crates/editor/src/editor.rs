@@ -8,6 +8,7 @@
 //! * [`display_map`] - chunks up text in the editor into the logical blocks, establishes coordinates and mapping between each of them.
 //!   Contains all metadata related to text transformations (folds, fake inlay text insertions, soft wraps, tab markup, etc.).
 //! * [`inlay_hint_cache`] - is a storage of inlay hints out of LSP requests, responsible for querying LSP and updating `display_map`'s state accordingly.
+//! * [`dynamic_font_features`] - tracks which lines should have different font features (like disabling ligatures on the current line).
 //!
 //! All other submodules and structs are mostly concerned with holding editor data about the way it displays current buffer region(s).
 //!
@@ -17,6 +18,7 @@ mod blink_manager;
 mod clangd_ext;
 pub mod code_context_menus;
 pub mod display_map;
+pub mod dynamic_font_features;
 mod editor_settings;
 mod editor_settings_controls;
 mod element;
@@ -88,6 +90,7 @@ use code_context_menus::{
     CompletionsMenu, ContextMenuOrigin,
 };
 use git::blame::{GitBlame, GlobalBlameRenderer};
+
 use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AppContext, AsyncWindowContext,
     AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
@@ -338,6 +341,7 @@ pub enum HideMouseCursorOrigin {
 }
 
 pub fn init_settings(cx: &mut App) {
+    theme::ThemeSettings::register(cx);
     EditorSettings::register(cx);
 }
 
@@ -1082,6 +1086,7 @@ pub struct Editor {
     current_line_highlight: Option<CurrentLineHighlight>,
     collapse_matches: bool,
     autoindent_mode: Option<AutoindentMode>,
+    dynamic_font_features: dynamic_font_features::DynamicFontFeatureProvider,
     workspace: Option<(WeakEntity<Workspace>, Option<WorkspaceId>)>,
     input_enabled: bool,
     use_modal_editing: bool,
@@ -1209,6 +1214,7 @@ pub struct EditorSnapshot {
     ongoing_scroll: OngoingScroll,
     current_line_highlight: CurrentLineHighlight,
     gutter_hovered: bool,
+    dynamic_font_features: dynamic_font_features::DynamicFontFeatureProvider,
 }
 
 #[derive(Default, Debug, Clone, Copy)]
@@ -2086,6 +2092,7 @@ impl Editor {
             current_line_highlight: None,
             autoindent_mode: Some(AutoindentMode::EachLine),
             collapse_matches: false,
+            dynamic_font_features: dynamic_font_features::DynamicFontFeatureProvider::create(cx),
             workspace: None,
             input_enabled: !is_minimap,
             use_modal_editing: full_mode,
@@ -2327,6 +2334,12 @@ impl Editor {
         if editor.mode.is_full() {
             editor.report_editor_event("Editor Opened", None, cx);
         }
+
+        editor._subscriptions.extend(
+            editor
+                .dynamic_font_features
+                .setup_subscriptions(&cx.entity(), cx),
+        );
 
         editor
     }
@@ -2648,6 +2661,7 @@ impl Editor {
                 .current_line_highlight
                 .unwrap_or_else(|| EditorSettings::get_global(cx).current_line_highlight),
             gutter_hovered: self.gutter_hovered,
+            dynamic_font_features: self.dynamic_font_features.clone(),
         }
     }
 
@@ -8819,6 +8833,7 @@ impl Editor {
                 |_| false,
                 window,
                 cx,
+                false,
             )
             .width
         };
@@ -20024,6 +20039,8 @@ impl Editor {
             }
             self.refresh_colors(false, None, window, cx);
         }
+
+        self.dynamic_font_features.update_config(cx);
 
         cx.notify();
     }
