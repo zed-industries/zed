@@ -745,7 +745,7 @@ impl InlineCompletionButton {
                         })
                     })
                     .separator();
-            } else if self.user_store.read(cx).current_user_account_too_young() {
+            } else if self.user_store.read(cx).account_too_young() {
                 menu = menu
                     .custom_entry(
                         |_window, _cx| {
@@ -774,6 +774,46 @@ impl InlineCompletionButton {
                     )
                     .entry(
                         "You need to upgrade to Zed Pro or contact us.",
+                        None,
+                        |window, cx| {
+                            window.dispatch_action(
+                                Box::new(OpenZedUrl {
+                                    url: zed_urls::account_url(cx),
+                                }),
+                                cx,
+                            );
+                        },
+                    )
+                    .separator();
+            } else if self.user_store.read(cx).has_overdue_invoices() {
+                menu = menu
+                    .custom_entry(
+                        |_window, _cx| {
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Icon::new(IconName::Warning)
+                                        .size(IconSize::Small)
+                                        .color(Color::Warning),
+                                )
+                                .child(
+                                    Label::new("You have an outstanding invoice")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Warning),
+                                )
+                                .into_any_element()
+                        },
+                        |window, cx| {
+                            window.dispatch_action(
+                                Box::new(OpenZedUrl {
+                                    url: zed_urls::account_url(cx),
+                                }),
+                                cx,
+                            );
+                        },
+                    )
+                    .entry(
+                        "Check your payment status or contact us to continue using this feature.",
                         None,
                         |window, cx| {
                             window.dispatch_action(
