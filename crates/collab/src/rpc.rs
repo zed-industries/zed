@@ -2718,6 +2718,7 @@ async fn make_update_user_plan_message(
     let plan = current_plan(db, user_id, is_staff).await?;
     let billing_customer = db.get_billing_customer_by_user_id(user_id).await?;
     let billing_preferences = db.get_billing_preferences(user_id).await?;
+    let user = db.get_user_by_id(user_id).await?;
 
     let (subscription_period, usage) = if let Some(llm_db) = llm_db {
         let subscription = db.get_active_billing_subscription(user_id).await?;
@@ -2738,6 +2739,18 @@ async fn make_update_user_plan_message(
         (None, None)
     };
 
+    // Calculate account_too_young
+    let account_too_young = if matches!(plan, proto::Plan::ZedPro) {
+        // If they have paid, then we allow them to use all of the features
+        false
+    } else if let Some(user) = user {
+        // If we have access to the profile age, we use that
+        chrono::Utc::now().naive_utc() - user.account_created_at() < MIN_ACCOUNT_AGE_FOR_LLM_USE
+    } else {
+        // Default to false otherwise
+        false
+    };
+
     Ok(proto::UpdateUserPlan {
         plan: plan.into(),
         trial_started_at: billing_customer
@@ -2754,6 +2767,7 @@ async fn make_update_user_plan_message(
                 ended_at: ended_at.timestamp() as u64,
             }
         }),
+        account_too_young: Some(account_too_young),
         usage: usage.map(|usage| {
             let plan = match plan {
                 proto::Plan::Free => zed_llm_client::Plan::ZedFree,

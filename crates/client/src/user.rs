@@ -1,6 +1,6 @@
 use super::{Client, Status, TypedEnvelope, proto};
 use anyhow::{Context as _, Result, anyhow};
-use chrono::{DateTime, Duration, NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use collections::{HashMap, HashSet, hash_map::Entry};
 use feature_flags::FeatureFlagAppExt;
 use futures::{Future, StreamExt, channel::mpsc};
@@ -14,9 +14,6 @@ use text::ReplicaId;
 use util::{TryFutureExt as _, maybe};
 
 pub type UserId = u64;
-
-/// The minimum account age an account must have in order to use the LLM service.
-pub const MIN_ACCOUNT_AGE_FOR_LLM_USE: Duration = Duration::days(30);
 
 #[derive(
     Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
@@ -112,6 +109,7 @@ pub struct UserStore {
     edit_predictions_usage_amount: Option<u32>,
     edit_predictions_usage_limit: Option<proto::UsageLimit>,
     is_usage_based_billing_enabled: Option<bool>,
+    account_too_young: Option<bool>,
     current_user: watch::Receiver<Option<Arc<User>>>,
     accepted_tos_at: Option<Option<DateTime<Utc>>>,
     contacts: Vec<Arc<Contact>>,
@@ -178,6 +176,7 @@ impl UserStore {
             edit_predictions_usage_amount: None,
             edit_predictions_usage_limit: None,
             is_usage_based_billing_enabled: None,
+            account_too_young: None,
             accepted_tos_at: None,
             contacts: Default::default(),
             incoming_contact_requests: Default::default(),
@@ -351,6 +350,7 @@ impl UserStore {
                 .trial_started_at
                 .and_then(|trial_started_at| DateTime::from_timestamp(trial_started_at as i64, 0));
             this.is_usage_based_billing_enabled = message.payload.is_usage_based_billing_enabled;
+            this.account_too_young = message.payload.account_too_young;
 
             if let Some(usage) = message.payload.usage {
                 this.model_request_usage_amount = Some(usage.model_requests_usage_amount);
@@ -758,21 +758,7 @@ impl UserStore {
 
     /// Check if the current user's account is too new to use the service
     pub fn current_user_account_too_young(&self) -> bool {
-        // If they have paid, then we allow them to use all of the features
-        if let Some(proto::Plan::ZedPro) = self.current_plan {
-            return false;
-        }
-        // If we have access to the profile age, we use that
-        if let Some(account_created_at) = self
-            .current_user
-            .borrow()
-            .as_ref()
-            .and_then(|user| user.account_created_at)
-        {
-            return Utc::now().naive_utc() - account_created_at < MIN_ACCOUNT_AGE_FOR_LLM_USE;
-        }
-        // Default to false otherwise
-        false
+        self.account_too_young.unwrap_or(false)
     }
 
     pub fn current_user_has_accepted_terms(&self) -> Option<bool> {
