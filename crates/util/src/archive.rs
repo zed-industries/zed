@@ -1,17 +1,68 @@
 use std::path::Path;
 
 use anyhow::{Context as _, Result};
-use async_fs::File;
-use async_zip::base::read::seek::ZipFileReader;
+use async_zip::base::read;
 use futures::{AsyncRead, io::BufReader};
 
+#[cfg(windows)]
 pub async fn extract_zip<R: AsyncRead + Unpin>(destination: &Path, reader: R) -> Result<()> {
-    // TODO kb comment this and make a streaming version for Windows?
-    let mut file = File::from(tempfile::tempfile().context("creating a temporary file")?);
+    let mut reader = read::stream::ZipFileReader::new(BufReader::new(reader));
+
+    let destination = &destination
+        .canonicalize()
+        .unwrap_or_else(|_| destination.to_path_buf());
+
+    while let Some(mut item) = reader.next_with_entry().await? {
+        let entry_reader = item.reader_mut();
+        let entry = entry_reader.entry();
+        let path = destination.join(
+            entry
+                .filename()
+                .as_str()
+                .context("reading zip entry file name")?,
+        );
+
+        if entry
+            .dir()
+            .with_context(|| format!("reading zip entry metadata for path {path:?}"))?
+        {
+            std::fs::create_dir_all(&path)
+                .with_context(|| format!("creating directory {path:?}"))?;
+        } else {
+            let parent_dir = path
+                .parent()
+                .with_context(|| format!("no parent directory for {path:?}"))?;
+            std::fs::create_dir_all(parent_dir)
+                .with_context(|| format!("creating parent directory {parent_dir:?}"))?;
+            let mut file = smol::fs::File::create(&path)
+                .await
+                .with_context(|| format!("creating file {path:?}"))?;
+            futures::io::copy(entry_reader, &mut file)
+                .await
+                .with_context(|| format!("extracting into file {path:?}"))?;
+        }
+
+        reader = item.skip().await.context("reading next zip entry")?;
+    }
+
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub async fn extract_zip<R: AsyncRead + Unpin>(destination: &Path, reader: R) -> Result<()> {
+    // Unix needs file permissions copied when extracting.
+    // This is only possible to do when a reader impls `AsyncSeek` and `seek::ZipFileReader` is used.
+    // `stream::ZipFileReader` also has the `unix_permissions` method, but it will always return `Some(0)`.
+    //
+    // A typical `reader` comes from a streaming network response, so cannot be sought right away,
+    // and reading the entire archive into the memory seems wasteful.
+    //
+    // So, save the stream into a temporary file first and then get it read with a seeking reader.
+    let mut file = async_fs::File::from(tempfile::tempfile().context("creating a temporary file")?);
     futures::io::copy(&mut BufReader::new(reader), &mut file)
         .await
         .context("saving archive contents into the temporary file")?;
-    let mut reader = ZipFileReader::new(BufReader::new(file))
+    let mut reader = read::seek::ZipFileReader::new(BufReader::new(file))
         .await
         .context("reading the zip archive")?;
     let destination = &destination
@@ -48,16 +99,12 @@ pub async fn extract_zip<R: AsyncRead + Unpin>(destination: &Path, reader: R) ->
                 .await
                 .with_context(|| format!("extracting into file {path:?}"))?;
 
-            // todo("windows")
-            #[cfg(not(windows))]
-            {
-                if let Some(perms) = entry.unix_permissions() {
-                    use std::os::unix::fs::PermissionsExt;
-                    let permissions = std::fs::Permissions::from_mode(u32::from(perms));
-                    file.set_permissions(permissions)
-                        .await
-                        .with_context(|| format!("setting permissions for file {path:?}"))?;
-                }
+            if let Some(perms) = entry.unix_permissions() {
+                use std::os::unix::fs::PermissionsExt;
+                let permissions = std::fs::Permissions::from_mode(u32::from(perms));
+                file.set_permissions(permissions)
+                    .await
+                    .with_context(|| format!("setting permissions for file {path:?}"))?;
             }
         }
     }
@@ -91,18 +138,23 @@ mod tests {
             let data = smol::fs::read(&path).await?;
 
             let filename = relative_path.display().to_string();
-            let mut builder =
-                ZipEntryBuilder::new(filename.into(), async_zip::Compression::Deflate);
 
             #[cfg(unix)]
             {
+                let mut builder =
+                    ZipEntryBuilder::new(filename.into(), async_zip::Compression::Deflate);
                 use std::os::unix::fs::PermissionsExt;
                 let metadata = std::fs::metadata(&path)?;
                 let perms = metadata.permissions().mode() as u16;
                 builder = builder.unix_permissions(perms);
+                writer.write_entry_whole(builder, &data).await?;
             }
-
-            writer.write_entry_whole(builder, &data).await?;
+            #[cfg(not(unix))]
+            {
+                let builder =
+                    ZipEntryBuilder::new(filename.into(), async_zip::Compression::Deflate);
+                writer.write_entry_whole(builder, &data).await?;
+            }
         }
 
         writer.close().await?;
