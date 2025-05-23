@@ -81,14 +81,28 @@ mod conditional {
         }
 
         pub fn select(&mut self, id: Option<InspectorElementId>, cx: &mut Context<Self>) {
-            self.active_element = id.map(InspectedElement::new);
+            self.set_active_element_id(id, cx);
             self.is_picking = false;
             cx.notify();
         }
 
         pub fn hover(&mut self, id: Option<InspectorElementId>, cx: &mut Context<Self>) {
             if self.is_picking {
-                self.active_element = id.map(InspectedElement::new);
+                self.set_active_element_id(id, cx);
+            }
+        }
+
+        fn set_active_element_id(
+            &mut self,
+            id: Option<InspectorElementId>,
+            cx: &mut Context<Self>,
+        ) {
+            let changed = match &id {
+                None => true,
+                Some(id) => Some(id) != self.active_element_id(),
+            };
+            if changed {
+                self.active_element = id.map(|id| InspectedElement::new(id));
                 cx.notify();
             }
         }
@@ -97,7 +111,7 @@ mod conditional {
             self.active_element.as_ref().map(|e| &e.id)
         }
 
-        pub fn populate_active_element_state<T: 'static, R>(
+        pub fn with_active_element_state<T: 'static, R>(
             &mut self,
             window: &mut Window,
             f: impl FnOnce(&mut Option<T>, &mut Window) -> R,
@@ -137,15 +151,15 @@ mod conditional {
             cx: &mut Context<Self>,
         ) -> Vec<AnyElement> {
             let mut elements = Vec::new();
-            if let Some(inspected_element) = self.active_element.take() {
-                for (type_id, state) in &inspected_element.states {
+            if let Some(active_element) = self.active_element.take() {
+                for (type_id, state) in &active_element.states {
                     if let Some(render_inspector) = cx
                         .inspector_element_registry
                         .renderers_by_type_id
                         .remove(&type_id)
                     {
                         let mut element = (render_inspector)(
-                            inspected_element.id.clone(),
+                            active_element.id.clone(),
                             state.as_ref(),
                             window,
                             cx,
@@ -157,7 +171,7 @@ mod conditional {
                     }
                 }
 
-                self.active_element = Some(inspected_element);
+                self.active_element = Some(active_element);
             }
 
             elements

@@ -1595,7 +1595,7 @@ impl Window {
                     let active_element_id = inspector.read(cx).active_element_id();
                     if Some(inspector_id) == active_element_id {
                         return inspector.update(cx, |inspector, _cx| {
-                            inspector.populate_active_element_state(self, f)
+                            inspector.with_active_element_state(self, f)
                         });
                     }
                 }
