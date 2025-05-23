@@ -130,3 +130,185 @@ In your PR do the following:
    - Make sure the `version` matches the one set in `extension.toml` at the particular commit.
 
 If you'd like to automate this process, there is a [community GitHub Action](https://github.com/huacnlee/zed-extension-action) you can use.
+
+## Step-by-step Tutorial: Creating Extensions
+
+Zed encourages contributions from developers of all experience levels. Below are step-by-step guides for building extensions, from a simple "Hello World" to more advanced examples.
+
+### Example 1: "Hello World" Slash Command
+
+This tutorial guides you in creating a minimal extension that adds a `/hello` slash command, which prints "Hello, World!" in the Assistant.
+
+#### 1. Create the Extension Directory Structure
+
+```text
+hello-world-zed/
+  extension.toml
+  Cargo.toml
+  src/
+    lib.rs
+```
+
+#### 2. Write `extension.toml`
+
+```toml
+id = "hello-world"
+name = "Hello World"
+version = "0.0.1"
+schema_version = 1
+authors = ["Your Name <you@example.com>"]
+description = "A minimal extension that adds a /hello slash command."
+repository = "https://github.com/your-name/hello-world-zed"
+
+[slash_commands.hello]
+description = "Prints Hello, World!"
+requires_argument = false
+```
+
+#### 3. Write `Cargo.toml`
+
+```toml
+[package]
+name = "hello-world-zed"
+version = "0.0.1"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+zed_extension_api = "0.1.0"
+```
+
+#### 4. Write `src/lib.rs`
+
+```rust
+use zed_extension_api as zed;
+
+struct HelloWorldExtension;
+
+impl zed::Extension for HelloWorldExtension {
+    fn run_slash_command(
+        &self,
+        command: zed::SlashCommand,
+        _args: Vec<String>,
+        _worktree: Option<&zed::Worktree>,
+    ) -> Result<zed::SlashCommandOutput, String> {
+        match command.name.as_str() {
+            "hello" => Ok(zed::SlashCommandOutput {
+                text: "Hello, World!".to_string(),
+                sections: vec![],
+            }),
+            _ => Err("Unknown command".to_string()),
+        }
+    }
+}
+
+zed::register_extension!(HelloWorldExtension);
+```
+
+#### 5. Build the Extension
+
+```sh
+cargo build --release --target wasm32-unknown-unknown
+```
+
+#### 6. Install and Test
+
+- In Zed, open Extensions, click "Install Dev Extension," and select your directory.
+- Open the Assistant (`Cmd+K`/`Ctrl+K`), type `/hello`, and confirm "Hello, World!" appears.
+
+---
+
+### Example 2: Slash Command with Arguments and Editor Interaction
+
+This example demonstrates a slash command `/insert` that inserts text into the current editor tab.
+
+#### Directory Structure
+
+```text
+insert-text-zed/
+  extension.toml
+  Cargo.toml
+  src/
+    lib.rs
+```
+
+#### `extension.toml`
+
+```toml
+id = "insert-text"
+name = "Insert Text"
+version = "0.0.1"
+schema_version = 1
+authors = ["Your Name <you@example.com>"]
+description = "An extension that inserts text into the editor with /insert."
+repository = "https://github.com/your-name/insert-text-zed"
+
+[slash_commands.insert]
+description = "Inserts text at the cursor. Usage: /insert <text>"
+requires_argument = true
+```
+
+#### `Cargo.toml`
+
+```toml
+[package]
+name = "insert-text-zed"
+version = "0.0.1"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+zed_extension_api = "0.1.0"
+```
+
+#### `src/lib.rs`
+
+```rust
+use zed_extension_api as zed;
+
+struct InsertTextExtension;
+
+impl zed::Extension for InsertTextExtension {
+    fn run_slash_command(
+        &self,
+        command: zed::SlashCommand,
+        args: Vec<String>,
+        worktree: Option<&zed::Worktree>,
+    ) -> Result<zed::SlashCommandOutput, String> {
+        match command.name.as_str() {
+            "insert" => {
+                if args.is_empty() {
+                    return Err("Usage: /insert <text>".to_owned());
+                }
+                let text = args.join(" ");
+                if let Some(worktree) = worktree {
+                    worktree.insert_text_at_cursor(&text).map_err(|e| e.to_string())?;
+                    Ok(zed::SlashCommandOutput {
+                        text: format!("Inserted: {}", text),
+                        sections: vec![],
+                    })
+                } else {
+                    Err("No active editor found".to_owned())
+                }
+            }
+            _ => Err("Unknown command".to_string()),
+        }
+    }
+}
+
+zed::register_extension!(InsertTextExtension);
+```
+
+#### Build and Test
+
+Build and install as before. In the Assistant, type:
+
+```
+/insert This text will appear at the cursor!
+```
+
+You should see the text inserted into your active editor window.
