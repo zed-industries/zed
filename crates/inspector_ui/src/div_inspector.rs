@@ -208,13 +208,15 @@ impl Render for DivInspector {
 fn render_layout_state(state: &DivInspectorState, cx: &App) -> Div {
     v_flex()
         .child(div().text_ui(cx).child(format!("Bounds: {}", state.bounds)))
-        .when(state.content_size != state.bounds.size, |this| {
-            this.child(
-                div()
-                    .id("content-size")
-                    .text_ui(cx)
-                    .tooltip(Tooltip::text("Size of the element's children"))
-                    .child(format!("Content size: {}", state.content_size)),
-            )
-        })
+        .child(
+            div()
+                .id("content-size")
+                .text_ui(cx)
+                .tooltip(Tooltip::text("Size of the element's children"))
+                .child(if state.content_size != state.bounds.size {
+                    format!("Content size: {}", state.content_size)
+                } else {
+                    "".to_string()
+                }),
+        )
 }
