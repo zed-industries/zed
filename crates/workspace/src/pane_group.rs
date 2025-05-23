@@ -1113,9 +1113,14 @@ mod element {
             Some(self.basis.into())
         }
 
+        fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+            None
+        }
+
         fn request_layout(
             &mut self,
             _global_id: Option<&GlobalElementId>,
+            _inspector_id: Option<&gpui::InspectorElementId>,
             window: &mut Window,
             cx: &mut App,
         ) -> (gpui::LayoutId, Self::RequestLayoutState) {
@@ -1132,6 +1137,7 @@ mod element {
         fn prepaint(
             &mut self,
             global_id: Option<&GlobalElementId>,
+            _inspector_id: Option<&gpui::InspectorElementId>,
             bounds: Bounds<Pixels>,
             _state: &mut Self::RequestLayoutState,
             window: &mut Window,
@@ -1224,6 +1230,7 @@ mod element {
         fn paint(
             &mut self,
             _id: Option<&GlobalElementId>,
+            _inspector_id: Option<&gpui::InspectorElementId>,
             bounds: gpui::Bounds<ui::prelude::Pixels>,
             _: &mut Self::RequestLayoutState,
             layout: &mut Self::PrepaintState,
