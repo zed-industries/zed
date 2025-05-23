@@ -165,15 +165,20 @@ impl Element for AnyView {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         window.with_rendered_view(self.entity_id(), |window| {
-            if let Some(style) = self.cached_style.as_ref() {
-                let mut root_style = Style::default();
-                root_style.refine(style);
-                let layout_id = window.request_layout(root_style, None, cx);
-                (layout_id, None)
-            } else {
-                let mut element = (self.render)(self, window, cx);
-                let layout_id = element.request_layout(window, cx);
-                (layout_id, Some(element))
+            // Disable caching when inspecting so that mouse_hit_test has all hitboxes.
+            let caching_disabled = window.is_inspector_picking(cx);
+            match self.cached_style.as_ref() {
+                Some(style) if !caching_disabled => {
+                    let mut root_style = Style::default();
+                    root_style.refine(style);
+                    let layout_id = window.request_layout(root_style, None, cx);
+                    (layout_id, None)
+                }
+                _ => {
+                    let mut element = (self.render)(self, window, cx);
+                    let layout_id = element.request_layout(window, cx);
+                    (layout_id, Some(element))
+                }
             }
         })
     }
@@ -189,64 +194,62 @@ impl Element for AnyView {
     ) -> Option<AnyElement> {
         window.set_view_id(self.entity_id());
         window.with_rendered_view(self.entity_id(), |window| {
-            if self.cached_style.is_some() {
-                window.with_element_state::<AnyViewState, _>(
-                    global_id.unwrap(),
-                    |element_state, window| {
-                        let content_mask = window.content_mask();
-                        let text_style = window.text_style();
-
-                        if let Some(mut element_state) = element_state {
-                            if element_state.cache_key.bounds == bounds
-                                && element_state.cache_key.content_mask == content_mask
-                                && element_state.cache_key.text_style == text_style
-                                && !window.dirty_views.contains(&self.entity_id())
-                                && !window.refreshing
-                            {
-                                let prepaint_start = window.prepaint_index();
-                                window.reuse_prepaint(element_state.prepaint_range.clone());
-                                cx.entities
-                                    .extend_accessed(&element_state.accessed_entities);
-                                let prepaint_end = window.prepaint_index();
-                                element_state.prepaint_range = prepaint_start..prepaint_end;
-
-                                return (None, element_state);
-                            }
-                        }
-
-                        let refreshing = mem::replace(&mut window.refreshing, true);
-                        let prepaint_start = window.prepaint_index();
-                        let (mut element, accessed_entities) = cx.detect_accessed_entities(|cx| {
-                            let mut element = (self.render)(self, window, cx);
-                            element.layout_as_root(bounds.size.into(), window, cx);
-                            element.prepaint_at(bounds.origin, window, cx);
-                            element
-                        });
-
-                        let prepaint_end = window.prepaint_index();
-                        window.refreshing = refreshing;
-
-                        (
-                            Some(element),
-                            AnyViewState {
-                                accessed_entities,
-                                prepaint_range: prepaint_start..prepaint_end,
-                                paint_range: PaintIndex::default()..PaintIndex::default(),
-                                cache_key: ViewCacheKey {
-                                    bounds,
-                                    content_mask,
-                                    text_style,
-                                },
-                            },
-                        )
-                    },
-                )
-            } else {
-                let mut element = element.take().unwrap();
+            if let Some(mut element) = element.take() {
                 element.prepaint(window, cx);
-
-                Some(element)
+                return Some(element);
             }
+
+            window.with_element_state::<AnyViewState, _>(
+                global_id.unwrap(),
+                |element_state, window| {
+                    let content_mask = window.content_mask();
+                    let text_style = window.text_style();
+
+                    if let Some(mut element_state) = element_state {
+                        if element_state.cache_key.bounds == bounds
+                            && element_state.cache_key.content_mask == content_mask
+                            && element_state.cache_key.text_style == text_style
+                            && !window.dirty_views.contains(&self.entity_id())
+                            && !window.refreshing
+                        {
+                            let prepaint_start = window.prepaint_index();
+                            window.reuse_prepaint(element_state.prepaint_range.clone());
+                            cx.entities
+                                .extend_accessed(&element_state.accessed_entities);
+                            let prepaint_end = window.prepaint_index();
+                            element_state.prepaint_range = prepaint_start..prepaint_end;
+
+                            return (None, element_state);
+                        }
+                    }
+
+                    let refreshing = mem::replace(&mut window.refreshing, true);
+                    let prepaint_start = window.prepaint_index();
+                    let (mut element, accessed_entities) = cx.detect_accessed_entities(|cx| {
+                        let mut element = (self.render)(self, window, cx);
+                        element.layout_as_root(bounds.size.into(), window, cx);
+                        element.prepaint_at(bounds.origin, window, cx);
+                        element
+                    });
+
+                    let prepaint_end = window.prepaint_index();
+                    window.refreshing = refreshing;
+
+                    (
+                        Some(element),
+                        AnyViewState {
+                            accessed_entities,
+                            prepaint_range: prepaint_start..prepaint_end,
+                            paint_range: PaintIndex::default()..PaintIndex::default(),
+                            cache_key: ViewCacheKey {
+                                bounds,
+                                content_mask,
+                                text_style,
+                            },
+                        },
+                    )
+                },
+            )
         })
     }
 
@@ -261,7 +264,8 @@ impl Element for AnyView {
         cx: &mut App,
     ) {
         window.with_rendered_view(self.entity_id(), |window| {
-            if self.cached_style.is_some() {
+            let caching_disabled = window.is_inspector_picking(cx);
+            if self.cached_style.is_some() && !caching_disabled {
                 window.with_element_state::<AnyViewState, _>(
                     global_id.unwrap(),
                     |element_state, window| {

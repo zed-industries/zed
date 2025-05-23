@@ -415,18 +415,13 @@ pub(crate) struct CursorStyleRequest {
 }
 
 /// An identifier for a [Hitbox].
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub struct HitboxId(usize);
 
 impl HitboxId {
     /// Checks if the hitbox with this id is currently hovered.
     pub fn is_hovered(&self, window: &Window) -> bool {
         window.mouse_hit_test.0.contains(self)
-    }
-
-    /// Checks if the hitbox with this id is currently the topmost hovered element.
-    pub fn is_topmost_hit(&self, window: &Window) -> bool {
-        window.mouse_hit_test.0.first() == Some(self)
     }
 }
 
@@ -449,11 +444,6 @@ impl Hitbox {
     /// Checks if the hitbox is currently hovered.
     pub fn is_hovered(&self, window: &Window) -> bool {
         self.id.is_hovered(window)
-    }
-
-    /// Checks if the hitbox with this id is currently the topmost hovered element.
-    pub fn is_topmost_hit(&self, window: &Window) -> bool {
-        self.id.is_topmost_hit(window)
     }
 }
 
@@ -515,9 +505,10 @@ pub(crate) struct Frame {
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
-    // hashbrown::HashMap is used as it provides an entry_ref API so there's no need to clone keys.
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<InspectorElementPath>, usize>,
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub(crate) inspector_hitboxes: FxHashMap<HitboxId, InspectorElementId>,
 }
 
 #[derive(Clone, Default)]
@@ -547,8 +538,6 @@ impl Frame {
             window_active: false,
             element_states: FxHashMap::default(),
             accessed_element_states: Vec::new(),
-            #[cfg(any(feature = "inspector", debug_assertions))]
-            next_inspector_instance_ids: FxHashMap::default(),
             mouse_listeners: Vec::new(),
             dispatch_tree,
             scene: Scene::default(),
@@ -560,14 +549,18 @@ impl Frame {
 
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds: FxHashMap::default(),
+
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            next_inspector_instance_ids: FxHashMap::default(),
+
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            inspector_hitboxes: FxHashMap::default(),
         }
     }
 
     pub(crate) fn clear(&mut self) {
         self.element_states.clear();
         self.accessed_element_states.clear();
-        #[cfg(any(feature = "inspector", debug_assertions))]
-        self.next_inspector_instance_ids.clear();
         self.mouse_listeners.clear();
         self.dispatch_tree.clear();
         self.scene.clear();
@@ -577,6 +570,12 @@ impl Frame {
         self.hitboxes.clear();
         self.deferred_draws.clear();
         self.focus = None;
+
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        {
+            self.next_inspector_instance_ids.clear();
+            self.inspector_hitboxes.clear();
+        }
     }
 
     pub(crate) fn hit_test(&self, position: Point<Pixels>) -> HitTest {
@@ -1749,6 +1748,9 @@ impl Window {
         } else if let Some(mut tooltip_element) = tooltip_element {
             tooltip_element.paint(self, cx);
         }
+
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        self.paint_inspector_hitbox(cx);
     }
 
     fn prepaint_tooltip(&mut self, cx: &mut App) -> Option<AnyElement> {
@@ -3249,6 +3251,13 @@ impl Window {
             self.reset_cursor_style(cx);
         }
 
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        if self.is_inspector_picking(cx) {
+            self.handle_inspector_mouse_event(event, cx);
+            // When inspector is picking, all other mouse handling is skipped.
+            return;
+        }
+
         let mut mouse_listeners = mem::take(&mut self.rendered_frame.mouse_listeners);
 
         // Capture phase, events bubble from back to front. Handlers for this phase are used for
@@ -3889,6 +3898,7 @@ impl Window {
             }
             WindowMode::Inspector(_) => self.mode = WindowMode::Normal,
         }
+        self.refresh();
     }
 
     /// Puts the inspector in picking mode, where elements can be clicked to select them.
@@ -3902,6 +3912,7 @@ impl Window {
                 inspector.update(cx, |inspector, _cx| inspector.start_picking())
             }
         }
+        self.refresh();
     }
 
     /// Returns true if the window is in inspector mode.
@@ -3960,6 +3971,7 @@ impl Window {
         &mut self,
         path: InspectorElementPath,
     ) -> InspectorElementId {
+        self.invalidator.debug_assert_paint_or_prepaint();
         let path = Rc::new(path);
         let next_instance_id = self
             .next_frame
@@ -3996,6 +4008,70 @@ impl Window {
             return;
         };
         inspector_element.paint(self, cx);
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub(crate) fn insert_inspector_hitbox(
+        &mut self,
+        hitbox_id: HitboxId,
+        inspector_id: Option<&InspectorElementId>,
+        cx: &App,
+    ) {
+        self.invalidator.debug_assert_paint_or_prepaint();
+        if !self.is_inspector_picking(cx) {
+            return;
+        }
+        if let Some(inspector_id) = inspector_id {
+            self.next_frame
+                .inspector_hitboxes
+                .insert(hitbox_id, inspector_id.clone());
+        }
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    fn paint_inspector_hitbox(&mut self, cx: &App) {
+        if self.is_inspector_picking(cx) {
+            if let Some((hitbox_id, _)) = self.topmost_inspector_hitbox(&self.next_frame) {
+                if let Some(hitbox) = self
+                    .next_frame
+                    .hitboxes
+                    .iter()
+                    .find(|hitbox| hitbox.id == hitbox_id)
+                {
+                    self.paint_quad(crate::fill(hitbox.bounds, crate::rgba(0x61afef4d)));
+                }
+            }
+        }
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    fn handle_inspector_mouse_event(&mut self, event: &dyn Any, cx: &mut App) {
+        if event.downcast_ref::<MouseMoveEvent>().is_some() {
+            if let Some((_, inspector_id)) = self.topmost_inspector_hitbox(&self.rendered_frame) {
+                self.inspector_hover_element(Some(inspector_id.clone()), cx);
+                // todo! remove?
+                self.refresh();
+            }
+        } else if event.downcast_ref::<crate::MouseDownEvent>().is_some() {
+            if let Some((_, inspector_id)) = self.topmost_inspector_hitbox(&self.rendered_frame) {
+                self.inspector_select_element(Some(inspector_id.clone()), cx);
+                // todo! remove?
+                self.refresh();
+            }
+        }
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    fn topmost_inspector_hitbox<'a>(
+        &self,
+        frame: &'a Frame,
+    ) -> Option<(HitboxId, &'a InspectorElementId)> {
+        for hitbox_id in &self.mouse_hit_test.0 {
+            if let Some(inspector_id) = frame.inspector_hitboxes.get(hitbox_id) {
+                return Some((*hitbox_id, inspector_id));
+            }
+        }
+        return None;
     }
 }
 

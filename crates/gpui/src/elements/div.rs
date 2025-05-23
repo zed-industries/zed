@@ -1757,14 +1757,11 @@ impl Interactivity {
 
                                     if let Some(_hitbox) = hitbox {
                                         #[cfg(any(feature = "inspector", debug_assertions))]
-                                        if let Some(inspector_id) = _inspector_id {
-                                            self.paint_inspector_info(
-                                                _hitbox,
-                                                inspector_id.clone(),
-                                                window,
-                                                cx,
-                                            );
-                                        }
+                                        window.insert_inspector_hitbox(
+                                            _hitbox.id,
+                                            _inspector_id,
+                                            cx,
+                                        );
 
                                         if let Some(group) = self.group.as_ref() {
                                             GroupHitboxes::pop(group, cx);
@@ -1779,48 +1776,6 @@ impl Interactivity {
                 ((), element_state)
             },
         );
-    }
-
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    fn paint_inspector_info(
-        &self,
-        hitbox: &Hitbox,
-        inspector_id: InspectorElementId,
-        window: &mut Window,
-        cx: &App,
-    ) {
-        if !window.is_inspector_picking(cx) {
-            return;
-        }
-
-        if hitbox.is_topmost_hit(window) {
-            window.paint_quad(crate::fill(hitbox.bounds, crate::rgba(0x61afef4d)));
-        }
-
-        let inspector_id = Rc::new(inspector_id);
-
-        window.on_mouse_event({
-            let hitbox = hitbox.clone();
-            let inspector_id = inspector_id.clone();
-            move |_: &MouseDownEvent, phase, window, cx| {
-                if phase == DispatchPhase::Capture && hitbox.is_topmost_hit(window) {
-                    window.prevent_default();
-                    cx.stop_propagation();
-                    window.inspector_select_element(Some((*inspector_id).clone()), cx);
-                }
-            }
-        });
-
-        window.on_mouse_event({
-            let hitbox = hitbox.clone();
-            move |_: &MouseMoveEvent, phase, window, cx| {
-                if phase == DispatchPhase::Capture && hitbox.is_topmost_hit(window) {
-                    window.prevent_default();
-                    cx.stop_propagation();
-                    window.inspector_hover_element(Some((*inspector_id).clone()), cx);
-                }
-            }
-        });
     }
 
     #[cfg(debug_assertions)]
