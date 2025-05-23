@@ -7,6 +7,7 @@ use editor::actions::{
     SelectLargerSyntaxNode, SelectNext, SelectSmallerSyntaxNode, ToggleCodeActions,
     ToggleDiagnostics, ToggleGoToLine, ToggleInlineDiagnostics,
 };
+use editor::code_context_menus::{CodeContextMenu, ContextMenuOrigin};
 use editor::{Editor, EditorSettings};
 use gpui::{
     Action, AnchoredPositionMode, ClickEvent, Context, Corner, ElementId, Entity, EventEmitter,
@@ -146,31 +147,50 @@ impl Render for QuickActionBar {
 
         let code_actions_dropdown = code_action_enabled.then(|| {
             let focus = editor.focus_handle(cx);
-            let code_action_menu = editor.update(cx, |editor, cx| {
-                if editor.context_menu_deployed_from_quick_action_bar() {
+            let (code_action_menu_active, is_deployed_from_quick_action) = {
+                let menu_ref = editor.read(cx).context_menu().borrow();
+                let code_action_menu = menu_ref
+                    .as_ref()
+                    .filter(|menu| matches!(menu, CodeContextMenu::CodeActions(..)));
+                let is_deployed = code_action_menu.as_ref().map_or(false, |menu| {
+                    matches!(menu.origin(), ContextMenuOrigin::QuickActionBar)
+                });
+                (code_action_menu.is_some(), is_deployed)
+            };
+            let code_action_element = if is_deployed_from_quick_action {
+                editor.update(cx, |editor, cx| {
                     if let Some(style) = editor.style() {
                         editor.render_context_menu(&style, MAX_CODE_ACTION_MENU_LINES, window, cx)
                     } else {
                         None
                     }
-                } else {
-                    None
-                }
-            });
+                })
+            } else {
+                None
+            };
             v_flex()
                 .child(
                     IconButton::new("toggle_code_actions_icon", IconName::Bolt)
                         .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
                         .disabled(!has_available_code_actions)
-                        .toggle_state(code_action_menu.is_some())
-                        .when_none(&code_action_menu, |this| {
+                        .toggle_state(code_action_menu_active)
+                        .when(!code_action_menu_active, |this| {
                             this.when(has_available_code_actions, |this| {
-                                this.tooltip(Tooltip::text("Code Actions"))
+                                this.tooltip(Tooltip::for_action_title(
+                                    "Code Actions",
+                                    &ToggleCodeActions::default(),
+                                ))
                             })
-                            .when(!has_available_code_actions, |this| {
-                                this.tooltip(Tooltip::text("No Code Actions Available"))
-                            })
+                            .when(
+                                !has_available_code_actions,
+                                |this| {
+                                    this.tooltip(Tooltip::for_action_title(
+                                        "No Code Actions Available",
+                                        &ToggleCodeActions::default(),
+                                    ))
+                                },
+                            )
                         })
                         .on_click({
                             let focus = focus.clone();
@@ -186,7 +206,7 @@ impl Render for QuickActionBar {
                             }
                         }),
                 )
-                .children(code_action_menu.map(|menu| {
+                .children(code_action_element.map(|menu| {
                     deferred(
                         anchored()
                             .position_mode(AnchoredPositionMode::Local)

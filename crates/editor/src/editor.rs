@@ -15,7 +15,7 @@
 pub mod actions;
 mod blink_manager;
 mod clangd_ext;
-mod code_context_menus;
+pub mod code_context_menus;
 pub mod display_map;
 mod editor_settings;
 mod editor_settings_controls;
@@ -777,7 +777,7 @@ impl RunnableTasks {
 }
 
 #[derive(Clone)]
-struct ResolvedTasks {
+pub struct ResolvedTasks {
     templates: SmallVec<[(TaskSourceKind, ResolvedTask); 1]>,
     position: Anchor,
 }
@@ -5759,12 +5759,8 @@ impl Editor {
             .is_some_and(|(_, actions)| !actions.is_empty())
     }
 
-    pub fn context_menu_deployed_from_quick_action_bar(&self) -> bool {
-        self.context_menu
-            .borrow()
-            .as_ref()
-            .map(|menu| matches!(menu.origin(), ContextMenuOrigin::QuickActionBar))
-            .unwrap_or(false)
+    pub fn context_menu(&self) -> &RefCell<Option<CodeContextMenu>> {
+        &self.context_menu
     }
 
     fn refresh_code_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<()> {
