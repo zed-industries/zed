@@ -2742,8 +2742,8 @@ async fn make_update_user_plan_message(
         (None, None)
     };
 
-    let account_too_young = !matches!(plan, proto::Plan::ZedPro)
-        && chrono::Utc::now().naive_utc() - user.account_created_at() < MIN_ACCOUNT_AGE_FOR_LLM_USE;
+    let account_too_young =
+        !matches!(plan, proto::Plan::ZedPro) && user.account_age() < MIN_ACCOUNT_AGE_FOR_LLM_USE;
 
     Ok(proto::UpdateUserPlan {
         plan: plan.into(),
