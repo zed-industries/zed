@@ -3217,14 +3217,22 @@ impl TryFrom<&'_ str> for AbsoluteLength {
     }
 }
 
-// TODO: Regex restrict
 impl JsonSchema for AbsoluteLength {
     fn schema_name() -> String {
-        String::schema_name()
+        "AbsoluteLength".to_string()
     }
 
-    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
-        String::json_schema(generator)
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        use schemars::schema::{InstanceType, SchemaObject, StringValidation};
+        
+        Schema::Object(SchemaObject {
+            instance_type: Some(InstanceType::String.into()),
+            string: Some(Box::new(StringValidation {
+                pattern: Some(r"^-?\d+(\.\d+)?(px|rem)$".to_string()),
+                ..Default::default()
+            })),
+            ..Default::default()
+        })
     }
 }
 
@@ -3346,14 +3354,22 @@ impl TryFrom<&'_ str> for DefiniteLength {
     }
 }
 
-// TODO: Regex restrict
 impl JsonSchema for DefiniteLength {
     fn schema_name() -> String {
-        String::schema_name()
+        "DefiniteLength".to_string()
     }
 
-    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
-        String::json_schema(generator)
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        use schemars::schema::{InstanceType, SchemaObject, StringValidation};
+        
+        Schema::Object(SchemaObject {
+            instance_type: Some(InstanceType::String.into()),
+            string: Some(Box::new(StringValidation {
+                pattern: Some(r"^-?\d+(\.\d+)?(px|rem|%)$".to_string()),
+                ..Default::default()
+            })),
+            ..Default::default()
+        })
     }
 }
 
@@ -3452,14 +3468,22 @@ impl TryFrom<&'_ str> for Length {
     }
 }
 
-// TODO: Regex restrict
 impl JsonSchema for Length {
     fn schema_name() -> String {
-        String::schema_name()
+        "Length".to_string()
     }
 
-    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
-        String::json_schema(generator)
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        use schemars::schema::{InstanceType, SchemaObject, StringValidation};
+        
+        Schema::Object(SchemaObject {
+            instance_type: Some(InstanceType::String.into()),
+            string: Some(Box::new(StringValidation {
+                pattern: Some(r"^(auto|-?\d+(\.\d+)?(px|rem|%))$".to_string()),
+                ..Default::default()
+            })),
+            ..Default::default()
+        })
     }
 }
 
