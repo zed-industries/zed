@@ -88,6 +88,10 @@ pub struct AvailableModel {
     pub display_name: Option<String>,
     /// The size of the context window, indicating the maximum number of tokens the model can process.
     pub max_tokens: usize,
+    /// The number of thinking tokens to use for Gemini models.
+    /// If this is not set, the model decides on its own and the limit is 24576 tokens.
+    /// https://ai.google.dev/gemini-api/docs/thinking
+    pub thinking_budget: Option<usize>,
     /// The maximum number of output tokens allowed by the model.
     pub max_output_tokens: Option<u32>,
     /// The maximum number of completion tokens allowed by the model (o1-* only)
@@ -384,6 +388,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                     name: model.name.clone(),
                     display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
+                    thinking_budget: model.thinking_budget,
                 }),
             };
             models.insert(model.id().to_string(), model.clone());
@@ -742,7 +747,8 @@ impl LanguageModel for CloudLanguageModel {
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
                 let model_id = model.id().to_string();
-                let generate_content_request = into_google(request, model_id.clone());
+                let generate_content_request =
+                    into_google(request, model_id.clone(), model.thinking_budget());
                 async move {
                     let http_client = &client.http_client();
                     let token = llm_api_token.acquire(&client).await?;
@@ -901,7 +907,7 @@ impl LanguageModel for CloudLanguageModel {
             }
             CloudModel::Google(model) => {
                 let client = self.client.clone();
-                let request = into_google(request, model.id().into());
+                let request = into_google(request, model.id().into(), model.thinking_budget());
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
