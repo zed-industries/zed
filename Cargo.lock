@@ -8820,7 +8820,6 @@ dependencies = [
  "credentials_provider",
  "deepseek",
  "editor",
- "feature_flags",
  "fs",
  "futures 0.3.31",
  "google_ai",
@@ -19890,9 +19889,9 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.8.2"
+version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9be71e2f9b271e1eb8eb3e0d986075e770d1a0a299fb036abc3f1fc13a2fa7eb"
+checksum = "22a8b9575b215536ed8ad254ba07171e4e13bd029eda3b54cca4b184d2768050"
 dependencies = [
  "anyhow",
  "serde",
