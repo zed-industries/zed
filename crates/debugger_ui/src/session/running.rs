@@ -814,9 +814,25 @@ impl RunningState {
                         (task, None)
                     }
                 };
-                let Some(task) = task.resolve_task("debug-build-task", &task_context) else {
+                let Some(mut task) = task.resolve_task("debug-build-task", &task_context) else {
                     anyhow::bail!("Could not resolve task variables within a debug scenario");
                 };
+
+                task.resolved.args = task
+                    .resolved
+                    .args
+                    .into_iter()
+                    .filter(|arg| {
+                        arg.starts_with('$')
+                            .then(|| {
+                                task.resolved
+                                    .env
+                                    .get(&arg[1..])
+                                    .is_some_and(|arg| !arg.trim().is_empty())
+                            })
+                            .unwrap_or(true)
+                    })
+                    .collect();
 
                 let locator_name = if let Some(locator_name) = locator_name {
                     debug_assert!(!config_is_valid);
@@ -856,6 +872,7 @@ impl RunningState {
                     args,
                     ..task.resolved.clone()
                 };
+
                 let terminal = project
                     .update_in(cx, |project, window, cx| {
                         project.create_terminal(
@@ -924,7 +941,7 @@ impl RunningState {
 
                 let scenario = dap_registry
                     .adapter(&adapter)
-                    .ok_or_else(|| anyhow!("{}: is not a valid adapter name", &adapter))
+                    .context(format!("{}: is not a valid adapter name", &adapter))
                     .map(|adapter| adapter.config_from_zed_format(zed_config))??;
                 config = scenario.config;
                 Self::substitute_variables_in_config(&mut config, &task_context);
