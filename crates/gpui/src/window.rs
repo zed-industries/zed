@@ -1479,55 +1479,6 @@ impl Window {
         self.platform_window.show_character_palette();
     }
 
-    /// Toggles the inspector mode on this window.
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    pub fn toggle_inspector(&mut self, cx: &mut App) {
-        match self.mode {
-            WindowMode::Normal => {
-                self.mode = WindowMode::Inspector(cx.new(|_| Inspector::new()));
-            }
-            WindowMode::Inspector(_) => self.mode = WindowMode::Normal,
-        }
-    }
-
-    /// Puts the inspector in picking mode, where elements can be clicked to select them.
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    pub fn start_inspector_picking(&mut self, cx: &mut App) {
-        match &self.mode {
-            WindowMode::Normal => {
-                self.mode = WindowMode::Inspector(cx.new(|_| Inspector::new()));
-            }
-            WindowMode::Inspector(inspector) => {
-                inspector.update(cx, |inspector, _cx| inspector.start_picking())
-            }
-        }
-    }
-
-    /// Returns true if the window is in inspector mode.
-    pub fn is_inspector_picking(&self, cx: &App) -> bool {
-        match &self.mode {
-            WindowMode::Normal => false,
-            #[cfg(any(feature = "inspector", debug_assertions))]
-            WindowMode::Inspector(inspector) => inspector.read(cx).is_picking(),
-        }
-    }
-
-    /// Sets the given [`InspectorElementId`] as the currently inspected element.
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    pub fn inspector_select_element(&mut self, id: Option<InspectorElementId>, cx: &mut App) {
-        if let WindowMode::Inspector(inspector) = &self.mode {
-            inspector.update(cx, |inspector, cx| inspector.select(id, cx))
-        }
-    }
-
-    /// Sets the given [`InspectorElementId`] as the currently hovered element.
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    pub fn inspector_hover_element(&mut self, id: Option<InspectorElementId>, cx: &mut App) {
-        if let WindowMode::Inspector(inspector) = &self.mode {
-            inspector.update(cx, |inspector, cx| inspector.hover(id, cx))
-        }
-    }
-
     /// The scale factor of the display associated with the window. For example, it could
     /// return 2.0 for a "retina" display, indicating that each logical pixel should actually
     /// be rendered as two pixels on screen.
@@ -1562,47 +1513,6 @@ impl Window {
         let result = f(&global_id, self);
         self.element_id_stack.pop();
         result
-    }
-
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    pub(crate) fn build_inspector_element_id(
-        &mut self,
-        path: InspectorElementPath,
-    ) -> InspectorElementId {
-        let next_instance_id = self
-            .next_frame
-            .next_element_instance_ids
-            .entry_ref(&path)
-            .or_insert(0);
-        let instance_id = *next_instance_id;
-        *next_instance_id += 1;
-        InspectorElementId { path, instance_id }
-    }
-
-    /// Executes the provided function with mutable access to an inspector state.
-    pub fn with_inspector_state<T: 'static, R>(
-        &mut self,
-        _inspector_id: Option<&InspectorElementId>,
-        cx: &mut App,
-        f: impl FnOnce(&mut Option<T>, &mut Self) -> R,
-    ) -> R {
-        #[cfg(any(feature = "inspector", debug_assertions))]
-        if let Some(inspector_id) = _inspector_id {
-            match &self.mode {
-                WindowMode::Normal => {}
-                WindowMode::Inspector(inspector) => {
-                    let inspector = inspector.clone();
-                    let active_element_id = inspector.read(cx).active_element_id();
-                    if Some(inspector_id) == active_element_id {
-                        return inspector.update(cx, |inspector, _cx| {
-                            inspector.with_active_element_state(self, f)
-                        });
-                    }
-                }
-            };
-        }
-
-        f(&mut None, self)
     }
 
     /// Executes the provided function with the specified rem size.
@@ -1972,33 +1882,6 @@ impl Window {
         }
         self.next_frame.deferred_draws = deferred_draws;
         self.element_id_stack.clear();
-    }
-
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    fn prepaint_inspector(&mut self, inspector_width: Pixels, cx: &mut App) -> Option<AnyElement> {
-        let mode = mem::replace(&mut self.mode, WindowMode::Normal);
-        match mode {
-            WindowMode::Normal => None,
-            WindowMode::Inspector(inspector) => {
-                let mut inspector_element = AnyView::from(inspector.clone()).into_any_element();
-                inspector_element.prepaint_as_root(
-                    point(self.viewport_size.width - inspector_width, px(0.0)),
-                    size(inspector_width, self.viewport_size.height).into(),
-                    self,
-                    cx,
-                );
-                self.mode = WindowMode::Inspector(inspector);
-                Some(inspector_element)
-            }
-        }
-    }
-
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    fn paint_inspector(&mut self, mut inspector_element: Option<AnyElement>, cx: &mut App) {
-        let Some(mut inspector_element) = inspector_element else {
-            return;
-        };
-        inspector_element.paint(self, cx);
     }
 
     pub(crate) fn prepaint_index(&self) -> PrepaintStateIndex {
@@ -3995,6 +3878,123 @@ impl Window {
     /// Currently returns None on Mac and Windows.
     pub fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.platform_window.gpu_specs()
+    }
+
+    /// Toggles the inspector mode on this window.
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub fn toggle_inspector(&mut self, cx: &mut App) {
+        match self.mode {
+            WindowMode::Normal => {
+                self.mode = WindowMode::Inspector(cx.new(|_| Inspector::new()));
+            }
+            WindowMode::Inspector(_) => self.mode = WindowMode::Normal,
+        }
+    }
+
+    /// Puts the inspector in picking mode, where elements can be clicked to select them.
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub fn start_inspector_picking(&mut self, cx: &mut App) {
+        match &self.mode {
+            WindowMode::Normal => {
+                self.mode = WindowMode::Inspector(cx.new(|_| Inspector::new()));
+            }
+            WindowMode::Inspector(inspector) => {
+                inspector.update(cx, |inspector, _cx| inspector.start_picking())
+            }
+        }
+    }
+
+    /// Returns true if the window is in inspector mode.
+    pub fn is_inspector_picking(&self, cx: &App) -> bool {
+        match &self.mode {
+            WindowMode::Normal => false,
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            WindowMode::Inspector(inspector) => inspector.read(cx).is_picking(),
+        }
+    }
+
+    /// Sets the given [`InspectorElementId`] as the currently inspected element.
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub fn inspector_select_element(&mut self, id: Option<InspectorElementId>, cx: &mut App) {
+        if let WindowMode::Inspector(inspector) = &self.mode {
+            inspector.update(cx, |inspector, cx| inspector.select(id, cx))
+        }
+    }
+
+    /// Sets the given [`InspectorElementId`] as the currently hovered element.
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub fn inspector_hover_element(&mut self, id: Option<InspectorElementId>, cx: &mut App) {
+        if let WindowMode::Inspector(inspector) = &self.mode {
+            inspector.update(cx, |inspector, cx| inspector.hover(id, cx))
+        }
+    }
+
+    /// Executes the provided function with mutable access to an inspector state.
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub fn with_inspector_state<T: 'static, R>(
+        &mut self,
+        _inspector_id: Option<&InspectorElementId>,
+        cx: &mut App,
+        f: impl FnOnce(&mut Option<T>, &mut Self) -> R,
+    ) -> R {
+        if let Some(inspector_id) = _inspector_id {
+            match &self.mode {
+                WindowMode::Normal => {}
+                WindowMode::Inspector(inspector) => {
+                    let inspector = inspector.clone();
+                    let active_element_id = inspector.read(cx).active_element_id();
+                    if Some(inspector_id) == active_element_id {
+                        return inspector.update(cx, |inspector, _cx| {
+                            inspector.with_active_element_state(self, f)
+                        });
+                    }
+                }
+            };
+        }
+
+        f(&mut None, self)
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub(crate) fn build_inspector_element_id(
+        &mut self,
+        path: InspectorElementPath,
+    ) -> InspectorElementId {
+        let next_instance_id = self
+            .next_frame
+            .next_element_instance_ids
+            .entry_ref(&path)
+            .or_insert(0);
+        let instance_id = *next_instance_id;
+        *next_instance_id += 1;
+        InspectorElementId { path, instance_id }
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    fn prepaint_inspector(&mut self, inspector_width: Pixels, cx: &mut App) -> Option<AnyElement> {
+        let mode = mem::replace(&mut self.mode, WindowMode::Normal);
+        match mode {
+            WindowMode::Normal => None,
+            WindowMode::Inspector(inspector) => {
+                let mut inspector_element = AnyView::from(inspector.clone()).into_any_element();
+                inspector_element.prepaint_as_root(
+                    point(self.viewport_size.width - inspector_width, px(0.0)),
+                    size(inspector_width, self.viewport_size.height).into(),
+                    self,
+                    cx,
+                );
+                self.mode = WindowMode::Inspector(inspector);
+                Some(inspector_element)
+            }
+        }
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    fn paint_inspector(&mut self, mut inspector_element: Option<AnyElement>, cx: &mut App) {
+        let Some(mut inspector_element) = inspector_element else {
+            return;
+        };
+        inspector_element.paint(self, cx);
     }
 }
 
