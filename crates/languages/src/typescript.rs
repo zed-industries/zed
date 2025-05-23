@@ -490,14 +490,11 @@ impl LspAdapter for EsLintLspAdapter {
                         })?;
                 }
                 AssetKind::Zip => {
-                    extract_zip(
-                        &destination_path,
-                        BufReader::new(response.body_mut()),
-                    )
-                    .await
-                    .with_context(|| {
-                        format!("unzipping {} to {:?}", version.url, destination_path)
-                    })?;
+                    extract_zip(&destination_path, response.body_mut())
+                        .await
+                        .with_context(|| {
+                            format!("unzipping {} to {:?}", version.url, destination_path)
+                        })?;
                 }
             }
 
