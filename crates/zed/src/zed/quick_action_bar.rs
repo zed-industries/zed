@@ -27,7 +27,7 @@ use workspace::{
 };
 use zed_actions::{assistant::InlineAssist, outline::ToggleOutline};
 
-const MAX_CODE_ACTION_MENU_LINES: u32 = 8;
+const MAX_CODE_ACTION_MENU_LINES: u32 = 16;
 
 pub struct QuickActionBar {
     _inlay_hints_enabled_subscription: Option<Subscription>,
