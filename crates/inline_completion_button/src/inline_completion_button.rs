@@ -420,98 +420,6 @@ impl InlineCompletionButton {
         let fs = self.fs.clone();
         let line_height = window.line_height();
 
-        let provider = self.edit_prediction_provider.as_ref();
-
-        if let Some(usage) = provider.and_then(|provider| provider.usage(cx)) {
-            menu = menu.header("Usage");
-            menu = menu
-                .custom_entry(
-                    move |_window, cx| {
-                        let used_percentage = match usage.limit {
-                            UsageLimit::Limited(limit) => {
-                                Some((usage.amount as f32 / limit as f32) * 100.)
-                            }
-                            UsageLimit::Unlimited => None,
-                        };
-
-                        h_flex()
-                            .flex_1()
-                            .gap_1p5()
-                            .children(
-                                used_percentage
-                                    .map(|percent| ProgressBar::new("usage", percent, 100., cx)),
-                            )
-                            .child(
-                                Label::new(match usage.limit {
-                                    UsageLimit::Limited(limit) => {
-                                        format!("{} / {limit}", usage.amount)
-                                    }
-                                    UsageLimit::Unlimited => format!("{} / ∞", usage.amount),
-                                })
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                            )
-                            .into_any_element()
-                    },
-                    move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
-                )
-                .when(usage.over_limit(), |menu| -> ContextMenu {
-                    menu.entry("Subscribe to increase your limit", None, |window, cx| {
-                        window.dispatch_action(
-                            Box::new(OpenZedUrl {
-                                url: zed_urls::account_url(cx),
-                            }),
-                            cx,
-                        );
-                    })
-                })
-                .separator();
-        } else if provider
-            .map(|provider| provider.needs_terms_acceptance(cx))
-            .unwrap_or(true)
-            && self.user_store.read(cx).current_user_account_too_young()
-        {
-            menu = menu
-                .custom_entry(
-                    |_window, _cx| {
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                Icon::new(IconName::Warning)
-                                    .size(IconSize::Small)
-                                    .color(Color::Warning),
-                            )
-                            .child(
-                                Label::new("Your GitHub account is less than 30 days old")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Warning),
-                            )
-                            .into_any_element()
-                    },
-                    |window, cx| {
-                        window.dispatch_action(
-                            Box::new(OpenZedUrl {
-                                url: zed_urls::account_url(cx),
-                            }),
-                            cx,
-                        );
-                    },
-                )
-                .entry(
-                    "You need to upgrade to Zed Pro or contact us.",
-                    None,
-                    |window, cx| {
-                        window.dispatch_action(
-                            Box::new(OpenZedUrl {
-                                url: zed_urls::account_url(cx),
-                            }),
-                            cx,
-                        );
-                    },
-                )
-                .separator();
-        }
-
         menu = menu.header("Show Edit Predictions For");
 
         let language_state = self.language.as_ref().map(|language| {
@@ -787,7 +695,98 @@ impl InlineCompletionButton {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
-        ContextMenu::build(window, cx, |menu, window, cx| {
+        ContextMenu::build(window, cx, |mut menu, window, cx| {
+            if let Some(usage) = self
+                .edit_prediction_provider
+                .as_ref()
+                .and_then(|provider| provider.usage(cx))
+            {
+                menu = menu.header("Usage");
+                menu = menu
+                    .custom_entry(
+                        move |_window, cx| {
+                            let used_percentage = match usage.limit {
+                                UsageLimit::Limited(limit) => {
+                                    Some((usage.amount as f32 / limit as f32) * 100.)
+                                }
+                                UsageLimit::Unlimited => None,
+                            };
+
+                            h_flex()
+                                .flex_1()
+                                .gap_1p5()
+                                .children(
+                                    used_percentage.map(|percent| {
+                                        ProgressBar::new("usage", percent, 100., cx)
+                                    }),
+                                )
+                                .child(
+                                    Label::new(match usage.limit {
+                                        UsageLimit::Limited(limit) => {
+                                            format!("{} / {limit}", usage.amount)
+                                        }
+                                        UsageLimit::Unlimited => format!("{} / ∞", usage.amount),
+                                    })
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                                )
+                                .into_any_element()
+                        },
+                        move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
+                    )
+                    .when(usage.over_limit(), |menu| -> ContextMenu {
+                        menu.entry("Subscribe to increase your limit", None, |window, cx| {
+                            window.dispatch_action(
+                                Box::new(OpenZedUrl {
+                                    url: zed_urls::account_url(cx),
+                                }),
+                                cx,
+                            );
+                        })
+                    })
+                    .separator();
+            } else if self.user_store.read(cx).current_user_account_too_young() {
+                menu = menu
+                    .custom_entry(
+                        |_window, _cx| {
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Icon::new(IconName::Warning)
+                                        .size(IconSize::Small)
+                                        .color(Color::Warning),
+                                )
+                                .child(
+                                    Label::new("Your GitHub account is less than 30 days old")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Warning),
+                                )
+                                .into_any_element()
+                        },
+                        |window, cx| {
+                            window.dispatch_action(
+                                Box::new(OpenZedUrl {
+                                    url: zed_urls::account_url(cx),
+                                }),
+                                cx,
+                            );
+                        },
+                    )
+                    .entry(
+                        "You need to upgrade to Zed Pro or contact us.",
+                        None,
+                        |window, cx| {
+                            window.dispatch_action(
+                                Box::new(OpenZedUrl {
+                                    url: zed_urls::account_url(cx),
+                                }),
+                                cx,
+                            );
+                        },
+                    )
+                    .separator();
+            }
+
             self.build_language_settings_menu(menu, window, cx).when(
                 cx.has_flag::<PredictEditsRateCompletionsFeatureFlag>(),
                 |this| this.action("Rate Completions", RateCompletions.boxed_clone()),
