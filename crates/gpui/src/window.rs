@@ -411,6 +411,19 @@ pub(crate) struct CursorStyleRequest {
     pub(crate) style: CursorStyle,
 }
 
+/// A type of window control area that corresponds to the platform window.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WindowControlArea {
+    /// An area that allows dragging of the platform window.
+    Drag,
+    /// An area that allows closing of the platform window.
+    Close,
+    /// An area that allows maximizing of the platform window.
+    Max,
+    /// An area that allows minimizing of the platform window.
+    Min,
+}
+
 /// An identifier for a [Hitbox].
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct HitboxId(usize);
@@ -496,6 +509,7 @@ pub(crate) struct Frame {
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
     pub(crate) hitboxes: Vec<Hitbox>,
+    pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
     pub(crate) deferred_draws: Vec<DeferredDraw>,
     pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
     pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
@@ -535,6 +549,7 @@ impl Frame {
             dispatch_tree,
             scene: Scene::default(),
             hitboxes: Vec::new(),
+            window_control_hitboxes: Vec::new(),
             deferred_draws: Vec::new(),
             input_handlers: Vec::new(),
             tooltip_requests: Vec::new(),
@@ -555,6 +570,7 @@ impl Frame {
         self.tooltip_requests.clear();
         self.cursor_styles.clear();
         self.hitboxes.clear();
+        self.window_control_hitboxes.clear();
         self.deferred_draws.clear();
         self.focus = None;
     }
@@ -875,6 +891,22 @@ impl Window {
                     .update(&mut cx, |_, window, cx| window.dispatch_event(event, cx))
                     .log_err()
                     .unwrap_or(DispatchEventResult::default())
+            })
+        });
+        platform_window.on_hit_test_window_control({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, window, _cx| {
+                        for (area, hitbox) in &window.rendered_frame.window_control_hitboxes {
+                            if window.mouse_hit_test.0.contains(&hitbox.id) {
+                                return Some(*area);
+                            }
+                        }
+                        None
+                    })
+                    .log_err()
+                    .unwrap_or(None)
             })
         });
 
@@ -2835,6 +2867,14 @@ impl Window {
         };
         self.next_frame.hitboxes.push(hitbox.clone());
         hitbox
+    }
+
+    /// Set a hitbox which will act as a control area of the platform window.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    pub fn insert_window_control_hitbox(&mut self, area: WindowControlArea, hitbox: Hitbox) {
+        self.invalidator.debug_assert_paint();
+        self.next_frame.window_control_hitboxes.push((area, hitbox));
     }
 
     /// Sets the key context for the current element. This context will be used to translate
