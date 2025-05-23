@@ -1239,9 +1239,13 @@ mod tests {
         cx.executor().run_until_parked();
 
         // Read the file to verify trailing whitespace was removed automatically
-        let updated_content = fs.load(path!("/root/src/main.rs").as_ref()).await.unwrap();
         assert_eq!(
-            updated_content, "fn main() {\n    println!(\"Hello!\");\n}\n",
+            // Ignore carriage returns on Windows
+            fs.load(path!("/root/src/main.rs").as_ref())
+                .await
+                .unwrap()
+                .replace("\r\n", "\n"),
+            "fn main() {\n    println!(\"Hello!\");\n}\n",
             "Trailing whitespace should be removed when remove_trailing_whitespace_on_save is enabled"
         );
 
@@ -1289,8 +1293,11 @@ mod tests {
         cx.executor().run_until_parked();
 
         // Verify the file still has trailing whitespace
+        // Read the file again - it should still have trailing whitespace
+        let final_content = fs.load(path!("/root/src/main.rs").as_ref()).await.unwrap();
         assert_eq!(
-            fs.load(path!("/root/src/main.rs").as_ref()).await.unwrap(),
+            // Ignore carriage returns on Windows
+            final_content.replace("\r\n", "\n"),
             CONTENT_WITH_TRAILING_WHITESPACE,
             "Trailing whitespace should remain when remove_trailing_whitespace_on_save is disabled"
         );
@@ -1420,7 +1427,9 @@ mod tests {
         // Read the file to verify it was formatted automatically
         let new_content = fs.load(path!("/root/src/main.rs").as_ref()).await.unwrap();
         assert_eq!(
-            new_content, FORMATTED_CONTENT,
+            // Ignore carriage returns on Windows
+            new_content.replace("\r\n", "\n"),
+            FORMATTED_CONTENT,
             "Code should be formatted when format_on_save is enabled"
         );
 
@@ -1469,7 +1478,11 @@ mod tests {
 
         // Verify the file is still unformatted
         assert_eq!(
-            fs.load(path!("/root/src/main.rs").as_ref()).await.unwrap(),
+            // Ignore carriage returns on Windows
+            fs.load(path!("/root/src/main.rs").as_ref())
+                .await
+                .unwrap()
+                .replace("\r\n", "\n"),
             UNFORMATTED_CONTENT,
             "Code should remain unformatted when format_on_save is disabled"
         );
@@ -1520,9 +1533,13 @@ mod tests {
         cx.executor().run_until_parked();
 
         // Read the file to verify it was formatted with the specified formatter
-        let new_content = fs.load(path!("/root/src/main.rs").as_ref()).await.unwrap();
         assert_eq!(
-            new_content, FORMATTED_CONTENT,
+            // Ignore carriage returns on Windows
+            fs.load(path!("/root/src/main.rs").as_ref())
+                .await
+                .unwrap()
+                .replace("\r\n", "\n"),
+            FORMATTED_CONTENT,
             "Code should be formatted when format_on_save is set to a list"
         );
     }
