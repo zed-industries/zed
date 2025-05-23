@@ -2,15 +2,16 @@ mod markdown_preview;
 mod repl_menu;
 use assistant_settings::AssistantSettings;
 use editor::actions::{
-    AddSelectionAbove, AddSelectionBelow, ConfirmCodeAction, DuplicateLineDown, GoToDiagnostic,
-    GoToHunk, GoToPreviousDiagnostic, GoToPreviousHunk, MoveLineDown, MoveLineUp, SelectAll,
-    SelectLargerSyntaxNode, SelectNext, SelectSmallerSyntaxNode, ToggleDiagnostics, ToggleGoToLine,
-    ToggleInlineDiagnostics,
+    AddSelectionAbove, AddSelectionBelow, DuplicateLineDown, GoToDiagnostic, GoToHunk,
+    GoToPreviousDiagnostic, GoToPreviousHunk, MoveLineDown, MoveLineUp, SelectAll,
+    SelectLargerSyntaxNode, SelectNext, SelectSmallerSyntaxNode, ToggleCodeActions,
+    ToggleDiagnostics, ToggleGoToLine, ToggleInlineDiagnostics,
 };
 use editor::{Editor, EditorSettings};
 use gpui::{
-    Action, ClickEvent, Context, Corner, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, ParentElement, Render, Styled, Subscription, WeakEntity, Window,
+    Action, AnchoredPositionMode, ClickEvent, Context, Corner, ElementId, Entity, EventEmitter,
+    FocusHandle, Focusable, InteractiveElement, ParentElement, Render, Styled, Subscription,
+    WeakEntity, Window, anchored, deferred, point,
 };
 use project::project_settings::DiagnosticSeverity;
 use search::{BufferSearchBar, buffer_search};
@@ -32,7 +33,6 @@ pub struct QuickActionBar {
     show: bool,
     toggle_selections_handle: PopoverMenuHandle<ContextMenu>,
     toggle_settings_handle: PopoverMenuHandle<ContextMenu>,
-    toggle_code_actions_handle: PopoverMenuHandle<ContextMenu>,
     workspace: WeakEntity<Workspace>,
 }
 
@@ -49,7 +49,6 @@ impl QuickActionBar {
             show: true,
             toggle_selections_handle: Default::default(),
             toggle_settings_handle: Default::default(),
-            toggle_code_actions_handle: Default::default(),
             workspace: workspace.weak_handle(),
         };
         this.apply_settings(cx);
@@ -84,12 +83,19 @@ impl QuickActionBar {
 }
 
 impl Render for QuickActionBar {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(editor) = self.active_editor() else {
             return div().id("empty quick action bar");
         };
 
         let supports_inlay_hints = editor.update(cx, |editor, cx| editor.supports_inlay_hints(cx));
+        let code_action_context_menu = editor.update(cx, |editor, cx| {
+            if let Some(style) = editor.style() {
+                editor.render_context_menu(&style, 10, window, cx)
+            } else {
+                None
+            }
+        });
         let editor_value = editor.read(cx);
         let selection_menu_enabled = editor_value.selection_menu_enabled(cx);
         let inlay_hints_enabled = editor_value.inlay_hints_enabled();
@@ -110,7 +116,6 @@ impl Render for QuickActionBar {
         let minimap_enabled = supports_minimap && editor_value.minimap().is_some();
         let has_code_actions = editor_value.has_code_actions();
         let code_action_enabled = editor_value.code_actions_enabled(cx);
-
         let focus_handle = editor_value.focus_handle(cx);
 
         let search_button = editor.is_singleton(cx).then(|| {
@@ -146,42 +151,37 @@ impl Render for QuickActionBar {
 
         let code_actions_dropdown = code_action_enabled.then(|| {
             let focus = editor.focus_handle(cx);
-            PopoverMenu::new("editor-code-actions-dropdown")
-                .menu({
-                    let editor_weak = editor.downgrade();
-                    move |window, cx| {
-                        let focus = focus.clone();
-                        let actions = editor_weak
-                            .update(cx, |editor, cx| {
-                                editor.set_popover_code_actions_menu(window, cx)
-                            })
-                            .ok()
-                            .flatten()?;
-                        let menu = ContextMenu::build(window, cx, move |menu, _, _| {
-                            let mut menu = menu.context(focus.clone());
-                            for (index, action) in actions.iter().enumerate() {
-                                menu = menu.action(
-                                    action.action.lsp_action.title().to_string(),
-                                    Box::new(ConfirmCodeAction {
-                                        item_ix: Some(index),
-                                    }),
-                                );
-                            }
-                            menu
-                        });
-                        Some(menu)
-                    }
-                })
-                .trigger_with_tooltip(
+            v_flex()
+                .child(
                     IconButton::new("toggle_code_actions_icon", IconName::Bolt)
                         .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
                         .disabled(!has_code_actions)
-                        .toggle_state(self.toggle_code_actions_handle.is_deployed()),
-                    Tooltip::text("Code Actions"),
+                        .toggle_state(code_action_context_menu.is_some())
+                        .tooltip(Tooltip::text("Code Actions"))
+                        .on_click({
+                            let focus = focus.clone();
+                            move |_, window, cx| {
+                                focus.dispatch_action(
+                                    &ToggleCodeActions {
+                                        deployed_from_indicator: None,
+                                        quick_launch: false,
+                                    },
+                                    window,
+                                    cx,
+                                );
+                            }
+                        }),
                 )
-                .anchor(Corner::TopRight)
-                .with_handle(self.toggle_code_actions_handle.clone())
+                .children(code_action_context_menu.map(|menu| {
+                    deferred(
+                        anchored()
+                            .position_mode(AnchoredPositionMode::Local)
+                            .position(point(px(0.), px(24.)))
+                            .anchor(Corner::TopLeft)
+                            .child(menu),
+                    )
+                }))
         });
 
         let editor_selections_dropdown = selection_menu_enabled.then(|| {
