@@ -203,7 +203,7 @@ where
                 .unwrap_or_default();
             task_inventory
                 .read(cx)
-                .list_tasks(file, language, task_contexts.worktree(), cx)
+                .list_tasks(file, language, task_contexts.worktree(), None, cx)
         })?;
 
         let did_spawn = workspace

@@ -628,6 +628,7 @@ impl ContextProvider for RustContextProvider {
     fn associated_tasks(
         &self,
         file: Option<Arc<dyn language::File>>,
+        _project_root: Option<std::path::PathBuf>,
         cx: &App,
     ) -> Option<TaskTemplates> {
         const DEFAULT_RUN_NAME_STR: &str = "RUST_DEFAULT_PACKAGE_RUN";

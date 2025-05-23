@@ -29,6 +29,7 @@ use util::{NumericPrefixWithSuffix, ResultExt as _, paths::PathExt as _, post_in
 use worktree::WorktreeId;
 
 use crate::{task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
+use crate::Project;
 
 /// Inventory tracks available tasks for a given project.
 #[derive(Debug, Default)]
@@ -305,7 +306,7 @@ impl Inventory {
             })
             .unwrap_or((None, None, None));
 
-        self.list_tasks(file, language, worktree_id.or(buffer_worktree_id), cx)
+        self.list_tasks(file, language, worktree_id.or(buffer_worktree_id), None, cx)
             .iter()
             .find(|(_, template)| template.label == label)
             .map(|val| val.1.clone())
@@ -319,6 +320,7 @@ impl Inventory {
         file: Option<Arc<dyn File>>,
         language: Option<Arc<Language>>,
         worktree: Option<WorktreeId>,
+        project: Option<gpui::Entity<Project>>,
         cx: &App,
     ) -> Vec<(TaskSourceKind, TaskTemplate)> {
         let global_tasks = self.global_templates_from_settings();
@@ -328,13 +330,21 @@ impl Inventory {
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
             name: language.name().into(),
         });
+        let project_root = project.as_ref().and_then(|project| {
+            let worktree_id = file.as_ref().map(|f| f.worktree_id(cx));
+            worktree_id.and_then(|id| {
+                project.read(cx)
+                    .worktree_for_id(id, cx)
+                    .map(|w| w.read(cx).abs_path().to_path_buf())
+            })
+        });
         let language_tasks = language
             .filter(|language| {
                 language_settings(Some(language.name()), file.as_ref(), cx)
                     .tasks
                     .enabled
             })
-            .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
+            .and_then(|language| language.context_provider()?.associated_tasks(file, project_root, cx))
             .into_iter()
             .flat_map(|tasks| tasks.0.into_iter())
             .flat_map(|task| Some((task_source_kind.clone()?, task)));
@@ -412,7 +422,7 @@ impl Inventory {
                     .tasks
                     .enabled
             })
-            .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
+            .and_then(|language| language.context_provider()?.associated_tasks(file, None, cx))
             .into_iter()
             .flat_map(|tasks| tasks.0.into_iter())
             .flat_map(|task| Some((task_source_kind.clone()?, task)));
@@ -724,7 +734,7 @@ mod test_inventory {
     ) -> Vec<String> {
         inventory.update(cx, |inventory, cx| {
             inventory
-                .list_tasks(None, None, worktree, cx)
+                .list_tasks(None, None, worktree, None, cx)
                 .into_iter()
                 .map(|(_, task)| task.label)
                 .sorted()
@@ -739,7 +749,7 @@ mod test_inventory {
     ) {
         inventory.update(cx, |inventory, cx| {
             let (task_source_kind, task) = inventory
-                .list_tasks(None, None, None, cx)
+                .list_tasks(None, None, None, None, cx)
                 .into_iter()
                 .find(|(_, task)| task.label == task_name)
                 .unwrap_or_else(|| panic!("Failed to find task with name {task_name}"));
@@ -760,7 +770,7 @@ mod test_inventory {
         inventory.update(cx, |inventory, cx| {
             let task_context = &TaskContext::default();
             inventory
-                .list_tasks(None, None, worktree, cx)
+                .list_tasks(None, None, worktree, None, cx)
                 .into_iter()
                 .filter_map(|(source_kind, task)| {
                     let id_base = source_kind.to_id_base();
@@ -889,7 +899,8 @@ impl ContextProviderWithTasks {
 impl ContextProvider for ContextProviderWithTasks {
     fn associated_tasks(
         &self,
-        _: Option<Arc<dyn language::File>>,
+        _: Option<Arc<dyn File>>,
+        _: Option<std::path::PathBuf>,
         _: &App,
     ) -> Option<TaskTemplates> {
         Some(self.templates.clone())
