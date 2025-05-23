@@ -339,9 +339,6 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                             },
                             {
                                 "required": ["targetCreateCommands"]
-                            },
-                            {
-                                "required": ["cargo"]
                             }
                         ]
                     }
