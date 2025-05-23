@@ -1396,6 +1396,7 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
                 this.disable_ime();
             }
             zwp_text_input_v3::Event::CommitString { text } => {
+                println!(" zwp_text_input_v3::Event::CommitString {text:?}");
                 state.composing = false;
                 let Some(window) = state.keyboard_focused_window.clone() else {
                     return;
@@ -1432,6 +1433,7 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
 
                 if let Some(text) = state.ime_pre_edit.take() {
                     drop(state);
+                    println!("zwp_text_input_v3::Event::PreeditString {text:?}");
                     window.handle_ime(ImeInput::SetMarkedText(text));
                     if let Some(area) = window.get_ime_area() {
                         text_input.set_cursor_rectangle(
@@ -1598,6 +1600,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                             {
                                 compose.reset();
                                 drop(state);
+                                println!("wl_pointer::ButtonState::Pressed {}", text);
                                 window.handle_ime(ImeInput::InsertText(text));
                                 state = client.borrow_mut();
                             }

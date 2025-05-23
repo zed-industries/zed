@@ -1248,6 +1248,7 @@ impl X11Client {
         let mut xim_handler = state.xim_handler.take().unwrap();
         state.composing = !text.is_empty();
         drop(state);
+        println!("xim_handle_preedit: {}", text);
         window.handle_ime_preedit(text);
 
         if let Some(area) = window.get_ime_area() {
