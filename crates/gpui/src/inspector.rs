@@ -45,7 +45,7 @@ impl Into<InspectorElementPath> for &InspectorElementPath {
 }
 
 #[cfg(any(feature = "inspector", debug_assertions))]
-pub(crate) use conditional::*;
+pub use conditional::*;
 
 #[cfg(any(feature = "inspector", debug_assertions))]
 mod conditional {
@@ -54,9 +54,15 @@ mod conditional {
     use collections::FxHashMap;
     use std::any::{Any, TypeId};
 
+    /// Function set on `App` to render the inspector UI.
+    pub type InspectorRenderer =
+        Box<dyn Fn(&mut Inspector, &mut Window, &mut Context<Inspector>) -> AnyElement>;
+
+    /// Manages inspector state - which element is currently selected and whether the inspector is
+    /// in picking mode.
     pub struct Inspector {
         active_element: Option<InspectedElement>,
-        pub pick_depth: Option<f32>,
+        pub(crate) pick_depth: Option<f32>,
     }
 
     struct InspectedElement {
@@ -74,19 +80,19 @@ mod conditional {
     }
 
     impl Inspector {
-        pub fn new() -> Self {
+        pub(crate) fn new() -> Self {
             Self {
                 active_element: None,
                 pick_depth: Some(0.0),
             }
         }
 
-        pub fn select(&mut self, id: InspectorElementId, window: &mut Window) {
+        pub(crate) fn select(&mut self, id: InspectorElementId, window: &mut Window) {
             self.set_active_element_id(id, window);
             self.pick_depth = None;
         }
 
-        pub fn hover(&mut self, id: InspectorElementId, window: &mut Window) {
+        pub(crate) fn hover(&mut self, id: InspectorElementId, window: &mut Window) {
             if self.is_picking() {
                 let changed = self.set_active_element_id(id, window);
                 if changed {
@@ -95,7 +101,7 @@ mod conditional {
             }
         }
 
-        pub fn set_active_element_id(
+        pub(crate) fn set_active_element_id(
             &mut self,
             id: InspectorElementId,
             window: &mut Window,
@@ -108,11 +114,12 @@ mod conditional {
             changed
         }
 
+        /// ID of the currently hovered or selected element.
         pub fn active_element_id(&self) -> Option<&InspectorElementId> {
             self.active_element.as_ref().map(|e| &e.id)
         }
 
-        pub fn with_active_element_state<T: 'static, R>(
+        pub(crate) fn with_active_element_state<T: 'static, R>(
             &mut self,
             window: &mut Window,
             f: impl FnOnce(&mut Option<T>, &mut Window) -> R,
@@ -138,15 +145,18 @@ mod conditional {
             result
         }
 
+        /// Starts element picking mode, allowing the user to select elements by clicking.
         pub fn start_picking(&mut self) {
             self.pick_depth = Some(0.0);
         }
 
+        /// Returns whether the inspector is currently in picking mode.
         pub fn is_picking(&self) -> bool {
             self.pick_depth.is_some()
         }
 
-        fn render_inspector_states(
+        /// Renders elements for all registered inspector states of the active inspector element.
+        pub fn render_inspector_states(
             &mut self,
             window: &mut Window,
             cx: &mut Context<Self>,
@@ -182,13 +192,7 @@ mod conditional {
     impl Render for Inspector {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             if let Some(inspector_renderer) = cx.inspector_renderer.take() {
-                let rendered_inspector_states = self.render_inspector_states(window, cx);
-                let result = inspector_renderer(
-                    self.active_element.as_ref().map(|e| &e.id),
-                    rendered_inspector_states,
-                    window,
-                    cx,
-                );
+                let result = inspector_renderer(self, window, cx);
                 cx.inspector_renderer = Some(inspector_renderer);
                 result
             } else {
@@ -198,7 +202,7 @@ mod conditional {
     }
 
     #[derive(Default)]
-    pub struct InspectorElementRegistry {
+    pub(crate) struct InspectorElementRegistry {
         renderers_by_type_id: FxHashMap<
             TypeId,
             Box<dyn Fn(InspectorElementId, &dyn Any, &mut Window, &mut App) -> AnyElement>,

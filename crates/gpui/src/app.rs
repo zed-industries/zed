@@ -284,16 +284,7 @@ pub struct App {
         FxHashMap<EntityId, FxHashMap<WindowId, WindowInvalidator>>,
     pub(crate) tracked_entities: FxHashMap<WindowId, FxHashSet<EntityId>>,
     #[cfg(any(feature = "inspector", debug_assertions))]
-    pub(crate) inspector_renderer: Option<
-        Box<
-            dyn Fn(
-                Option<&crate::InspectorElementId>,
-                Vec<crate::AnyElement>,
-                &mut Window,
-                &mut App,
-            ) -> crate::AnyElement,
-        >,
-    >,
+    pub(crate) inspector_renderer: Option<crate::InspectorRenderer>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) inspector_element_registry: InspectorElementRegistry,
     #[cfg(any(test, feature = "test-support", debug_assertions))]
@@ -1688,22 +1679,10 @@ impl App {
         }
     }
 
-    /// Sets the renderer for the inspector. This is provided the rendered states for the selected
-    /// element (if any).
+    /// Sets the renderer for the inspector.
     #[cfg(any(feature = "inspector", debug_assertions))]
-    pub fn set_inspector_renderer<R: crate::IntoElement>(
-        &mut self,
-        f: impl 'static
-        + Fn(
-            Option<&crate::InspectorElementId>,
-            Vec<crate::AnyElement>,
-            &mut Window,
-            &mut App,
-        ) -> R,
-    ) {
-        self.inspector_renderer = Some(Box::new(move |id, states, window, cx| {
-            f(id, states, window, cx).into_any_element()
-        }));
+    pub fn set_inspector_renderer(&mut self, f: crate::InspectorRenderer) {
+        self.inspector_renderer = Some(f);
     }
 
     /// Registers a renderer specific to an inspector state.

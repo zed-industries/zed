@@ -3897,15 +3897,6 @@ impl Window {
         self.refresh();
     }
 
-    /// Puts the inspector in picking mode, where elements can be clicked to select them.
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    pub fn start_inspector_picking(&mut self, cx: &mut App) {
-        if let Some(inspector) = &self.inspector {
-            inspector.update(cx, |inspector, _cx| inspector.start_picking());
-            self.refresh();
-        }
-    }
-
     /// Returns true if the window is in inspector mode.
     pub fn is_inspector_picking(&self, _cx: &App) -> bool {
         #[cfg(any(feature = "inspector", debug_assertions))]
@@ -3980,8 +3971,10 @@ impl Window {
         };
     }
 
+    /// Registers a hitbox that can be used for inspector picking mode, allowing users to select and
+    /// inspect UI elements by clicking on them.
     #[cfg(any(feature = "inspector", debug_assertions))]
-    pub(crate) fn insert_inspector_hitbox(
+    pub fn insert_inspector_hitbox(
         &mut self,
         hitbox_id: HitboxId,
         inspector_id: Option<&crate::InspectorElementId>,

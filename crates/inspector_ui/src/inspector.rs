@@ -1,5 +1,5 @@
 use anyhow::{Context as _, anyhow};
-use gpui::{App, DivInspectorState, InspectorElementId, IntoElement, Window};
+use gpui::{App, DivInspectorState, Inspector, InspectorElementId, IntoElement, Window};
 use std::{cell::OnceCell, path::Path, sync::Arc};
 use ui::{Label, Tooltip, prelude::*};
 use util::{ResultExt as _, command::new_smol_command};
@@ -45,17 +45,17 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
         })
     });
 
-    cx.set_inspector_renderer(render_inspector);
+    cx.set_inspector_renderer(Box::new(render_inspector));
 }
 
 fn render_inspector(
-    inspector_id: Option<&InspectorElementId>,
-    rendered_inspector_states: Vec<AnyElement>,
+    inspector: &mut Inspector,
     window: &mut Window,
-    cx: &mut App,
-) -> impl IntoElement + use<> {
+    cx: &mut Context<Inspector>,
+) -> AnyElement {
     let ui_font = theme::setup_ui_font(window, cx);
     let colors = cx.theme().colors();
+    let inspector_id = inspector.active_element_id();
     v_flex()
         .id("gpui-inspector")
         .size_full()
@@ -73,12 +73,12 @@ fn render_inspector(
                 .child(
                     IconButton::new("pick-mode", IconName::MagnifyingGlass)
                         .tooltip(Tooltip::text("Start inspector pick mode"))
-                        // TODO: Why isn't the icon colored when inspecting?
                         .selected_icon_color(Color::Selected)
-                        .toggle_state(window.is_inspector_picking(cx))
-                        .on_click(|_, window, cx| {
-                            window.start_inspector_picking(cx);
-                        }),
+                        .toggle_state(inspector.is_picking())
+                        .on_click(cx.listener(|inspector, _, window, _cx| {
+                            inspector.start_picking();
+                            window.refresh();
+                        })),
                 )
                 .child(
                     h_flex()
@@ -94,8 +94,9 @@ fn render_inspector(
                 .when_some(inspector_id, |this, inspector_id| {
                     this.child(render_inspector_id(inspector_id, cx))
                 })
-                .children(rendered_inspector_states),
+                .children(inspector.render_inspector_states(window, cx)),
         )
+        .into_any_element()
 }
 
 fn render_inspector_id(inspector_id: &InspectorElementId, cx: &App) -> Div {
