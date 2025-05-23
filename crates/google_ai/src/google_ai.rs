@@ -289,6 +289,12 @@ pub struct UsageMetadata {
     pub total_token_count: Option<usize>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThinkingConfig {
+    pub thinking_budget: usize,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerationConfig {
@@ -304,6 +310,8 @@ pub struct GenerationConfig {
     pub top_p: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_k: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_config: Option<ThinkingConfig>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -496,6 +504,7 @@ pub enum Model {
         /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
         display_name: Option<String>,
         max_tokens: usize,
+        thinking_budget: Option<usize>,
     },
 }
 
@@ -550,6 +559,15 @@ impl Model {
             Model::Gemini25ProPreview0325 => ONE_MILLION,
             Model::Gemini25FlashPreview0417 => ONE_MILLION,
             Model::Custom { max_tokens, .. } => *max_tokens,
+        }
+    }
+
+    pub fn thinking_budget(&self) -> Option<usize> {
+        match self {
+            Model::Custom {
+                thinking_budget, ..
+            } => *thinking_budget,
+            _ => None,
         }
     }
 }

@@ -4,7 +4,8 @@ use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
 use google_ai::{
-    FunctionDeclaration, GenerateContentResponse, Part, SystemInstruction, UsageMetadata,
+    FunctionDeclaration, GenerateContentResponse, Part, SystemInstruction, ThinkingConfig,
+    UsageMetadata,
 };
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
@@ -50,6 +51,7 @@ pub struct AvailableModel {
     name: String,
     display_name: Option<String>,
     max_tokens: usize,
+    thinking_budget: Option<usize>,
 }
 
 pub struct GoogleLanguageModelProvider {
@@ -216,6 +218,7 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
                     name: model.name.clone(),
                     display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
+                    thinking_budget: model.thinking_budget,
                 },
             );
         }
@@ -343,7 +346,7 @@ impl LanguageModel for GoogleLanguageModel {
         cx: &App,
     ) -> BoxFuture<'static, Result<usize>> {
         let model_id = self.model.id().to_string();
-        let request = into_google(request, model_id.clone());
+        let request = into_google(request, model_id.clone(), self.model.thinking_budget());
         let http_client = self.http_client.clone();
         let api_key = self.state.read(cx).api_key.clone();
 
@@ -379,7 +382,11 @@ impl LanguageModel for GoogleLanguageModel {
             >,
         >,
     > {
-        let request = into_google(request, self.model.id().to_string());
+        let request = into_google(
+            request,
+            self.model.id().to_string(),
+            self.model.thinking_budget(),
+        );
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
             let response = request
@@ -394,6 +401,7 @@ impl LanguageModel for GoogleLanguageModel {
 pub fn into_google(
     mut request: LanguageModelRequest,
     model_id: String,
+    thinking_budget: Option<usize>,
 ) -> google_ai::GenerateContentRequest {
     fn map_content(content: Vec<MessageContent>) -> Vec<Part> {
         content
@@ -504,6 +512,9 @@ pub fn into_google(
             stop_sequences: Some(request.stop),
             max_output_tokens: None,
             temperature: request.temperature.map(|t| t as f64).or(Some(1.0)),
+            thinking_config: thinking_budget.map(|budget| ThinkingConfig {
+                thinking_budget: budget,
+            }),
             top_p: None,
             top_k: None,
         }),

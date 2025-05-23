@@ -71,6 +71,10 @@ pub struct AvailableModel {
     pub display_name: Option<String>,
     /// The size of the context window, indicating the maximum number of tokens the model can process.
     pub max_tokens: usize,
+    /// The number of thinking tokens to use for Gemini models.
+    /// If this is not set, the model decides on its own and the limit is 24576 tokens.
+    /// https://ai.google.dev/gemini-api/docs/thinking
+    pub thinking_budget: Option<usize>,
     /// The maximum number of output tokens allowed by the model.
     pub max_output_tokens: Option<u32>,
     /// The maximum number of completion tokens allowed by the model (o1-* only)
@@ -750,7 +754,7 @@ impl LanguageModel for CloudLanguageModel {
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
                 let model_id = self.model.id.to_string();
-                let generate_content_request = into_google(request, model_id.clone());
+                let generate_content_request = into_google(request, model_id.clone(), None);
                 async move {
                     let http_client = &client.http_client();
                     let token = llm_api_token.acquire(&client).await?;
@@ -922,7 +926,7 @@ impl LanguageModel for CloudLanguageModel {
             }
             zed_llm_client::LanguageModelProvider::Google => {
                 let client = self.client.clone();
-                let request = into_google(request, self.model.id.to_string());
+                let request = into_google(request, self.model.id.to_string(), None);
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
