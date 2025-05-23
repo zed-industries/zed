@@ -52,7 +52,7 @@ use util::{ResultExt, default};
 
 use crate::AllLanguageModelSettings;
 
-const PROVIDER_ID: &str = "amazon-bedrock";
+const PROVIDER_ID: &str = "bedrock";
 const PROVIDER_NAME: &str = "Amazon Bedrock";
 
 #[derive(Default, Clone, Deserialize, Serialize, PartialEq, Debug)]
