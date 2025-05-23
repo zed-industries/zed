@@ -101,15 +101,12 @@ impl DebugPanel {
         let Some(session) = self.active_session.clone() else {
             return;
         };
-        let Some(active_pane) = session
+        let active_pane = session
             .read(cx)
             .running_state()
             .read(cx)
             .active_pane()
-            .cloned()
-        else {
-            return;
-        };
+            .clone();
         active_pane.update(cx, |pane, cx| {
             pane.focus_active_item(window, cx);
         });
