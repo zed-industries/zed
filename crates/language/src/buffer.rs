@@ -2901,7 +2901,7 @@ impl BufferSnapshot {
                 end
             };
             if let Some((start, end)) = start.zip(end) {
-                if start.row == end.row && !significant_indentation {
+                if start.row == end.row && (!significant_indentation || start.column < end.column) {
                     continue;
                 }
                 let range = start..end;
