@@ -139,7 +139,6 @@ fn render_inspector_id(inspector_id: &InspectorElementId, cx: &App) -> Div {
         )
 }
 
-// TODO: Move to some other crate (along with build.rs) and also use this in error notifications.
 async fn open_zed_source_location(
     location: &'static std::panic::Location<'static>,
 ) -> anyhow::Result<()> {
