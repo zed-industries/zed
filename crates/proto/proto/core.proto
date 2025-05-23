@@ -12,7 +12,6 @@ message User {
     string avatar_url = 3;
     optional string email = 4;
     optional string name = 5;
-    optional uint64 account_created_at = 6;
 }
 
 message Nonce {

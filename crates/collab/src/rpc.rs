@@ -2483,7 +2483,6 @@ async fn get_users(
         .map(|user| proto::User {
             id: user.id.to_proto(),
             avatar_url: format!("https://github.com/{}.png?size=128", user.github_login),
-            account_created_at: Some(user.account_created_at().and_utc().timestamp() as u64),
             github_login: user.github_login,
             email: user.email_address,
             name: user.name,
@@ -2517,7 +2516,6 @@ async fn fuzzy_search_users(
         .map(|user| proto::User {
             id: user.id.to_proto(),
             avatar_url: format!("https://github.com/{}.png?size=128", user.github_login),
-            account_created_at: Some(user.account_created_at().and_utc().timestamp() as u64),
             github_login: user.github_login,
             name: user.name,
             email: user.email_address,

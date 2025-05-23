@@ -166,7 +166,6 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
                 avatar_url: "http://avatar.com/nathansobo".into(),
                 name: None,
                 email: None,
-                account_created_at: None,
             }],
         },
     );
@@ -221,7 +220,6 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
                 avatar_url: "http://avatar.com/maxbrunsfeld".into(),
                 name: None,
                 email: None,
-                account_created_at: None,
             }],
         },
     );
@@ -267,7 +265,6 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
                 avatar_url: "http://avatar.com/as-cii".into(),
                 name: None,
                 email: None,
-                account_created_at: None,
             }],
         },
     );

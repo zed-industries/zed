@@ -1,6 +1,6 @@
 use super::{Client, Status, TypedEnvelope, proto};
 use anyhow::{Context as _, Result, anyhow};
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet, hash_map::Entry};
 use feature_flags::FeatureFlagAppExt;
 use futures::{Future, StreamExt, channel::mpsc};
@@ -50,7 +50,6 @@ pub struct User {
     pub avatar_uri: SharedUri,
     pub name: Option<String>,
     pub email: Option<String>,
-    pub account_created_at: Option<NaiveDateTime>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -875,10 +874,6 @@ impl User {
             avatar_uri: message.avatar_url.into(),
             name: message.name,
             email: message.email,
-            account_created_at: message
-                .account_created_at
-                .and_then(|timestamp| DateTime::from_timestamp(timestamp as i64, 0))
-                .map(|dt| dt.naive_utc()),
         })
     }
 }
