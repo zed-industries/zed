@@ -62,16 +62,7 @@ pub fn init(cx: &mut App) {
         cx.when_flag_enabled::<DebuggerFeatureFlag>(window, |workspace, _, _| {
             workspace
                 .register_action(|workspace, _: &ToggleFocus, window, cx| {
-                    let did_focus_panel = workspace.toggle_panel_focus::<DebugPanel>(window, cx);
-                    if !did_focus_panel {
-                        return;
-                    };
-                    let Some(panel) = workspace.panel::<DebugPanel>(cx) else {
-                        return;
-                    };
-                    panel.update(cx, |panel, cx| {
-                        panel.focus_active_item(window, cx);
-                    })
+                    workspace.toggle_panel_focus::<DebugPanel>(window, cx);
                 })
                 .register_action(|workspace, _: &Pause, _, cx| {
                     if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
