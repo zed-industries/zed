@@ -28,15 +28,15 @@ These adapters enable Zed to provide a consistent debugging experience across mu
 
 ## Getting Started
 
-For basic debugging you can set up a new configuration by opening up the `New Session Modal` either by the `debugger: start` (default: f4) or clicking the plus icon at the top right of the debug panel. Once the `New Session Modal` is open you can click custom on the bottom left to open a view that allows you to create a custom debug configuration. Once you have created a configuration you can save it to your workspace's `.zed/debug.json` by clicking on the save button on the bottom left.
+For basic debugging you can set up a new configuration by opening the `New Session Modal` either via the `debugger: start` (default: f4) or clicking the plus icon at the top right of the debug panel.
 
-For more advance use cases you can create debug configurations by directly editing the `.zed/debug.json` file in your project root directory. Once you fill out the adapter and label fields completions will show you the available options of the selected debug adapter.
+For more advanced use cases you can create debug configurations by directly editing the `.zed/debug.json` file in your project root directory.
 
 You can then use the `New Session Modal` to select a configuration then start debugging.
 
 ### Configuration
 
-While configuration fields are debug adapter dependent, most adapters support the follow fields.
+While configuration fields are debug adapter dependent, most adapters support the following fields.
 
 ```json
 [
@@ -71,7 +71,7 @@ Zed currently supports these types of breakpoints
 - Conditional Breakpoints: Stop at the breakpoint when it's hit if the condition is met
 - Hit Breakpoints: Stop at the breakpoint when it's hit a certain number of times
 
-Standard breakpoints can be toggled by left clicking on the editor gutter or using the Toggle Breakpoint action. Right clicking on a breakpoint, right clicking on a code runner symbol brings up the breakpoint context menu. That has options for toggling breakpoints and editing log breakpoints.
+Standard breakpoints can be toggled by left clicking on the editor gutter or using the Toggle Breakpoint action. Right clicking on a breakpoint or on a code runner symbol brings up the breakpoint context menu. This has options for toggling breakpoints and editing log breakpoints.
 
 Other kinds of breakpoints can be toggled/edited by right clicking on the breakpoint icon in the gutter and selecting the desired option.
 
@@ -216,10 +216,10 @@ Other kinds of breakpoints can be toggled/edited by right clicking on the breakp
 
 ## Theme
 
-The Debugger supports the following theme options
+The Debugger supports the following theme options:
 
-    /// Color used to accent some of the debuggers elements
-    /// Only accent breakpoint & breakpoint related symbols right now
+    /// Color used to accent some of the debugger's elements
+    /// Only accents breakpoint & breakpoint related symbols right now
 
 **debugger.accent**: Color used to accent breakpoint & breakpoint related symbols
 **editor.debugger_active_line.background**: Background color of active debug line
