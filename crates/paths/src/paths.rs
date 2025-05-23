@@ -435,7 +435,7 @@ pub fn vscode_settings_file() -> &'static PathBuf {
                 .join("Library/Application Support")
                 .join(rel_path)
         } else {
-            config_dir().join(rel_path)
+            home_dir().join(".config").join(rel_path)
         }
     })
 }
