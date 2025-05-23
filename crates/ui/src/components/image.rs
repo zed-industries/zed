@@ -26,8 +26,6 @@ pub enum VectorName {
     ZedXCopilot,
     Grid,
     AiGrid,
-    BreakpointFlagStart,
-    BreakpointFlagEnd,
 }
 
 /// A vector image, such as an SVG.
