@@ -14141,7 +14141,7 @@ async fn test_context_menus_hide_hover_popover(cx: &mut gpui::TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.toggle_code_actions(
             &ToggleCodeActions {
-                deployed_from_indicator: None,
+                deployed_from: None,
                 quick_launch: false,
             },
             window,

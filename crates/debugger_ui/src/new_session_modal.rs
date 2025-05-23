@@ -1126,7 +1126,7 @@ impl PickerDelegate for DebugScenarioDelegate {
         let task_kind = &self.candidates[hit.candidate_id].0;
 
         let icon = match task_kind {
-            Some(TaskSourceKind::Lsp(..)) => Some(Icon::new(IconName::Bolt)),
+            Some(TaskSourceKind::Lsp(..)) => Some(Icon::new(IconName::BoltFilled)),
             Some(TaskSourceKind::UserInput) => Some(Icon::new(IconName::Terminal)),
             Some(TaskSourceKind::AbsPath { .. }) => Some(Icon::new(IconName::Settings)),
             Some(TaskSourceKind::Worktree { .. }) => Some(Icon::new(IconName::FileTree)),
