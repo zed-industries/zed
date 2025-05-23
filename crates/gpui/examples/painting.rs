@@ -1,6 +1,6 @@
 use gpui::{
     Application, Background, Bounds, ColorSpace, Context, MouseDownEvent, Path, PathBuilder,
-    PathStyle, Pixels, Point, Render, Size, StrokeOptions, Window, WindowOptions, bounds, canvas, div,
+    PathStyle, Pixels, Point, Render, StrokeOptions, Window, WindowOptions, bounds, canvas, div,
     linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size,
 };
 
@@ -103,7 +103,11 @@ impl PaintingViewer {
         lines.push((path, gpui::green().into()));
 
         // draw the indicators (aligned and unaligned versions)
-        let aligned_indicator = breakpoint_indicator_path(bounds(point(px(50.), px(250.)), size(px(60.), px(16.))));
+        let aligned_indicator = breakpoint_indicator_path(
+            bounds(point(px(50.), px(250.)), size(px(60.), px(16.))),
+            1.0,
+            false,
+        );
         lines.push((aligned_indicator, rgb(0x1e88e5).into()));
 
         Self {
@@ -247,11 +251,14 @@ fn main() {
 ///
 /// Note: The indicator needs to be a minimum of MIN_WIDTH px wide.
 /// wide to draw without graphical issues, so it will ignore narrower width.
-fn breakpoint_indicator_path(bounds: Bounds<Pixels>) -> Path<Pixels> {
+fn breakpoint_indicator_path(bounds: Bounds<Pixels>, scale: f32, stroke: bool) -> Path<Pixels> {
     static MIN_WIDTH: f32 = 31.;
 
-    let width = if bounds.size.width.0 < MIN_WIDTH {
-        px(MIN_WIDTH)
+    // Apply user scale to the minimum width
+    let min_width = MIN_WIDTH * scale;
+
+    let width = if bounds.size.width.0 < min_width {
+        px(min_width)
     } else {
         bounds.size.width
     };
@@ -261,8 +268,8 @@ fn breakpoint_indicator_path(bounds: Bounds<Pixels>) -> Path<Pixels> {
     let base_x = bounds.origin.x;
     let base_y = bounds.origin.y;
 
-    // Calculate the scaling factor for the height (SVG is 15px tall)
-    let scale_factor = height / px(15.0);
+    // Calculate the scaling factor for the height (SVG is 15px tall), incorporating user scale
+    let scale_factor = (height / px(15.0)) * scale;
 
     // Calculate how much width to allocate to the stretchable middle section
     // SVG has 32px of fixed elements (corners), so the rest is for the middle
@@ -275,8 +282,17 @@ fn breakpoint_indicator_path(bounds: Bounds<Pixels>) -> Path<Pixels> {
         px((value_f32 * 4.0).round() / 4.0)
     };
 
-    // Create a new path
-    let mut builder = PathBuilder::fill();
+    // Create a new path - either fill or stroke based on the flag
+    let mut builder = if stroke {
+        // For stroke, we need to set appropriate line width and options
+        let stroke_width = px(1.0 * scale); // Apply scale to stroke width
+        let options = StrokeOptions::default().with_line_width(stroke_width.0);
+
+        PathBuilder::stroke(stroke_width).with_style(PathStyle::Stroke(options))
+    } else {
+        // For fill, use the original implementation
+        PathBuilder::fill()
+    };
 
     // Upper half of the shape - Based on the provided SVG
     // Start at bottom left (0, 8)

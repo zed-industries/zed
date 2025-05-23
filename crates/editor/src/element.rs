@@ -21,6 +21,7 @@ use crate::{
         ShowMinimap, ShowScrollbar,
     },
     git::blame::{BlameRenderer, GitBlame, GlobalBlameRenderer},
+    gutter::breakpoint_indicator::breakpoint_indicator_path,
     hover_popover::{
         self, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
         POPOVER_RIGHT_OFFSET, hover_at,
@@ -48,8 +49,8 @@ use gpui::{
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels,
     ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString, Size,
     StatefulInteractiveElement, Style, Styled, TextRun, TextStyleRefinement, WeakEntity, Window,
-    anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
-    relative, size, solid_background, transparent_black,
+    anchored, canvas, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px,
+    quad, relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::language_settings::{
@@ -63,7 +64,7 @@ use multi_buffer::{
 
 use project::{
     ProjectPath,
-    debugger::breakpoint_store::{Breakpoint, BreakpointEditAction, BreakpointState},
+    debugger::breakpoint_store::{Breakpoint, BreakpointEditAction},
     project_settings::{GitGutterSetting, GitHunkStyleSetting, ProjectSettings},
 };
 use settings::Settings;
@@ -82,9 +83,7 @@ use std::{
 use sum_tree::Bias;
 use text::BufferId;
 use theme::{ActiveTheme, Appearance, BufferLineHeight, PlayerColor};
-use ui::{
-    ButtonLike, KeyBinding, POPOVER_Y_PADDING, Tooltip, Vector, VectorName, h_flex, prelude::*,
-};
+use ui::{ButtonLike, KeyBinding, POPOVER_Y_PADDING, Tooltip, h_flex, prelude::*};
 use unicode_segmentation::UnicodeSegmentation;
 use util::{RangeExt, ResultExt, debug_panic};
 use workspace::{CollaboratorId, Workspace, item::Item, notifications::NotifyTaskExt};
@@ -2393,16 +2392,30 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
-        use crate::gutter::breakpoint_indicator::breakpoint_indicator_path;
-        use gpui::canvas;
-
+        let id = ElementId::Name(format!("breakpoint_indicator_{}", multibuffer_row.0).into());
         let disabled = breakpoint.is_disabled();
-        let offset = px(40.);
-        let line_number = multibuffer_row.0 + 1;
-        let font_size = self.style.text.font_size;
+        let editor_text = self.style.text.clone();
+        let editor_font_size = editor_text.font_size;
+        let editor_font_size_px = editor_font_size.to_pixels(window.rem_size());
+        let line_height: Pixels = self
+            .style
+            .text
+            .clone()
+            .line_height
+            .to_pixels(editor_font_size, window.rem_size());
+        let font_scale = editor_font_size_px / window.rem_size();
+
+        let scaled_pixels = move |value: f32| px(value) * font_scale.clone();
+
+        let offset = scaled_pixels(40.);
+        let indicator_y_offset = px(4.);
+        let indicator_height = line_height - indicator_y_offset;
+
+        let longest_line_width = self.max_line_number_width(snapshot, window, cx);
+        let indicator_width = dbg!(longest_line_width) + scaled_pixels(40.);
 
         // Is it a breakpoint that shows up when hovering over gutter?
-        let (is_phantom, collides_with_existing) = editor.gutter_breakpoint_indicator.0.map_or(
+        let (hovered, collides_with_existing) = editor.gutter_breakpoint_indicator.0.map_or(
             (false, false),
             |PhantomBreakpointIndicator {
                  is_active,
@@ -2416,23 +2429,6 @@ impl EditorElement {
             },
         );
 
-        let (color, icon) = {
-            let icon = match (&breakpoint.message.is_some(), disabled) {
-                (false, false) => ui::IconName::DebugBreakpoint,
-                (true, false) => ui::IconName::DebugLogBreakpoint,
-                (false, true) => ui::IconName::DebugDisabledBreakpoint,
-                (true, true) => ui::IconName::DebugDisabledLogBreakpoint,
-            };
-
-            let color = if is_phantom {
-                Color::Hint
-            } else {
-                Color::Debugger
-            };
-
-            (color, icon)
-        };
-
         let breakpoint = Arc::from(breakpoint.clone());
 
         let alt_as_text = gpui::Keystroke {
@@ -2441,7 +2437,7 @@ impl EditorElement {
         };
         let primary_action_text = if breakpoint.is_disabled() {
             "enable"
-        } else if is_phantom && !collides_with_existing {
+        } else if hovered && !collides_with_existing {
             "set"
         } else {
             "unset"
@@ -2451,55 +2447,38 @@ impl EditorElement {
             use std::fmt::Write;
             write!(primary_text, ", {alt_as_text}-click to disable").ok();
         }
-        let primary_text = SharedString::from(primary_text);
-        let focus_handle = editor.focus_handle.clone();
 
-        let id = ElementId::Name(format!("breakpoint_indicator_{}", multibuffer_row.0).into());
-        let editor_text = self.style.text.clone();
-        let editor_font_size = editor_text.font_size;
-        let line_height: Pixels = self
-            .style
-            .text
-            .clone()
-            .line_height
-            .to_pixels(editor_font_size, window.rem_size());
-        let indicator_y_offset = px(2.);
-        let indicator_height = line_height - indicator_y_offset;
-
-        let longest_line_width = self.max_line_number_width(snapshot, window, cx);
-        let indicator_width = dbg!(longest_line_width) + px(24. + 16.);
-
-        // Create a foreground color for the indicator
-        let fg_color = if is_phantom {
-            cx.theme().colors().text
+        let fg_color = if hovered {
+            cx.theme().colors().ghost_element_hover
         } else if disabled {
-            cx.theme().colors().text.alpha(0.5)
-        } else if breakpoint.message.is_some() {
-            // Log breakpoint
-            cx.theme().status().warning
+            cx.theme().status().info.alpha(0.64)
         } else {
-            cx.theme().status().error
+            cx.theme().status().info.alpha(0.48)
         };
 
         div()
             .id(id)
+            .cursor_pointer()
             .absolute()
-            .top(indicator_y_offset / 2.0)
             .left_0()
-            // .left(px(-32.))
             .w(indicator_width)
             .h(indicator_height)
             .child(
                 canvas(
                     |_bounds, _cx, _style| {},
                     move |bounds, _cx, window, _style| {
+                        let font_scale = editor_font_size_px / window.rem_size();
+
                         let bounds = Bounds {
                             origin: point(bounds.origin.x + offset, bounds.origin.y),
-                            size: size(dbg!(bounds.size.width), indicator_height),
+                            size: size(bounds.size.width, indicator_height),
                         };
 
-                        // Create the breakpoint indicator path
-                        let path = breakpoint_indicator_path(bounds);
+                        let path = breakpoint_indicator_path(
+                            bounds,
+                            font_scale,
+                            if disabled { true } else { false },
+                        );
 
                         // Paint the path with the appropriate color
                         window.paint_path(path, fg_color);
@@ -2548,51 +2527,7 @@ impl EditorElement {
                     });
                 }
             })
-            // .tooltip(format!("{} (Right-click for more options)", primary_text))
             .into_any_element()
-        // IconButton::new(("breakpoint_indicator", row.0 as usize), icon)
-        //     .icon_size(IconSize::XSmall)
-        //     .size(ui::ButtonSize::None)
-        //     .icon_color(color)
-        //     .style(ButtonStyle::Transparent)
-        // .on_click(cx.listener({
-        //     let breakpoint = breakpoint.clone();
-
-        //     move |editor, event: &ClickEvent, window, cx| {
-        //         let edit_action = if event.modifiers().platform || breakpoint.is_disabled() {
-        //             BreakpointEditAction::InvertState
-        //         } else {
-        //             BreakpointEditAction::Toggle
-        //         };
-
-        //         window.focus(&editor.focus_handle(cx));
-        //         editor.edit_breakpoint_at_anchor(
-        //             position,
-        //             breakpoint.as_ref().clone(),
-        //             edit_action,
-        //             cx,
-        //         );
-        //     }
-        // }))
-        // .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
-        //     editor.set_breakpoint_context_menu(
-        //         row,
-        //         Some(position),
-        //         event.down.position,
-        //         window,
-        //         cx,
-        //     );
-        // }))
-        // .tooltip(move |window, cx| {
-        //     Tooltip::with_meta_in(
-        //         primary_text.clone(),
-        //         None,
-        //         "Right-click for more options",
-        //         &focus_handle,
-        //         window,
-        //         cx,
-        //     )
-        // })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2849,7 +2784,7 @@ impl EditorElement {
         scroll_position: gpui::Point<f32>,
         rows: Range<DisplayRow>,
         buffer_rows: &[RowInfo],
-        active_rows: &BTreeMap<DisplayRow, LineHighlightSpec>,
+        _active_rows: &BTreeMap<DisplayRow, LineHighlightSpec>,
         newest_selection_head: Option<DisplayPoint>,
         snapshot: &EditorSnapshot,
         window: &mut Window,
@@ -2905,16 +2840,7 @@ impl EditorElement {
                     return None;
                 }
 
-                let color = active_rows
-                    .get(&display_row)
-                    .map(|spec| {
-                        if spec.breakpoint {
-                            cx.theme().colors().debugger_accent
-                        } else {
-                            cx.theme().colors().editor_active_line_number
-                        }
-                    })
-                    .unwrap_or_else(|| cx.theme().colors().editor_line_number);
+                let color = cx.theme().colors().editor_active_line_number;
                 let shaped_line = self
                     .shape_line_number(SharedString::from(&line_number), color, window)
                     .log_err()?;

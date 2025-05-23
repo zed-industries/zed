@@ -1,11 +1,15 @@
-use gpui::{Bounds, Path, PathBuilder, point};
+use gpui::{Bounds, Path, PathBuilder, PathStyle, StrokeOptions, point};
 use ui::{Pixels, px};
 
 /// Draw the path for the breakpoint indicator.
 ///
 /// Note: The indicator needs to be a minimum of MIN_WIDTH px wide.
 /// wide to draw without graphical issues, so it will ignore narrower width.
-pub(crate) fn breakpoint_indicator_path(bounds: Bounds<Pixels>) -> Path<Pixels> {
+pub(crate) fn breakpoint_indicator_path(
+    bounds: Bounds<Pixels>,
+    scale: f32,
+    stroke: bool,
+) -> Path<Pixels> {
     // All dimensions mentioned are in pixels, based on an a
     // total shape size of 50px wide by 15px high
 
@@ -13,10 +17,11 @@ pub(crate) fn breakpoint_indicator_path(bounds: Bounds<Pixels>) -> Path<Pixels> 
     static BASE_WIDTH: f32 = 32.;
     static PIXEL_ROUNDING: f32 = 8.; // Round to the nearest eighth of a pixel
 
-    static MIN_WIDTH: f32 = 34.;
+    // Apply user scale to the minimum width
+    let min_width = 34.0 * scale;
 
-    let width = if bounds.size.width.0 < MIN_WIDTH {
-        px(MIN_WIDTH)
+    let width = if bounds.size.width.0 < min_width {
+        px(min_width)
     } else {
         bounds.size.width
     };
@@ -26,8 +31,8 @@ pub(crate) fn breakpoint_indicator_path(bounds: Bounds<Pixels>) -> Path<Pixels> 
     let base_x = bounds.origin.x;
     let base_y = bounds.origin.y;
 
-    // Calculate the scaling factor for the height
-    let scale_factor = height / px(BASE_HEIGHT);
+    // Calculate the scaling factor for the height, incorporating user scale
+    let scale_factor = (height / px(BASE_HEIGHT)) * scale;
 
     // Calculate how much width to allocate to the stretchable middle section
     // Shape has 32px of fixed elements (corners), so the rest is for the middle
@@ -39,8 +44,17 @@ pub(crate) fn breakpoint_indicator_path(bounds: Bounds<Pixels>) -> Path<Pixels> 
         px((value_f32 * PIXEL_ROUNDING).round() / PIXEL_ROUNDING)
     };
 
-    // Create a new path
-    let mut builder = PathBuilder::fill();
+    // Create a new path - either fill or stroke based on the flag
+    let mut builder = if stroke {
+        // For stroke, we need to set appropriate line width and options
+        let stroke_width = px(1.0 * scale); // Apply scale to stroke width
+        let options = StrokeOptions::default().with_line_width(stroke_width.0);
+
+        PathBuilder::stroke(stroke_width).with_style(PathStyle::Stroke(options))
+    } else {
+        // For fill, use the original implementation
+        PathBuilder::fill()
+    };
 
     // Start at center left (0, 8)
     let start_x = pixel_rounding(base_x);
