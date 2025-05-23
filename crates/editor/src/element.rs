@@ -681,31 +681,37 @@ impl EditorElement {
                 window,
                 cx,
             );
-        } else if modifiers.shift && !modifiers.control && !modifiers.alt && !modifiers.secondary()
-        {
-            editor.select(
-                SelectPhase::Extend {
-                    position,
-                    click_count,
-                },
-                window,
-                cx,
-            );
         } else {
             let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
             let multi_cursor_modifier = match multi_cursor_setting {
                 MultiCursorModifier::Alt => modifiers.alt,
                 MultiCursorModifier::CmdOrCtrl => modifiers.secondary(),
             };
-            editor.select(
-                SelectPhase::Begin {
-                    position,
-                    add: multi_cursor_modifier,
-                    click_count,
-                },
-                window,
-                cx,
-            );
+
+            // If shift is held with the multi-cursor modifier, treat as range selection (like Option+Shift on macOS)
+            let shift_and_multi = modifiers.shift && multi_cursor_modifier;
+            let shift_alone = modifiers.shift && !modifiers.control && !modifiers.alt && !modifiers.secondary();
+
+            if shift_and_multi || shift_alone {
+                editor.select(
+                    SelectPhase::Extend {
+                        position,
+                        click_count,
+                    },
+                    window,
+                    cx,
+                );
+            } else {
+                editor.select(
+                    SelectPhase::Begin {
+                        position,
+                        add: multi_cursor_modifier,
+                        click_count,
+                    },
+                    window,
+                    cx,
+                );
+            }
         }
         cx.stop_propagation();
 
