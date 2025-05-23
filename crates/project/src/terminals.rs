@@ -264,7 +264,7 @@ impl Project {
                             },
                         )
                     }
-                    None => (None, settings.shell.clone()),
+                    None => (None, settings.shell),
                 }
             }
             TerminalKind::Task(spawn_task) => {
