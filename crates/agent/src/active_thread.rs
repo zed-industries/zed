@@ -1033,7 +1033,6 @@ impl ActiveThread {
                     self.push_message(message_id, &message_segments, window, cx);
                 }
 
-                self.scroll_to_bottom(cx);
                 self.save_thread(cx);
                 cx.notify();
             }
