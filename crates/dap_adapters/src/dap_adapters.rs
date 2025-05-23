@@ -6,17 +6,18 @@ mod php;
 mod python;
 mod ruby;
 
-use std::{net::Ipv4Addr, sync::Arc};
+use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use async_trait::async_trait;
 use codelldb::CodeLldbDebugAdapter;
 use dap::{
-    DapRegistry, DebugRequest,
+    DapRegistry,
     adapters::{
         self, AdapterVersion, DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName,
         GithubRepo,
     },
+    configure_tcp_connection,
     inline_value::{PythonInlineValueProvider, RustInlineValueProvider},
 };
 use gdb::GdbDebugAdapter;
@@ -26,8 +27,8 @@ use javascript::JsDebugAdapter;
 use php::PhpDebugAdapter;
 use python::PythonDebugAdapter;
 use ruby::RubyDebugAdapter;
-use serde_json::{Value, json};
-use task::TcpArgumentsTemplate;
+use serde_json::json;
+use task::{DebugScenario, ZedDebugConfig};
 
 pub fn init(cx: &mut App) {
     cx.update_default_global(|registry: &mut DapRegistry, _cx| {
@@ -39,36 +40,13 @@ pub fn init(cx: &mut App) {
         registry.add_adapter(Arc::from(GoDebugAdapter));
         registry.add_adapter(Arc::from(GdbDebugAdapter));
 
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            registry.add_adapter(Arc::from(dap::FakeAdapter {}));
+        }
+
         registry.add_inline_value_provider("Rust".to_string(), Arc::from(RustInlineValueProvider));
         registry
             .add_inline_value_provider("Python".to_string(), Arc::from(PythonInlineValueProvider));
     })
-}
-
-pub(crate) async fn configure_tcp_connection(
-    tcp_connection: TcpArgumentsTemplate,
-) -> Result<(Ipv4Addr, u16, Option<u64>)> {
-    let host = tcp_connection.host();
-    let timeout = tcp_connection.timeout;
-
-    let port = if let Some(port) = tcp_connection.port {
-        port
-    } else {
-        dap::transport::TcpTransport::port(&tcp_connection).await?
-    };
-
-    Ok((host, port, timeout))
-}
-
-trait ToDap {
-    fn to_dap(&self) -> dap::StartDebuggingRequestArgumentsRequest;
-}
-
-impl ToDap for DebugRequest {
-    fn to_dap(&self) -> dap::StartDebuggingRequestArgumentsRequest {
-        match self {
-            Self::Launch(_) => dap::StartDebuggingRequestArgumentsRequest::Launch,
-            Self::Attach(_) => dap::StartDebuggingRequestArgumentsRequest::Attach,
-        }
-    }
 }

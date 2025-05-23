@@ -7,7 +7,7 @@ use anyhow::{Context as _, anyhow};
 use chrono::Utc;
 use collections::HashMap;
 use serde::{Deserialize, Serialize};
-use stripe::{PriceId, SubscriptionStatus};
+use stripe::{CreateCustomer, Customer, CustomerId, PriceId, SubscriptionStatus};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -120,6 +120,47 @@ impl StripeBilling {
                 None
             }
         })
+    }
+
+    /// Returns the Stripe customer associated with the provided email address, or creates a new customer, if one does
+    /// not already exist.
+    ///
+    /// Always returns a new Stripe customer if the email address is `None`.
+    pub async fn find_or_create_customer_by_email(
+        &self,
+        email_address: Option<&str>,
+    ) -> Result<CustomerId> {
+        let existing_customer = if let Some(email) = email_address {
+            let customers = Customer::list(
+                &self.client,
+                &stripe::ListCustomers {
+                    email: Some(email),
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+            customers.data.first().cloned()
+        } else {
+            None
+        };
+
+        let customer_id = if let Some(existing_customer) = existing_customer {
+            existing_customer.id
+        } else {
+            let customer = Customer::create(
+                &self.client,
+                CreateCustomer {
+                    email: email_address,
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+            customer.id
+        };
+
+        Ok(customer_id)
     }
 
     pub async fn subscribe_to_price(
@@ -237,7 +278,7 @@ impl StripeBilling {
             trial_period_days: Some(trial_period_days),
             trial_settings: Some(stripe::CreateCheckoutSessionSubscriptionDataTrialSettings {
                 end_behavior: stripe::CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehavior {
-                    missing_payment_method: stripe::CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehaviorMissingPaymentMethod::Pause,
+                    missing_payment_method: stripe::CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehaviorMissingPaymentMethod::Cancel,
                 }
             }),
             metadata: if !subscription_metadata.is_empty() {
@@ -268,6 +309,28 @@ impl StripeBilling {
         customer_id: stripe::CustomerId,
     ) -> Result<stripe::Subscription> {
         let zed_free_price_id = self.zed_free_price_id().await?;
+
+        let existing_subscriptions = stripe::Subscription::list(
+            &self.client,
+            &stripe::ListSubscriptions {
+                customer: Some(customer_id.clone()),
+                status: None,
+                ..Default::default()
+            },
+        )
+        .await?;
+
+        let existing_active_subscription =
+            existing_subscriptions
+                .data
+                .into_iter()
+                .find(|subscription| {
+                    subscription.status == SubscriptionStatus::Active
+                        || subscription.status == SubscriptionStatus::Trialing
+                });
+        if let Some(subscription) = existing_active_subscription {
+            return Ok(subscription);
+        }
 
         let mut params = stripe::CreateSubscription::new(customer_id);
         params.items = Some(vec![stripe::CreateSubscriptionItems {

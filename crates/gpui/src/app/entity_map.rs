@@ -1,5 +1,5 @@
 use crate::{App, AppContext, VisualContext, Window, seal::Sealed};
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result};
 use collections::FxHashSet;
 use derive_more::{Deref, DerefMut};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
@@ -692,7 +692,7 @@ impl<T: 'static> WeakEntity<T> {
     {
         crate::Flatten::flatten(
             self.upgrade()
-                .ok_or_else(|| anyhow!("entity released"))
+                .context("entity released")
                 .map(|this| cx.update_entity(&this, update)),
         )
     }
@@ -710,7 +710,7 @@ impl<T: 'static> WeakEntity<T> {
         Result<C::Result<R>>: crate::Flatten<R>,
     {
         let window = cx.window_handle();
-        let this = self.upgrade().ok_or_else(|| anyhow!("entity released"))?;
+        let this = self.upgrade().context("entity released")?;
 
         crate::Flatten::flatten(window.update(cx, |_, window, cx| {
             this.update(cx, |entity, cx| update(entity, window, cx))
@@ -727,7 +727,7 @@ impl<T: 'static> WeakEntity<T> {
     {
         crate::Flatten::flatten(
             self.upgrade()
-                .ok_or_else(|| anyhow!("entity release"))
+                .context("entity released")
                 .map(|this| cx.read_entity(&this, read)),
         )
     }

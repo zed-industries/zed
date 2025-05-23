@@ -1,6 +1,5 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
-use anyhow::anyhow;
 use gpui::{
     Animation, AnimationExt, App, Application, Asset, AssetLogger, AssetSource, Bounds, Context,
     Hsla, ImageAssetLoader, ImageCacheError, ImgResourceLoader, LOADING_DELAY, Length, Pixels,
@@ -57,7 +56,7 @@ impl Asset for LoadImageWithParameters {
             timer.await;
             if parameters.fail {
                 log::error!("Intentionally failed to load image");
-                Err(anyhow!("Failed to load image").into())
+                Err(anyhow::anyhow!("Failed to load image").into())
             } else {
                 data.await
             }
@@ -177,7 +176,7 @@ impl Render for ImageLoadingExample {
                         )
                         .to_path_buf();
                         img(image_source.clone())
-                            .id("image-1")
+                            .id("image-4")
                             .border_1()
                             .size_12()
                             .with_fallback(|| Self::fallback_element().into_any_element())

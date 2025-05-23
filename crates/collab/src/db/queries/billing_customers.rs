@@ -57,6 +57,19 @@ impl Database {
         .await
     }
 
+    pub async fn get_billing_customer_by_id(
+        &self,
+        id: BillingCustomerId,
+    ) -> Result<Option<billing_customer::Model>> {
+        self.transaction(|tx| async move {
+            Ok(billing_customer::Entity::find()
+                .filter(billing_customer::Column::Id.eq(id))
+                .one(&*tx)
+                .await?)
+        })
+        .await
+    }
+
     /// Returns the billing customer for the user with the specified ID.
     pub async fn get_billing_customer_by_user_id(
         &self,

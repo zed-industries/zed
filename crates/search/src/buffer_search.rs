@@ -1460,7 +1460,6 @@ impl BufferSearchBar {
                             self.select_next_match(&SelectNextMatch, window, cx);
                         }
                         should_propagate = false;
-                        self.focus_editor(&FocusEditor, window, cx);
                     }
                 }
             }
@@ -2398,7 +2397,7 @@ mod tests {
             search_bar.replace_all(&ReplaceAll, window, cx)
         });
         assert_eq!(
-            editor.update(cx, |this, cx| { this.text(cx) }),
+            editor.read_with(cx, |this, cx| { this.text(cx) }),
             r#"
         A regular expr$1 (shortened as regex or regexp;[1] also referred to as
         rational expr$1[2][3]) is a sequence of characters that specifies a search
@@ -2424,7 +2423,7 @@ mod tests {
         });
         // Notice how the first or in the text (shORtened) is not replaced. Neither are the remaining hits of `or` in the text.
         assert_eq!(
-            editor.update(cx, |this, cx| { this.text(cx) }),
+            editor.read_with(cx, |this, cx| { this.text(cx) }),
             r#"
         A regular expr$1 (shortened as regex banana regexp;[1] also referred to as
         rational expr$1[2][3]) is a sequence of characters that specifies a search
@@ -2447,7 +2446,7 @@ mod tests {
             search_bar.replace_all(&ReplaceAll, window, cx)
         });
         assert_eq!(
-            editor.update(cx, |this, cx| { this.text(cx) }),
+            editor.read_with(cx, |this, cx| { this.text(cx) }),
             r#"
         A regular expr$1 (shortened as regex banana regexp;1number also referred to as
         rational expr$12number3number) is a sequence of characters that specifies a search
@@ -2477,7 +2476,7 @@ mod tests {
         // The only word affected by this edit should be `algorithms`, even though there's a bunch
         // of words in this text that would match this regex if not for WHOLE_WORD.
         assert_eq!(
-            editor.update(cx, |this, cx| { this.text(cx) }),
+            editor.read_with(cx, |this, cx| { this.text(cx) }),
             r#"
         A regular expr$1 (shortened as regex banana regexp;1number also referred to as
         rational expr$12number3number) is a sequence of characters that specifies a search
@@ -2528,7 +2527,7 @@ mod tests {
         assert_eq!(
             options
                 .editor
-                .update(options.cx, |this, cx| { this.text(cx) }),
+                .read_with(options.cx, |this, cx| { this.text(cx) }),
             options.expected_text
         );
     }

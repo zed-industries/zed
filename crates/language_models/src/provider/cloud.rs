@@ -19,8 +19,8 @@ use language_model::{
     ZED_CLOUD_PROVIDER_ID,
 };
 use language_model::{
-    LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider, LlmApiToken,
-    PaymentRequiredError, RefreshLlmTokenListener,
+    LanguageModelCompletionEvent, LanguageModelProvider, LlmApiToken, PaymentRequiredError,
+    RefreshLlmTokenListener,
 };
 use proto::Plan;
 use release_channel::AppVersion;
@@ -278,7 +278,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
         let llm_api_token = self.state.read(cx).llm_api_token.clone();
-        let model = CloudModel::Anthropic(anthropic::Model::Claude3_7Sonnet);
+        let model = CloudModel::Anthropic(anthropic::Model::ClaudeSonnet4);
         Some(self.create_language_model(model, llm_api_token))
     }
 
@@ -291,8 +291,8 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     fn recommended_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let llm_api_token = self.state.read(cx).llm_api_token.clone();
         [
-            CloudModel::Anthropic(anthropic::Model::Claude3_7Sonnet),
-            CloudModel::Anthropic(anthropic::Model::Claude3_7SonnetThinking),
+            CloudModel::Anthropic(anthropic::Model::ClaudeSonnet4),
+            CloudModel::Anthropic(anthropic::Model::ClaudeSonnet4Thinking),
         ]
         .into_iter()
         .map(|model| self.create_language_model(model, llm_api_token.clone()))
@@ -330,6 +330,14 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             models.insert(
                 anthropic::Model::Claude3_7SonnetThinking.id().to_string(),
                 CloudModel::Anthropic(anthropic::Model::Claude3_7SonnetThinking),
+            );
+            models.insert(
+                anthropic::Model::ClaudeSonnet4.id().to_string(),
+                CloudModel::Anthropic(anthropic::Model::ClaudeSonnet4),
+            );
+            models.insert(
+                anthropic::Model::ClaudeSonnet4Thinking.id().to_string(),
+                CloudModel::Anthropic(anthropic::Model::ClaudeSonnet4Thinking),
             );
         }
 
@@ -615,7 +623,7 @@ impl CloudLanguageModel {
                     }
                 }
 
-                return Err(anyhow!("Forbidden"));
+                anyhow::bail!("Forbidden");
             } else if status.as_u16() >= 500 && status.as_u16() < 600 {
                 // If we encounter an error in the 500 range, retry after a delay.
                 // We've seen at least these in the wild from API providers:
@@ -626,10 +634,10 @@ impl CloudLanguageModel {
                 if retries_remaining == 0 {
                     let mut body = String::new();
                     response.body_mut().read_to_string(&mut body).await?;
-                    return Err(anyhow!(
+                    anyhow::bail!(
                         "cloud language model completion failed after {} retries with status {status}: {body}",
                         Self::MAX_RETRIES
-                    ));
+                    );
                 }
 
                 Timer::after(retry_delay).await;
@@ -697,10 +705,6 @@ impl LanguageModel for CloudLanguageModel {
 
     fn telemetry_id(&self) -> String {
         format!("zed.dev/{}", self.model.id())
-    }
-
-    fn availability(&self) -> LanguageModelAvailability {
-        self.model.availability()
     }
 
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {

@@ -1348,6 +1348,7 @@ impl AgentDiff {
             ThreadEvent::NewRequest
             | ThreadEvent::Stopped(Ok(StopReason::EndTurn))
             | ThreadEvent::Stopped(Ok(StopReason::MaxTokens))
+            | ThreadEvent::Stopped(Ok(StopReason::Refusal))
             | ThreadEvent::Stopped(Err(_))
             | ThreadEvent::ShowError(_)
             | ThreadEvent::CompletionCanceled => {

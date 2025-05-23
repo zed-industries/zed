@@ -191,6 +191,8 @@ let
             wayland
           ]
         }";
+
+        NIX_OUTPATH_USED_AS_RANDOM_SEED = "norebuilds";
       };
 
       # prevent nix from removing the "unused" wayland/gpu-lib rpaths
