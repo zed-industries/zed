@@ -4,13 +4,12 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
-use gpui::{App, AsyncApp, StyleRefinement};
+use gpui::{App, AsyncApp};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use language::{LanguageRegistry, LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::{ContextProviderWithTasks, Fs, lsp_store::language_server_settings};
-use schemars::r#gen::SchemaSettings;
 use serde_json::{Value, json};
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::{
@@ -92,6 +91,7 @@ impl JsonLspAdapter {
         let tsconfig_schema = serde_json::Value::from_str(TSCONFIG_SCHEMA).unwrap();
         let package_json_schema = serde_json::Value::from_str(PACKAGE_JSON_SCHEMA).unwrap();
 
+        #[allow(unused_mut)]
         let mut schemas = serde_json::json!([
             {
                 "fileMatch": ["tsconfig.json"],
@@ -181,11 +181,12 @@ impl JsonLspAdapter {
     }
 }
 
+#[cfg(debug_assertions)]
 fn generate_inspector_style_schema() -> serde_json_lenient::Value {
-    let schema = SchemaSettings::draft07()
+    let schema = schemars::r#gen::SchemaSettings::draft07()
         .with(|settings| settings.option_add_null_type = false)
         .into_generator()
-        .into_root_schema_for::<StyleRefinement>();
+        .into_root_schema_for::<gpui::StyleRefinement>();
 
     serde_json_lenient::to_value(schema).unwrap()
 }

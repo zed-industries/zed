@@ -1211,8 +1211,6 @@ pub struct DivFrameState {
 }
 
 /// Interactivity state displayed an manipulated in the inspector.
-///
-/// todo! remove Clone impl
 #[derive(Clone)]
 pub struct DivInspectorState {
     /// The inspected element's base style. This is used for both inspecting and modifying the
@@ -1464,14 +1462,14 @@ impl Interactivity {
     pub fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        inspector_id: Option<&InspectorElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
         f: impl FnOnce(Style, &mut Window, &mut App) -> LayoutId,
     ) -> LayoutId {
         #[cfg(any(feature = "inspector", debug_assertions))]
         window.with_inspector_state(
-            inspector_id,
+            _inspector_id,
             cx,
             |inspector_state: &mut Option<DivInspectorState>, _window| {
                 if let Some(inspector_state) = inspector_state {

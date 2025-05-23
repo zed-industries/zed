@@ -7,8 +7,9 @@ mod inspector;
 pub use inspector::init;
 
 #[cfg(not(debug_assertions))]
-pub fn init(_app_state: std::sync::Arc<AppState>, cx: &mut gpui::App) {
-    use workspace::notifications::NotifyResultExt;
+pub fn init(_app_state: std::sync::Arc<workspace::AppState>, cx: &mut gpui::App) {
+    use std::any::TypeId;
+    use workspace::notifications::NotifyResultExt as _;
 
     cx.on_action(|_: &zed_actions::dev::ToggleInspector, cx| {
         Err::<(), anyhow::Error>(anyhow::anyhow!(
@@ -17,7 +18,7 @@ pub fn init(_app_state: std::sync::Arc<AppState>, cx: &mut gpui::App) {
         .notify_app_err(cx);
     });
 
-    CommandPaletteFilter::update_global(cx, |filter, _cx| {
-        filter.hide_action_types(&[zed_actions::dev::ToggleInspector::type_id()]);
+    command_palette_hooks::CommandPaletteFilter::update_global(cx, |filter, _cx| {
+        filter.hide_action_types(&[TypeId::of::<zed_actions::dev::ToggleInspector>()]);
     });
 }

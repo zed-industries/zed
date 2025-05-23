@@ -13,10 +13,9 @@ path = "src/inspector_ui.rs"
 
 [dependencies]
 anyhow.workspace = true
+command_palette_hooks.workspace = true
 editor.workspace = true
-futures.workspace = true
 gpui.workspace = true
-itertools.workspace = true
 language.workspace = true
 project.workspace = true
 serde_json.workspace = true

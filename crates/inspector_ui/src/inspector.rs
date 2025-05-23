@@ -7,10 +7,12 @@ use workspace::AppState;
 
 use crate::div_inspector::DivInspector;
 
+// TODO: Add a way to select style builder method names and apply them to the style.
+//
 // TODO: Show bounds / size info. On hover, highlight element
 //
-// TODO: instance_id disambiguation is broken with caching if the cached element doesn't have an
-// ElementId.
+// TODO: Ideally mousewheel would explore actual parent/child relationships rather than hitbox
+// order. On the other hand, hitbox order allows actually inspecting every element.
 //
 // TODO: Elements that are no longer rendering will still appear in the inspector. This isn't really
 // a bug, but would be good to surface this.
@@ -24,10 +26,10 @@ use crate::div_inspector::DivInspector;
 //
 // TODO: Move logic of the gpui `Inspector` entity into this crate:
 //
-// * `Inspector` trait with methods like `on_click` and `on_hover` that are given
-// InspectorElementId.
+// * `Inspector` trait with methods like `select` and `hover` that are given InspectorElementId.
+// Implementor of this trait then gets set on `App`.
 //
-// * Add `with_rendered_inspector_states` to `Window`. gets set on `App`.
+// * Add `with_rendered_inspector_states` to `Window`.
 //
 // Motivations:
 //
@@ -115,8 +117,9 @@ fn render_inspector(
                         }),
                 )
                 .child(
-                    div()
-                        .pl_2()
+                    h_flex()
+                        .w_full()
+                        .justify_end()
                         .child(Label::new("GPUI Inspector").size(LabelSize::Large)),
                 ),
         )

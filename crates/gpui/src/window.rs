@@ -5,18 +5,17 @@ use crate::{
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Context,
     Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener, DispatchNodeId,
     DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, FontId,
-    Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, InspectorElementId,
-    InspectorElementPath, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
-    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
-    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
-    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
-    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow,
-    SharedString, Size, StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine,
-    Task, TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
-    transparent_black,
+    Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero, KeyBinding, KeyContext,
+    KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers,
+    ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
+    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
+    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
+    SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
+    SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
+    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    point, prelude::*, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -506,9 +505,9 @@ pub(crate) struct Frame {
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
     #[cfg(any(feature = "inspector", debug_assertions))]
-    pub(crate) next_inspector_instance_ids: FxHashMap<Rc<InspectorElementPath>, usize>,
+    pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
     #[cfg(any(feature = "inspector", debug_assertions))]
-    pub(crate) inspector_hitboxes: FxHashMap<HitboxId, InspectorElementId>,
+    pub(crate) inspector_hitboxes: FxHashMap<HitboxId, crate::InspectorElementId>,
 }
 
 #[derive(Clone, Default)]
@@ -3908,11 +3907,11 @@ impl Window {
     }
 
     /// Returns true if the window is in inspector mode.
-    pub fn is_inspector_picking(&self, cx: &App) -> bool {
+    pub fn is_inspector_picking(&self, _cx: &App) -> bool {
         #[cfg(any(feature = "inspector", debug_assertions))]
         {
             if let Some(inspector) = &self.inspector {
-                return inspector.read(cx).is_picking();
+                return inspector.read(_cx).is_picking();
             }
         }
         false
@@ -3922,7 +3921,7 @@ impl Window {
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub fn with_inspector_state<T: 'static, R>(
         &mut self,
-        _inspector_id: Option<&InspectorElementId>,
+        _inspector_id: Option<&crate::InspectorElementId>,
         cx: &mut App,
         f: impl FnOnce(&mut Option<T>, &mut Self) -> R,
     ) -> R {
@@ -3943,8 +3942,8 @@ impl Window {
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) fn build_inspector_element_id(
         &mut self,
-        path: InspectorElementPath,
-    ) -> InspectorElementId {
+        path: crate::InspectorElementPath,
+    ) -> crate::InspectorElementId {
         self.invalidator.debug_assert_paint_or_prepaint();
         let path = Rc::new(path);
         let next_instance_id = self
@@ -3954,7 +3953,7 @@ impl Window {
             .or_insert(0);
         let instance_id = *next_instance_id;
         *next_instance_id += 1;
-        InspectorElementId { path, instance_id }
+        crate::InspectorElementId { path, instance_id }
     }
 
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -3985,7 +3984,7 @@ impl Window {
     pub(crate) fn insert_inspector_hitbox(
         &mut self,
         hitbox_id: HitboxId,
-        inspector_id: Option<&InspectorElementId>,
+        inspector_id: Option<&crate::InspectorElementId>,
         cx: &App,
     ) {
         self.invalidator.debug_assert_paint_or_prepaint();
@@ -4072,7 +4071,7 @@ impl Window {
         &self,
         inspector: &Inspector,
         frame: &Frame,
-    ) -> Option<(HitboxId, InspectorElementId)> {
+    ) -> Option<(HitboxId, crate::InspectorElementId)> {
         if let Some(pick_depth) = inspector.pick_depth {
             let depth = (pick_depth as i64).try_into().unwrap_or(0);
             let max_skipped = self.mouse_hit_test.0.len().saturating_sub(1);

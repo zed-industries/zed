@@ -33,14 +33,14 @@ use util::{ResultExt, debug_panic};
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::InspectorElementRegistry;
 use crate::{
-    Action, ActionBuildError, ActionRegistry, Any, AnyElement, AnyView, AnyWindowHandle,
-    AppContext, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle,
-    DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global,
-    InspectorElementId, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem,
-    OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, Point,
-    PromptBuilder, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle,
-    Reservation, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer, Task,
-    TextSystem, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
+    Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Asset,
+    AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
+    EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
+    Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
+    PlatformDisplay, PlatformKeyboardLayout, Point, PromptBuilder, PromptHandle, PromptLevel,
+    Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString,
+    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance,
+    WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -277,11 +277,11 @@ pub struct App {
     pub(crate) inspector_renderer: Option<
         Box<
             dyn Fn(
-                Option<&InspectorElementId>,
-                Vec<AnyElement>,
+                Option<&crate::InspectorElementId>,
+                Vec<crate::AnyElement>,
                 &mut Window,
                 &mut App,
-            ) -> AnyElement,
+            ) -> crate::AnyElement,
         >,
     >,
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -1683,7 +1683,13 @@ impl App {
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub fn set_inspector_renderer<R: crate::IntoElement>(
         &mut self,
-        f: impl 'static + Fn(Option<&InspectorElementId>, Vec<AnyElement>, &mut Window, &mut App) -> R,
+        f: impl 'static
+        + Fn(
+            Option<&crate::InspectorElementId>,
+            Vec<crate::AnyElement>,
+            &mut Window,
+            &mut App,
+        ) -> R,
     ) {
         self.inspector_renderer = Some(Box::new(move |id, states, window, cx| {
             f(id, states, window, cx).into_any_element()

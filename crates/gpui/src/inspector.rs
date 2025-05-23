@@ -37,6 +37,7 @@ impl Into<InspectorElementId> for &InspectorElementId {
     }
 }
 
+#[cfg(any(feature = "inspector", debug_assertions))]
 impl Into<InspectorElementPath> for &InspectorElementPath {
     fn into(self) -> InspectorElementPath {
         self.clone()

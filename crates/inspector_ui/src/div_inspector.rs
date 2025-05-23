@@ -46,6 +46,8 @@ impl DivInspector {
         }
     }
 
+    // TODO: Buffer will leak memory over time due to building up history. Instead of using
+    // `project` to create it, should just directly build the buffer and File.
     async fn open_style_buffer(
         project: Entity<Project>,
         this: WeakEntity<DivInspector>,
@@ -78,6 +80,7 @@ impl DivInspector {
                     window.with_inspector_state(Some(&id), cx, |state, _window| state.clone());
                 if let Some(state) = state {
                     this.update_inspected_element(&id, state, window, cx);
+                    cx.notify();
                 }
             }
         })?;
@@ -166,7 +169,6 @@ impl DivInspector {
         .detach();
 
         self.style_editor = Some(style_editor);
-        cx.notify();
     }
 }
 
