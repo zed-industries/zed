@@ -910,7 +910,7 @@ impl App {
                     .windows
                     .values()
                     .filter_map(|window| {
-                        let window = window.as_ref()?;
+                        let window = window.as_ref()?.borrow();
                         window.invalidator.is_dirty().then_some(window.handle)
                     })
                     .collect::<Vec<_>>()
