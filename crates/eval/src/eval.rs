@@ -135,9 +135,6 @@ fn main() {
         let auth1 = agent_model.provider.authenticate(cx);
         let auth2 = judge_model.provider.authenticate(cx);
 
-        let agent_model = agent_model.model;
-        let judge_model = judge_model.model;
-
         cx.spawn(async move |cx| {
             auth1.await?;
             auth2.await?;
@@ -271,8 +268,8 @@ fn main() {
 
             future::join_all((0..args.concurrency).map(|_| {
                 let app_state = app_state.clone();
-                let model = agent_model.clone();
-                let judge_model = judge_model.clone();
+                let model = agent_model.model.clone();
+                let judge_model = judge_model.model.clone();
                 let zed_commit_sha = zed_commit_sha.clone();
                 let zed_branch_name = zed_branch_name.clone();
                 let run_id = run_id.clone();
