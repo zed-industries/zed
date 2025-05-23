@@ -2392,30 +2392,34 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
-        let id = ElementId::Name(format!("breakpoint_indicator_{}", multibuffer_row.0).into());
-        let disabled = breakpoint.is_disabled();
-        let editor_text = self.style.text.clone();
-        let editor_font_size = editor_text.font_size;
-        let editor_font_size_px = editor_font_size.to_pixels(window.rem_size());
-        let line_height: Pixels = self
-            .style
-            .text
-            .clone()
+        let element_id = ElementId::Name(format!("breakpoint_indicator_{}", multibuffer_row.0).into());
+
+        let text_style = self.style.text.clone();
+        let font_size = text_style.font_size;
+        let font_size_px = font_size.to_pixels(window.rem_size());
+        let rem_size = window.rem_size();
+        let font_scale = font_size_px / rem_size;
+
+        let line_height: Pixels = text_style
             .line_height
-            .to_pixels(editor_font_size, window.rem_size());
-        let font_scale = editor_font_size_px / window.rem_size();
+            .to_pixels(font_size, rem_size);
 
-        let scaled_pixels = move |value: f32| px(value) * font_scale.clone();
+        let scale_px = |value: f32| px(value) * font_scale;
 
-        let offset = scaled_pixels(40.);
-        let indicator_y_offset = px(4.);
-        let indicator_height = line_height - indicator_y_offset;
+        const HORIZONTAL_OFFSET: f32 = 40.0;
+        const VERTICAL_OFFSET: f32 = 4.0;
 
-        let longest_line_width = self.max_line_number_width(snapshot, window, cx);
-        let indicator_width = dbg!(longest_line_width) + scaled_pixels(40.);
+        let horizontal_offset = scale_px(HORIZONTAL_OFFSET);
+        let vertical_offset = px(VERTICAL_OFFSET);
+        let indicator_height = line_height - vertical_offset;
 
-        // Is it a breakpoint that shows up when hovering over gutter?
-        let (hovered, collides_with_existing) = editor.gutter_breakpoint_indicator.0.map_or(
+        let line_number_width = self.max_line_number_width(snapshot, window, cx);
+        let indicator_width = dbg!(line_number_width) + scale_px(HORIZONTAL_OFFSET);
+
+        let is_disabled = breakpoint.is_disabled();
+        let breakpoint_arc = Arc::from(breakpoint.clone());
+
+        let (is_hovered, collides_with_existing) = editor.gutter_breakpoint_indicator.0.map_or(
             (false, false),
             |PhantomBreakpointIndicator {
                  is_active,
@@ -2429,35 +2433,35 @@ impl EditorElement {
             },
         );
 
-        let breakpoint = Arc::from(breakpoint.clone());
-
-        let alt_as_text = gpui::Keystroke {
-            modifiers: Modifiers::secondary_key(),
-            ..Default::default()
-        };
-        let primary_action_text = if breakpoint.is_disabled() {
-            "enable"
-        } else if hovered && !collides_with_existing {
-            "set"
-        } else {
-            "unset"
-        };
-        let mut primary_text = format!("Click to {primary_action_text}");
-        if collides_with_existing && !breakpoint.is_disabled() {
-            use std::fmt::Write;
-            write!(primary_text, ", {alt_as_text}-click to disable").ok();
-        }
-
-        let fg_color = if hovered {
+        let indicator_color = if is_hovered {
             cx.theme().colors().ghost_element_hover
-        } else if disabled {
+        } else if is_disabled {
             cx.theme().status().info.alpha(0.64)
         } else {
             cx.theme().status().info.alpha(0.48)
         };
 
+        let primary_action = if is_disabled {
+            "enable"
+        } else if is_hovered && !collides_with_existing {
+            "set"
+        } else {
+            "unset"
+        };
+
+        let mut tooltip_text = format!("Click to {primary_action}");
+
+        if collides_with_existing && !is_disabled {
+            use std::fmt::Write;
+            let modifier_key = gpui::Keystroke {
+                modifiers: Modifiers::secondary_key(),
+                ..Default::default()
+            };
+            write!(tooltip_text, ", {modifier_key}-click to disable").ok();
+        }
+
         div()
-            .id(id)
+            .id(element_id)
             .cursor_pointer()
             .absolute()
             .left_0()
@@ -2467,59 +2471,59 @@ impl EditorElement {
                 canvas(
                     |_bounds, _cx, _style| {},
                     move |bounds, _cx, window, _style| {
-                        let font_scale = editor_font_size_px / window.rem_size();
-
-                        let bounds = Bounds {
-                            origin: point(bounds.origin.x + offset, bounds.origin.y),
+                        let adjusted_bounds = Bounds {
+                            origin: point(bounds.origin.x + horizontal_offset, bounds.origin.y),
                             size: size(bounds.size.width, indicator_height),
                         };
 
                         let path = breakpoint_indicator_path(
-                            bounds,
+                            adjusted_bounds,
                             font_scale,
-                            if disabled { true } else { false },
+                            is_disabled,
                         );
 
-                        // Paint the path with the appropriate color
-                        window.paint_path(path, fg_color);
+                        window.paint_path(path, indicator_color);
                     },
                 )
                 .size_full(),
             )
             .on_click({
-                let editor = self.editor.downgrade();
-                let breakpoint = breakpoint.clone();
+                let editor_weak = self.editor.downgrade();
+                let breakpoint = breakpoint_arc.clone();
                 move |event, window, cx| {
-                    let edit_action = if event.modifiers().platform || breakpoint.is_disabled() {
+                    let action = if event.modifiers().platform || breakpoint.is_disabled() {
                         BreakpointEditAction::InvertState
                     } else {
                         BreakpointEditAction::Toggle
                     };
-                    let Some(editor) = editor.upgrade() else {
+
+                    let Some(editor_strong) = editor_weak.upgrade() else {
                         return;
                     };
-                    window.focus(&editor.focus_handle(cx));
-                    editor.update(cx, |editor, cx| {
+
+                    window.focus(&editor_strong.focus_handle(cx));
+                    editor_strong.update(cx, |editor, cx| {
                         editor.edit_breakpoint_at_anchor(
                             position,
                             breakpoint.as_ref().clone(),
-                            edit_action,
+                            action,
                             cx,
                         );
                     });
                 }
             })
             .on_mouse_down(gpui::MouseButton::Right, {
-                let editor = self.editor.downgrade();
-                let position = position.clone();
+                let editor_weak = self.editor.downgrade();
+                let anchor_position = position.clone();
                 move |event, window, cx| {
-                    let Some(editor) = editor.upgrade() else {
+                    let Some(editor_strong) = editor_weak.upgrade() else {
                         return;
                     };
-                    editor.update(cx, |editor, cx| {
+
+                    editor_strong.update(cx, |editor, cx| {
                         editor.set_breakpoint_context_menu(
                             row,
-                            Some(position.clone()),
+                            Some(anchor_position.clone()),
                             event.position,
                             window,
                             cx,

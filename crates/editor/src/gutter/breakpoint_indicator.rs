@@ -10,133 +10,133 @@ pub(crate) fn breakpoint_indicator_path(
     scale: f32,
     stroke: bool,
 ) -> Path<Pixels> {
-    // All dimensions mentioned are in pixels, based on an a
-    // total shape size of 50px wide by 15px high
+    // Constants for the breakpoint shape dimensions
+    // The shape is designed based on a 50px wide by 15px high template
+    const SHAPE_BASE_HEIGHT: f32 = 15.0;
+    const SHAPE_FIXED_WIDTH: f32 = 32.0; // Width of non-stretchable parts (corners)
+    const SHAPE_MIN_WIDTH: f32 = 34.0;   // Minimum width to render properly
+    const PIXEL_ROUNDING_FACTOR: f32 = 8.0; // Round to nearest 1/8 pixel
 
-    static BASE_HEIGHT: f32 = 15.;
-    static BASE_WIDTH: f32 = 32.;
-    static PIXEL_ROUNDING: f32 = 8.; // Round to the nearest eighth of a pixel
+    // Key points in the shape (in base coordinates)
+    const CORNER_RADIUS: f32 = 5.0;
+    const CENTER_Y: f32 = 7.5;
+    const TOP_Y: f32 = 0.0;
+    const BOTTOM_Y: f32 = 15.0;
+    const CURVE_CONTROL_OFFSET: f32 = 1.5;
+    const RIGHT_CORNER_START: f32 = 4.0;
+    const RIGHT_CORNER_WIDTH: f32 = 13.0;
 
-    // Apply user scale to the minimum width
-    let min_width = 34.0 * scale;
-
-    let width = if bounds.size.width.0 < min_width {
-        px(min_width)
+    // Calculate actual dimensions with scaling
+    let min_allowed_width = px(SHAPE_MIN_WIDTH * scale);
+    let actual_width = if bounds.size.width < min_allowed_width {
+        min_allowed_width
     } else {
         bounds.size.width
     };
-    let height = bounds.size.height;
+    let actual_height = bounds.size.height;
 
-    // Position the indicator on the canvas
-    let base_x = bounds.origin.x;
-    let base_y = bounds.origin.y;
+    // Origin point for positioning
+    let origin_x = bounds.origin.x;
+    let origin_y = bounds.origin.y;
 
-    // Calculate the scaling factor for the height, incorporating user scale
-    let scale_factor = (height / px(BASE_HEIGHT)) * scale;
+    // Calculate the scale factor based on height and user scale
+    let shape_scale = (actual_height / px(SHAPE_BASE_HEIGHT)) * scale;
 
-    // Calculate how much width to allocate to the stretchable middle section
-    // Shape has 32px of fixed elements (corners), so the rest is for the middle
-    let fixed_width = px(BASE_WIDTH) * scale_factor;
-    let middle_width = width - fixed_width;
+    // Calculate the width of fixed and stretchable sections
+    let fixed_sections_width = px(SHAPE_FIXED_WIDTH) * shape_scale;
+    let stretchable_middle_width = actual_width - fixed_sections_width;
 
-    let pixel_rounding = |value: Pixels| -> Pixels {
+    // Helper function to round pixels to nearest 1/8
+    let round_to_pixel_grid = |value: Pixels| -> Pixels {
         let value_f32: f32 = value.into();
-        px((value_f32 * PIXEL_ROUNDING).round() / PIXEL_ROUNDING)
+        px((value_f32 * PIXEL_ROUNDING_FACTOR).round() / PIXEL_ROUNDING_FACTOR)
     };
 
-    // Create a new path - either fill or stroke based on the flag
-    let mut builder = if stroke {
-        // For stroke, we need to set appropriate line width and options
-        let stroke_width = px(1.0 * scale); // Apply scale to stroke width
-        let options = StrokeOptions::default().with_line_width(stroke_width.0);
+    // Pre-calculate all the key x-coordinates
+    let left_edge_x = round_to_pixel_grid(origin_x);
+    let left_corner_end_x = round_to_pixel_grid(origin_x + px(CORNER_RADIUS) * shape_scale);
+    let middle_section_end_x = round_to_pixel_grid(origin_x + px(CORNER_RADIUS) * shape_scale + stretchable_middle_width);
+    let right_corner_start_x = round_to_pixel_grid(origin_x + px(CORNER_RADIUS) * shape_scale + stretchable_middle_width + px(RIGHT_CORNER_START) * shape_scale);
+    let right_edge_x = round_to_pixel_grid(origin_x + px(CORNER_RADIUS) * shape_scale + stretchable_middle_width + px(RIGHT_CORNER_WIDTH) * shape_scale);
 
+    // Pre-calculate all the key y-coordinates
+    let top_edge_y = round_to_pixel_grid(origin_y);
+    let center_y = round_to_pixel_grid(origin_y + px(CENTER_Y) * shape_scale);
+    let bottom_edge_y = round_to_pixel_grid(origin_y + px(BOTTOM_Y) * shape_scale);
+    
+    // Y-coordinates for the left side curves
+    let left_upper_curve_start_y = round_to_pixel_grid(origin_y + px(CORNER_RADIUS) * shape_scale);
+    let left_lower_curve_end_y = round_to_pixel_grid(origin_y + px(10.0) * shape_scale);
+    
+    // Y-coordinates for the right side curves
+    let right_upper_curve_control_y = round_to_pixel_grid(origin_y + px(6.0) * shape_scale);
+    let right_lower_curve_control_y = round_to_pixel_grid(origin_y + px(9.0) * shape_scale);
+    
+    // Control point offsets
+    let control_offset = px(CURVE_CONTROL_OFFSET) * shape_scale;
+    let right_control_offset = px(9.0) * shape_scale;
+
+    // Create the path builder
+    let mut builder = if stroke {
+        let stroke_width = px(1.0 * scale);
+        let options = StrokeOptions::default().with_line_width(stroke_width.0);
         PathBuilder::stroke(stroke_width).with_style(PathStyle::Stroke(options))
     } else {
-        // For fill, use the original implementation
         PathBuilder::fill()
     };
 
-    // Start at center left (0, 8)
-    let start_x = pixel_rounding(base_x);
-    let start_y = pixel_rounding(base_y + px(7.5) * scale_factor);
-    builder.move_to(point(start_x, start_y));
+    // Build the path - starting from left center
+    builder.move_to(point(left_edge_x, center_y));
 
-    // Vertical line to (0, 5)
-    let vert_y = pixel_rounding(base_y + px(5.0) * scale_factor);
-    builder.line_to(point(start_x, vert_y));
-
-    // Curve to (5, 0) - using cubic Bezier
-    let curve1_end_x = pixel_rounding(base_x + px(5.0) * scale_factor);
-    let curve1_end_y = pixel_rounding(base_y);
-    let curve1_ctrl1_x = pixel_rounding(base_x);
-    let curve1_ctrl1_y = pixel_rounding(base_y + px(1.5) * scale_factor);
-    let curve1_ctrl2_x = pixel_rounding(base_x + px(1.5) * scale_factor);
-    let curve1_ctrl2_y = pixel_rounding(base_y);
+    // === Upper half of the shape ===
+    
+    // Move up to start of left upper curve
+    builder.line_to(point(left_edge_x, left_upper_curve_start_y));
+    
+    // Top-left corner curve
     builder.cubic_bezier_to(
-        point(curve1_end_x, curve1_end_y),
-        point(curve1_ctrl1_x, curve1_ctrl1_y),
-        point(curve1_ctrl2_x, curve1_ctrl2_y),
+        point(left_corner_end_x, top_edge_y),
+        point(left_edge_x, round_to_pixel_grid(origin_y + control_offset)),
+        point(round_to_pixel_grid(origin_x + control_offset), top_edge_y),
     );
-
-    // Horizontal line through the middle section to (37, 0)
-    let middle_end_x = pixel_rounding(base_x + px(5.0) * scale_factor + middle_width);
-    builder.line_to(point(middle_end_x, curve1_end_y));
-
-    // Horizontal line to (41, 0)
-    let right_section_x =
-        pixel_rounding(base_x + px(5.0) * scale_factor + middle_width + px(4.0) * scale_factor);
-    builder.line_to(point(right_section_x, curve1_end_y));
-
-    // Curve to (50, 7.5) - using cubic Bezier
-    let curve2_end_x =
-        pixel_rounding(base_x + px(5.0) * scale_factor + middle_width + px(13.0) * scale_factor);
-    let curve2_end_y = pixel_rounding(base_y + px(7.5) * scale_factor);
-    let curve2_ctrl1_x =
-        pixel_rounding(base_x + px(5.0) * scale_factor + middle_width + px(9.0) * scale_factor);
-    let curve2_ctrl1_y = pixel_rounding(base_y);
-    let curve2_ctrl2_x =
-        pixel_rounding(base_x + px(5.0) * scale_factor + middle_width + px(13.0) * scale_factor);
-    let curve2_ctrl2_y = pixel_rounding(base_y + px(6.0) * scale_factor);
+    
+    // Top edge - stretchable middle section
+    builder.line_to(point(middle_section_end_x, top_edge_y));
+    
+    // Top edge - right corner start
+    builder.line_to(point(right_corner_start_x, top_edge_y));
+    
+    // Top-right corner curve
     builder.cubic_bezier_to(
-        point(curve2_end_x, curve2_end_y),
-        point(curve2_ctrl1_x, curve2_ctrl1_y),
-        point(curve2_ctrl2_x, curve2_ctrl2_y),
+        point(right_edge_x, center_y),
+        point(round_to_pixel_grid(origin_x + px(CORNER_RADIUS) * shape_scale + stretchable_middle_width + right_control_offset), top_edge_y),
+        point(right_edge_x, right_upper_curve_control_y),
     );
-
-    // Lower half - mirrored vertically
-    // Curve from (50, 7.5) to (41, 15)
-    let curve3_end_y = pixel_rounding(base_y + px(15.0) * scale_factor);
-    let curve3_ctrl1_x =
-        pixel_rounding(base_x + px(5.0) * scale_factor + middle_width + px(13.0) * scale_factor);
-    let curve3_ctrl1_y = pixel_rounding(base_y + px(9.0) * scale_factor);
-    let curve3_ctrl2_x =
-        pixel_rounding(base_x + px(5.0) * scale_factor + middle_width + px(9.0) * scale_factor);
-    let curve3_ctrl2_y = pixel_rounding(base_y + px(15.0) * scale_factor);
+    
+    // === Lower half of the shape (mirrored) ===
+    
+    // Bottom-right corner curve
     builder.cubic_bezier_to(
-        point(right_section_x, curve3_end_y),
-        point(curve3_ctrl1_x, curve3_ctrl1_y),
-        point(curve3_ctrl2_x, curve3_ctrl2_y),
+        point(right_corner_start_x, bottom_edge_y),
+        point(right_edge_x, right_lower_curve_control_y),
+        point(round_to_pixel_grid(origin_x + px(CORNER_RADIUS) * shape_scale + stretchable_middle_width + right_control_offset), bottom_edge_y),
     );
-
-    // Horizontal line to (37, 15)
-    builder.line_to(point(middle_end_x, curve3_end_y));
-
-    // Horizontal line through the middle section to (5, 15)
-    builder.line_to(point(curve1_end_x, curve3_end_y));
-
-    // Curve to (0, 10)
-    let curve4_end_y = pixel_rounding(base_y + px(10.0) * scale_factor);
-    let curve4_ctrl1_x = pixel_rounding(base_x + px(1.5) * scale_factor);
-    let curve4_ctrl1_y = pixel_rounding(base_y + px(15.0) * scale_factor);
-    let curve4_ctrl2_x = pixel_rounding(base_x);
-    let curve4_ctrl2_y = pixel_rounding(base_y + px(13.5) * scale_factor);
+    
+    // Bottom edge - right corner to middle
+    builder.line_to(point(middle_section_end_x, bottom_edge_y));
+    
+    // Bottom edge - stretchable middle section
+    builder.line_to(point(left_corner_end_x, bottom_edge_y));
+    
+    // Bottom-left corner curve
     builder.cubic_bezier_to(
-        point(start_x, curve4_end_y),
-        point(curve4_ctrl1_x, curve4_ctrl1_y),
-        point(curve4_ctrl2_x, curve4_ctrl2_y),
+        point(left_edge_x, left_lower_curve_end_y),
+        point(round_to_pixel_grid(origin_x + control_offset), bottom_edge_y),
+        point(left_edge_x, round_to_pixel_grid(origin_y + px(13.5) * shape_scale)),
     );
-
-    builder.line_to(point(start_x, start_y));
+    
+    // Close the path by returning to start
+    builder.line_to(point(left_edge_x, center_y));
 
     builder.build().unwrap()
 }
