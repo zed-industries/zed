@@ -4080,6 +4080,7 @@ async fn get_llm_api_token(
     let token = LlmTokenClaims::create(
         &user,
         session.is_staff(),
+        billing_customer,
         billing_preferences,
         &flags,
         billing_subscription,
