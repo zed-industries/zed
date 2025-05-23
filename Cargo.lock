@@ -18562,7 +18562,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.187.7"
+version = "0.187.8"
 dependencies = [
  "activity_indicator",
  "agent",
