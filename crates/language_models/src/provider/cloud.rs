@@ -165,9 +165,8 @@ impl State {
                     }
 
                     let response = Self::fetch_models(client, llm_api_token).await?;
-                    dbg!(&response.models);
                     cx.update(|cx| {
-                        this.update(cx, |this, _cx| {
+                        this.update(cx, |this, cx| {
                             this.default_model = response
                                 .models
                                 .iter()
@@ -187,6 +186,7 @@ impl State {
                                 .cloned()
                                 .collect();
                             this.models = response.models;
+                            cx.notify();
                         })
                     })??;
 
