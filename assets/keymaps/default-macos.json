@@ -358,12 +358,6 @@
     }
   },
   {
-    "context": "ThreadHistory",
-    "bindings": {
-      "ctrl--": "pane::GoBack"
-    }
-  },
-  {
     "context": "ThreadHistory > Editor",
     "bindings": {
       "shift-backspace": "agent::RemoveSelectedThread"

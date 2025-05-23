@@ -2851,7 +2851,8 @@ mod tests {
             .await
             .unwrap();
 
-        let context = context_store.update(cx, |store, _| store.context().next().cloned().unwrap());
+        let context =
+            context_store.read_with(cx, |store, _| store.context().next().cloned().unwrap());
         let loaded_context = cx
             .update(|cx| load_context(vec![context], &project, &None, cx))
             .await;
@@ -3162,7 +3163,8 @@ fn main() {{
             .await
             .unwrap();
 
-        let context = context_store.update(cx, |store, _| store.context().next().cloned().unwrap());
+        let context =
+            context_store.read_with(cx, |store, _| store.context().next().cloned().unwrap());
         let loaded_context = cx
             .update(|cx| load_context(vec![context], &project, &None, cx))
             .await;

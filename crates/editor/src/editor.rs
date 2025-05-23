@@ -15,7 +15,7 @@
 pub mod actions;
 mod blink_manager;
 mod clangd_ext;
-mod code_context_menus;
+pub mod code_context_menus;
 pub mod display_map;
 mod editor_settings;
 mod editor_settings_controls;
@@ -776,7 +776,7 @@ impl RunnableTasks {
 }
 
 #[derive(Clone)]
-struct ResolvedTasks {
+pub struct ResolvedTasks {
     templates: SmallVec<[(TaskSourceKind, ResolvedTask); 1]>,
     position: Anchor,
 }
@@ -4004,6 +4004,13 @@ impl Editor {
                                     tab_size: len,
                                 } = language.documentation()?;
 
+                                let is_within_block_comment = buffer
+                                    .language_scope_at(start_point)
+                                    .is_some_and(|scope| scope.override_name() == Some("comment"));
+                                if !is_within_block_comment {
+                                    return None;
+                                }
+
                                 let (snapshot, range) =
                                     buffer.buffer_line_for_row(MultiBufferRow(start_point.row))?;
 
@@ -4012,6 +4019,8 @@ impl Editor {
                                     .take_while(|c| c.is_whitespace())
                                     .count();
 
+                                // It is safe to use a column from MultiBufferPoint in context of a single buffer ranges, because we're only ever looking at a single line at a time.
+                                let column = start_point.column;
                                 let cursor_is_after_start_tag = {
                                     let start_tag_len = start_tag.len();
                                     let start_tag_line = snapshot
@@ -4020,8 +4029,7 @@ impl Editor {
                                         .take(start_tag_len)
                                         .collect::<String>();
                                     if start_tag_line.starts_with(start_tag.as_ref()) {
-                                        num_of_whitespaces + start_tag_len
-                                            <= start_point.column as usize
+                                        num_of_whitespaces + start_tag_len <= column as usize
                                     } else {
                                         false
                                     }
@@ -4035,8 +4043,7 @@ impl Editor {
                                         .take(delimiter_trim.len())
                                         .collect::<String>();
                                     if delimiter_line.starts_with(delimiter_trim) {
-                                        num_of_whitespaces + delimiter_trim.len()
-                                            <= start_point.column as usize
+                                        num_of_whitespaces + delimiter_trim.len() <= column as usize
                                     } else {
                                         false
                                     }
@@ -4058,14 +4065,13 @@ impl Editor {
                                     }
 
                                     if let Some(end_tag_offset) = end_tag_offset {
-                                        let cursor_is_before_end_tag =
-                                            start_point.column <= end_tag_offset;
+                                        let cursor_is_before_end_tag = column <= end_tag_offset;
                                         if cursor_is_after_start_tag {
                                             if cursor_is_before_end_tag {
                                                 insert_extra_newline = true;
                                             }
                                             let cursor_is_at_start_of_end_tag =
-                                                start_point.column == end_tag_offset;
+                                                column == end_tag_offset;
                                             if cursor_is_at_start_of_end_tag {
                                                 indent_on_extra_newline.len = (*len).into();
                                             }
@@ -5374,7 +5380,7 @@ impl Editor {
         let quick_launch = action.quick_launch;
         let mut context_menu = self.context_menu.borrow_mut();
         if let Some(CodeContextMenu::CodeActions(code_actions)) = context_menu.as_ref() {
-            if code_actions.deployed_from_indicator == action.deployed_from_indicator {
+            if code_actions.deployed_from == action.deployed_from {
                 // Toggle if we're selecting the same one
                 *context_menu = None;
                 cx.notify();
@@ -5387,7 +5393,7 @@ impl Editor {
         }
         drop(context_menu);
         let snapshot = self.snapshot(window, cx);
-        let deployed_from_indicator = action.deployed_from_indicator;
+        let deployed_from = action.deployed_from.clone();
         let mut task = self.code_actions_task.take();
         let action = action.clone();
         cx.spawn_in(window, async move |editor, cx| {
@@ -5398,10 +5404,12 @@ impl Editor {
 
             let spawned_test_task = editor.update_in(cx, |editor, window, cx| {
                 if editor.focus_handle.is_focused(window) {
-                    let multibuffer_point = action
-                        .deployed_from_indicator
-                        .map(|row| DisplayPoint::new(row, 0).to_point(&snapshot))
-                        .unwrap_or_else(|| editor.selections.newest::<Point>(cx).head());
+                    let multibuffer_point = match &action.deployed_from {
+                        Some(CodeActionSource::Indicator(row)) => {
+                            DisplayPoint::new(*row, 0).to_point(&snapshot)
+                        }
+                        _ => editor.selections.newest::<Point>(cx).head(),
+                    };
                     let (buffer, buffer_row) = snapshot
                         .buffer_snapshot
                         .buffer_line_for_row(MultiBufferRow(multibuffer_point.row))
@@ -5525,7 +5533,7 @@ impl Editor {
                                     ),
                                     selected_item: Default::default(),
                                     scroll_handle: UniformListScrollHandle::default(),
-                                    deployed_from_indicator,
+                                    deployed_from,
                                 }));
                             if spawn_straight_away {
                                 if let Some(task) = editor.confirm_code_action(
@@ -5743,6 +5751,21 @@ impl Editor {
         self.code_action_providers
             .retain(|provider| provider.id() != id);
         self.refresh_code_actions(window, cx);
+    }
+
+    pub fn code_actions_enabled(&self, cx: &App) -> bool {
+        !self.code_action_providers.is_empty()
+            && EditorSettings::get_global(cx).toolbar.code_actions
+    }
+
+    pub fn has_available_code_actions(&self) -> bool {
+        self.available_code_actions
+            .as_ref()
+            .is_some_and(|(_, actions)| !actions.is_empty())
+    }
+
+    pub fn context_menu(&self) -> &RefCell<Option<CodeContextMenu>> {
+        &self.context_menu
     }
 
     fn refresh_code_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<()> {
@@ -7497,7 +7520,7 @@ impl Editor {
                 window.focus(&editor.focus_handle(cx));
                 editor.toggle_code_actions(
                     &ToggleCodeActions {
-                        deployed_from_indicator: Some(row),
+                        deployed_from: Some(CodeActionSource::Indicator(row)),
                         quick_launch,
                     },
                     window,
@@ -7518,7 +7541,7 @@ impl Editor {
                 .map_or(false, |menu| menu.visible())
     }
 
-    fn context_menu_origin(&self) -> Option<ContextMenuOrigin> {
+    pub fn context_menu_origin(&self) -> Option<ContextMenuOrigin> {
         self.context_menu
             .borrow()
             .as_ref()
@@ -8537,7 +8560,7 @@ impl Editor {
         }
     }
 
-    fn render_context_menu(
+    pub fn render_context_menu(
         &self,
         style: &EditorStyle,
         max_height_in_lines: u32,

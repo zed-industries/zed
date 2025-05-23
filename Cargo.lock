@@ -14,6 +14,7 @@ dependencies = [
  "gpui",
  "language",
  "project",
+ "release_channel",
  "smallvec",
  "ui",
  "util",
@@ -681,6 +682,7 @@ dependencies = [
  "language_model",
  "language_models",
  "log",
+ "lsp",
  "markdown",
  "open",
  "paths",
@@ -4037,7 +4039,7 @@ dependencies = [
 [[package]]
 name = "dap-types"
 version = "0.0.1"
-source = "git+https://github.com/zed-industries/dap-types?rev=be69a016ba710191b9fdded28c8b042af4b617f7#be69a016ba710191b9fdded28c8b042af4b617f7"
+source = "git+https://github.com/zed-industries/dap-types?rev=68516de327fa1be15214133a0a2e52a12982ce75#68516de327fa1be15214133a0a2e52a12982ce75"
 dependencies = [
  "schemars",
  "serde",
@@ -4349,7 +4351,7 @@ version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 1.0.109",
+ "syn 2.0.101",
  "workspace-hack",
 ]
 
@@ -7123,7 +7125,7 @@ dependencies = [
  "gpui",
  "proc-macro2",
  "quote",
- "syn 1.0.109",
+ "syn 2.0.101",
  "workspace-hack",
 ]
 
@@ -14776,7 +14778,7 @@ version = "0.1.0"
 dependencies = [
  "sqlez",
  "sqlformat",
- "syn 1.0.109",
+ "syn 2.0.101",
  "workspace-hack",
 ]
 
@@ -16861,7 +16863,7 @@ name = "ui_macros"
 version = "0.1.0"
 dependencies = [
  "quote",
- "syn 1.0.109",
+ "syn 2.0.101",
  "workspace-hack",
 ]
 
@@ -17118,7 +17120,7 @@ name = "util_macros"
 version = "0.1.0"
 dependencies = [
  "quote",
- "syn 1.0.109",
+ "syn 2.0.101",
  "workspace-hack",
 ]
 
@@ -19951,7 +19953,7 @@ dependencies = [
 
 [[package]]
 name = "zed_toml"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]

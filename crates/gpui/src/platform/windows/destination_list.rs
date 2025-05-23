@@ -158,8 +158,8 @@ fn add_recent_folders(
                 .iter()
                 .map(|p| {
                     p.file_name()
-                        .map(|name| name.to_string_lossy().to_string())
-                        .unwrap_or_else(|| p.to_string_lossy().to_string())
+                        .map(|name| name.to_string_lossy())
+                        .unwrap_or_else(|| p.to_string_lossy())
                 })
                 .join(", ");
 

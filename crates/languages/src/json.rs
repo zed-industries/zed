@@ -466,11 +466,7 @@ impl LspAdapter for NodeVersionAdapter {
                 .await
                 .context("downloading release")?;
             if version.url.ends_with(".zip") {
-                extract_zip(
-                    &destination_container_path,
-                    BufReader::new(response.body_mut()),
-                )
-                .await?;
+                extract_zip(&destination_container_path, response.body_mut()).await?;
             } else if version.url.ends_with(".tar.gz") {
                 let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
                 let archive = Archive::new(decompressed_bytes);
@@ -486,15 +482,6 @@ impl LspAdapter for NodeVersionAdapter {
                 &destination_path,
             )
             .await?;
-            // todo("windows")
-            #[cfg(not(windows))]
-            {
-                fs::set_permissions(
-                    &destination_path,
-                    <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
-                )
-                .await?;
-            }
             remove_matching(&container_dir, |entry| entry != destination_path).await;
         }
         Ok(LanguageServerBinary {

@@ -432,7 +432,7 @@ core-foundation-sys = "0.8.6"
 core-video = { version = "0.4.3", features = ["metal"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 ctor = "0.4.0"
-dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "be69a016ba710191b9fdded28c8b042af4b617f7" }
+dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "68516de327fa1be15214133a0a2e52a12982ce75" }
 dashmap = "6.0"
 derive_more = "0.99.17"
 dirs = "4.0"
@@ -553,7 +553,7 @@ streaming-iterator = "0.1"
 strsim = "0.11"
 strum = { version = "0.27.0", features = ["derive"] }
 subtle = "2.5.0"
-syn = { version = "1.0.72", features = ["full", "extra-traits"] }
+syn = { version = "2.0.101", features = ["full", "extra-traits"] }
 sys-locale = "0.3.1"
 sysinfo = "0.31.0"
 take-until = "0.2.0"

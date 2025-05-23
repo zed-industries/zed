@@ -16,29 +16,24 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         ..
     } = parse_macro_input!(input);
 
-    let refineable_attr = attrs.iter().find(|attr| attr.path.is_ident("refineable"));
+    let refineable_attr = attrs.iter().find(|attr| attr.path().is_ident("refineable"));
 
     let mut impl_debug_on_refinement = false;
     let mut derives_serialize = false;
     let mut refinement_traits_to_derive = vec![];
 
     if let Some(refineable_attr) = refineable_attr {
-        if let Ok(syn::Meta::List(meta_list)) = refineable_attr.parse_meta() {
-            for nested in meta_list.nested {
-                let syn::NestedMeta::Meta(syn::Meta::Path(path)) = nested else {
-                    continue;
-                };
-
-                if path.is_ident("Debug") {
-                    impl_debug_on_refinement = true;
-                } else {
-                    if path.is_ident("Serialize") {
-                        derives_serialize = true;
-                    }
-                    refinement_traits_to_derive.push(path);
+        let _ = refineable_attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("Debug") {
+                impl_debug_on_refinement = true;
+            } else {
+                if meta.path.is_ident("Serialize") {
+                    derives_serialize = true;
                 }
+                refinement_traits_to_derive.push(meta.path);
             }
-        }
+            Ok(())
+        });
     }
 
     let refinement_ident = format_ident!("{}Refinement", ident);
@@ -373,7 +368,9 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
 }
 
 fn is_refineable_field(f: &Field) -> bool {
-    f.attrs.iter().any(|attr| attr.path.is_ident("refineable"))
+    f.attrs
+        .iter()
+        .any(|attr| attr.path().is_ident("refineable"))
 }
 
 fn is_optional_field(f: &Field) -> bool {
