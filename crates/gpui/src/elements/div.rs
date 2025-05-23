@@ -1450,7 +1450,7 @@ pub struct Interactivity {
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
     pub(crate) occlude_mouse: bool,
 
-    #[cfg(debug_assertions)]
+    #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
 
     #[cfg(any(test, feature = "test-support"))]
