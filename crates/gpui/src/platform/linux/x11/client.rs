@@ -569,6 +569,7 @@ impl X11Client {
                 let xim_connected = xim_handler.connected;
                 drop(state);
 
+                println!("XIM event: {:#?}", event);
                 let xim_filtered = match ximc.filter_event(&event, &mut xim_handler) {
                     Ok(handled) => handled,
                     Err(err) => {
