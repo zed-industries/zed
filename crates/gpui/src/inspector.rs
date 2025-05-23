@@ -9,37 +9,8 @@ pub struct InspectorElementId {
     pub instance_id: usize,
 }
 
-/// `GlobalElementId` qualified by source location of element construction.
-#[cfg(any(feature = "inspector", debug_assertions))]
-#[derive(Debug, Eq, PartialEq, Hash)]
-pub struct InspectorElementPath {
-    /// The path to the nearest ancestor element that has an `ElementId`.
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    pub global_id: crate::GlobalElementId,
-    /// Source location where this element was constructed.
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    pub source_location: &'static std::panic::Location<'static>,
-}
-
-#[cfg(any(feature = "inspector", debug_assertions))]
-impl Clone for InspectorElementPath {
-    fn clone(&self) -> Self {
-        Self {
-            global_id: crate::GlobalElementId(self.global_id.0.clone()),
-            source_location: self.source_location,
-        }
-    }
-}
-
 impl Into<InspectorElementId> for &InspectorElementId {
     fn into(self) -> InspectorElementId {
-        self.clone()
-    }
-}
-
-#[cfg(any(feature = "inspector", debug_assertions))]
-impl Into<InspectorElementPath> for &InspectorElementPath {
-    fn into(self) -> InspectorElementPath {
         self.clone()
     }
 }
@@ -53,6 +24,32 @@ mod conditional {
     use crate::{AnyElement, App, Context, Empty, IntoElement, Render, Window};
     use collections::FxHashMap;
     use std::any::{Any, TypeId};
+
+    /// `GlobalElementId` qualified by source location of element construction.
+    #[derive(Debug, Eq, PartialEq, Hash)]
+    pub struct InspectorElementPath {
+        /// The path to the nearest ancestor element that has an `ElementId`.
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        pub global_id: crate::GlobalElementId,
+        /// Source location where this element was constructed.
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        pub source_location: &'static std::panic::Location<'static>,
+    }
+
+    impl Clone for InspectorElementPath {
+        fn clone(&self) -> Self {
+            Self {
+                global_id: crate::GlobalElementId(self.global_id.0.clone()),
+                source_location: self.source_location,
+            }
+        }
+    }
+
+    impl Into<InspectorElementPath> for &InspectorElementPath {
+        fn into(self) -> InspectorElementPath {
+            self.clone()
+        }
+    }
 
     /// Function set on `App` to render the inspector UI.
     pub type InspectorRenderer =
