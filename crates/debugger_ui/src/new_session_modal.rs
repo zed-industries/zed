@@ -34,7 +34,7 @@ use ui::{
 use util::ResultExt;
 use workspace::{ModalView, Workspace, pane};
 
-use crate::{NewCustomSession, attach_modal::AttachModal, debugger_panel::DebugPanel};
+use crate::{attach_modal::AttachModal, debugger_panel::DebugPanel};
 
 enum SaveScenarioState {
     Saving,
@@ -154,7 +154,7 @@ impl NewSessionModal {
                         attach_mode,
                         custom_mode,
                         debugger: None,
-                        mode: NewSessionMode::Launch,
+                        mode: NewSessionMode::Scenarios,
                         debug_panel: debug_panel.downgrade(),
                         workspace: workspace_handle,
                         save_scenario_state: None,
@@ -174,10 +174,10 @@ impl NewSessionModal {
             NewSessionMode::Attach => self.attach_mode.update(cx, |this, cx| {
                 this.clone().render(window, cx).into_any_element()
             }),
-            NewSessionMode::Custom => self.custom_mode.update(cx, |this, cx| {
+            NewSessionMode::Launch => self.custom_mode.update(cx, |this, cx| {
                 this.clone().render(dap_menu, window, cx).into_any_element()
             }),
-            NewSessionMode::Launch => v_flex()
+            NewSessionMode::Scenarios => v_flex()
                 .w(rems(34.))
                 .child(self.launch_picker.clone())
                 .into_any_element(),
@@ -187,14 +187,14 @@ impl NewSessionModal {
     fn mode_focus_handle(&self, cx: &App) -> FocusHandle {
         match self.mode {
             NewSessionMode::Attach => self.attach_mode.read(cx).attach_picker.focus_handle(cx),
-            NewSessionMode::Custom => self.custom_mode.read(cx).program.focus_handle(cx),
-            NewSessionMode::Launch => self.launch_picker.focus_handle(cx),
+            NewSessionMode::Launch => self.custom_mode.read(cx).program.focus_handle(cx),
+            NewSessionMode::Scenarios => self.launch_picker.focus_handle(cx),
         }
     }
 
     fn debug_scenario(&self, debugger: &str, cx: &App) -> Option<DebugScenario> {
         let request = match self.mode {
-            NewSessionMode::Custom => Some(DebugRequest::Launch(
+            NewSessionMode::Launch => Some(DebugRequest::Launch(
                 self.custom_mode.read(cx).debug_request(cx),
             )),
             NewSessionMode::Attach => Some(DebugRequest::Attach(
@@ -204,7 +204,7 @@ impl NewSessionModal {
         }?;
         let label = suggested_label(&request, debugger);
 
-        let stop_on_entry = if let NewSessionMode::Custom = &self.mode {
+        let stop_on_entry = if let NewSessionMode::Launch = &self.mode {
             Some(self.custom_mode.read(cx).stop_on_entry.selected())
         } else {
             None
@@ -227,7 +227,7 @@ impl NewSessionModal {
             return;
         };
 
-        if let NewSessionMode::Launch = &self.mode {
+        if let NewSessionMode::Scenarios = &self.mode {
             self.launch_picker.update(cx, |picker, cx| {
                 picker.delegate.confirm(false, window, cx);
             });
@@ -290,6 +290,23 @@ impl NewSessionModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ui::DropdownMenu {
+        let mode = self.mode;
+        if let Some((_, scenario)) = self.launch_picker.update(cx, |picker, cx| {
+            picker
+                .delegate
+                .candidates
+                .get(picker.delegate.selected_index)
+                .filter(|_| mode == NewSessionMode::Scenarios)
+                .cloned()
+        }) {
+            return DropdownMenu::new(
+                "dap-adapter-disabled-picker",
+                scenario.adapter.clone(),
+                ContextMenu::build(window, cx, |menu, _, _| menu),
+            )
+            .disabled(true);
+        }
+
         let workspace = self.workspace.clone();
         let weak = cx.weak_entity();
         let active_buffer = self.task_contexts(cx).and_then(|tc| {
@@ -355,19 +372,19 @@ impl NewSessionModal {
 
 static SELECT_DEBUGGER_LABEL: SharedString = SharedString::new_static("Select Debugger");
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NewSessionMode {
-    Custom,
-    Attach,
     Launch,
+    Attach,
+    Scenarios,
 }
 
 impl std::fmt::Display for NewSessionMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mode = match self {
-            NewSessionMode::Launch => "Launch".to_owned(),
+            NewSessionMode::Scenarios => "Scenarios".to_owned(),
             NewSessionMode::Attach => "Attach".to_owned(),
-            NewSessionMode::Custom => "Custom".to_owned(),
+            NewSessionMode::Launch => "Launch".to_owned(),
         };
 
         write!(f, "{}", mode)
@@ -435,15 +452,15 @@ impl Render for NewSessionModal {
             .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
                 cx.emit(DismissEvent);
             }))
-            .on_action(cx.listener(|this, _: &NewCustomSession, window, cx| {
-                this.mode = NewSessionMode::Custom;
-                this.mode_focus_handle(cx).focus(window);
-            }))
+            // .on_action(cx.listener(|this, _: &NewCustomSession, window, cx| {
+            //     this.mode = NewSessionMode::Launch;
+            //     this.mode_focus_handle(cx).focus(window);
+            // }))
             .on_action(
                 cx.listener(|this, _: &pane::ActivatePreviousItem, window, cx| {
                     this.mode = match this.mode {
-                        NewSessionMode::Attach => NewSessionMode::Launch,
-                        NewSessionMode::Launch => NewSessionMode::Attach,
+                        NewSessionMode::Attach => NewSessionMode::Scenarios,
+                        NewSessionMode::Scenarios => NewSessionMode::Attach,
                         _ => {
                             return;
                         }
@@ -454,8 +471,8 @@ impl Render for NewSessionModal {
             )
             .on_action(cx.listener(|this, _: &pane::ActivateNextItem, window, cx| {
                 this.mode = match this.mode {
-                    NewSessionMode::Attach => NewSessionMode::Launch,
-                    NewSessionMode::Launch => NewSessionMode::Attach,
+                    NewSessionMode::Attach => NewSessionMode::Scenarios,
+                    NewSessionMode::Scenarios => NewSessionMode::Attach,
                     _ => {
                         return;
                     }
@@ -473,19 +490,19 @@ impl Render for NewSessionModal {
                             .justify_start()
                             .w_full()
                             .child(
-                                ToggleButton::new("debugger-session-ui-picker-button", "Launch")
+                                ToggleButton::new("debugger-session-ui-picker-button", NewSessionMode::Scenarios.to_string())
                                     .size(ButtonSize::Default)
                                     .style(ui::ButtonStyle::Subtle)
-                                    .toggle_state(matches!(self.mode, NewSessionMode::Launch))
+                                    .toggle_state(matches!(self.mode, NewSessionMode::Scenarios))
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        this.mode = NewSessionMode::Launch;
+                                        this.mode = NewSessionMode::Scenarios;
                                         this.mode_focus_handle(cx).focus(window);
                                         cx.notify();
                                     }))
                                     .first(),
                             )
                             .child(
-                                ToggleButton::new("debugger-session-ui-attach-button", "Attach")
+                                ToggleButton::new("debugger-session-ui-attach-button", NewSessionMode::Attach.to_string())
                                     .size(ButtonSize::Default)
                                     .toggle_state(matches!(self.mode, NewSessionMode::Attach))
                                     .style(ui::ButtonStyle::Subtle)
@@ -505,15 +522,26 @@ impl Render for NewSessionModal {
                                     }))
                                     .last(),
                             )
+                            .child(
+                                ToggleButton::new("debugger-session-ui-launch-button", NewSessionMode::Launch.to_string())
+                                    .size(ButtonSize::Default)
+                                    .style(ui::ButtonStyle::Subtle)
+                                    .toggle_state(matches!(self.mode, NewSessionMode::Launch))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.mode = NewSessionMode::Launch;
+                                        this.mode_focus_handle(cx).focus(window);
+                                        cx.notify();
+                                    }))
+                                    .first(),
+                            )
                     )
-                    .when(self.mode == NewSessionMode::Attach || self.mode == NewSessionMode::Custom, |el| {
-                        el.justify_end().child(self.render_adapter_menu(window, cx))
-                    })
+                    .justify_end()
+                    .child(self.render_adapter_menu(window, cx))
                     .border_color(cx.theme().colors().border_variant)
                     .border_b_1(),
             )
             .child(v_flex().child(self.render_mode(window, cx)))
-            .when(self.mode == NewSessionMode::Custom, |el|{
+            .when(self.mode == NewSessionMode::Launch, |el|{
                 // FIXME clean up
                 el.child(
                     h_flex()
@@ -527,19 +555,19 @@ impl Render for NewSessionModal {
                             NewSessionMode::Attach => {
                                 div().child(self.render_adapter_menu(window, cx))
                             }
-                            NewSessionMode::Launch => div().child(
+                            NewSessionMode::Scenarios => div().child(
                                 Button::new("new-session-modal-custom", "Custom").on_click({
                                     let this = cx.weak_entity();
                                     move |_, window, cx| {
                                         this.update(cx, |this, cx| {
-                                            this.mode = NewSessionMode::Custom;
+                                            this.mode = NewSessionMode::Launch;
                                             this.mode_focus_handle(cx).focus(window);
                                         })
                                         .ok();
                                     }
                                 }),
                             ),
-                            NewSessionMode::Custom => h_flex()
+                            NewSessionMode::Launch => h_flex()
                                 .child(
                                     Button::new("new-session-modal-back", "Save to .zed/debug.json...")
                                         .on_click(cx.listener(|this, _, window, cx| {
@@ -688,7 +716,7 @@ impl Render for NewSessionModal {
                         .child(
                             Button::new("debugger-spawn", "Start")
                                 .on_click(cx.listener(|this, _, window, cx| match &this.mode {
-                                    NewSessionMode::Launch => {
+                                    NewSessionMode::Scenarios => {
                                         this.launch_picker.update(cx, |picker, cx| {
                                             picker.delegate.confirm(true, window, cx)
                                         })
@@ -696,7 +724,7 @@ impl Render for NewSessionModal {
                                     _ => this.start_new_session(window, cx),
                                 }))
                                 .disabled(match self.mode {
-                                    NewSessionMode::Launch => {
+                                    NewSessionMode::Scenarios => {
                                         !self.launch_picker.read(cx).delegate.matches.is_empty()
                                     }
                                     NewSessionMode::Attach => {
@@ -712,7 +740,7 @@ impl Render for NewSessionModal {
                                                 .match_count()
                                                 == 0
                                     }
-                                    NewSessionMode::Custom => {
+                                    NewSessionMode::Launch => {
                                         self.debugger.is_none()
                                             || self.custom_mode.read(cx).program.read(cx).is_empty(cx)
                                     }
@@ -1000,7 +1028,7 @@ impl PickerDelegate for DebugScenarioDelegate {
     type ListItem = ui::ListItem;
 
     fn match_count(&self) -> usize {
-        self.matches.len() + 1
+        self.matches.len()
     }
 
     fn selected_index(&self) -> usize {
@@ -1065,7 +1093,7 @@ impl PickerDelegate for DebugScenarioDelegate {
                         delegate.selected_index = 0;
                     } else {
                         delegate.selected_index =
-                            delegate.selected_index.min(delegate.matches.len());
+                            delegate.selected_index.min(delegate.matches.len() - 1);
                     }
                 })
                 .log_err();
@@ -1081,11 +1109,6 @@ impl PickerDelegate for DebugScenarioDelegate {
     }
 
     fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<picker::Picker<Self>>) {
-        if self.selected_index() == self.matches.len() {
-            window.dispatch_action(NewCustomSession.boxed_clone(), cx);
-            return;
-        }
-
         let debug_scenario = self
             .matches
             .get(self.selected_index())
@@ -1127,18 +1150,18 @@ impl PickerDelegate for DebugScenarioDelegate {
         window: &mut Window,
         cx: &mut Context<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        if ix == self.matches.len() {
-            return Some(
-                ListItem::new("new-session-modal-custom")
-                    .child(Label::new("Custom"))
-                    .inset(true)
-                    .spacing(ListItemSpacing::Sparse)
-                    .toggle_state(selected)
-                    .on_click(move |_, window, cx| {
-                        window.dispatch_action(NewCustomSession.boxed_clone(), cx);
-                    }),
-            );
-        }
+        // if ix == self.matches.len() {
+        //     return Some(
+        //         ListItem::new("new-session-modal-custom")
+        //             .child(Label::new("Custom"))
+        //             .inset(true)
+        //             .spacing(ListItemSpacing::Sparse)
+        //             .toggle_state(selected)
+        //             .on_click(move |_, window, cx| {
+        //                 window.dispatch_action(NewCustomSession.boxed_clone(), cx);
+        //             }),
+        //     );
+        // }
 
         let hit = &self.matches[ix];
 
