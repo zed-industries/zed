@@ -758,12 +758,12 @@ impl UserStore {
         self.current_user.clone()
     }
 
-    /// Check if the current user's account is too new to use the service
+    /// Returns whether the user's account is too new to use the service.
     pub fn account_too_young(&self) -> bool {
         self.account_too_young.unwrap_or(false)
     }
 
-    /// Check if the current user has overdue invoices and usage should be blocked.
+    /// Returns whether the current user has overdue invoices and usage should be blocked.
     pub fn has_overdue_invoices(&self) -> bool {
         self.has_overdue_invoices.unwrap_or(false)
     }
