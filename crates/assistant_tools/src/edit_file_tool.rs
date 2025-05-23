@@ -956,8 +956,8 @@ async fn build_buffer_diff(
 mod tests {
     use super::*;
     use client::TelemetrySettings;
-    use fs::FakeFs;
-    use gpui::TestAppContext;
+    use fs::{FakeFs, Fs};
+    use gpui::{TestAppContext, UpdateGlobal};
     use language_model::fake_provider::FakeLanguageModel;
     use serde_json::json;
     use settings::SettingsStore;
@@ -1166,5 +1166,129 @@ mod tests {
             TelemetrySettings::register(cx);
             Project::init_settings(cx);
         });
+    }
+
+    #[gpui::test]
+    async fn test_remove_trailing_whitespace(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({"src": {}})).await;
+
+        // Create a simple file with trailing whitespace
+        fs.save(
+            path!("/root/src/main.rs").as_ref(),
+            &"initial content".into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
+
+        // First, test with remove_trailing_whitespace_on_save enabled
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
+                    settings.defaults.remove_trailing_whitespace_on_save = Some(true);
+                });
+            });
+        });
+
+        const CONTENT_WITH_TRAILING_WHITESPACE: &str =
+            "fn main() {  \n    println!(\"Hello!\");  \n}\n";
+
+        // Have the model stream content that contains trailing whitespace
+        let edit_result = {
+            let edit_task = cx.update(|cx| {
+                let input = serde_json::to_value(EditFileToolInput {
+                    display_description: "Create main function".into(),
+                    path: "root/src/main.rs".into(),
+                    mode: EditFileMode::Overwrite,
+                })
+                .unwrap();
+                Arc::new(EditFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            });
+
+            // Stream the content with trailing whitespace
+            cx.executor().run_until_parked();
+            model.stream_last_completion_response(CONTENT_WITH_TRAILING_WHITESPACE.to_string());
+            model.end_last_completion_stream();
+
+            edit_task.await
+        };
+        assert!(edit_result.is_ok());
+
+        // Wait for any async operations (e.g. formatting) to complete
+        cx.executor().run_until_parked();
+
+        // Read the file to verify trailing whitespace was removed automatically
+        let updated_content = fs.load(path!("/root/src/main.rs").as_ref()).await.unwrap();
+        assert_eq!(
+            updated_content, "fn main() {\n    println!(\"Hello!\");\n}\n",
+            "Trailing whitespace should be removed when remove_trailing_whitespace_on_save is enabled"
+        );
+
+        // Next, test with remove_trailing_whitespace_on_save disabled
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
+                    settings.defaults.remove_trailing_whitespace_on_save = Some(false);
+                });
+            });
+        });
+
+        // Stream edits again with trailing whitespace
+        let edit_result = {
+            let edit_task = cx.update(|cx| {
+                let input = serde_json::to_value(EditFileToolInput {
+                    display_description: "Update main function".into(),
+                    path: "root/src/main.rs".into(),
+                    mode: EditFileMode::Overwrite,
+                })
+                .unwrap();
+                Arc::new(EditFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            });
+
+            // Stream the content with trailing whitespace
+            cx.executor().run_until_parked();
+            model.stream_last_completion_response(CONTENT_WITH_TRAILING_WHITESPACE.to_string());
+            model.end_last_completion_stream();
+
+            edit_task.await
+        };
+        assert!(edit_result.is_ok());
+
+        // Wait for any async operations (e.g. formatting) to complete
+        cx.executor().run_until_parked();
+
+        // Verify the file still has trailing whitespace
+        assert_eq!(
+            fs.load(path!("/root/src/main.rs").as_ref()).await.unwrap(),
+            CONTENT_WITH_TRAILING_WHITESPACE,
+            "Trailing whitespace should remain when remove_trailing_whitespace_on_save is disabled"
+        );
     }
 }
