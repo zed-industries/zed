@@ -26,6 +26,7 @@ use task::ResolvedTask;
 use ui::{Color, IntoElement, ListItem, Pixels, Popover, Styled, prelude::*};
 use util::ResultExt;
 
+use crate::CodeActionSource;
 use crate::editor_settings::SnippetSortOrder;
 use crate::hover_popover::{hover_markdown_style, open_markdown_url};
 use crate::{
@@ -168,6 +169,7 @@ impl CodeContextMenu {
 pub enum ContextMenuOrigin {
     Cursor,
     GutterIndicator(DisplayRow),
+    QuickActionBar,
 }
 
 #[derive(Clone, Debug)]
@@ -973,7 +975,7 @@ pub(crate) struct CodeActionsMenu {
     pub buffer: Entity<Buffer>,
     pub selected_item: usize,
     pub scroll_handle: UniformListScrollHandle,
-    pub deployed_from_indicator: Option<DisplayRow>,
+    pub deployed_from: Option<CodeActionSource>,
 }
 
 impl CodeActionsMenu {
@@ -1042,10 +1044,10 @@ impl CodeActionsMenu {
     }
 
     fn origin(&self) -> ContextMenuOrigin {
-        if let Some(row) = self.deployed_from_indicator {
-            ContextMenuOrigin::GutterIndicator(row)
-        } else {
-            ContextMenuOrigin::Cursor
+        match &self.deployed_from {
+            Some(CodeActionSource::Indicator(row)) => ContextMenuOrigin::GutterIndicator(*row),
+            Some(CodeActionSource::QuickActionBar) => ContextMenuOrigin::QuickActionBar,
+            None => ContextMenuOrigin::Cursor,
         }
     }
 
