@@ -46,8 +46,6 @@ impl DivInspector {
         }
     }
 
-    // TODO: Buffer will leak memory over time due to building up history. Instead of using
-    // `project` to create it, should just directly build the buffer and File.
     async fn open_style_buffer(
         project: Entity<Project>,
         this: WeakEntity<DivInspector>,

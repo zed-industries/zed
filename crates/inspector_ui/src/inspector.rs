@@ -7,43 +7,7 @@ use workspace::AppState;
 
 use crate::div_inspector::DivInspector;
 
-// TODO: Add a way to select style builder method names and apply them to the style.
-//
-// TODO: Show bounds / size info. On hover, highlight element
-//
-// TODO: Ideally mousewheel would explore actual parent/child relationships rather than hitbox
-// order. On the other hand, hitbox order allows actually inspecting every element.
-//
-// TODO: Elements that are no longer rendering will still appear in the inspector. This isn't really
-// a bug, but would be good to surface this.
-//
-// TODO: Keep around changed element state, instead of only supporting modification of a single
-// element. Probably makes sense to surface this in the inspector UI as a list of elements that have
-// state modifications.
-//
-// TODO: Related to below TODO, consider not even have special handling of rendering the inspector
-// to the side - it could just be a workspace item.
-//
-// TODO: Move logic of the gpui `Inspector` entity into this crate:
-//
-// * `Inspector` trait with methods like `select` and `hover` that are given InspectorElementId.
-// Implementor of this trait then gets set on `App`.
-//
-// * Add `with_rendered_inspector_states` to `Window`.
-//
-// Motivations:
-//
-// * No need for DivInspector to keep track of InspectorElementId to detect if it changes
-// to rebuild Editor.
-//
-// * Can get invoked when inspected element changes instead of on render. This would allow things
-// like modes where clicks or even hovers open the source code.
-//
-// * Seems cleaner to just have GPUI provide what's needed to implement an inspector. This will
-// consolidate the UX logic here.
-
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
-    // TODO: Instead toggle a global debug mode? Not all windows support the command pallete.
     cx.on_action(|_: &zed_actions::dev::ToggleInspector, cx| {
         let Some(active_window) = cx
             .active_window()
