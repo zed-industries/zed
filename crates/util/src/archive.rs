@@ -1,14 +1,17 @@
 use std::path::Path;
 
 use anyhow::{Context as _, Result};
+use async_fs::File;
 use async_zip::base::read::seek::ZipFileReader;
-use futures::{AsyncRead, AsyncSeek, io::BufReader};
+use futures::{AsyncRead, io::BufReader};
 
-pub async fn extract_zip<R: AsyncRead + AsyncSeek + Unpin>(
-    destination: &Path,
-    reader: R,
-) -> Result<()> {
-    let mut reader = ZipFileReader::new(BufReader::new(reader))
+pub async fn extract_zip<R: AsyncRead + Unpin>(destination: &Path, reader: R) -> Result<()> {
+    // TODO kb comment this and make a streaming version for Windows?
+    let mut file = File::from(tempfile::tempfile().context("creating a temporary file")?);
+    futures::io::copy(&mut BufReader::new(reader), &mut file)
+        .await
+        .context("saving archive contents into the temporary file")?;
+    let mut reader = ZipFileReader::new(BufReader::new(file))
         .await
         .context("reading the zip archive")?;
     let destination = &destination
@@ -66,7 +69,7 @@ pub async fn extract_zip<R: AsyncRead + AsyncSeek + Unpin>(
 mod tests {
     use async_zip::ZipEntryBuilder;
     use async_zip::base::write::ZipFileWriter;
-    use futures::AsyncWriteExt;
+    use futures::{AsyncSeek, AsyncWriteExt};
     use smol::io::Cursor;
     use tempfile::TempDir;
 
