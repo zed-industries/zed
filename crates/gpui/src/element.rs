@@ -357,8 +357,7 @@ impl<E: Element> Drawable<E> {
                             global_id: GlobalElementId(window.element_id_stack.clone()),
                             source_location: source,
                         };
-                        window
-                            .build_inspector_element_id(path)
+                        window.build_inspector_element_id(path)
                     });
                 }
                 #[cfg(not(any(feature = "inspector", debug_assertions)))]

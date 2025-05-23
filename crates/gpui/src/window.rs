@@ -517,7 +517,7 @@ pub(crate) struct Frame {
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
     // hashbrown::HashMap is used as it provides an entry_ref API so there's no need to clone keys.
     #[cfg(any(feature = "inspector", debug_assertions))]
-    pub(crate) next_element_instance_ids: hashbrown::HashMap<InspectorElementPath, usize>,
+    pub(crate) next_inspector_instance_ids: FxHashMap<Rc<InspectorElementPath>, usize>,
 }
 
 #[derive(Clone, Default)]
@@ -548,7 +548,7 @@ impl Frame {
             element_states: FxHashMap::default(),
             accessed_element_states: Vec::new(),
             #[cfg(any(feature = "inspector", debug_assertions))]
-            next_element_instance_ids: hashbrown::HashMap::default(),
+            next_inspector_instance_ids: FxHashMap::default(),
             mouse_listeners: Vec::new(),
             dispatch_tree,
             scene: Scene::default(),
@@ -567,7 +567,7 @@ impl Frame {
         self.element_states.clear();
         self.accessed_element_states.clear();
         #[cfg(any(feature = "inspector", debug_assertions))]
-        self.next_element_instance_ids.clear();
+        self.next_inspector_instance_ids.clear();
         self.mouse_listeners.clear();
         self.dispatch_tree.clear();
         self.scene.clear();
@@ -3960,10 +3960,11 @@ impl Window {
         &mut self,
         path: InspectorElementPath,
     ) -> InspectorElementId {
+        let path = Rc::new(path);
         let next_instance_id = self
             .next_frame
-            .next_element_instance_ids
-            .entry_ref(&path)
+            .next_inspector_instance_ids
+            .entry(path.clone())
             .or_insert(0);
         let instance_id = *next_instance_id;
         *next_instance_id += 1;

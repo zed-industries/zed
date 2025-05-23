@@ -3,7 +3,7 @@
 pub struct InspectorElementId {
     /// Stable part of the ID.
     #[cfg(any(feature = "inspector", debug_assertions))]
-    pub path: InspectorElementPath,
+    pub path: std::rc::Rc<InspectorElementPath>,
     /// Disambiguates elements that have the same path.
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub instance_id: usize,
