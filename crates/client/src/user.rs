@@ -108,6 +108,7 @@ pub struct UserStore {
     edit_predictions_usage_amount: Option<u32>,
     edit_predictions_usage_limit: Option<proto::UsageLimit>,
     is_usage_based_billing_enabled: Option<bool>,
+    account_too_young: Option<bool>,
     current_user: watch::Receiver<Option<Arc<User>>>,
     accepted_tos_at: Option<Option<DateTime<Utc>>>,
     contacts: Vec<Arc<Contact>>,
@@ -174,6 +175,7 @@ impl UserStore {
             edit_predictions_usage_amount: None,
             edit_predictions_usage_limit: None,
             is_usage_based_billing_enabled: None,
+            account_too_young: None,
             accepted_tos_at: None,
             contacts: Default::default(),
             incoming_contact_requests: Default::default(),
@@ -347,6 +349,7 @@ impl UserStore {
                 .trial_started_at
                 .and_then(|trial_started_at| DateTime::from_timestamp(trial_started_at as i64, 0));
             this.is_usage_based_billing_enabled = message.payload.is_usage_based_billing_enabled;
+            this.account_too_young = message.payload.account_too_young;
 
             if let Some(usage) = message.payload.usage {
                 this.model_request_usage_amount = Some(usage.model_requests_usage_amount);
@@ -750,6 +753,11 @@ impl UserStore {
 
     pub fn watch_current_user(&self) -> watch::Receiver<Option<Arc<User>>> {
         self.current_user.clone()
+    }
+
+    /// Check if the current user's account is too new to use the service
+    pub fn current_user_account_too_young(&self) -> bool {
+        self.account_too_young.unwrap_or(false)
     }
 
     pub fn current_user_has_accepted_terms(&self) -> Option<bool> {
