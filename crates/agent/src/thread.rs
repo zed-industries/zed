@@ -1209,34 +1209,38 @@ impl Thread {
             available_tools: available_tool_names,
         };
 
-        if let Some(project_context) = self.project_context.borrow().as_ref() {
-            match self
-                .prompt_builder
-                .generate_assistant_system_prompt(project_context, model_context)
-            {
-                Err(err) => {
-                    let message = format!("{err:?}").into();
-                    log::error!("{message}");
-                    cx.emit(ThreadEvent::ShowError(ThreadError::Message {
-                        header: "Error generating system prompt".into(),
-                        message,
-                    }));
+        // Only add the system prompt if this is the first completion request for the thread.
+        // Assuming completion_count is 0 for the first request.
+        if self.completion_count == 0 {
+            if let Some(project_context) = self.project_context.borrow().as_ref() {
+                match self
+                    .prompt_builder
+                    .generate_assistant_system_prompt(project_context, model_context)
+                {
+                    Err(err) => {
+                        let message = format!("{err:?}").into();
+                        log::error!("{message}");
+                        cx.emit(ThreadEvent::ShowError(ThreadError::Message {
+                            header: "Error generating system prompt".into(),
+                            message,
+                        }));
+                    }
+                    Ok(system_prompt) => {
+                        request.messages.push(LanguageModelRequestMessage {
+                            role: Role::System,
+                            content: vec![MessageContent::Text(system_prompt)],
+                            cache: true, // Cache is still good for the first system message
+                        });
+                    }
                 }
-                Ok(system_prompt) => {
-                    request.messages.push(LanguageModelRequestMessage {
-                        role: Role::System,
-                        content: vec![MessageContent::Text(system_prompt)],
-                        cache: true,
-                    });
-                }
+            } else {
+                let message = "Context for system prompt unexpectedly not ready.".into();
+                log::error!("{message}");
+                cx.emit(ThreadEvent::ShowError(ThreadError::Message {
+                    header: "Error generating system prompt".into(),
+                    message,
+                }));
             }
-        } else {
-            let message = "Context for system prompt unexpectedly not ready.".into();
-            log::error!("{message}");
-            cx.emit(ThreadEvent::ShowError(ThreadError::Message {
-                header: "Error generating system prompt".into(),
-                message,
-            }));
         }
 
         let mut message_ix_to_cache = None;
