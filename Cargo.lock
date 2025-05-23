@@ -8174,6 +8174,7 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+ "workspace-hack",
  "zed_actions",
 ]
 

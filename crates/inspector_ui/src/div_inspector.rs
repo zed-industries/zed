@@ -10,7 +10,7 @@ use project::{Project, ProjectPath};
 use std::path::Path;
 use ui::{Label, LabelSize, Tooltip, prelude::*, v_flex};
 
-/// Path used for unsaved buffer that contains style json. To support the json lanugage server, this
+/// Path used for unsaved buffer that contains style json. To support the json language server, this
 /// matches the name used in the generated schemas.
 const ZED_INSPECTOR_STYLE_PATH: &str = "/zed-inspector-style.json";
 
