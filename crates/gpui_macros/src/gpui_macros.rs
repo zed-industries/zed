@@ -1,5 +1,6 @@
 mod derive_app_context;
 mod derive_into_element;
+mod derive_reflect_methods;
 mod derive_render;
 mod derive_visual_context;
 mod register_action;
@@ -176,6 +177,21 @@ pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
     test::test(args, function)
+}
+
+/// A procedural macro that generates runtime reflection capabilities for trait methods.
+///
+/// This macro specifically handles methods of the form `fn name(self) -> Self` or
+/// `fn name(mut self) -> Self`, allowing them to be invoked dynamically by name at runtime.
+/// Methods with default implementations are also supported. Other method signatures are filtered out.
+///
+/// This generates a reflection module with methods to:
+/// - Get all reflectable methods
+/// - Find a method by name
+/// - Invoke a method dynamically
+#[proc_macro_attribute]
+pub fn reflect_methods(_args: TokenStream, input: TokenStream) -> TokenStream {
+    derive_reflect_methods::reflect_methods(_args, input)
 }
 
 pub(crate) fn get_simple_attribute_field(ast: &DeriveInput, name: &'static str) -> Option<Ident> {
