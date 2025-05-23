@@ -4295,6 +4295,7 @@ mod tests {
                 app_state.client.clone(),
                 prompt_builder.clone(),
                 app_state.languages.clone(),
+                false,
                 cx,
             );
             repl::init(app_state.fs.clone(), cx);
