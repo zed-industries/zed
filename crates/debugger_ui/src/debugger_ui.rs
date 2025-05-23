@@ -47,6 +47,7 @@ actions!(
         ShowStackTrace,
         ToggleThreadPicker,
         ToggleSessionPicker,
+        NewCustomSession,
     ]
 );
 
