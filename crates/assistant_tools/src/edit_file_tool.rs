@@ -1345,7 +1345,7 @@ mod tests {
         // Open the buffer to trigger LSP initialization
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/root/src/main.rs", cx)
+                project.open_local_buffer(path!("/root/src/main.rs"), cx)
             })
             .await
             .unwrap();
