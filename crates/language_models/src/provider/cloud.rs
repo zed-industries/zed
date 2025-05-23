@@ -1,8 +1,6 @@
 use anthropic::{AnthropicModelMode, parse_prompt_too_long};
 use anyhow::{Context as _, Result, anyhow};
 use client::{Client, UserStore, zed_urls};
-use collections::BTreeMap;
-use feature_flags::{FeatureFlagAppExt, LlmClosedBetaFeatureFlag};
 use futures::{
     AsyncBufReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream,
 };
@@ -11,7 +9,7 @@ use gpui::{
 };
 use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
 use language_model::{
-    AuthenticateError, CloudModel, LanguageModel, LanguageModelCacheConfiguration,
+    AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelCompletionError, LanguageModelId, LanguageModelKnownError, LanguageModelName,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelProviderTosView, LanguageModelRequest, LanguageModelToolChoice,
@@ -26,16 +24,13 @@ use proto::Plan;
 use release_channel::AppVersion;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use settings::{Settings, SettingsStore};
+use settings::SettingsStore;
 use smol::Timer;
 use smol::io::{AsyncReadExt, BufReader};
 use std::pin::Pin;
 use std::str::FromStr as _;
-use std::{
-    sync::{Arc, LazyLock},
-    time::Duration,
-};
-use strum::IntoEnumIterator;
+use std::sync::Arc;
+use std::time::Duration;
 use thiserror::Error;
 use ui::{TintColor, prelude::*};
 use util::{ResultExt as _, maybe};
@@ -47,24 +42,11 @@ use zed_llm_client::{
     TOOL_USE_LIMIT_REACHED_HEADER_NAME, ZED_VERSION_HEADER_NAME,
 };
 
-use crate::AllLanguageModelSettings;
 use crate::provider::anthropic::{AnthropicEventMapper, count_anthropic_tokens, into_anthropic};
 use crate::provider::google::{GoogleEventMapper, into_google};
 use crate::provider::open_ai::{OpenAiEventMapper, count_open_ai_tokens, into_open_ai};
 
 pub const PROVIDER_NAME: &str = "Zed";
-
-const ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: Option<&str> =
-    option_env!("ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON");
-
-fn zed_cloud_provider_additional_models() -> &'static [AvailableModel] {
-    static ADDITIONAL_MODELS: LazyLock<Vec<AvailableModel>> = LazyLock::new(|| {
-        ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON
-            .map(|json| serde_json::from_str(json).unwrap())
-            .unwrap_or_default()
-    });
-    ADDITIONAL_MODELS.as_slice()
-}
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct ZedDotDevSettings {
