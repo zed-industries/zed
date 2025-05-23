@@ -5749,7 +5749,8 @@ impl Editor {
     }
 
     pub fn code_actions_enabled(&self, cx: &App) -> bool {
-        EditorSettings::get_global(cx).toolbar.code_actions
+        !self.code_action_providers.is_empty()
+            && EditorSettings::get_global(cx).toolbar.code_actions
     }
 
     pub fn has_available_code_actions(&self) -> bool {
