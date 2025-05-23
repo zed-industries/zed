@@ -4,20 +4,42 @@ use serde_json::{Map, Value};
 
 use std::sync::Arc;
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum VsCodeSettingsSource {
+    VsCode,
+    Cursor,
+}
+
+impl std::fmt::Display for VsCodeSettingsSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VsCodeSettingsSource::VsCode => write!(f, "VsCode"),
+            VsCodeSettingsSource::Cursor => write!(f, "Cursor"),
+        }
+    }
+}
+
 pub struct VsCodeSettings {
+    pub source: VsCodeSettingsSource,
     content: Map<String, Value>,
 }
 
 impl VsCodeSettings {
-    pub fn from_str(content: &str) -> Result<Self> {
+    pub fn from_str(content: &str, source: VsCodeSettingsSource) -> Result<Self> {
         Ok(Self {
+            source,
             content: serde_json_lenient::from_str(content)?,
         })
     }
 
-    pub async fn load_user_settings(fs: Arc<dyn Fs>) -> Result<Self> {
-        let content = fs.load(paths::vscode_settings_file()).await?;
+    pub async fn load_user_settings(source: VsCodeSettingsSource, fs: Arc<dyn Fs>) -> Result<Self> {
+        let path = match source {
+            VsCodeSettingsSource::VsCode => paths::vscode_settings_file(),
+            VsCodeSettingsSource::Cursor => paths::cursor_settings_file(),
+        };
+        let content = fs.load(path).await?;
         Ok(Self {
+            source,
             content: serde_json_lenient::from_str(&content)?,
         })
     }
