@@ -2863,18 +2863,24 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         settings.defaults.tab_size = NonZeroU32::new(4)
     });
 
-    let language = Arc::new(Language::new(
-        LanguageConfig {
-            documentation: Some(language::DocumentationConfig {
-                start: "/**".into(),
-                end: "*/".into(),
-                prefix: "* ".into(),
-                tab_size: NonZeroU32::new(1).unwrap(),
-            }),
-            ..LanguageConfig::default()
-        },
-        None,
-    ));
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                documentation: Some(language::DocumentationConfig {
+                    start: "/**".into(),
+                    end: "*/".into(),
+                    prefix: "* ".into(),
+                    tab_size: NonZeroU32::new(1).unwrap(),
+                }),
+
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_override_query("[(line_comment)(block_comment)] @comment.inclusive")
+        .unwrap(),
+    );
+
     {
         let mut cx = EditorTestContext::new(cx).await;
         cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
