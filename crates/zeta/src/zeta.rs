@@ -1574,6 +1574,16 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
             return;
         }
 
+        if self
+            .zeta
+            .read(cx)
+            .user_store
+            .read(cx)
+            .current_user_account_too_young()
+        {
+            return;
+        }
+
         if let Some(current_completion) = self.current_completion.as_ref() {
             let snapshot = buffer.read(cx).snapshot();
             if current_completion

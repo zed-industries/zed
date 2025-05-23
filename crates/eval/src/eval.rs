@@ -432,6 +432,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
         client.clone(),
         prompt_builder.clone(),
         languages.clone(),
+        true,
         cx,
     );
     assistant_tools::init(client.http_client(), cx);

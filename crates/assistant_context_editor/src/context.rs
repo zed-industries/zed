@@ -2204,6 +2204,7 @@ impl AssistantContext {
                             StopReason::ToolUse => {}
                             StopReason::EndTurn => {}
                             StopReason::MaxTokens => {}
+                            StopReason::Refusal => {}
                         }
                     }
                 })

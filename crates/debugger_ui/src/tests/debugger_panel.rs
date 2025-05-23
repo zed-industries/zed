@@ -1015,7 +1015,7 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
     cx.run_until_parked();
 
     let running_state = active_debug_session_panel(workspace, cx)
-        .update(cx, |item, _| item.running_state().clone());
+        .read_with(cx, |item, _| item.running_state().clone());
 
     cx.run_until_parked();
     let thread_id = ThreadId(1);

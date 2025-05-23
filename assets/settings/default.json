@@ -230,11 +230,11 @@
   // Possible values:
   //  - "off" — no diagnostics are allowed
   //  - "error"
-  //  - "warning" (default)
+  //  - "warning"
   //  - "info"
   //  - "hint"
-  //  - null — allow all diagnostics
-  "diagnostics_max_severity": "warning",
+  //  - null — allow all diagnostics (default)
+  "diagnostics_max_severity": null,
   // Whether to show wrap guides (vertical rulers) in the editor.
   // Setting this to true will show a guide at the 'preferred_line_length' value
   // if 'soft_wrap' is set to 'preferred_line_length', and will show any
@@ -322,7 +322,9 @@
     // Whether to show the Selections menu in the editor toolbar.
     "selections_menu": true,
     // Whether to show agent review buttons in the editor toolbar.
-    "agent_review": true
+    "agent_review": true,
+    // Whether to show code action buttons in the editor toolbar.
+    "code_actions": true
   },
   // Titlebar related settings
   "title_bar": {
