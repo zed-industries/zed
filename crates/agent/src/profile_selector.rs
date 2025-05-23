@@ -153,13 +153,10 @@ impl Render for ProfileSelector {
             .map(|profile| profile.name.clone())
             .unwrap_or_else(|| "Unknown".into());
 
-        let configured_model = self
-            .thread
-            .read_with(cx, |thread, _cx| thread.configured_model())
-            .or_else(|| {
-                let model_registry = LanguageModelRegistry::read_global(cx);
-                model_registry.default_model()
-            });
+        let configured_model = self.thread.read(cx).configured_model().or_else(|| {
+            let model_registry = LanguageModelRegistry::read_global(cx);
+            model_registry.default_model()
+        });
         let supports_tools =
             configured_model.map_or(false, |default| default.model.supports_tools());
 

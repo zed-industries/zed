@@ -349,9 +349,7 @@ impl DebugPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        while let Some(parent_session) =
-            curr_session.read_with(cx, |session, _| session.parent_session().cloned())
-        {
+        while let Some(parent_session) = curr_session.read(cx).parent_session().cloned() {
             curr_session = parent_session;
         }
 
