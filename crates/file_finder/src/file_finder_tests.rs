@@ -699,7 +699,7 @@ async fn test_single_file_worktrees(cx: &mut TestAppContext) {
                 .spawn_search(test_path_position("thf/"), window, cx)
         })
         .await;
-    picker.update(cx, |f, _| assert_eq!(f.delegate.matches.len(), 0));
+    assert_eq!(picker.read(cx).delegate.matches.len(), 0)
 }
 
 #[gpui::test]

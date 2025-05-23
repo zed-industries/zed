@@ -761,11 +761,9 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
     cx.run_until_parked();
 
     let mutated_excerpts =
-        editor_content_with_blocks(&mutated_diagnostics.update(cx, |d, _| d.editor.clone()), cx);
-    let reference_excerpts = editor_content_with_blocks(
-        &reference_diagnostics.update(cx, |d, _| d.editor.clone()),
-        cx,
-    );
+        editor_content_with_blocks(&mutated_diagnostics.read(cx).editor.clone(), cx);
+    let reference_excerpts =
+        editor_content_with_blocks(&reference_diagnostics.read(cx).editor.clone(), cx);
 
     // The mutated view may contain more than the reference view as
     // we don't currently shrink excerpts when diagnostics were removed.

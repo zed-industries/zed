@@ -320,5 +320,5 @@ fn collect_match_candidates(
     picker: &Entity<Picker<OpenPathDelegate>>,
     cx: &mut VisualTestContext,
 ) -> Vec<String> {
-    picker.update(cx, |f, _| f.delegate.collect_match_candidates())
+    picker.read(cx).delegate.collect_match_candidates()
 }
