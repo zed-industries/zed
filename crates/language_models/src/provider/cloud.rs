@@ -167,25 +167,39 @@ impl State {
                     let response = Self::fetch_models(client, llm_api_token).await?;
                     cx.update(|cx| {
                         this.update(cx, |this, cx| {
-                            this.default_model = response
-                                .models
+                            let mut models = Vec::new();
+
+                            for model in response.models {
+                                models.push(Arc::new(model.clone()));
+
+                                // Right now we represent thinking variants of models as separate models on the client,
+                                // so we need to insert variants for any model that supports thinking.
+                                if model.supports_thinking {
+                                    models.push(Arc::new(zed_llm_client::LanguageModel {
+                                        id: zed_llm_client::LanguageModelId(
+                                            format!("{}-thinking", model.id).into(),
+                                        ),
+                                        display_name: format!("{} Thinking", model.display_name),
+                                        ..model
+                                    }));
+                                }
+                            }
+
+                            this.default_model = models
                                 .iter()
                                 .find(|model| model.id == response.default_model)
                                 .cloned();
-                            this.default_fast_model = response
-                                .models
+                            this.default_fast_model = models
                                 .iter()
                                 .find(|model| model.id == response.default_fast_model)
                                 .cloned();
                             this.recommended_models = response
                                 .recommended_models
                                 .iter()
-                                .filter_map(|id| {
-                                    response.models.iter().find(|model| &model.id == id)
-                                })
+                                .filter_map(|id| models.iter().find(|model| &model.id == id))
                                 .cloned()
                                 .collect();
-                            this.models = response.models;
+                            this.models = models;
                             cx.notify();
                         })
                     })??;
@@ -681,6 +695,10 @@ impl LanguageModel for CloudLanguageModel {
         }
     }
 
+    fn supports_max_mode(&self) -> bool {
+        self.model.supports_max_mode
+    }
+
     fn telemetry_id(&self) -> String {
         format!("zed.dev/{}", self.model.id)
     }
@@ -723,8 +741,10 @@ impl LanguageModel for CloudLanguageModel {
         match self.model.provider {
             zed_llm_client::LanguageModelProvider::Anthropic => count_anthropic_tokens(request, cx),
             zed_llm_client::LanguageModelProvider::OpenAi => {
-                // todo!(): Don't unwrap.
-                let model = open_ai::Model::from_id(&self.model.id.0).unwrap();
+                let model = match open_ai::Model::from_id(&self.model.id.0) {
+                    Ok(model) => model,
+                    Err(err) => return async move { Err(anyhow!(err)) }.boxed(),
+                };
                 count_open_ai_tokens(request, model, cx)
             }
             zed_llm_client::LanguageModelProvider::Google => {
@@ -799,8 +819,13 @@ impl LanguageModel for CloudLanguageModel {
                     self.model.id.to_string(),
                     1.0,
                     self.model.max_output_tokens as u32,
-                    // todo!(): Add thinking support.
-                    AnthropicModelMode::Default,
+                    if self.model.id.0.ends_with("-thinking") {
+                        AnthropicModelMode::Thinking {
+                            budget_tokens: Some(4_096),
+                        }
+                    } else {
+                        AnthropicModelMode::Default
+                    },
                 );
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
@@ -854,8 +879,10 @@ impl LanguageModel for CloudLanguageModel {
             }
             zed_llm_client::LanguageModelProvider::OpenAi => {
                 let client = self.client.clone();
-                // todo!(): Don't unwrap.
-                let model = open_ai::Model::from_id(&self.model.id.0).unwrap();
+                let model = match open_ai::Model::from_id(&self.model.id.0) {
+                    Ok(model) => model,
+                    Err(err) => return async move { Err(anyhow!(err)) }.boxed(),
+                };
                 let request = into_open_ai(request, &model, None);
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
