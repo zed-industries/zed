@@ -68,12 +68,13 @@ pub struct DebugPanel {
     pub(crate) thread_picker_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub(crate) session_picker_menu_handle: PopoverMenuHandle<ContextMenu>,
     fs: Arc<dyn Fs>,
+    _subscriptions: [Subscription; 1],
 }
 
 impl DebugPanel {
     pub fn new(
         workspace: &Workspace,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         cx.new(|cx| {
@@ -81,6 +82,14 @@ impl DebugPanel {
             let focus_handle = cx.focus_handle();
             let thread_picker_menu_handle = PopoverMenuHandle::default();
             let session_picker_menu_handle = PopoverMenuHandle::default();
+
+            let focus_subscription = cx.on_focus(
+                &focus_handle,
+                window,
+                |this: &mut DebugPanel, window, cx| {
+                    this.focus_active_item(window, cx);
+                },
+            );
 
             Self {
                 size: px(300.),
@@ -93,6 +102,7 @@ impl DebugPanel {
                 fs: workspace.app_state().fs.clone(),
                 thread_picker_menu_handle,
                 session_picker_menu_handle,
+                _subscriptions: [focus_subscription],
             }
         })
     }
@@ -101,15 +111,12 @@ impl DebugPanel {
         let Some(session) = self.active_session.clone() else {
             return;
         };
-        let Some(active_pane) = session
+        let active_pane = session
             .read(cx)
             .running_state()
             .read(cx)
             .active_pane()
-            .cloned()
-        else {
-            return;
-        };
+            .clone();
         active_pane.update(cx, |pane, cx| {
             pane.focus_active_item(window, cx);
         });
