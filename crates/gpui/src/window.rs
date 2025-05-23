@@ -3902,7 +3902,7 @@ impl Window {
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub fn start_inspector_picking(&mut self, cx: &mut App) {
         if let Some(inspector) = &self.inspector {
-            inspector.update(cx, |inspector, cx| inspector.start_picking());
+            inspector.update(cx, |inspector, _cx| inspector.start_picking());
             self.refresh();
         }
     }
@@ -3916,22 +3916,6 @@ impl Window {
             }
         }
         false
-    }
-
-    /// Sets the given [`InspectorElementId`] as the currently inspected element.
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    pub fn inspector_select_element(&mut self, id: Option<InspectorElementId>, cx: &mut App) {
-        if let Some(inspector) = &self.inspector {
-            inspector.update(cx, |inspector, cx| inspector.select(id, cx))
-        }
-    }
-
-    /// Sets the given [`InspectorElementId`] as the currently hovered element.
-    #[cfg(any(feature = "inspector", debug_assertions))]
-    pub fn inspector_hover_element(&mut self, id: Option<InspectorElementId>, cx: &mut App) {
-        if let Some(inspector) = &self.inspector {
-            inspector.update(cx, |inspector, cx| inspector.hover(id, cx))
-        }
     }
 
     /// Executes the provided function with mutable access to an inspector state.
@@ -4017,8 +4001,10 @@ impl Window {
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     fn paint_inspector_hitbox(&mut self, cx: &App) {
-        if self.is_inspector_picking(cx) {
-            if let Some((hitbox_id, _)) = self.topmost_inspector_hitbox(&self.next_frame) {
+        if let Some(inspector) = self.inspector.as_ref() {
+            let inspector = inspector.read(cx);
+            if let Some((hitbox_id, _)) = self.hovered_inspector_hitbox(inspector, &self.next_frame)
+            {
                 if let Some(hitbox) = self
                     .next_frame
                     .hitboxes
@@ -4033,29 +4019,68 @@ impl Window {
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     fn handle_inspector_mouse_event(&mut self, event: &dyn Any, cx: &mut App) {
+        let Some(inspector) = self.inspector.clone() else {
+            return;
+        };
         if event.downcast_ref::<MouseMoveEvent>().is_some() {
-            if let Some((_, inspector_id)) = self.topmost_inspector_hitbox(&self.rendered_frame) {
-                self.inspector_hover_element(Some(inspector_id.clone()), cx);
-                // todo! remove?
-                self.refresh();
-            }
+            inspector.update(cx, |inspector, _cx| {
+                if let Some((_, inspector_id)) =
+                    self.hovered_inspector_hitbox(inspector, &self.rendered_frame)
+                {
+                    inspector.hover(inspector_id, self);
+                }
+            });
         } else if event.downcast_ref::<crate::MouseDownEvent>().is_some() {
-            if let Some((_, inspector_id)) = self.topmost_inspector_hitbox(&self.rendered_frame) {
-                self.inspector_select_element(Some(inspector_id.clone()), cx);
-                // todo! remove?
-                self.refresh();
+            inspector.update(cx, |inspector, _cx| {
+                if let Some((_, inspector_id)) =
+                    self.hovered_inspector_hitbox(inspector, &self.rendered_frame)
+                {
+                    inspector.select(inspector_id, self);
+                }
+            });
+        } else if let Some(event) = event.downcast_ref::<crate::ScrollWheelEvent>() {
+            // This should be kept in sync with SCROLL_LINES in x11 platform.
+            const SCROLL_LINES: f32 = 3.0;
+            const SCROLL_PIXELS_PER_LAYER: f32 = 36.0;
+            let delta_y = event
+                .delta
+                .pixel_delta(px(SCROLL_PIXELS_PER_LAYER / SCROLL_LINES))
+                .y;
+            if let Some(inspector) = self.inspector.clone() {
+                inspector.update(cx, |inspector, _cx| {
+                    if let Some(depth) = inspector.pick_depth.as_mut() {
+                        *depth += delta_y.0 / SCROLL_PIXELS_PER_LAYER;
+                        let max_depth = self.mouse_hit_test.0.len() as f32 - 0.5;
+                        if *depth < 0.0 {
+                            *depth = 0.0;
+                        } else if *depth > max_depth {
+                            *depth = max_depth;
+                        }
+                        if let Some((_, inspector_id)) =
+                            self.hovered_inspector_hitbox(inspector, &self.rendered_frame)
+                        {
+                            inspector.set_active_element_id(inspector_id.clone(), self);
+                        }
+                    }
+                });
             }
         }
     }
 
     #[cfg(any(feature = "inspector", debug_assertions))]
-    fn topmost_inspector_hitbox<'a>(
+    fn hovered_inspector_hitbox(
         &self,
-        frame: &'a Frame,
-    ) -> Option<(HitboxId, &'a InspectorElementId)> {
-        for hitbox_id in &self.mouse_hit_test.0 {
-            if let Some(inspector_id) = frame.inspector_hitboxes.get(hitbox_id) {
-                return Some((*hitbox_id, inspector_id));
+        inspector: &Inspector,
+        frame: &Frame,
+    ) -> Option<(HitboxId, InspectorElementId)> {
+        if let Some(pick_depth) = inspector.pick_depth {
+            let depth = (pick_depth as i64).try_into().unwrap_or(0);
+            let max_skipped = self.mouse_hit_test.0.len().saturating_sub(1);
+            let skip_count = (depth as usize).min(max_skipped);
+            for hitbox_id in self.mouse_hit_test.0.iter().skip(skip_count) {
+                if let Some(inspector_id) = frame.inspector_hitboxes.get(hitbox_id) {
+                    return Some((*hitbox_id, inspector_id.clone()));
+                }
             }
         }
         return None;

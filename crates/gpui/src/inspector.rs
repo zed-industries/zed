@@ -55,7 +55,7 @@ mod conditional {
 
     pub struct Inspector {
         active_element: Option<InspectedElement>,
-        is_picking: bool,
+        pub pick_depth: Option<f32>,
     }
 
     struct InspectedElement {
@@ -76,35 +76,35 @@ mod conditional {
         pub fn new() -> Self {
             Self {
                 active_element: None,
-                is_picking: true,
+                pick_depth: Some(0.0),
             }
         }
 
-        pub fn select(&mut self, id: Option<InspectorElementId>, cx: &mut Context<Self>) {
-            self.set_active_element_id(id, cx);
-            self.is_picking = false;
-            cx.notify();
+        pub fn select(&mut self, id: InspectorElementId, window: &mut Window) {
+            self.set_active_element_id(id, window);
+            self.pick_depth = None;
         }
 
-        pub fn hover(&mut self, id: Option<InspectorElementId>, cx: &mut Context<Self>) {
-            if self.is_picking {
-                self.set_active_element_id(id, cx);
+        pub fn hover(&mut self, id: InspectorElementId, window: &mut Window) {
+            if self.is_picking() {
+                let changed = self.set_active_element_id(id, window);
+                if changed {
+                    self.pick_depth = Some(0.0);
+                }
             }
         }
 
-        fn set_active_element_id(
+        pub fn set_active_element_id(
             &mut self,
-            id: Option<InspectorElementId>,
-            cx: &mut Context<Self>,
-        ) {
-            let changed = match &id {
-                None => true,
-                Some(id) => Some(id) != self.active_element_id(),
-            };
+            id: InspectorElementId,
+            window: &mut Window,
+        ) -> bool {
+            let changed = Some(&id) != self.active_element_id();
             if changed {
-                self.active_element = id.map(|id| InspectedElement::new(id));
-                cx.notify();
+                self.active_element = Some(InspectedElement::new(id));
+                window.refresh();
             }
+            changed
         }
 
         pub fn active_element_id(&self) -> Option<&InspectorElementId> {
@@ -138,11 +138,11 @@ mod conditional {
         }
 
         pub fn start_picking(&mut self) {
-            self.is_picking = true;
+            self.pick_depth = Some(0.0);
         }
 
         pub fn is_picking(&self) -> bool {
-            self.is_picking
+            self.pick_depth.is_some()
         }
 
         fn render_inspector_states(
