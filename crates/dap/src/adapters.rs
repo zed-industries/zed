@@ -309,7 +309,7 @@ pub async fn download_adapter_from_github(
             let mut file = File::create(&zip_path).await?;
             futures::io::copy(response.body_mut(), &mut file).await?;
             let file = File::open(&zip_path).await?;
-            extract_zip(&version_path, BufReader::new(file))
+            extract_zip(&version_path, file)
                 .await
                 // we cannot check the status as some adapter include files with names that trigger `Illegal byte sequence`
                 .ok();

@@ -7,7 +7,7 @@ pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
 use project::lsp_store::clangd_ext;
 use serde_json::json;
-use smol::{fs, io::BufReader};
+use smol::fs;
 use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
 use util::{ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into};
 
@@ -83,20 +83,10 @@ impl super::LspAdapter for CLspAdapter {
                 "download failed with status {}",
                 response.status().to_string()
             );
-            extract_zip(&container_dir, BufReader::new(response.body_mut()))
+            extract_zip(&container_dir, response.body_mut())
                 .await
                 .with_context(|| format!("unzipping clangd archive to {container_dir:?}"))?;
             remove_matching(&container_dir, |entry| entry != version_dir).await;
-
-            // todo("windows")
-            #[cfg(not(windows))]
-            {
-                fs::set_permissions(
-                    &binary_path,
-                    <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
-                )
-                .await?;
-            }
         }
 
         Ok(LanguageServerBinary {
