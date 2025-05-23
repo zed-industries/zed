@@ -960,7 +960,7 @@ mod tests {
     use gpui::{TestAppContext, UpdateGlobal};
     use language::{FakeLspAdapter, Language, LanguageConfig, LanguageMatcher};
     use language_model::fake_provider::FakeLanguageModel;
-    use language_settings::{AllLanguageSettings, SelectedFormatter};
+    use language_settings::{AllLanguageSettings, Formatter, FormatterList, SelectedFormatter};
     use lsp;
     use serde_json::json;
     use settings::SettingsStore;
@@ -1472,6 +1472,58 @@ mod tests {
             fs.load(path!("/root/src/main.rs").as_ref()).await.unwrap(),
             UNFORMATTED_CONTENT,
             "Code should remain unformatted when format_on_save is disabled"
+        );
+
+        // Finally, test with format_on_save set to a list
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
+                    settings.defaults.format_on_save = Some(FormatOnSave::List(FormatterList(
+                        vec![Formatter::LanguageServer { name: None }].into(),
+                    )));
+                });
+            });
+        });
+
+        // Stream unformatted edits again
+        let edit_result = {
+            let edit_task = cx.update(|cx| {
+                let input = serde_json::to_value(EditFileToolInput {
+                    display_description: "Update main function with list formatter".into(),
+                    path: "root/src/main.rs".into(),
+                    mode: EditFileMode::Overwrite,
+                })
+                .unwrap();
+                Arc::new(EditFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            });
+
+            // Stream the unformatted content
+            cx.executor().run_until_parked();
+            model.stream_last_completion_response(UNFORMATTED_CONTENT.to_string());
+            model.end_last_completion_stream();
+
+            edit_task.await
+        };
+        assert!(edit_result.is_ok());
+
+        // Wait for any async operations (e.g. formatting) to complete
+        cx.executor().run_until_parked();
+
+        // Read the file to verify it was formatted with the specified formatter
+        let new_content = fs.load(path!("/root/src/main.rs").as_ref()).await.unwrap();
+        assert_eq!(
+            new_content, FORMATTED_CONTENT,
+            "Code should be formatted when format_on_save is set to a list"
         );
     }
 }
