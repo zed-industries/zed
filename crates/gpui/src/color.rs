@@ -105,11 +105,13 @@ impl JsonSchema for Rgba {
 
     fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
         use schemars::schema::{InstanceType, SchemaObject, StringValidation};
-        
+
         Schema::Object(SchemaObject {
             instance_type: Some(InstanceType::String.into()),
             string: Some(Box::new(StringValidation {
-                pattern: Some(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$".to_string()),
+                pattern: Some(
+                    r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$".to_string(),
+                ),
                 ..Default::default()
             })),
             ..Default::default()

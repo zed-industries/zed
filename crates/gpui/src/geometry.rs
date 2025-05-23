@@ -3224,7 +3224,7 @@ impl JsonSchema for AbsoluteLength {
 
     fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
         use schemars::schema::{InstanceType, SchemaObject, StringValidation};
-        
+
         Schema::Object(SchemaObject {
             instance_type: Some(InstanceType::String.into()),
             string: Some(Box::new(StringValidation {
@@ -3361,7 +3361,7 @@ impl JsonSchema for DefiniteLength {
 
     fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
         use schemars::schema::{InstanceType, SchemaObject, StringValidation};
-        
+
         Schema::Object(SchemaObject {
             instance_type: Some(InstanceType::String.into()),
             string: Some(Box::new(StringValidation {
@@ -3475,7 +3475,7 @@ impl JsonSchema for Length {
 
     fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
         use schemars::schema::{InstanceType, SchemaObject, StringValidation};
-        
+
         Schema::Object(SchemaObject {
             instance_type: Some(InstanceType::String.into()),
             string: Some(Box::new(StringValidation {

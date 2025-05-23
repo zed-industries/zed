@@ -1558,8 +1558,8 @@ impl Interactivity {
             cx,
             |inspector_state: &mut Option<DivInspectorState>, _window| {
                 if let Some(inspector_state) = inspector_state {
-                    inspector_state.bounds = bounds.clone();
-                    inspector_state.content_size = content_size.clone();
+                    inspector_state.bounds = bounds;
+                    inspector_state.content_size = content_size;
                 }
             },
         );
