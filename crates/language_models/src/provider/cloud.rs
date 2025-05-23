@@ -1,5 +1,5 @@
 use anthropic::{AnthropicModelMode, parse_prompt_too_long};
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use client::{Client, UserStore, zed_urls};
 use collections::BTreeMap;
 use feature_flags::{FeatureFlagAppExt, LlmClosedBetaFeatureFlag};
@@ -38,12 +38,13 @@ use std::{
 use strum::IntoEnumIterator;
 use thiserror::Error;
 use ui::{TintColor, prelude::*};
+use util::{ResultExt as _, maybe};
 use zed_llm_client::{
     CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CURRENT_PLAN_HEADER_NAME, CompletionBody,
     CompletionRequestStatus, CountTokensBody, CountTokensResponse, EXPIRED_LLM_TOKEN_HEADER_NAME,
-    MODEL_REQUESTS_RESOURCE_HEADER_VALUE, SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME,
-    SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME, TOOL_USE_LIMIT_REACHED_HEADER_NAME,
-    ZED_VERSION_HEADER_NAME,
+    ListModelsResponse, MODEL_REQUESTS_RESOURCE_HEADER_VALUE,
+    SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME,
+    TOOL_USE_LIMIT_REACHED_HEADER_NAME, ZED_VERSION_HEADER_NAME,
 };
 
 use crate::AllLanguageModelSettings;
@@ -137,6 +138,8 @@ pub struct State {
     user_store: Entity<UserStore>,
     status: client::Status,
     accept_terms: Option<Task<Result<()>>>,
+    models: Vec<zed_llm_client::LanguageModel>,
+    _fetch_models_task: Task<()>,
     _settings_subscription: Subscription,
     _llm_token_subscription: Subscription,
 }
@@ -156,6 +159,37 @@ impl State {
             user_store,
             status,
             accept_terms: None,
+            models: Vec::new(),
+            _fetch_models_task: cx.spawn(async move |this, cx| {
+                maybe!(async move {
+                    let (client, llm_api_token) = this
+                        .read_with(cx, |this, _cx| (client.clone(), this.llm_api_token.clone()))?;
+
+                    loop {
+                        let status = this.read_with(cx, |this, _cx| this.status)?;
+                        if matches!(status, client::Status::Connected { .. }) {
+                            break;
+                        }
+
+                        cx.background_executor()
+                            .timer(Duration::from_millis(100))
+                            .await;
+                    }
+
+                    let response = Self::fetch_models(client, llm_api_token).await?;
+                    dbg!(&response.models);
+                    cx.update(|cx| {
+                        this.update(cx, |this, _cx| {
+                            this.models = response.models;
+                        })
+                    })??;
+
+                    anyhow::Ok(())
+                })
+                .await
+                .context("failed to fetch Zed models")
+                .log_err();
+            }),
             _settings_subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
             }),
@@ -207,6 +241,38 @@ impl State {
                 cx.notify()
             })
         }));
+    }
+
+    async fn fetch_models(
+        client: Arc<Client>,
+        llm_api_token: LlmApiToken,
+    ) -> Result<ListModelsResponse> {
+        let http_client = &client.http_client();
+        let token = llm_api_token.acquire(&client).await?;
+
+        let request = http_client::Request::builder()
+            .method(Method::GET)
+            .uri(http_client.build_zed_llm_url("/models", &[])?.as_ref())
+            .header("Content-Type", "application/json")
+            .header("Authorization", format!("Bearer {token}"))
+            .body(AsyncBody::empty())?;
+        let mut response = http_client
+            .send(request)
+            .await
+            .context("failed to send list models request")?;
+
+        if response.status().is_success() {
+            let mut body = String::new();
+            response.body_mut().read_to_string(&mut body).await?;
+            return Ok(serde_json::from_str(&body)?);
+        } else {
+            let mut body = String::new();
+            response.body_mut().read_to_string(&mut body).await?;
+            anyhow::bail!(
+                "error listing models.\nStatus: {:?}\nBody: {body}",
+                response.status(),
+            );
+        }
     }
 }
 
