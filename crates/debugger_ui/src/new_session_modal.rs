@@ -750,7 +750,10 @@ impl CustomMode {
 
         let program = cx.new(|cx| Editor::single_line(window, cx));
         program.update(cx, |this, cx| {
-            this.set_placeholder_text("Run", cx);
+            this.set_placeholder_text(
+                "ALPHA=\"Windows\" BETA=\"Wen\" your_program --arg1 --arg2=arg3",
+                cx,
+            );
 
             if let Some(past_program) = past_program {
                 this.set_text(past_program, window, cx);
