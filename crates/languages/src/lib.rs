@@ -1,4 +1,5 @@
 use anyhow::Context as _;
+use eslint::EsLintConfigProvider;
 use gpui::{App, UpdateGlobal};
 use json::json_task_context;
 use node_runtime::NodeRuntime;
@@ -304,9 +305,10 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
         anyhow::Ok(())
     })
     .detach();
-    let manifest_providers: [Arc<dyn ManifestProvider>; 2] = [
+    let manifest_providers: [Arc<dyn ManifestProvider>; 3] = [
         Arc::from(CargoManifestProvider),
         Arc::from(PyprojectTomlManifestProvider),
+        Arc::from(EsLintConfigProvider),
     ];
     for provider in manifest_providers {
         project::ManifestProviders::global(cx).register(provider);
