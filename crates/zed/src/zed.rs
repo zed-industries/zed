@@ -237,7 +237,7 @@ pub fn initialize_workspace(
             cx.new(|cx| toolchain_selector::ActiveToolchain::new(workspace, window, cx));
         let vim_mode_indicator = cx.new(|cx| vim::ModeIndicator::new(window, cx));
         let image_info = cx.new(|_cx| ImageInfo::new(workspace));
-        let lsp_tool = cx.new(|_| LspTool::new());
+        let lsp_tool = cx.new(|cx| LspTool::new(workspace, cx));
 
         let cursor_position =
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
@@ -246,8 +246,8 @@ pub fn initialize_workspace(
             status_bar.add_left_item(diagnostic_summary, window, cx);
             status_bar.add_left_item(activity_indicator, window, cx);
             status_bar.add_right_item(edit_prediction_button, window, cx);
-            status_bar.add_right_item(lsp_tool, window, cx);
             status_bar.add_right_item(active_buffer_language, window, cx);
+            status_bar.add_right_item(lsp_tool, window, cx);
             status_bar.add_right_item(active_toolchain_language, window, cx);
             status_bar.add_right_item(vim_mode_indicator, window, cx);
             status_bar.add_right_item(cursor_position, window, cx);
