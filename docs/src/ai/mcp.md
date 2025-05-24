@@ -8,8 +8,8 @@ Check out the [Anthropic news post](https://www.anthropic.com/news/model-context
 
 ## MCP Servers as Extensions
 
-Zed supports exposing MCP servers as extensions.
-You can check which servers are currently available in a few ways: through [the Zed website](https://zed.dev/extensions?filter=context-servers) or directly through the app by running the `zed: extensions` action or by going to the Agent Panel's top-right menu and looking for "View Server Extensions".
+One of the ways you can use MCP servers in Zed is through exposing it as an extension.
+Check the servers that are already available in Zed's extension store via either [the Zed website](https://zed.dev/extensions?filter=context-servers) or directly through the app by running the `zed: extensions` action or by going to the Agent Panel's top-right menu and looking for "View Server Extensions".
 
 In any case, here are some of the ones available:
 
@@ -26,7 +26,7 @@ If there's an existing MCP server you'd like to bring to Zed, check out the [con
 
 ## Bring your own MCP server
 
-You can bring your own MCP server by adding something like this to your settings:
+Alternatively, you can connect to MCP servers in Zed via adding their commands directly to your `settings.json`, like so:
 
 ```json
 {
@@ -43,4 +43,4 @@ You can bring your own MCP server by adding something like this to your settings
 }
 ```
 
-If you are interested in building your own MCP server, check out the [Model Context Protocol docs](https://modelcontextprotocol.io/introduction#get-started-with-mcp) to get started.
+You can also add a custom server by reaching for the Agent Panel's Settigs view (also accesible via the `agent: open configuration` action) and adding the desired server through the modal that appears when clicking the "Add Custom Server" button.
