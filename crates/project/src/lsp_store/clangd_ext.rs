@@ -63,7 +63,7 @@ pub fn register_notifications(
                             source: Some(CLANGD_SERVER_NAME.to_string()),
                             message: INACTIVE_REGION_MESSAGE.to_string(),
                             tags: Some(vec![lsp::DiagnosticTag::UNNECESSARY]),
-                            ..Default::default()
+                            ..lsp::Diagnostic::default()
                         })
                         .collect();
                     let mapped_diagnostics = lsp::PublishDiagnosticsParams {
