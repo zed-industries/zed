@@ -29,6 +29,7 @@ use paths::contexts_dir;
 use project::Project;
 use prompt_store::PromptBuilder;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use smallvec::SmallVec;
 use std::{
     cmp::{Ordering, max},
@@ -682,6 +683,7 @@ pub struct AssistantContext {
     language_registry: Arc<LanguageRegistry>,
     project: Option<Entity<Project>>,
     prompt_builder: Arc<PromptBuilder>,
+    completion_mode: agent_settings::CompletionMode,
 }
 
 trait ContextAnnotation {
@@ -716,6 +718,14 @@ impl AssistantContext {
             telemetry,
             cx,
         )
+    }
+
+    pub fn completion_mode(&self) -> agent_settings::CompletionMode {
+        self.completion_mode
+    }
+
+    pub fn set_completion_mode(&mut self, completion_mode: agent_settings::CompletionMode) {
+        self.completion_mode = completion_mode;
     }
 
     pub fn new(
@@ -764,6 +774,7 @@ impl AssistantContext {
             pending_cache_warming_task: Task::ready(None),
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
+            completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
             path: None,
             buffer,
             telemetry,
@@ -2321,7 +2332,15 @@ impl AssistantContext {
                 completion_request.messages.push(request_message);
             }
         }
+        let supports_max_mode = if let Some(model) = model {
+            model.supports_max_mode()
+        } else {
+            false
+        };
 
+        if supports_max_mode {
+            completion_request.mode = Some(self.completion_mode.into());
+        }
         completion_request
     }
 

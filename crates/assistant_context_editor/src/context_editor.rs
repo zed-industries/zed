@@ -1,7 +1,10 @@
-use crate::language_model_selector::{
-    LanguageModelSelector, LanguageModelSelectorPopoverMenu, ToggleModelSelector,
+use crate::{
+    language_model_selector::{
+        LanguageModelSelector, LanguageModelSelectorPopoverMenu, ToggleModelSelector,
+    },
+    max_mode_tooltip::MaxModeTooltip,
 };
-use agent_settings::AgentSettings;
+use agent_settings::{AgentSettings, CompletionMode};
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
 use assistant_slash_commands::{
@@ -2058,6 +2061,47 @@ impl ContextEditor {
         )
     }
 
+    fn render_max_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let context = self.context().read(cx);
+        let active_model = match LanguageModelRegistry::read_global(cx)
+            .default_model()
+            .map(|default| default.model)
+        {
+            Some(model) => model,
+            None => return None,
+        };
+        if !active_model.supports_max_mode() {
+            return None;
+        }
+
+        let active_completion_mode = context.completion_mode();
+        let max_mode_enabled = active_completion_mode == CompletionMode::Max;
+
+        Some(
+            Button::new("max-mode", "Max Mode")
+                .label_size(LabelSize::Small)
+                .color(Color::Muted)
+                .icon(IconName::ZedMaxMode)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+                .icon_position(IconPosition::Start)
+                .toggle_state(max_mode_enabled)
+                .on_click(cx.listener(move |this, _event, _window, cx| {
+                    this.context().update(cx, |context, _cx| {
+                        context.set_completion_mode(match active_completion_mode {
+                            CompletionMode::Max => CompletionMode::Normal,
+                            CompletionMode::Normal => CompletionMode::Max,
+                        });
+                    });
+                }))
+                .tooltip(move |_window, cx| {
+                    cx.new(|_| MaxModeTooltip::new().selected(max_mode_enabled))
+                        .into()
+                })
+                .into_any_element(),
+        )
+    }
+
     fn render_language_model_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let active_model = LanguageModelRegistry::read_global(cx)
             .default_model()
@@ -2567,7 +2611,9 @@ impl Render for ContextEditor {
                                     div()
                                         .pl_0p5()
                                         .child(self.render_language_model_selector(cx)),
-                                ),
+                                )
+                                .child(ui::Divider::vertical())
+                                .children(self.render_max_mode_toggle(cx)),
                         )
                         .child(
                             h_flex()
