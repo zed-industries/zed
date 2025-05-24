@@ -30,7 +30,7 @@ fn parse_expanded_items(expanded: TokenStream) -> Option<Vec<TraitItem>> {
     Some(dummy_trait.items)
 }
 
-pub fn reflect_methods(_args: TokenStream, input: TokenStream) -> TokenStream {
+pub fn derive_inspector_reflection(_args: TokenStream, input: TokenStream) -> TokenStream {
     let mut item = parse_macro_input!(input as Item);
 
     // First, expand any macros in the trait
@@ -42,7 +42,7 @@ pub fn reflect_methods(_args: TokenStream, input: TokenStream) -> TokenStream {
         _ => {
             return syn::Error::new_spanned(
                 quote!(#item),
-                "#[reflect_methods] can only be applied to traits",
+                "#[derive_inspector_reflection] can only be applied to traits",
             )
             .to_compile_error()
             .into();
@@ -122,7 +122,7 @@ fn generate_reflected_trait(trait_item: ItemTrait) -> TokenStream {
         let method_name_str = method_name.to_string();
         let wrapper_name = Ident::new(&format!("__wrapper_{}", method_name), method_name.span());
         quote! {
-            MethodInfo {
+            ::gpui::inspector_reflection::MethodInfo {
                 name: #method_name_str,
                 function: #wrapper_name::<T>,
             }
@@ -138,49 +138,20 @@ fn generate_reflected_trait(trait_item: ItemTrait) -> TokenStream {
         /// Implements function reflection
         #vis mod #reflection_mod_name {
             use super::*;
-            use std::any::Any;
-
-            /// Type alias for the function pointer that invokes a method
-            pub type InvokeFn = fn(Box<dyn Any>) -> Box<dyn Any>;
-
-            /// Information about a reflectable method
-            #[derive(Clone, Copy)]
-            pub struct MethodInfo {
-                /// The name of the method
-                pub name: &'static str,
-                function: InvokeFn,
-            }
-
-            impl MethodInfo {
-                /// Invoke this method on a value
-                ///
-                /// Returns the result of the method invocation.
-                ///
-                /// # Panics
-                ///
-                /// Panics if the type erasure fails (this should not happen with correct usage).
-                pub fn invoke<T: 'static>(self, value: T) -> T {
-                    let boxed = Box::new(value) as Box<dyn Any>;
-                    let result = (self.function)(boxed);
-                    *result.downcast::<T>().expect("Type mismatch in reflection invoke")
-                }
-            }
 
             #(#wrapper_functions)*
 
             /// Get all reflectable methods for a concrete type implementing the trait
-            pub fn methods<T: #trait_name + 'static>() -> [MethodInfo; #method_count] {
+            pub fn methods<T: #trait_name + 'static>() -> [::gpui::inspector_reflection::MethodInfo; #method_count] {
                 [
                     #(#method_info_entries),*
                 ]
             }
 
             /// Find a method by name for a concrete type implementing the trait
-            pub fn find_method<T: #trait_name + 'static>(name: &str) -> Option<MethodInfo> {
+            pub fn find_method<T: #trait_name + 'static>(name: &str) -> Option<::gpui::inspector_reflection::MethodInfo> {
                 methods::<T>().into_iter().find(|m| m.name == name)
             }
-
-
         }
     };
 

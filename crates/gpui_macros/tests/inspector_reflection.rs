@@ -1,6 +1,6 @@
-use gpui_macros::reflect_methods;
+use gpui_macros::derive_inspector_reflection;
 
-#[reflect_methods]
+#[derive_inspector_reflection]
 trait Transform: Clone {
     fn double(self) -> Self;
     fn triple(self) -> Self;
@@ -52,7 +52,7 @@ impl Transform for Number {
 }
 
 #[test]
-fn test_reflect_methods() {
+fn test_derive_inspector_reflection() {
     use transform_reflection::*;
 
     // Get all methods that match the pattern fn(self) -> Self or fn(mut self) -> Self

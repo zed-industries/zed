@@ -1,11 +1,13 @@
 mod derive_app_context;
 mod derive_into_element;
-mod derive_reflect_methods;
 mod derive_render;
 mod derive_visual_context;
 mod register_action;
 mod styles;
 mod test;
+
+#[cfg(any(feature = "inspector", debug_assertions))]
+mod derive_inspector_reflection;
 
 use proc_macro::TokenStream;
 use syn::{DeriveInput, Ident};
@@ -189,9 +191,10 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
 /// - Get all reflectable methods
 /// - Find a method by name
 /// - Invoke a method dynamically
+#[cfg(any(feature = "inspector", debug_assertions))]
 #[proc_macro_attribute]
-pub fn reflect_methods(_args: TokenStream, input: TokenStream) -> TokenStream {
-    derive_reflect_methods::reflect_methods(_args, input)
+pub fn derive_inspector_reflection(_args: TokenStream, input: TokenStream) -> TokenStream {
+    derive_inspector_reflection::derive_inspector_reflection(_args, input)
 }
 
 pub(crate) fn get_simple_attribute_field(ast: &DeriveInput, name: &'static str) -> Option<Ident> {

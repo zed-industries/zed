@@ -221,3 +221,37 @@ mod conditional {
         }
     }
 }
+
+/// Provides definitions used by `#[derive_inspector_reflection]`.
+#[cfg(any(feature = "inspector", debug_assertions))]
+pub mod inspector_reflection {
+    use std::any::Any;
+
+    /// Type alias for the function pointer that invokes a method
+    pub type InvokeFn = fn(Box<dyn Any>) -> Box<dyn Any>;
+
+    /// Information about a reflectable method
+    #[derive(Clone, Copy)]
+    pub struct MethodInfo {
+        /// The name of the method
+        pub name: &'static str,
+        function: InvokeFn,
+    }
+
+    impl MethodInfo {
+        /// Invoke this method on a value
+        ///
+        /// Returns the result of the method invocation.
+        ///
+        /// # Panics
+        ///
+        /// Panics if the type erasure fails (this should not happen with correct usage).
+        pub fn invoke<T: 'static>(self, value: T) -> T {
+            let boxed = Box::new(value) as Box<dyn Any>;
+            let result = (self.function)(boxed);
+            *result
+                .downcast::<T>()
+                .expect("Type mismatch in reflection invoke")
+        }
+    }
+}
