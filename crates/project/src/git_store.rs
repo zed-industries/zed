@@ -1741,6 +1741,7 @@ impl GitStore {
                     name.zip(email),
                     CommitOptions {
                         amend: options.amend,
+                        signoff: options.signoff,
                     },
                     cx,
                 )
@@ -3482,6 +3483,7 @@ impl Repository {
                             email: email.map(String::from),
                             options: Some(proto::commit::CommitOptions {
                                 amend: options.amend,
+                                signoff: options.signoff,
                             }),
                         })
                         .await
