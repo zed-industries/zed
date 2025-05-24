@@ -127,7 +127,7 @@ impl<'de> Deserialize<'de> for SharedString {
     where
         D: serde::Deserializer<'de>,
     {
-        let s = String::deserialize(deserializer)?;
-        Ok(SharedString::from(s))
+        let owned: Arc<str> = Arc::deserialize(deserializer)?;
+        Ok(SharedString(ArcCow::Owned(owned)))
     }
 }
