@@ -354,7 +354,7 @@ impl DebugPanel {
         }
 
         let Some(worktree) = curr_session.read(cx).worktree() else {
-            log::error!("Attempted to start a child session from non local debug session");
+            log::error!("Attempted to restart a non-running session");
             return;
         };
 
@@ -389,7 +389,7 @@ impl DebugPanel {
         cx: &mut Context<Self>,
     ) {
         let Some(worktree) = parent_session.read(cx).worktree() else {
-            log::error!("Attempted to start a child session from non local debug session");
+            log::error!("Attempted to start a child-session from a non-running session");
             return;
         };
 
