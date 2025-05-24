@@ -15,8 +15,9 @@ use dap::{
 use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    Animation, AnimationExt as _, App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, Render, Subscription, TextStyle, Transformation, WeakEntity, percentage,
+    Action, Animation, AnimationExt as _, App, AppContext, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, Render, Subscription, TextStyle, Transformation, WeakEntity,
+    percentage,
 };
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
 use project::{ProjectPath, TaskContexts, TaskSourceKind, task_store::TaskStore};
@@ -153,7 +154,7 @@ impl NewSessionModal {
                         attach_mode,
                         custom_mode,
                         debugger: None,
-                        mode: NewSessionMode::Launch,
+                        mode: NewSessionMode::Scenarios,
                         debug_panel: debug_panel.downgrade(),
                         workspace: workspace_handle,
                         save_scenario_state: None,
@@ -168,15 +169,15 @@ impl NewSessionModal {
     }
 
     fn render_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
-        let dap_menu = self.adapter_drop_down_menu(window, cx);
+        let dap_menu = self.render_adapter_menu(window, cx);
         match self.mode {
             NewSessionMode::Attach => self.attach_mode.update(cx, |this, cx| {
                 this.clone().render(window, cx).into_any_element()
             }),
-            NewSessionMode::Custom => self.custom_mode.update(cx, |this, cx| {
+            NewSessionMode::Launch => self.custom_mode.update(cx, |this, cx| {
                 this.clone().render(dap_menu, window, cx).into_any_element()
             }),
-            NewSessionMode::Launch => v_flex()
+            NewSessionMode::Scenarios => v_flex()
                 .w(rems(34.))
                 .child(self.launch_picker.clone())
                 .into_any_element(),
@@ -186,14 +187,14 @@ impl NewSessionModal {
     fn mode_focus_handle(&self, cx: &App) -> FocusHandle {
         match self.mode {
             NewSessionMode::Attach => self.attach_mode.read(cx).attach_picker.focus_handle(cx),
-            NewSessionMode::Custom => self.custom_mode.read(cx).program.focus_handle(cx),
-            NewSessionMode::Launch => self.launch_picker.focus_handle(cx),
+            NewSessionMode::Launch => self.custom_mode.read(cx).program.focus_handle(cx),
+            NewSessionMode::Scenarios => self.launch_picker.focus_handle(cx),
         }
     }
 
     fn debug_scenario(&self, debugger: &str, cx: &App) -> Option<DebugScenario> {
         let request = match self.mode {
-            NewSessionMode::Custom => Some(DebugRequest::Launch(
+            NewSessionMode::Launch => Some(DebugRequest::Launch(
                 self.custom_mode.read(cx).debug_request(cx),
             )),
             NewSessionMode::Attach => Some(DebugRequest::Attach(
@@ -203,7 +204,7 @@ impl NewSessionModal {
         }?;
         let label = suggested_label(&request, debugger);
 
-        let stop_on_entry = if let NewSessionMode::Custom = &self.mode {
+        let stop_on_entry = if let NewSessionMode::Launch = &self.mode {
             Some(self.custom_mode.read(cx).stop_on_entry.selected())
         } else {
             None
@@ -226,7 +227,7 @@ impl NewSessionModal {
             return;
         };
 
-        if let NewSessionMode::Launch = &self.mode {
+        if let NewSessionMode::Scenarios = &self.mode {
             self.launch_picker.update(cx, |picker, cx| {
                 picker.delegate.confirm(false, window, cx);
             });
@@ -284,11 +285,28 @@ impl NewSessionModal {
         self.launch_picker.read(cx).delegate.task_contexts.clone()
     }
 
-    fn adapter_drop_down_menu(
+    fn render_adapter_menu(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ui::DropdownMenu {
+        let mode = self.mode;
+        if let Some((_, scenario)) = self.launch_picker.update(cx, |picker, cx| {
+            picker
+                .delegate
+                .candidates
+                .get(picker.delegate.selected_index)
+                .filter(|_| mode == NewSessionMode::Scenarios)
+                .cloned()
+        }) {
+            return DropdownMenu::new(
+                "dap-adapter-disabled-picker",
+                scenario.adapter.clone(),
+                ContextMenu::build(window, cx, |menu, _, _| menu),
+            )
+            .disabled(true);
+        }
+
         let workspace = self.workspace.clone();
         let weak = cx.weak_entity();
         let active_buffer = self.task_contexts(cx).and_then(|tc| {
@@ -354,19 +372,19 @@ impl NewSessionModal {
 
 static SELECT_DEBUGGER_LABEL: SharedString = SharedString::new_static("Select Debugger");
 
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NewSessionMode {
-    Custom,
-    Attach,
     Launch,
+    Attach,
+    Scenarios,
 }
 
 impl std::fmt::Display for NewSessionMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mode = match self {
-            NewSessionMode::Launch => "Launch".to_owned(),
+            NewSessionMode::Scenarios => "Scenarios".to_owned(),
             NewSessionMode::Attach => "Attach".to_owned(),
-            NewSessionMode::Custom => "Custom".to_owned(),
+            NewSessionMode::Launch => "Launch".to_owned(),
         };
 
         write!(f, "{}", mode)
@@ -434,11 +452,15 @@ impl Render for NewSessionModal {
             .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
                 cx.emit(DismissEvent);
             }))
+            // .on_action(cx.listener(|this, _: &NewCustomSession, window, cx| {
+            //     this.mode = NewSessionMode::Launch;
+            //     this.mode_focus_handle(cx).focus(window);
+            // }))
             .on_action(
                 cx.listener(|this, _: &pane::ActivatePreviousItem, window, cx| {
                     this.mode = match this.mode {
-                        NewSessionMode::Attach => NewSessionMode::Launch,
-                        NewSessionMode::Launch => NewSessionMode::Attach,
+                        NewSessionMode::Attach => NewSessionMode::Scenarios,
+                        NewSessionMode::Scenarios => NewSessionMode::Attach,
                         _ => {
                             return;
                         }
@@ -449,8 +471,8 @@ impl Render for NewSessionModal {
             )
             .on_action(cx.listener(|this, _: &pane::ActivateNextItem, window, cx| {
                 this.mode = match this.mode {
-                    NewSessionMode::Attach => NewSessionMode::Launch,
-                    NewSessionMode::Launch => NewSessionMode::Attach,
+                    NewSessionMode::Attach => NewSessionMode::Scenarios,
+                    NewSessionMode::Scenarios => NewSessionMode::Attach,
                     _ => {
                         return;
                     }
@@ -468,19 +490,19 @@ impl Render for NewSessionModal {
                             .justify_start()
                             .w_full()
                             .child(
-                                ToggleButton::new("debugger-session-ui-picker-button", "Launch")
+                                ToggleButton::new("debugger-session-ui-picker-button", NewSessionMode::Scenarios.to_string())
                                     .size(ButtonSize::Default)
                                     .style(ui::ButtonStyle::Subtle)
-                                    .toggle_state(matches!(self.mode, NewSessionMode::Launch))
+                                    .toggle_state(matches!(self.mode, NewSessionMode::Scenarios))
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        this.mode = NewSessionMode::Launch;
+                                        this.mode = NewSessionMode::Scenarios;
                                         this.mode_focus_handle(cx).focus(window);
                                         cx.notify();
                                     }))
                                     .first(),
                             )
                             .child(
-                                ToggleButton::new("debugger-session-ui-attach-button", "Attach")
+                                ToggleButton::new("debugger-session-ui-attach-button", NewSessionMode::Attach.to_string())
                                     .size(ButtonSize::Default)
                                     .toggle_state(matches!(self.mode, NewSessionMode::Attach))
                                     .style(ui::ButtonStyle::Subtle)
@@ -499,217 +521,233 @@ impl Render for NewSessionModal {
                                         cx.notify();
                                     }))
                                     .last(),
-                            ),
+                            )
+                            .child(
+                                ToggleButton::new("debugger-session-ui-launch-button", NewSessionMode::Launch.to_string())
+                                    .size(ButtonSize::Default)
+                                    .style(ui::ButtonStyle::Subtle)
+                                    .toggle_state(matches!(self.mode, NewSessionMode::Launch))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.mode = NewSessionMode::Launch;
+                                        this.mode_focus_handle(cx).focus(window);
+                                        cx.notify();
+                                    }))
+                                    .first(),
+                            )
                     )
-                    .justify_between()
+                    .justify_end()
+                    .child(self.render_adapter_menu(window, cx))
                     .border_color(cx.theme().colors().border_variant)
                     .border_b_1(),
             )
             .child(v_flex().child(self.render_mode(window, cx)))
-            .child(
-                h_flex()
-                    .justify_between()
-                    .gap_2()
-                    .p_2()
-                    .border_color(cx.theme().colors().border_variant)
-                    .border_t_1()
-                    .w_full()
-                    .child(match self.mode {
-                        NewSessionMode::Attach => {
-                            div().child(self.adapter_drop_down_menu(window, cx))
-                        }
-                        NewSessionMode::Launch => div().child(
-                            Button::new("new-session-modal-custom", "Custom").on_click({
-                                let this = cx.weak_entity();
-                                move |_, window, cx| {
-                                    this.update(cx, |this, cx| {
-                                        this.mode = NewSessionMode::Custom;
-                                        this.mode_focus_handle(cx).focus(window);
-                                    })
-                                    .ok();
-                                }
-                            }),
-                        ),
-                        NewSessionMode::Custom => h_flex()
-                            .child(
-                                Button::new("new-session-modal-back", "Save to .zed/debug.json...")
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        let Some(save_scenario) = this
-                                            .debugger
-                                            .as_ref()
-                                            .and_then(|debugger| this.debug_scenario(&debugger, cx))
-                                            .zip(
-                                                this.task_contexts(cx)
-                                                    .and_then(|tcx| tcx.worktree()),
-                                            )
-                                            .and_then(|(scenario, worktree_id)| {
-                                                this.debug_panel
-                                                    .update(cx, |panel, cx| {
-                                                        panel.save_scenario(
-                                                            &scenario,
-                                                            worktree_id,
-                                                            window,
-                                                            cx,
-                                                        )
-                                                    })
-                                                    .ok()
-                                            })
-                                        else {
-                                            return;
-                                        };
-
-                                        this.save_scenario_state = Some(SaveScenarioState::Saving);
-
-                                        cx.spawn(async move |this, cx| {
-                                            let res = save_scenario.await;
-
-                                            this.update(cx, |this, _| match res {
-                                                Ok(saved_file) => {
-                                                    this.save_scenario_state =
-                                                        Some(SaveScenarioState::Saved(saved_file))
-                                                }
-                                                Err(error) => {
-                                                    this.save_scenario_state =
-                                                        Some(SaveScenarioState::Failed(
-                                                            error.to_string().into(),
-                                                        ))
-                                                }
-                                            })
-                                            .ok();
-
-                                            cx.background_executor()
-                                                .timer(Duration::from_secs(2))
-                                                .await;
-                                            this.update(cx, |this, _| {
-                                                this.save_scenario_state.take()
-                                            })
-                                            .ok();
+            .when(self.mode == NewSessionMode::Launch, |el|{
+                // FIXME clean up
+                el.child(
+                    h_flex()
+                        .justify_between()
+                        .gap_2()
+                        .p_2()
+                        .border_color(cx.theme().colors().border_variant)
+                        .border_t_1()
+                        .w_full()
+                        .child(match self.mode {
+                            NewSessionMode::Attach => {
+                                div().child(self.render_adapter_menu(window, cx))
+                            }
+                            NewSessionMode::Scenarios => div().child(
+                                Button::new("new-session-modal-custom", "Custom").on_click({
+                                    let this = cx.weak_entity();
+                                    move |_, window, cx| {
+                                        this.update(cx, |this, cx| {
+                                            this.mode = NewSessionMode::Launch;
+                                            this.mode_focus_handle(cx).focus(window);
                                         })
-                                        .detach();
-                                    }))
-                                    .disabled(
+                                        .ok();
+                                    }
+                                }),
+                            ),
+                            NewSessionMode::Launch => h_flex()
+                                .child(
+                                    Button::new("new-session-modal-back", "Save to .zed/debug.json...")
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            let Some(save_scenario) = this
+                                                .debugger
+                                                .as_ref()
+                                                .and_then(|debugger| this.debug_scenario(&debugger, cx))
+                                                .zip(
+                                                    this.task_contexts(cx)
+                                                        .and_then(|tcx| tcx.worktree()),
+                                                )
+                                                .and_then(|(scenario, worktree_id)| {
+                                                    this.debug_panel
+                                                        .update(cx, |panel, cx| {
+                                                            panel.save_scenario(
+                                                                &scenario,
+                                                                worktree_id,
+                                                                window,
+                                                                cx,
+                                                            )
+                                                        })
+                                                        .ok()
+                                                })
+                                            else {
+                                                return;
+                                            };
+
+                                            this.save_scenario_state = Some(SaveScenarioState::Saving);
+
+                                            cx.spawn(async move |this, cx| {
+                                                let res = save_scenario.await;
+
+                                                this.update(cx, |this, _| match res {
+                                                    Ok(saved_file) => {
+                                                        this.save_scenario_state =
+                                                            Some(SaveScenarioState::Saved(saved_file))
+                                                    }
+                                                    Err(error) => {
+                                                        this.save_scenario_state =
+                                                            Some(SaveScenarioState::Failed(
+                                                                error.to_string().into(),
+                                                            ))
+                                                    }
+                                                })
+                                                .ok();
+
+                                                cx.background_executor()
+                                                    .timer(Duration::from_secs(2))
+                                                    .await;
+                                                this.update(cx, |this, _| {
+                                                    this.save_scenario_state.take()
+                                                })
+                                                .ok();
+                                            })
+                                            .detach();
+                                        }))
+                                        .disabled(
+                                            self.debugger.is_none()
+                                                || self
+                                                    .custom_mode
+                                                    .read(cx)
+                                                    .program
+                                                    .read(cx)
+                                                    .is_empty(cx)
+                                                || self.save_scenario_state.is_some(),
+                                        ),
+                                )
+                                .when_some(self.save_scenario_state.as_ref(), {
+                                    let this_entity = this.clone();
+
+                                    move |this, save_state| match save_state {
+                                        SaveScenarioState::Saved(saved_path) => this.child(
+                                            IconButton::new(
+                                                "new-session-modal-go-to-file",
+                                                IconName::ArrowUpRight,
+                                            )
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(Color::Muted)
+                                            .on_click({
+                                                let this_entity = this_entity.clone();
+                                                let saved_path = saved_path.clone();
+                                                move |_, window, cx| {
+                                                    window
+                                                        .spawn(cx, {
+                                                            let this_entity = this_entity.clone();
+                                                            let saved_path = saved_path.clone();
+
+                                                            async move |cx| {
+                                                                this_entity
+                                                                    .update_in(
+                                                                        cx,
+                                                                        |this, window, cx| {
+                                                                            this.workspace.update(
+                                                                                cx,
+                                                                                |workspace, cx| {
+                                                                                    workspace.open_path(
+                                                                                        saved_path
+                                                                                            .clone(),
+                                                                                        None,
+                                                                                        true,
+                                                                                        window,
+                                                                                        cx,
+                                                                                    )
+                                                                                },
+                                                                            )
+                                                                        },
+                                                                    )??
+                                                                    .await?;
+
+                                                                this_entity
+                                                                    .update(cx, |_, cx| {
+                                                                        cx.emit(DismissEvent)
+                                                                    })
+                                                                    .ok();
+
+                                                                anyhow::Ok(())
+                                                            }
+                                                        })
+                                                        .detach();
+                                                }
+                                            }),
+                                        ),
+                                        SaveScenarioState::Saving => this.child(
+                                            Icon::new(IconName::Spinner)
+                                                .size(IconSize::Small)
+                                                .color(Color::Muted)
+                                                .with_animation(
+                                                    "Spinner",
+                                                    Animation::new(Duration::from_secs(3)).repeat(),
+                                                    |icon, delta| {
+                                                        icon.transform(Transformation::rotate(
+                                                            percentage(delta),
+                                                        ))
+                                                    },
+                                                ),
+                                        ),
+                                        SaveScenarioState::Failed(error_msg) => this.child(
+                                            IconButton::new("Failed Scenario Saved", IconName::X)
+                                                .icon_size(IconSize::Small)
+                                                .icon_color(Color::Error)
+                                                .tooltip(ui::Tooltip::text(error_msg.clone())),
+                                        ),
+                                    }
+                                }),
+                        })
+                        .child(
+                            Button::new("debugger-spawn", "Start")
+                                .on_click(cx.listener(|this, _, window, cx| match &this.mode {
+                                    NewSessionMode::Scenarios => {
+                                        this.launch_picker.update(cx, |picker, cx| {
+                                            picker.delegate.confirm(true, window, cx)
+                                        })
+                                    }
+                                    _ => this.start_new_session(window, cx),
+                                }))
+                                .disabled(match self.mode {
+                                    NewSessionMode::Scenarios => {
+                                        !self.launch_picker.read(cx).delegate.matches.is_empty()
+                                    }
+                                    NewSessionMode::Attach => {
                                         self.debugger.is_none()
                                             || self
-                                                .custom_mode
+                                                .attach_mode
                                                 .read(cx)
-                                                .program
+                                                .attach_picker
                                                 .read(cx)
-                                                .is_empty(cx)
-                                            || self.save_scenario_state.is_some(),
-                                    ),
-                            )
-                            .when_some(self.save_scenario_state.as_ref(), {
-                                let this_entity = this.clone();
-
-                                move |this, save_state| match save_state {
-                                    SaveScenarioState::Saved(saved_path) => this.child(
-                                        IconButton::new(
-                                            "new-session-modal-go-to-file",
-                                            IconName::ArrowUpRight,
-                                        )
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(Color::Muted)
-                                        .on_click({
-                                            let this_entity = this_entity.clone();
-                                            let saved_path = saved_path.clone();
-                                            move |_, window, cx| {
-                                                window
-                                                    .spawn(cx, {
-                                                        let this_entity = this_entity.clone();
-                                                        let saved_path = saved_path.clone();
-
-                                                        async move |cx| {
-                                                            this_entity
-                                                                .update_in(
-                                                                    cx,
-                                                                    |this, window, cx| {
-                                                                        this.workspace.update(
-                                                                            cx,
-                                                                            |workspace, cx| {
-                                                                                workspace.open_path(
-                                                                                    saved_path
-                                                                                        .clone(),
-                                                                                    None,
-                                                                                    true,
-                                                                                    window,
-                                                                                    cx,
-                                                                                )
-                                                                            },
-                                                                        )
-                                                                    },
-                                                                )??
-                                                                .await?;
-
-                                                            this_entity
-                                                                .update(cx, |_, cx| {
-                                                                    cx.emit(DismissEvent)
-                                                                })
-                                                                .ok();
-
-                                                            anyhow::Ok(())
-                                                        }
-                                                    })
-                                                    .detach();
-                                            }
-                                        }),
-                                    ),
-                                    SaveScenarioState::Saving => this.child(
-                                        Icon::new(IconName::Spinner)
-                                            .size(IconSize::Small)
-                                            .color(Color::Muted)
-                                            .with_animation(
-                                                "Spinner",
-                                                Animation::new(Duration::from_secs(3)).repeat(),
-                                                |icon, delta| {
-                                                    icon.transform(Transformation::rotate(
-                                                        percentage(delta),
-                                                    ))
-                                                },
-                                            ),
-                                    ),
-                                    SaveScenarioState::Failed(error_msg) => this.child(
-                                        IconButton::new("Failed Scenario Saved", IconName::X)
-                                            .icon_size(IconSize::Small)
-                                            .icon_color(Color::Error)
-                                            .tooltip(ui::Tooltip::text(error_msg.clone())),
-                                    ),
-                                }
-                            }),
-                    })
-                    .child(
-                        Button::new("debugger-spawn", "Start")
-                            .on_click(cx.listener(|this, _, window, cx| match &this.mode {
-                                NewSessionMode::Launch => {
-                                    this.launch_picker.update(cx, |picker, cx| {
-                                        picker.delegate.confirm(true, window, cx)
-                                    })
-                                }
-                                _ => this.start_new_session(window, cx),
-                            }))
-                            .disabled(match self.mode {
-                                NewSessionMode::Launch => {
-                                    !self.launch_picker.read(cx).delegate.matches.is_empty()
-                                }
-                                NewSessionMode::Attach => {
-                                    self.debugger.is_none()
-                                        || self
-                                            .attach_mode
-                                            .read(cx)
-                                            .attach_picker
-                                            .read(cx)
-                                            .picker
-                                            .read(cx)
-                                            .delegate
-                                            .match_count()
-                                            == 0
-                                }
-                                NewSessionMode::Custom => {
-                                    self.debugger.is_none()
-                                        || self.custom_mode.read(cx).program.read(cx).is_empty(cx)
-                                }
-                            }),
-                    ),
-            )
+                                                .picker
+                                                .read(cx)
+                                                .delegate
+                                                .match_count()
+                                                == 0
+                                    }
+                                    NewSessionMode::Launch => {
+                                        self.debugger.is_none()
+                                            || self.custom_mode.read(cx).program.read(cx).is_empty(cx)
+                                    }
+                                }),
+                        ),
+                )
+            })
     }
 }
 
@@ -828,16 +866,16 @@ impl CustomMode {
             .w_full()
             .gap_3()
             .track_focus(&self.program.focus_handle(cx))
-            .child(
-                h_flex()
-                    .child(
-                        Label::new("Debugger")
-                            .size(ui::LabelSize::Small)
-                            .color(Color::Muted),
-                    )
-                    .gap(ui::DynamicSpacing::Base08.rems(cx))
-                    .child(adapter_menu),
-            )
+            // .child(
+            //     h_flex()
+            //         .child(
+            //             Label::new("Debugger")
+            //                 .size(ui::LabelSize::Small)
+            //                 .color(Color::Muted),
+            //         )
+            //         .gap(ui::DynamicSpacing::Base08.rems(cx))
+            //         .child(adapter_menu),
+            // )
             .child(render_editor(&self.program, window, cx))
             .child(render_editor(&self.cwd, window, cx))
             .child(
@@ -1115,6 +1153,19 @@ impl PickerDelegate for DebugScenarioDelegate {
         window: &mut Window,
         cx: &mut Context<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
+        // if ix == self.matches.len() {
+        //     return Some(
+        //         ListItem::new("new-session-modal-custom")
+        //             .child(Label::new("Custom"))
+        //             .inset(true)
+        //             .spacing(ListItemSpacing::Sparse)
+        //             .toggle_state(selected)
+        //             .on_click(move |_, window, cx| {
+        //                 window.dispatch_action(NewCustomSession.boxed_clone(), cx);
+        //             }),
+        //     );
+        // }
+
         let hit = &self.matches[ix];
 
         let highlighted_location = HighlightedMatch {
