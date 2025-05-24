@@ -84,7 +84,7 @@ fn generate_reflected_trait(trait_item: ItemTrait) -> TokenStream {
         quote! {
             MethodInfo {
                 name: #method_name_str,
-                invoke: #wrapper_name::<T>,
+                function: #wrapper_name::<T>,
             }
         }
     });
@@ -108,8 +108,22 @@ fn generate_reflected_trait(trait_item: ItemTrait) -> TokenStream {
             pub struct MethodInfo {
                 /// The name of the method
                 pub name: &'static str,
-                /// Function pointer to invoke the method
-                pub invoke: InvokeFn,
+                function: InvokeFn,
+            }
+            
+            impl MethodInfo {
+                /// Invoke this method on a value
+                ///
+                /// Returns the result of the method invocation.
+                ///
+                /// # Panics
+                ///
+                /// Panics if the type erasure fails (this should not happen with correct usage).
+                pub fn invoke<T: 'static>(self, value: T) -> T {
+                    let boxed = Box::new(value) as Box<dyn Any>;
+                    let result = (self.function)(boxed);
+                    *result.downcast::<T>().expect("Type mismatch in reflection invoke")
+                }
             }
 
             #(#wrapper_functions)*
@@ -126,23 +140,7 @@ fn generate_reflected_trait(trait_item: ItemTrait) -> TokenStream {
                 methods::<T>().into_iter().find(|m| m.name == name)
             }
 
-            /// Invoke a method by name on a value
-            ///
-            /// Returns `Some(result)` if the method exists and was successfully invoked,
-            /// or `None` if the method was not found.
-            ///
-            /// # Panics
-            ///
-            /// Panics if the type erasure fails (this should not happen with correct usage).
-            pub fn invoke_method<T: #trait_name + 'static>(name: &str, value: T) -> Option<T> {
-                if let Some(method) = find_method::<T>(name) {
-                    let boxed = Box::new(value) as Box<dyn Any>;
-                    let result = (method.invoke)(boxed);
-                    result.downcast::<T>().ok().map(|b| *b)
-                } else {
-                    None
-                }
-            }
+
         }
     };
 
