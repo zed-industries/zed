@@ -776,6 +776,7 @@ impl crate::Keystroke {
             modifiers,
             key,
             key_char,
+            ..Default::default()
         }
     }
 

@@ -615,7 +615,7 @@ pub struct Window {
     pub(crate) handle: AnyWindowHandle,
     pub(crate) invalidator: WindowInvalidator,
     pub(crate) removed: bool,
-    pub(crate) platform_window: Box<dyn PlatformWindow>,
+    pub(crate) platform_window: Rc<dyn PlatformWindow>,
     display_id: Option<DisplayId>,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     text_system: Arc<WindowTextSystem>,
@@ -908,7 +908,7 @@ impl Window {
             handle,
             invalidator,
             removed: false,
-            platform_window,
+            platform_window: Rc::from(platform_window),
             display_id,
             sprite_atlas,
             text_system,
@@ -965,6 +965,11 @@ impl Window {
         value: AnyWindowFocusListener,
     ) -> (Subscription, impl FnOnce() + use<>) {
         self.focus_listeners.insert((), value)
+    }
+
+    #[track_caller]
+    pub(crate) fn platform_window_mut(&mut self) -> &mut dyn PlatformWindow {
+        Rc::get_mut(&mut self.platform_window).expect("platform window may already be borrowed")
     }
 }
 
@@ -1351,7 +1356,7 @@ impl Window {
 
     /// Set the content size of the window.
     pub fn resize(&mut self, size: Size<Pixels>) {
-        self.platform_window.resize(size);
+        self.platform_window_mut().resize(size);
     }
 
     /// Returns whether or not the window is currently fullscreen
@@ -1437,12 +1442,12 @@ impl Window {
 
     /// Updates the window's title at the platform level.
     pub fn set_window_title(&mut self, title: &str) {
-        self.platform_window.set_title(title);
+        self.platform_window_mut().set_title(title);
     }
 
     /// Sets the application identifier.
     pub fn set_app_id(&mut self, app_id: &str) {
-        self.platform_window.set_app_id(app_id);
+        self.platform_window_mut().set_app_id(app_id);
     }
 
     /// Sets the window background appearance.
@@ -1453,7 +1458,7 @@ impl Window {
 
     /// Mark the window as dirty at the platform level.
     pub fn set_window_edited(&mut self, edited: bool) {
-        self.platform_window.set_edited(edited);
+        self.platform_window_mut().set_edited(edited);
     }
 
     /// Determine the display on which the window is visible.
@@ -1580,7 +1585,7 @@ impl Window {
         self.requested_autoscroll = None;
 
         // Restore the previously-used input handler.
-        if let Some(input_handler) = self.platform_window.take_input_handler() {
+        if let Some(input_handler) = self.platform_window_mut().take_input_handler() {
             self.rendered_frame.input_handlers.push(Some(input_handler));
         }
         self.draw_roots(cx);
@@ -1589,7 +1594,7 @@ impl Window {
 
         // Register requested input handler with the platform window.
         if let Some(input_handler) = self.next_frame.input_handlers.pop() {
-            self.platform_window
+            self.platform_window_mut()
                 .set_input_handler(input_handler.unwrap());
         }
 
@@ -3119,9 +3124,9 @@ impl Window {
         }
 
         if let Some(input) = keystroke.key_char {
-            if let Some(mut input_handler) = self.platform_window.take_input_handler() {
+            if let Some(mut input_handler) = self.platform_window_mut().take_input_handler() {
                 input_handler.dispatch_input(&input, self, cx);
-                self.platform_window.set_input_handler(input_handler);
+                self.platform_window_mut().set_input_handler(input_handler);
                 return true;
             }
         }
@@ -3331,6 +3336,8 @@ impl Window {
                         key: key.to_string(),
                         key_char: None,
                         modifiers: Modifiers::default(),
+                        is_composing: None,
+                        native_event: None,
                     });
                 }
             }
@@ -3401,6 +3408,7 @@ impl Window {
         for binding in match_result.bindings {
             self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
             if !cx.propagate_event {
+                self.finish_composition(cx);
                 self.dispatch_keystroke_observers(
                     event,
                     Some(binding.action),
@@ -3414,6 +3422,13 @@ impl Window {
 
         self.finish_dispatch_key_event(event, dispatch_path, match_result.context_stack, cx);
         self.pending_input_changed(cx);
+    }
+
+    fn finish_composition(&mut self, cx: &mut App) {
+        if let Some(mut input_handler) = self.platform_window_mut().take_input_handler() {
+            input_handler.finish_composition(self, cx);
+            self.platform_window_mut().set_input_handler(input_handler);
+        }
     }
 
     fn finish_dispatch_key_event(
@@ -3531,6 +3546,7 @@ impl Window {
             for binding in replay.bindings {
                 self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
                 if !cx.propagate_event {
+                    self.finish_composition(cx);
                     self.dispatch_keystroke_observers(
                         &event,
                         Some(binding.action),
@@ -3545,10 +3561,17 @@ impl Window {
             if !cx.propagate_event {
                 continue 'replay;
             }
-            if let Some(input) = replay.keystroke.key_char.as_ref().cloned() {
-                if let Some(mut input_handler) = self.platform_window.take_input_handler() {
+            if let Some(native_event) = replay.keystroke.native_event.as_ref().cloned() {
+                let app = cx.this.clone().upgrade().unwrap();
+                let window = cx.windows.get(self.handle.id).unwrap().clone().unwrap();
+                let platform_window = self.platform_window.clone();
+                let _handled = window.unborrow(self, || {
+                    app.unborrow(cx, || platform_window.handle_native_event(native_event))
+                });
+            } else if let Some(input) = replay.keystroke.key_char.as_ref().cloned() {
+                if let Some(mut input_handler) = self.platform_window_mut().take_input_handler() {
                     input_handler.dispatch_input(&input, self, cx);
-                    self.platform_window.set_input_handler(input_handler)
+                    self.platform_window_mut().set_input_handler(input_handler)
                 }
             }
         }
@@ -3691,13 +3714,15 @@ impl Window {
     /// Updates the IME panel position suggestions for languages like japanese, chinese.
     pub fn invalidate_character_coordinates(&self) {
         self.on_next_frame(|window, cx| {
-            if let Some(mut input_handler) = window.platform_window.take_input_handler() {
+            if let Some(mut input_handler) = window.platform_window_mut().take_input_handler() {
                 if let Some(bounds) = input_handler.selected_bounds(window, cx) {
                     window
                         .platform_window
                         .update_ime_position(bounds.scale(window.scale_factor()));
                 }
-                window.platform_window.set_input_handler(input_handler);
+                window
+                    .platform_window_mut()
+                    .set_input_handler(input_handler);
             }
         });
     }
@@ -4163,6 +4188,7 @@ impl<V: 'static + Render> WindowHandle<V> {
         let x = cx
             .windows
             .get(self.id)
+            .map(|window| window.as_ref()?.try_borrow().ok())
             .and_then(|window| {
                 window
                     .as_ref()
