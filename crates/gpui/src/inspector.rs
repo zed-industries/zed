@@ -238,7 +238,7 @@ pub mod inspector_reflection {
         /// The method
         pub function: InvokeFn,
         /// Documentation for the method
-        pub doc: Option<&'static str>,
+        pub documentation: Option<&'static str>,
         /// `PhantomData` for the type of the argument and result
         pub _type: std::marker::PhantomData<T>,
     }

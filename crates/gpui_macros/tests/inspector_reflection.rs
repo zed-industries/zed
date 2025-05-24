@@ -112,25 +112,25 @@ fn test_derive_inspector_reflection() {
 
     assert_eq!(result, Some(Number(63))); // (10 * 2 + 1) * 3 = 63
 
-    // Test documentation capture
+    // Test documentationumentation capture
     let double_method = find_method::<Number>("double").unwrap();
-    assert_eq!(double_method.doc, Some("Doubles the value"));
+    assert_eq!(double_method.documentation, Some("Doubles the value"));
 
     let triple_method = find_method::<Number>("triple").unwrap();
-    assert_eq!(triple_method.doc, Some("Triples the value"));
+    assert_eq!(triple_method.documentation, Some("Triples the value"));
 
     let increment_method = find_method::<Number>("increment").unwrap();
     assert_eq!(
-        increment_method.doc,
+        increment_method.documentation,
         Some("Increments the value by one\n\nThis method has a default implementation")
     );
 
     let quadruple_method = find_method::<Number>("quadruple").unwrap();
     assert_eq!(
-        quadruple_method.doc,
+        quadruple_method.documentation,
         Some("Quadruples the value by doubling twice")
     );
 
     let add_one_method = find_method::<Number>("add_one").unwrap();
-    assert_eq!(add_one_method.doc, Some("Adds one to the value"));
+    assert_eq!(add_one_method.documentation, Some("Adds one to the value"));
 }

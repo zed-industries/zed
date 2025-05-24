@@ -6,6 +6,7 @@ use gpui::{
 };
 use language::language_settings::SoftWrap;
 use language::{Anchor, Buffer, CodeLabel, Point, ToOffset as _, ToPoint as _};
+use project::lsp_store::CompletionDocumentation;
 use project::{Completion, CompletionSource, Project, ProjectPath};
 use std::cell::RefCell;
 use std::fmt::Write as _;
@@ -378,7 +379,9 @@ impl CompletionProvider for RustStyleCompletionProvider {
                     new_text: format!(".{}()", method.name),
                     label: CodeLabel::plain(method.name.to_string(), None),
                     icon_path: None,
-                    documentation: None,
+                    documentation: method.documentation.map(|documentation| {
+                        CompletionDocumentation::MultiLineMarkdown(documentation.into())
+                    }),
                     source: CompletionSource::Custom,
                     insert_text_mode: None,
                     confirm: None,

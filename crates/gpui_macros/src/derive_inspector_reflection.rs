@@ -117,7 +117,7 @@ fn generate_reflected_trait(trait_item: ItemTrait) -> TokenStream {
             #inspector_reflection_path::MethodReflection {
                 name: #method_name_str,
                 function: #wrapper_name::<T>,
-                doc: #doc_expr,
+                documentation: #doc_expr,
                 _type: ::std::marker::PhantomData,
             }
         }
