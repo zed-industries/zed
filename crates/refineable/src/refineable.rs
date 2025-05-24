@@ -1,7 +1,7 @@
 pub use derive_refineable::Refineable;
 
 pub trait Refineable: Clone {
-    type Refinement: Refineable<Refinement = Self::Refinement> + Default;
+    type Refinement: Refineable<Refinement = Self::Refinement> + IsEmpty + Default;
 
     fn refine(&mut self, refinement: &Self::Refinement);
     fn refined(self, refinement: Self::Refinement) -> Self;
@@ -11,6 +11,11 @@ pub trait Refineable: Clone {
     {
         Self::default().refined(cascade.merged())
     }
+}
+
+pub trait IsEmpty {
+    /// When `true`, indicates that use applying this refinement does nothing.
+    fn is_empty(&self) -> bool;
 }
 
 pub struct Cascade<S: Refineable>(Vec<Option<S::Refinement>>);

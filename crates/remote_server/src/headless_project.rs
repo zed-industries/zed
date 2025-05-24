@@ -536,7 +536,7 @@ impl HeadlessProject {
                 });
             }
 
-            let buffer_id = buffer.read_with(cx, |b, _| b.remote_id());
+            let buffer_id = buffer.read(cx).remote_id();
 
             buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store

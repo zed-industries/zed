@@ -8,7 +8,7 @@ use anyhow::{Result, bail};
 use collections::IndexMap;
 use deepseek::Model as DeepseekModel;
 use gpui::{App, Pixels, SharedString};
-use language_model::{CloudModel, LanguageModel};
+use language_model::LanguageModel;
 use lmstudio::Model as LmStudioModel;
 use mistral::Model as MistralModel;
 use ollama::Model as OllamaModel;
@@ -45,7 +45,7 @@ pub enum NotifyWhenAgentWaiting {
 #[schemars(deny_unknown_fields)]
 pub enum AssistantProviderContentV1 {
     #[serde(rename = "zed.dev")]
-    ZedDotDev { default_model: Option<CloudModel> },
+    ZedDotDev { default_model: Option<String> },
     #[serde(rename = "openai")]
     OpenAi {
         default_model: Option<OpenAiModel>,
@@ -222,7 +222,7 @@ impl AssistantSettingsContent {
                             AssistantProviderContentV1::ZedDotDev { default_model } => {
                                 default_model.map(|model| LanguageModelSelection {
                                     provider: "zed.dev".into(),
-                                    model: model.id().to_string(),
+                                    model,
                                 })
                             }
                             AssistantProviderContentV1::OpenAi { default_model, .. } => {

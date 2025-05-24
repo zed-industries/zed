@@ -56,6 +56,12 @@ pub use sea_orm::ConnectOptions;
 pub use tables::user::Model as User;
 pub use tables::*;
 
+#[cfg(test)]
+pub struct DatabaseTestOptions {
+    pub runtime: tokio::runtime::Runtime,
+    pub query_failure_probability: parking_lot::Mutex<f64>,
+}
+
 /// Database gives you a handle that lets you access the database.
 /// It handles pooling internally.
 pub struct Database {
@@ -68,7 +74,7 @@ pub struct Database {
     notification_kinds_by_id: HashMap<NotificationKindId, &'static str>,
     notification_kinds_by_name: HashMap<String, NotificationKindId>,
     #[cfg(test)]
-    runtime: Option<tokio::runtime::Runtime>,
+    test_options: Option<DatabaseTestOptions>,
 }
 
 // The `Database` type has so many methods that its impl blocks are split into
@@ -87,7 +93,7 @@ impl Database {
             notification_kinds_by_name: HashMap::default(),
             executor,
             #[cfg(test)]
-            runtime: None,
+            test_options: None,
         })
     }
 
@@ -355,11 +361,16 @@ impl Database {
     {
         #[cfg(test)]
         {
+            let test_options = self.test_options.as_ref().unwrap();
             if let Executor::Deterministic(executor) = &self.executor {
                 executor.simulate_random_delay().await;
+                let fail_probability = *test_options.query_failure_probability.lock();
+                if executor.rng().gen_bool(fail_probability) {
+                    return Err(anyhow!("simulated query failure"))?;
+                }
             }
 
-            self.runtime.as_ref().unwrap().block_on(future)
+            test_options.runtime.block_on(future)
         }
 
         #[cfg(not(test))]

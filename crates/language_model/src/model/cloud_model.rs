@@ -7,66 +7,8 @@ use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, ReadGlobal as _,
 };
 use proto::{Plan, TypedEnvelope};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use smol::lock::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
-use strum::EnumIter;
 use thiserror::Error;
-
-use crate::LanguageModelToolSchemaFormat;
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "provider", rename_all = "lowercase")]
-pub enum CloudModel {
-    Anthropic(anthropic::Model),
-    OpenAi(open_ai::Model),
-    Google(google_ai::Model),
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, EnumIter)]
-pub enum ZedModel {
-    #[serde(rename = "Qwen/Qwen2-7B-Instruct")]
-    Qwen2_7bInstruct,
-}
-
-impl Default for CloudModel {
-    fn default() -> Self {
-        Self::Anthropic(anthropic::Model::default())
-    }
-}
-
-impl CloudModel {
-    pub fn id(&self) -> &str {
-        match self {
-            Self::Anthropic(model) => model.id(),
-            Self::OpenAi(model) => model.id(),
-            Self::Google(model) => model.id(),
-        }
-    }
-
-    pub fn display_name(&self) -> &str {
-        match self {
-            Self::Anthropic(model) => model.display_name(),
-            Self::OpenAi(model) => model.display_name(),
-            Self::Google(model) => model.display_name(),
-        }
-    }
-
-    pub fn max_token_count(&self) -> usize {
-        match self {
-            Self::Anthropic(model) => model.max_token_count(),
-            Self::OpenAi(model) => model.max_token_count(),
-            Self::Google(model) => model.max_token_count(),
-        }
-    }
-
-    pub fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        match self {
-            Self::Anthropic(_) | Self::OpenAi(_) => LanguageModelToolSchemaFormat::JsonSchema,
-            Self::Google(_) => LanguageModelToolSchemaFormat::JsonSchemaSubset,
-        }
-    }
-}
 
 #[derive(Error, Debug)]
 pub struct PaymentRequiredError;

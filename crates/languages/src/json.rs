@@ -97,6 +97,65 @@ impl JsonLspAdapter {
         let tsconfig_schema = serde_json::Value::from_str(TSCONFIG_SCHEMA).unwrap();
         let package_json_schema = serde_json::Value::from_str(PACKAGE_JSON_SCHEMA).unwrap();
 
+        #[allow(unused_mut)]
+        let mut schemas = serde_json::json!([
+            {
+                "fileMatch": ["tsconfig.json"],
+                "schema":tsconfig_schema
+            },
+            {
+                "fileMatch": ["package.json"],
+                "schema":package_json_schema
+            },
+            {
+                "fileMatch": [
+                    schema_file_match(paths::settings_file()),
+                    paths::local_settings_file_relative_path()
+                ],
+                "schema": settings_schema,
+            },
+            {
+                "fileMatch": [schema_file_match(paths::keymap_file())],
+                "schema": keymap_schema,
+            },
+            {
+                "fileMatch": [
+                    schema_file_match(paths::tasks_file()),
+                    paths::local_tasks_file_relative_path()
+                ],
+                "schema": tasks_schema,
+            },
+            {
+                "fileMatch": [
+                    schema_file_match(
+                        paths::snippets_dir()
+                            .join("*.json")
+                            .as_path()
+                    )
+                ],
+                "schema": snippets_schema,
+            },
+            {
+                "fileMatch": [
+                    schema_file_match(paths::debug_scenarios_file()),
+                    paths::local_debug_file_relative_path()
+                ],
+                "schema": debug_schema,
+            },
+        ]);
+
+        #[cfg(debug_assertions)]
+        {
+            schemas.as_array_mut().unwrap().push(serde_json::json!(
+                {
+                    "fileMatch": [
+                        "zed-inspector-style.json"
+                    ],
+                    "schema": generate_inspector_style_schema(),
+                }
+            ))
+        }
+
         // This can be viewed via `dev: open language server logs` -> `json-language-server` ->
         // `Server Info`
         serde_json::json!({
@@ -108,52 +167,7 @@ impl JsonLspAdapter {
                 {
                     "enable": true,
                 },
-                "schemas": [
-                    {
-                        "fileMatch": ["tsconfig.json"],
-                        "schema":tsconfig_schema
-                    },
-                    {
-                        "fileMatch": ["package.json"],
-                        "schema":package_json_schema
-                    },
-                    {
-                        "fileMatch": [
-                            schema_file_match(paths::settings_file()),
-                            paths::local_settings_file_relative_path()
-                        ],
-                        "schema": settings_schema,
-                    },
-                    {
-                        "fileMatch": [schema_file_match(paths::keymap_file())],
-                        "schema": keymap_schema,
-                    },
-                    {
-                        "fileMatch": [
-                            schema_file_match(paths::tasks_file()),
-                            paths::local_tasks_file_relative_path()
-                        ],
-                        "schema": tasks_schema,
-                    },
-                    {
-                        "fileMatch": [
-                            schema_file_match(
-                                paths::snippets_dir()
-                                    .join("*.json")
-                                    .as_path()
-                            )
-                        ],
-                        "schema": snippets_schema,
-                    },
-                    {
-                        "fileMatch": [
-                            schema_file_match(paths::debug_scenarios_file()),
-                            paths::local_debug_file_relative_path()
-                        ],
-                        "schema": debug_schema,
-
-                    },
-                ]
+                "schemas": schemas
             }
         })
     }
@@ -178,6 +192,16 @@ impl JsonLspAdapter {
         writer.replace(config.clone());
         return Ok(config);
     }
+}
+
+#[cfg(debug_assertions)]
+fn generate_inspector_style_schema() -> serde_json_lenient::Value {
+    let schema = schemars::r#gen::SchemaSettings::draft07()
+        .with(|settings| settings.option_add_null_type = false)
+        .into_generator()
+        .into_root_schema_for::<gpui::StyleRefinement>();
+
+    serde_json_lenient::to_value(schema).unwrap()
 }
 
 #[async_trait(?Send)]
@@ -442,11 +466,7 @@ impl LspAdapter for NodeVersionAdapter {
                 .await
                 .context("downloading release")?;
             if version.url.ends_with(".zip") {
-                extract_zip(
-                    &destination_container_path,
-                    BufReader::new(response.body_mut()),
-                )
-                .await?;
+                extract_zip(&destination_container_path, response.body_mut()).await?;
             } else if version.url.ends_with(".tar.gz") {
                 let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
                 let archive = Archive::new(decompressed_bytes);
@@ -462,15 +482,6 @@ impl LspAdapter for NodeVersionAdapter {
                 &destination_path,
             )
             .await?;
-            // todo("windows")
-            #[cfg(not(windows))]
-            {
-                fs::set_permissions(
-                    &destination_path,
-                    <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
-                )
-                .await?;
-            }
             remove_matching(&container_dir, |entry| entry != destination_path).await;
         }
         Ok(LanguageServerBinary {

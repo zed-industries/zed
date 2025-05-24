@@ -940,7 +940,7 @@ fn about(
         ""
     };
     let message = format!("{release_channel} {version} {debug}");
-    let detail = AppCommitSha::try_global(cx).map(|sha| sha.0.clone());
+    let detail = AppCommitSha::try_global(cx).map(|sha| sha.full());
 
     let prompt = window.prompt(PromptLevel::Info, &message, detail.as_deref(), &["OK"], cx);
     cx.foreground_executor()

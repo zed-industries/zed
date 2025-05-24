@@ -241,7 +241,7 @@ fn get_monitor_info(hmonitor: HMONITOR) -> anyhow::Result<MONITORINFOEXW> {
 fn generate_uuid(device_name: &[u16]) -> Uuid {
     let name = device_name
         .iter()
-        .flat_map(|&a| a.to_be_bytes().to_vec())
+        .flat_map(|&a| a.to_be_bytes())
         .collect_vec();
     Uuid::new_v5(&Uuid::NAMESPACE_DNS, &name)
 }

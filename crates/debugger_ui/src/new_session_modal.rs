@@ -750,7 +750,10 @@ impl CustomMode {
 
         let program = cx.new(|cx| Editor::single_line(window, cx));
         program.update(cx, |this, cx| {
-            this.set_placeholder_text("Run", cx);
+            this.set_placeholder_text(
+                "ALPHA=\"Windows\" BETA=\"Wen\" your_program --arg1 --arg2=arg3",
+                cx,
+            );
 
             if let Some(past_program) = past_program {
                 this.set_text(past_program, window, cx);
@@ -1123,7 +1126,7 @@ impl PickerDelegate for DebugScenarioDelegate {
         let task_kind = &self.candidates[hit.candidate_id].0;
 
         let icon = match task_kind {
-            Some(TaskSourceKind::Lsp(..)) => Some(Icon::new(IconName::Bolt)),
+            Some(TaskSourceKind::Lsp(..)) => Some(Icon::new(IconName::BoltFilled)),
             Some(TaskSourceKind::UserInput) => Some(Icon::new(IconName::Terminal)),
             Some(TaskSourceKind::AbsPath { .. }) => Some(Icon::new(IconName::Settings)),
             Some(TaskSourceKind::Worktree { .. }) => Some(Icon::new(IconName::FileTree)),

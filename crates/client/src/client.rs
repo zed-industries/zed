@@ -905,7 +905,15 @@ impl Client {
                         }
 
                         futures::select_biased! {
-                            result = self.set_connection(conn, cx).fuse() => ConnectionResult::Result(result.context("client auth and connect")),
+                            result = self.set_connection(conn, cx).fuse() => {
+                                match result.context("client auth and connect") {
+                                    Ok(()) => ConnectionResult::Result(Ok(())),
+                                    Err(err) => {
+                                        self.set_status(Status::ConnectionError, cx);
+                                        ConnectionResult::Result(Err(err))
+                                    },
+                                }
+                            },
                             _ = timeout => {
                                 self.set_status(Status::ConnectionError, cx);
                                 ConnectionResult::Timeout

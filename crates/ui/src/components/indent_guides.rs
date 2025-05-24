@@ -227,9 +227,14 @@ mod uniform_list {
             None
         }
 
+        fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+            None
+        }
+
         fn request_layout(
             &mut self,
             _id: Option<&gpui::GlobalElementId>,
+            _inspector_id: Option<&gpui::InspectorElementId>,
             window: &mut Window,
             cx: &mut App,
         ) -> (gpui::LayoutId, Self::RequestLayoutState) {
@@ -239,6 +244,7 @@ mod uniform_list {
         fn prepaint(
             &mut self,
             _id: Option<&gpui::GlobalElementId>,
+            _inspector_id: Option<&gpui::InspectorElementId>,
             _bounds: Bounds<Pixels>,
             _request_layout: &mut Self::RequestLayoutState,
             window: &mut Window,
@@ -264,6 +270,7 @@ mod uniform_list {
         fn paint(
             &mut self,
             _id: Option<&gpui::GlobalElementId>,
+            _inspector_id: Option<&gpui::InspectorElementId>,
             _bounds: Bounds<Pixels>,
             _request_layout: &mut Self::RequestLayoutState,
             prepaint: &mut Self::PrepaintState,

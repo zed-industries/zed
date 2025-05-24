@@ -1121,10 +1121,10 @@ impl MultiBuffer {
 
     pub fn last_transaction_id(&self, cx: &App) -> Option<TransactionId> {
         if let Some(buffer) = self.as_singleton() {
-            return buffer.read_with(cx, |b, _| {
-                b.peek_undo_stack()
-                    .map(|history_entry| history_entry.transaction_id())
-            });
+            return buffer
+                .read(cx)
+                .peek_undo_stack()
+                .map(|history_entry| history_entry.transaction_id());
         } else {
             let last_transaction = self.history.undo_stack.last()?;
             return Some(last_transaction.id);

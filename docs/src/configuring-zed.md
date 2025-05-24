@@ -1214,7 +1214,8 @@ or
   "breadcrumbs": true,
   "quick_actions": true,
   "selections_menu": true,
-  "agent_review": true
+  "agent_review": true,
+  "code_actions": true
 },
 ```
 

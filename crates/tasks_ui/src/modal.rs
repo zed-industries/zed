@@ -411,7 +411,7 @@ impl PickerDelegate for TasksModalDelegate {
             color: Color::Default,
         };
         let icon = match source_kind {
-            TaskSourceKind::Lsp(..) => Some(Icon::new(IconName::Bolt)),
+            TaskSourceKind::Lsp(..) => Some(Icon::new(IconName::BoltFilled)),
             TaskSourceKind::UserInput => Some(Icon::new(IconName::Terminal)),
             TaskSourceKind::AbsPath { .. } => Some(Icon::new(IconName::Settings)),
             TaskSourceKind::Worktree { .. } => Some(Icon::new(IconName::FileTree)),

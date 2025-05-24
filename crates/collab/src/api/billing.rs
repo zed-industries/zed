@@ -269,7 +269,8 @@ async fn list_billing_subscriptions(
                         .and_utc()
                         .to_rfc3339_opts(SecondsFormat::Millis, true)
                 }),
-                is_cancelable: subscription.stripe_subscription_status.is_cancelable()
+                is_cancelable: subscription.kind != Some(SubscriptionKind::ZedFree)
+                    && subscription.stripe_subscription_status.is_cancelable()
                     && subscription.stripe_cancel_at.is_none(),
             })
             .collect(),
@@ -591,23 +592,32 @@ async fn manage_billing_subscription(
             }),
             ..Default::default()
         }),
-        ManageSubscriptionIntent::Cancel => Some(CreateBillingPortalSessionFlowData {
-            type_: CreateBillingPortalSessionFlowDataType::SubscriptionCancel,
-            after_completion: Some(CreateBillingPortalSessionFlowDataAfterCompletion {
-                type_: stripe::CreateBillingPortalSessionFlowDataAfterCompletionType::Redirect,
-                redirect: Some(CreateBillingPortalSessionFlowDataAfterCompletionRedirect {
-                    return_url: format!("{}/account", app.config.zed_dot_dev_url()),
+        ManageSubscriptionIntent::Cancel => {
+            if subscription.kind == Some(SubscriptionKind::ZedFree) {
+                return Err(Error::http(
+                    StatusCode::BAD_REQUEST,
+                    "free subscription cannot be canceled".into(),
+                ));
+            }
+
+            Some(CreateBillingPortalSessionFlowData {
+                type_: CreateBillingPortalSessionFlowDataType::SubscriptionCancel,
+                after_completion: Some(CreateBillingPortalSessionFlowDataAfterCompletion {
+                    type_: stripe::CreateBillingPortalSessionFlowDataAfterCompletionType::Redirect,
+                    redirect: Some(CreateBillingPortalSessionFlowDataAfterCompletionRedirect {
+                        return_url: format!("{}/account", app.config.zed_dot_dev_url()),
+                    }),
+                    ..Default::default()
                 }),
+                subscription_cancel: Some(
+                    stripe::CreateBillingPortalSessionFlowDataSubscriptionCancel {
+                        subscription: subscription.stripe_subscription_id,
+                        retention: None,
+                    },
+                ),
                 ..Default::default()
-            }),
-            subscription_cancel: Some(
-                stripe::CreateBillingPortalSessionFlowDataSubscriptionCancel {
-                    subscription: subscription.stripe_subscription_id,
-                    retention: None,
-                },
-            ),
-            ..Default::default()
-        }),
+            })
+        }
         ManageSubscriptionIntent::StopCancellation => unreachable!(),
     };
 

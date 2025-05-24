@@ -133,21 +133,18 @@ impl LineWrapper {
         &mut self,
         line: SharedString,
         truncate_width: Pixels,
-        ellipsis: Option<&str>,
+        truncation_suffix: &str,
         runs: &mut Vec<TextRun>,
     ) -> SharedString {
         let mut width = px(0.);
-        let mut ellipsis_width = px(0.);
-        if let Some(ellipsis) = ellipsis {
-            for c in ellipsis.chars() {
-                ellipsis_width += self.width_for_char(c);
-            }
-        }
-
+        let mut suffix_width = truncation_suffix
+            .chars()
+            .map(|c| self.width_for_char(c))
+            .fold(px(0.0), |a, x| a + x);
         let mut char_indices = line.char_indices();
         let mut truncate_ix = 0;
         for (ix, c) in char_indices {
-            if width + ellipsis_width < truncate_width {
+            if width + suffix_width < truncate_width {
                 truncate_ix = ix;
             }
 
@@ -155,9 +152,9 @@ impl LineWrapper {
             width += char_width;
 
             if width.floor() > truncate_width {
-                let ellipsis = ellipsis.unwrap_or("");
-                let result = SharedString::from(format!("{}{}", &line[..truncate_ix], ellipsis));
-                update_runs_after_truncation(&result, ellipsis, runs);
+                let result =
+                    SharedString::from(format!("{}{}", &line[..truncate_ix], truncation_suffix));
+                update_runs_after_truncation(&result, truncation_suffix, runs);
 
                 return result;
             }
@@ -500,7 +497,7 @@ mod tests {
             wrapper: &mut LineWrapper,
             text: &'static str,
             result: &'static str,
-            ellipsis: Option<&str>,
+            ellipsis: &str,
         ) {
             let dummy_run_lens = vec![text.len()];
             let mut dummy_runs = generate_test_runs(&dummy_run_lens);
@@ -515,19 +512,19 @@ mod tests {
             &mut wrapper,
             "aa bbb cccc ddddd eeee ffff gggg",
             "aa bbb cccc ddddd eeee",
-            None,
+            "",
         );
         perform_test(
             &mut wrapper,
             "aa bbb cccc ddddd eeee ffff gggg",
             "aa bbb cccc ddddd eee…",
-            Some("…"),
+            "…",
         );
         perform_test(
             &mut wrapper,
             "aa bbb cccc ddddd eeee ffff gggg",
             "aa bbb cccc dddd......",
-            Some("......"),
+            "......",
         );
     }
 
@@ -545,7 +542,7 @@ mod tests {
         ) {
             let mut dummy_runs = generate_test_runs(run_lens);
             assert_eq!(
-                wrapper.truncate_line(text.into(), line_width, Some("…"), &mut dummy_runs),
+                wrapper.truncate_line(text.into(), line_width, "…", &mut dummy_runs),
                 result
             );
             for (run, result_len) in dummy_runs.iter().zip(result_run_len) {

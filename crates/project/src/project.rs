@@ -66,8 +66,8 @@ use image_store::{ImageItemEvent, ImageStoreEvent};
 
 use ::git::{blame::Blame, status::FileStatus};
 use gpui::{
-    AnyEntity, App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Hsla,
-    SharedString, Task, WeakEntity, Window,
+    App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Hsla, SharedString,
+    Task, WeakEntity, Window,
 };
 use itertools::Itertools;
 use language::{
@@ -2322,7 +2322,7 @@ impl Project {
         &mut self,
         path: ProjectPath,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(Option<ProjectEntryId>, AnyEntity)>> {
+    ) -> Task<Result<(Option<ProjectEntryId>, Entity<Buffer>)>> {
         let task = self.open_buffer(path.clone(), cx);
         cx.spawn(async move |_project, cx| {
             let buffer = task.await?;
@@ -2330,8 +2330,7 @@ impl Project {
                 File::from_dyn(buffer.file()).and_then(|file| file.project_entry_id(cx))
             })?;
 
-            let buffer: &AnyEntity = &buffer;
-            Ok((project_entry_id, buffer.clone()))
+            Ok((project_entry_id, buffer))
         })
     }
 

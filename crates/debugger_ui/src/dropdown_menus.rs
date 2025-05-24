@@ -156,7 +156,13 @@ impl DebugPanel {
         let selected_thread_name = threads
             .iter()
             .find(|(thread, _)| thread_id.map(|id| id.0) == Some(thread.id))
-            .map(|(thread, _)| thread.name.clone());
+            .map(|(thread, _)| {
+                thread
+                    .name
+                    .is_empty()
+                    .then(|| format!("Tid: {}", thread.id))
+                    .unwrap_or_else(|| thread.name.clone())
+            });
 
         if let Some(selected_thread_name) = selected_thread_name {
             let trigger = DebugPanel::dropdown_label(selected_thread_name).into_any_element();
@@ -168,7 +174,13 @@ impl DebugPanel {
                         for (thread, _) in threads {
                             let running_state = running_state.clone();
                             let thread_id = thread.id;
-                            this = this.entry(thread.name, None, move |window, cx| {
+                            let entry_name = thread
+                                .name
+                                .is_empty()
+                                .then(|| format!("Tid: {}", thread.id))
+                                .unwrap_or_else(|| thread.name);
+
+                            this = this.entry(entry_name, None, move |window, cx| {
                                 running_state.update(cx, |running_state, cx| {
                                     running_state.select_thread(ThreadId(thread_id), window, cx);
                                 });

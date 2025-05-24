@@ -16,25 +16,24 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         ..
     } = parse_macro_input!(input);
 
-    let refineable_attr = attrs.iter().find(|attr| attr.path.is_ident("refineable"));
+    let refineable_attr = attrs.iter().find(|attr| attr.path().is_ident("refineable"));
 
     let mut impl_debug_on_refinement = false;
+    let mut derives_serialize = false;
     let mut refinement_traits_to_derive = vec![];
 
     if let Some(refineable_attr) = refineable_attr {
-        if let Ok(syn::Meta::List(meta_list)) = refineable_attr.parse_meta() {
-            for nested in meta_list.nested {
-                let syn::NestedMeta::Meta(syn::Meta::Path(path)) = nested else {
-                    continue;
-                };
-
-                if path.is_ident("Debug") {
-                    impl_debug_on_refinement = true;
-                } else {
-                    refinement_traits_to_derive.push(path);
+        let _ = refineable_attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("Debug") {
+                impl_debug_on_refinement = true;
+            } else {
+                if meta.path.is_ident("Serialize") {
+                    derives_serialize = true;
                 }
+                refinement_traits_to_derive.push(meta.path);
             }
-        }
+            Ok(())
+        });
     }
 
     let refinement_ident = format_ident!("{}Refinement", ident);
@@ -51,6 +50,21 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
     let field_names: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
     let field_visibilities: Vec<_> = fields.iter().map(|f| &f.vis).collect();
     let wrapped_types: Vec<_> = fields.iter().map(|f| get_wrapper_type(f, &f.ty)).collect();
+
+    let field_attributes: Vec<TokenStream2> = fields
+        .iter()
+        .map(|f| {
+            if derives_serialize {
+                if is_refineable_field(f) {
+                    quote! { #[serde(default, skip_serializing_if = "::refineable::IsEmpty::is_empty")] }
+                } else {
+                    quote! { #[serde(skip_serializing_if = "::std::option::Option::is_none")] }
+                }
+            } else {
+                quote! {}
+            }
+        })
+        .collect();
 
     // Create trait bound that each wrapped type must implement Clone // & Default
     let type_param_bounds: Vec<_> = wrapped_types
@@ -239,6 +253,26 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         quote! {}
     };
 
+    let refinement_is_empty_conditions: Vec<TokenStream2> = fields
+        .iter()
+        .enumerate()
+        .map(|(i, field)| {
+            let name = &field.ident;
+
+            let condition = if is_refineable_field(field) {
+                quote! { self.#name.is_empty() }
+            } else {
+                quote! { self.#name.is_none() }
+            };
+
+            if i < fields.len() - 1 {
+                quote! { #condition && }
+            } else {
+                condition
+            }
+        })
+        .collect();
+
     let mut derive_stream = quote! {};
     for trait_to_derive in refinement_traits_to_derive {
         derive_stream.extend(quote! { #[derive(#trait_to_derive)] })
@@ -251,6 +285,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         pub struct #refinement_ident #impl_generics {
             #(
                 #[allow(missing_docs)]
+                #field_attributes
                 #field_visibilities #field_names: #wrapped_types
             ),*
         }
@@ -282,6 +317,14 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
             fn refined(mut self, refinement: Self::Refinement) -> Self {
                 #( #refinement_refined_assignments )*
                 self
+            }
+        }
+
+        impl #impl_generics ::refineable::IsEmpty for #refinement_ident #ty_generics
+            #where_clause
+        {
+            fn is_empty(&self) -> bool {
+                #( #refinement_is_empty_conditions )*
             }
         }
 
@@ -325,7 +368,9 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
 }
 
 fn is_refineable_field(f: &Field) -> bool {
-    f.attrs.iter().any(|attr| attr.path.is_ident("refineable"))
+    f.attrs
+        .iter()
+        .any(|attr| attr.path().is_ident("refineable"))
 }
 
 fn is_optional_field(f: &Field) -> bool {

@@ -271,14 +271,6 @@ pub async fn get_supermaven_agent_path(client: Arc<dyn HttpClient>) -> Result<Pa
         .await
         .with_context(|| format!("Unable to write binary to file at {:?}", binary_path))?;
 
-    #[cfg(not(windows))]
-    {
-        file.set_permissions(<fs::Permissions as fs::unix::PermissionsExt>::from_mode(
-            0o755,
-        ))
-        .await?;
-    }
-
     let mut old_binary_paths = fs::read_dir(supermaven_dir()).await?;
     while let Some(old_binary_path) = old_binary_paths.next().await {
         let old_binary_path = old_binary_path?;

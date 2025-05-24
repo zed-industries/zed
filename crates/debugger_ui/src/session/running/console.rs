@@ -84,7 +84,7 @@ impl Console {
                     this.update_output(window, cx)
                 }
             }),
-            cx.on_focus_in(&focus_handle, window, |console, window, cx| {
+            cx.on_focus(&focus_handle, window, |console, window, cx| {
                 if console.is_running(cx) {
                     console.query_bar.focus_handle(cx).focus(window);
                 }

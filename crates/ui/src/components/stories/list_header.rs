@@ -18,12 +18,12 @@ impl Render for ListHeaderStory {
             .child(
                 ListHeader::new("Section 3")
                     .start_slot(Icon::new(IconName::BellOff))
-                    .end_slot(IconButton::new("action_1", IconName::Bolt)),
+                    .end_slot(IconButton::new("action_1", IconName::BoltFilled)),
             )
             .child(Story::label("With multiple meta", cx))
             .child(
                 ListHeader::new("Section 4")
-                    .end_slot(IconButton::new("action_1", IconName::Bolt))
+                    .end_slot(IconButton::new("action_1", IconName::BoltFilled))
                     .end_slot(IconButton::new("action_2", IconName::Warning))
                     .end_slot(IconButton::new("action_3", IconName::Plus)),
             )

@@ -1,4 +1,4 @@
-use auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage};
+use auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage, VersionCheckType};
 use editor::Editor;
 use extension_host::ExtensionStore;
 use futures::StreamExt;
@@ -508,14 +508,7 @@ impl ActivityIndicator {
                         };
                         move |_, _, cx| workspace::reload(&reload, cx)
                     })),
-                    tooltip_message: Some(format!("Install version: {}", {
-                        match version {
-                            auto_update::VersionCheckType::Sha(sha) => sha.to_string(),
-                            auto_update::VersionCheckType::Semantic(semantic_version) => {
-                                semantic_version.to_string()
-                            }
-                        }
-                    })),
+                    tooltip_message: Some(Self::install_version_tooltip_message(&version)),
                 }),
                 AutoUpdateStatus::Errored => Some(Content {
                     icon: Some(
@@ -553,6 +546,17 @@ impl ActivityIndicator {
         }
 
         None
+    }
+
+    fn install_version_tooltip_message(version: &VersionCheckType) -> String {
+        format!("Install version: {}", {
+            match version {
+                auto_update::VersionCheckType::Sha(sha) => format!("{}…", sha.short()),
+                auto_update::VersionCheckType::Semantic(semantic_version) => {
+                    semantic_version.to_string()
+                }
+            }
+        })
     }
 
     fn toggle_language_server_work_context_menu(
@@ -684,5 +688,28 @@ impl StatusItemView for ActivityIndicator {
         _window: &mut Window,
         _: &mut Context<Self>,
     ) {
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::SemanticVersion;
+    use release_channel::AppCommitSha;
+
+    use super::*;
+
+    #[test]
+    fn test_install_version_tooltip_message() {
+        let message = ActivityIndicator::install_version_tooltip_message(
+            &VersionCheckType::Semantic(SemanticVersion::new(1, 0, 0)),
+        );
+
+        assert_eq!(message, "Install version: 1.0.0");
+
+        let message = ActivityIndicator::install_version_tooltip_message(&VersionCheckType::Sha(
+            AppCommitSha::new("14d9a4189f058d8736339b06ff2340101eaea5af".to_string()),
+        ));
+
+        assert_eq!(message, "Install version: 14d9a41…");
     }
 }
