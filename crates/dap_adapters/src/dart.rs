@@ -27,7 +27,7 @@ impl DebugAdapter for DartDebugAdapter {
     }
 
     fn adapter_language_name(&self) -> Option<LanguageName> {
-        Some(LanguageName::new("Dart".into()))
+        Some(LanguageName::new("Dart"))
     }
 
     async fn dap_schema(&self) -> serde_json::Value {
@@ -146,7 +146,7 @@ impl DebugAdapter for DartDebugAdapter {
         match request_str {
             "launch" => {
                 if !map.contains_key("program")
-                    || !map.get("program").and_then(|v| v.as_str()).is_some()
+                    || map.get("program").and_then(|v| v.as_str()).is_none()
                 {
                     return Err(anyhow!(
                         "The 'program' field (a string path to the main Dart file) is required for a 'launch' request"
