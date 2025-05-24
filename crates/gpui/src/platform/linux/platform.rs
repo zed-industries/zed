@@ -648,8 +648,8 @@ pub(super) unsafe fn read_fd(mut fd: filedescriptor::FileDescriptor) -> Result<V
 }
 
 impl CursorStyle {
-    #[allow(unused)]
-    pub(super) fn to_icon_name(&self) -> String {
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    pub(super) fn to_icon_name(&self) -> &'static str {
         // Based on cursor names from https://gitlab.gnome.org/GNOME/adwaita-icon-theme (GNOME)
         // and https://github.com/KDE/breeze (KDE). Both of them seem to be also derived from
         // Web CSS cursor names: https://developer.mozilla.org/en-US/docs/Web/CSS/cursor#values
@@ -682,7 +682,6 @@ impl CursorStyle {
                 "default"
             }
         }
-        .to_string()
     }
 }
 
