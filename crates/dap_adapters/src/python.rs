@@ -8,6 +8,7 @@ use gpui::{AsyncApp, SharedString};
 use json_dotpath::DotPaths;
 use language::{LanguageName, Toolchain};
 use serde_json::Value;
+use std::net::Ipv4Addr;
 use std::{
     collections::HashMap,
     ffi::OsStr,
@@ -26,6 +27,45 @@ impl PythonDebugAdapter {
     const ADAPTER_PACKAGE_NAME: &'static str = "debugpy";
     const ADAPTER_PATH: &'static str = "src/debugpy/adapter";
     const LANGUAGE_NAME: &'static str = "Python";
+
+    fn generate_debugpy_arguments(
+        &self,
+        host: &Ipv4Addr,
+        port: u16,
+        user_installed_path: Option<&Path>,
+        installed_in_venv: bool,
+        github_adapter_path: Option<&Path>,
+    ) -> Vec<String> {
+        if installed_in_venv {
+            vec![
+                "-m".to_string(),
+                "debugpy.adapter".to_string(),
+                format!("--host={}", host),
+                format!("--port={}", port),
+            ]
+        } else if let Some(user_installed_path) = user_installed_path {
+            vec![
+                user_installed_path
+                    .join(Self::ADAPTER_PATH)
+                    .to_string_lossy()
+                    .to_string(),
+                format!("--port={}", port),
+                format!("--host={}", host),
+            ]
+        } else if let Some(github_path) = github_adapter_path {
+            vec![
+                github_path
+                    .join(Self::ADAPTER_PATH)
+                    .to_string_lossy()
+                    .to_string(),
+                format!("--port={}", port),
+                format!("--host={}", host),
+            ]
+        } else {
+            // This shouldn't happen in practice, but provide a fallback
+            vec![format!("--port={}", port), format!("--host={}", host)]
+        }
+    }
 
     fn request_args(
         &self,
@@ -121,25 +161,13 @@ impl PythonDebugAdapter {
 
         let arguments = if installed_in_venv {
             log::debug!("Using venv-installed debugpy");
-            vec![
-                "-m".to_string(),
-                "debugpy.adapter".to_string(),
-                format!("--host={}", host),
-                format!("--port={}", port),
-            ]
-        } else if let Some(user_installed_path) = user_installed_path {
+            self.generate_debugpy_arguments(&host, port, None, true, None)
+        } else if let Some(user_installed_path) = &user_installed_path {
             log::debug!(
                 "Using user-installed debugpy adapter from: {}",
                 user_installed_path.display()
             );
-            vec![
-                user_installed_path
-                    .join(Self::ADAPTER_PATH)
-                    .to_string_lossy()
-                    .to_string(),
-                format!("--port={}", port),
-                format!("--host={}", host),
-            ]
+            self.generate_debugpy_arguments(&host, port, Some(user_installed_path), false, None)
         } else {
             let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
             let file_name_prefix = format!("{}_", Self::ADAPTER_NAME);
@@ -155,14 +183,7 @@ impl PythonDebugAdapter {
                 "Using GitHub-downloaded debugpy adapter from: {}",
                 debugpy_dir.display()
             );
-            vec![
-                debugpy_dir
-                    .join(Self::ADAPTER_PATH)
-                    .to_string_lossy()
-                    .to_string(),
-                format!("--port={}", port),
-                format!("--host={}", host),
-            ]
+            self.generate_debugpy_arguments(&host, port, None, false, Some(&debugpy_dir))
         };
 
         log::debug!(
@@ -650,31 +671,39 @@ impl DebugAdapter for PythonDebugAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use std::{net::Ipv4Addr, path::PathBuf};
 
     #[test]
-    fn test_venv_vs_user_path_logic() {
-        // Test that we can distinguish between venv-installed debugpy and user-provided paths
-        // The new logic uses a boolean flag for venv detection instead of path inspection
+    fn test_debugpy_install_path_cases() {
+        let adapter = PythonDebugAdapter::default();
+        let host = Ipv4Addr::new(127, 0, 0, 1);
+        let port = 5678;
 
-        let venv_debugpy_path = PathBuf::from("/some/env/lib/python3.9/site-packages/debugpy");
-        let local_debugpy_path = PathBuf::from("/home/user/projects/debugpy");
+        // Case 1: User-defined debugpy path (highest precedence)
+        let user_path = PathBuf::from("/custom/path/to/debugpy");
+        let user_args =
+            adapter.generate_debugpy_arguments(&host, port, Some(&user_path), false, None);
 
-        // Both paths could end with "debugpy" but the logic now uses explicit flags
-        assert_eq!(
-            venv_debugpy_path.file_name().and_then(|name| name.to_str()),
-            Some("debugpy")
-        );
-        assert_eq!(
-            local_debugpy_path
-                .file_name()
-                .and_then(|name| name.to_str()),
-            Some("debugpy")
-        );
+        // Case 2: Venv-installed debugpy (uses -m debugpy.adapter)
+        let venv_args = adapter.generate_debugpy_arguments(&host, port, None, true, None);
 
-        // The new approach uses installed_in_venv boolean instead of path inspection
-        // When installed_in_venv=true: use -m debugpy.adapter
-        // When installed_in_venv=false: use user_installed_path or GitHub download
+        // Case 3: GitHub-downloaded debugpy (fallback)
+        let fallback_path = PathBuf::from("/debug/adapters/Debugpy_v1.0.0");
+        let fallback_args =
+            adapter.generate_debugpy_arguments(&host, port, None, false, Some(&fallback_path));
+
+        assert!(user_args[0].ends_with("src/debugpy/adapter"));
+        assert_eq!(user_args[1], "--port=5678");
+        assert_eq!(user_args[2], "--host=127.0.0.1");
+
+        assert_eq!(venv_args[0], "-m");
+        assert_eq!(venv_args[1], "debugpy.adapter");
+        assert_eq!(venv_args[2], "--host=127.0.0.1");
+        assert_eq!(venv_args[3], "--port=5678");
+
+        assert!(fallback_args[0].ends_with("src/debugpy/adapter"));
+        assert_eq!(fallback_args[1], "--port=5678");
+        assert_eq!(fallback_args[2], "--host=127.0.0.1");
     }
 
     #[test]
