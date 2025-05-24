@@ -13,7 +13,7 @@ use language_model::{
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, StopReason, WrappedTextContent,
+    RateLimiter, Role, StopReason,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -428,11 +428,7 @@ pub fn into_mistral(
                 }
                 MessageContent::ToolResult(tool_result) => {
                     let content = match &tool_result.content {
-                        LanguageModelToolResultContent::Text(text)
-                        | LanguageModelToolResultContent::WrappedText(WrappedTextContent {
-                            text,
-                            ..
-                        }) => text.to_string(),
+                        LanguageModelToolResultContent::Text(text) => text.to_string(),
                         LanguageModelToolResultContent::Image(_) => {
                             // TODO: Mistral image support
                             "[Tool responded with an image, but Zed doesn't support these in Mistral models yet]".to_string()
