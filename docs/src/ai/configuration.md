@@ -23,7 +23,8 @@ Here's an overview of the supported providers and tool call support:
 
 ## Use Your Own Keys {#use-your-own-keys}
 
-While Zed offers hosted versions of models through [our various plans](/ai/plans-and-usage), we're always happy to support users wanting to supply their own API keys for LLM providers. Below, you can learn how to do that for each provider.
+While Zed offers hosted versions of models through [our various plans](/ai/plans-and-usage), we're always happy to support users wanting to supply their own API keys.
+Below, you can learn how to do that for each provider.
 
 > Using your own API keys is _free_—you do not need to subscribe to a Zed plan to use our AI features with your own keys.
 
