@@ -422,18 +422,20 @@ fn render_layout_state(inspector_state: &DivInspectorState, cx: &App) -> Div {
         )
 }
 
-static STYLE_METHODS: LazyLock<Vec<MethodReflection<StyleRefinement>>> = LazyLock::new(|| {
-    styled_ext_reflection::methods::<StyleRefinement>()
-        .into_iter()
-        .chain(styled_reflection::methods::<StyleRefinement>())
-        .collect()
-});
+static STYLE_METHODS: LazyLock<Vec<(Box<StyleRefinement>, MethodReflection<StyleRefinement>)>> =
+    LazyLock::new(|| {
+        styled_ext_reflection::methods::<StyleRefinement>()
+            .into_iter()
+            .chain(styled_reflection::methods::<StyleRefinement>())
+            .map(|method| (Box::new(method.invoke(StyleRefinement::default())), method))
+            .collect()
+    });
 
 fn guess_rust_code_from_style(goal_style: &StyleRefinement) -> String {
     let mut subset_methods = Vec::new();
     // Look in StyledExt first so that those take precedence.
-    for method in STYLE_METHODS.iter() {
-        if goal_style.is_superset_of(&method.invoke(StyleRefinement::default())) {
+    for (style, method) in STYLE_METHODS.iter() {
+        if goal_style.is_superset_of(style) {
             subset_methods.push(method);
         }
     }
@@ -456,7 +458,7 @@ fn update_style_from_method_names(
     method_names: impl IntoIterator<Item = String>,
 ) -> StyleRefinement {
     for name in method_names {
-        if let Some(method) = STYLE_METHODS.iter().find(|m| m.name == name) {
+        if let Some((_, method)) = STYLE_METHODS.iter().find(|(_, m)| m.name == name) {
             style = method.invoke(style);
         }
     }
@@ -493,7 +495,7 @@ impl CompletionProvider for RustStyleCompletionProvider {
         Task::ready(Ok(Some(
             STYLE_METHODS
                 .iter()
-                .map(|method| Completion {
+                .map(|(_, method)| Completion {
                     replace_range: replace_range.clone(),
                     new_text: format!(".{}()", method.name),
                     label: CodeLabel::plain(method.name.to_string(), None),
