@@ -4057,6 +4057,7 @@ dependencies = [
  "gpui",
  "json_dotpath",
  "language",
+ "log",
  "paths",
  "serde",
  "serde_json",

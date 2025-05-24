@@ -28,6 +28,7 @@ futures.workspace = true
 gpui.workspace = true
 json_dotpath.workspace = true
 language.workspace = true
+log.workspace = true
 paths.workspace = true
 serde.workspace = true
 serde_json.workspace = true

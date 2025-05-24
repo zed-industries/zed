@@ -116,26 +116,36 @@ impl PythonDebugAdapter {
         };
 
         let python_command = python_path.context("failed to find binary path for Python")?;
+        log::info!("Using Python executable: {}", python_command);
 
         // Check if we're dealing with a pip-installed debugpy (user_installed_path provided)
         // vs a downloaded GitHub release
         let arguments = if let Some(user_installed_path) = user_installed_path {
             // For pip-installed debugpy, check if it's a debugpy module directory
-            // In this case, use -m debugpy instead of trying to execute a file path
+            // In this case, use -m debugpy.adapter to start the debug adapter
             if user_installed_path
                 .file_name()
                 .and_then(|name| name.to_str())
                 == Some("debugpy")
             {
+                log::info!(
+                    "Using pip-installed debugpy from: {}",
+                    user_installed_path.display()
+                );
                 vec![
                     "-m".to_string(),
-                    "debugpy".to_string(),
-                    "--listen".to_string(),
-                    format!("{}:{}", host, port),
-                    "--wait-for-client".to_string(),
+                    "debugpy.adapter".to_string(),
+                    "--host".to_string(),
+                    host.to_string(),
+                    "--port".to_string(),
+                    port.to_string(),
                 ]
             } else {
                 // Fallback to the old behavior for other user-installed paths
+                log::info!(
+                    "Using user-installed debugpy adapter from: {}",
+                    user_installed_path.display()
+                );
                 vec![
                     user_installed_path
                         .join(Self::ADAPTER_PATH)
@@ -157,6 +167,10 @@ impl PythonDebugAdapter {
                 .await
                 .context("Debugpy directory not found")?;
 
+            log::info!(
+                "Using GitHub-downloaded debugpy adapter from: {}",
+                debugpy_dir.display()
+            );
             vec![
                 debugpy_dir
                     .join(Self::ADAPTER_PATH)
@@ -166,6 +180,12 @@ impl PythonDebugAdapter {
                 format!("--host={}", host),
             ]
         };
+
+        log::info!(
+            "Starting debugpy adapter with command: {} {}",
+            python_command,
+            arguments.join(" ")
+        );
 
         Ok(DebugAdapterBinary {
             command: python_command,
@@ -604,6 +624,10 @@ impl DebugAdapter for PythonDebugAdapter {
             if let Some(path) = Path::new(&toolchain.path.to_string()).parent() {
                 let debugpy_path = path.join("debugpy");
                 if smol::fs::metadata(&debugpy_path).await.is_ok() {
+                    log::info!(
+                        "Found debugpy in toolchain environment: {}",
+                        debugpy_path.display()
+                    );
                     return self
                         .get_installed_binary(
                             delegate,
@@ -636,7 +660,7 @@ mod tests {
     #[test]
     fn test_debugpy_arguments_for_pip_installed() {
         // Test that when user_installed_path points to a debugpy directory,
-        // we use -m debugpy instead of trying to execute a file path
+        // we use -m debugpy.adapter to start the debug adapter
 
         // Simulate a pip-installed debugpy path
         let debugpy_path = PathBuf::from("/some/env/bin/debugpy");
