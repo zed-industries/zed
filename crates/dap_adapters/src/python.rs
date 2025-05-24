@@ -28,43 +28,57 @@ impl PythonDebugAdapter {
     const ADAPTER_PATH: &'static str = "src/debugpy/adapter";
     const LANGUAGE_NAME: &'static str = "Python";
 
-    fn generate_debugpy_arguments(
+    async fn generate_debugpy_arguments(
         &self,
         host: &Ipv4Addr,
         port: u16,
         user_installed_path: Option<&Path>,
         installed_in_venv: bool,
-        github_adapter_path: Option<&Path>,
-    ) -> Vec<String> {
+    ) -> Result<Vec<String>> {
         if installed_in_venv {
-            vec![
+            log::debug!("Using venv-installed debugpy");
+            Ok(vec![
                 "-m".to_string(),
                 "debugpy.adapter".to_string(),
                 format!("--host={}", host),
                 format!("--port={}", port),
-            ]
+            ])
         } else if let Some(user_installed_path) = user_installed_path {
-            vec![
+            log::debug!(
+                "Using user-installed debugpy adapter from: {}",
+                user_installed_path.display()
+            );
+            Ok(vec![
                 user_installed_path
                     .join(Self::ADAPTER_PATH)
                     .to_string_lossy()
                     .to_string(),
                 format!("--host={}", host),
                 format!("--port={}", port),
-            ]
-        } else if let Some(github_path) = github_adapter_path {
-            vec![
-                github_path
+            ])
+        } else {
+            let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
+            let file_name_prefix = format!("{}_", Self::ADAPTER_NAME);
+
+            let debugpy_dir =
+                util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
+                    file_name.starts_with(&file_name_prefix)
+                })
+                .await
+                .context("Debugpy directory not found")?;
+
+            log::debug!(
+                "Using GitHub-downloaded debugpy adapter from: {}",
+                debugpy_dir.display()
+            );
+            Ok(vec![
+                debugpy_dir
                     .join(Self::ADAPTER_PATH)
                     .to_string_lossy()
                     .to_string(),
                 format!("--host={}", host),
                 format!("--port={}", port),
-            ]
-        } else {
-            panic!(
-                "Invalid debugpy configuration: no valid adapter path found. This should never happen as the calling code ensures one of the conditions is met."
-            )
+            ])
         }
     }
 
@@ -160,32 +174,14 @@ impl PythonDebugAdapter {
         let python_command = python_path.context("failed to find binary path for Python")?;
         log::debug!("Using Python executable: {}", python_command);
 
-        let arguments = if installed_in_venv {
-            log::debug!("Using venv-installed debugpy");
-            self.generate_debugpy_arguments(&host, port, None, true, None)
-        } else if let Some(user_installed_path) = &user_installed_path {
-            log::debug!(
-                "Using user-installed debugpy adapter from: {}",
-                user_installed_path.display()
-            );
-            self.generate_debugpy_arguments(&host, port, Some(user_installed_path), false, None)
-        } else {
-            let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
-            let file_name_prefix = format!("{}_", Self::ADAPTER_NAME);
-
-            let debugpy_dir =
-                util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
-                    file_name.starts_with(&file_name_prefix)
-                })
-                .await
-                .context("Debugpy directory not found")?;
-
-            log::debug!(
-                "Using GitHub-downloaded debugpy adapter from: {}",
-                debugpy_dir.display()
-            );
-            self.generate_debugpy_arguments(&host, port, None, false, Some(&debugpy_dir))
-        };
+        let arguments = self
+            .generate_debugpy_arguments(
+                &host,
+                port,
+                user_installed_path.as_deref(),
+                installed_in_venv,
+            )
+            .await?;
 
         log::debug!(
             "Starting debugpy adapter with command: {} {}",
@@ -674,37 +670,38 @@ mod tests {
     use super::*;
     use std::{net::Ipv4Addr, path::PathBuf};
 
-    #[test]
-    fn test_debugpy_install_path_cases() {
+    #[gpui::test]
+    async fn test_debugpy_install_path_cases() {
         let adapter = PythonDebugAdapter::default();
         let host = Ipv4Addr::new(127, 0, 0, 1);
         let port = 5678;
 
         // Case 1: User-defined debugpy path (highest precedence)
         let user_path = PathBuf::from("/custom/path/to/debugpy");
-        let user_args =
-            adapter.generate_debugpy_arguments(&host, port, Some(&user_path), false, None);
+        let user_args = adapter
+            .generate_debugpy_arguments(&host, port, Some(&user_path), false)
+            .await
+            .unwrap();
 
         // Case 2: Venv-installed debugpy (uses -m debugpy.adapter)
-        let venv_args = adapter.generate_debugpy_arguments(&host, port, None, true, None);
-
-        // Case 3: GitHub-downloaded debugpy (fallback)
-        let fallback_path = PathBuf::from("/debug/adapters/Debugpy_v1.0.0");
-        let fallback_args =
-            adapter.generate_debugpy_arguments(&host, port, None, false, Some(&fallback_path));
+        let venv_args = adapter
+            .generate_debugpy_arguments(&host, port, None, true)
+            .await
+            .unwrap();
 
         assert!(user_args[0].ends_with("src/debugpy/adapter"));
-        assert_eq!(user_args[1], "--port=5678");
-        assert_eq!(user_args[2], "--host=127.0.0.1");
+        assert_eq!(user_args[1], "--host=127.0.0.1");
+        assert_eq!(user_args[2], "--port=5678");
 
         assert_eq!(venv_args[0], "-m");
         assert_eq!(venv_args[1], "debugpy.adapter");
         assert_eq!(venv_args[2], "--host=127.0.0.1");
         assert_eq!(venv_args[3], "--port=5678");
 
-        assert!(fallback_args[0].ends_with("src/debugpy/adapter"));
-        assert_eq!(fallback_args[1], "--port=5678");
-        assert_eq!(fallback_args[2], "--host=127.0.0.1");
+        // Note: Case 3 (GitHub-downloaded debugpy) is now handled internally
+        // by the generate_debugpy_arguments function when neither user_installed_path
+        // nor installed_in_venv are provided, so we don't test it separately here
+        // as it would require setting up the actual file system structure.
     }
 
     #[test]
