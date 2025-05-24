@@ -193,6 +193,67 @@ pub enum ResetMode {
     Mixed,
 }
 
+/// Modifies .git/info/exclude temporarily
+pub struct GitExcludeOverride {
+    git_exclude_path: PathBuf,
+    original_excludes: Option<String>,
+    is_original_modified: bool,
+}
+
+impl GitExcludeOverride {
+    pub async fn new(git_exclude_path: PathBuf) -> Result<Self> {
+        let original_excludes = smol::fs::read_to_string(&git_exclude_path).await.ok();
+
+        Ok(GitExcludeOverride {
+            git_exclude_path,
+            original_excludes,
+            is_original_modified: false,
+        })
+    }
+
+    pub async fn add_excludes(&mut self, excludes: &str) -> Result<()> {
+        let mut content = self.original_excludes.clone().unwrap_or_default();
+        content.push_str("\n\n#  ====== Auto-added by Zed: =======\n");
+        content.push_str(excludes);
+        content.push('\n');
+
+        smol::fs::write(&self.git_exclude_path, content).await?;
+
+        self.is_original_modified = true;
+        Ok(())
+    }
+
+    pub async fn restore_original(&mut self) -> Result<()> {
+        if let Some(ref original) = self.original_excludes {
+            smol::fs::write(&self.git_exclude_path, original).await?;
+        } else {
+            if self.git_exclude_path.exists() {
+                smol::fs::remove_file(&self.git_exclude_path).await?;
+            }
+        }
+
+        self.is_original_modified = false;
+        Ok(())
+    }
+}
+
+impl Drop for GitExcludeOverride {
+    fn drop(&mut self) {
+        if self.is_original_modified {
+            let git_exclude_path = self.git_exclude_path.clone();
+            let original_excludes = self.original_excludes.clone();
+            smol::spawn(async move {
+                if let Some(original) = original_excludes {
+                    smol::fs::write(&git_exclude_path, original).await
+                } else {
+                    smol::fs::remove_file(&git_exclude_path).await
+                }
+            })
+            .detach();
+        }
+    }
+}
+
 pub trait GitRepository: Send + Sync {
     fn reload_index(&self);
 
@@ -1267,6 +1328,8 @@ impl GitRepository for RealGitRepository {
                     .envs(checkpoint_author_envs());
                 git.with_temp_index(async |git| {
                     let head_sha = git.run(&["rev-parse", "HEAD"]).await.ok();
+                    let mut excludes = git.with_exclude_overrides().await?;
+                    excludes.add_excludes("*.o").await?;
                     git.run(&["add", "--all"]).await?;
                     let tree = git.run(&["write-tree"]).await?;
                     let checkpoint_sha = if let Some(head_sha) = head_sha.as_deref() {
@@ -1275,6 +1338,8 @@ impl GitRepository for RealGitRepository {
                     } else {
                         git.run(&["commit-tree", &tree, "-m", "Checkpoint"]).await?
                     };
+
+                    excludes.restore_original().await?;
 
                     Ok(GitRepositoryCheckpoint {
                         commit_sha: checkpoint_sha.parse()?,
@@ -1464,6 +1529,16 @@ impl GitBinary {
         delete_temp_index.abort();
 
         Ok(result)
+    }
+
+    pub async fn with_exclude_overrides(&self) -> Result<GitExcludeOverride> {
+        let path = self
+            .working_directory
+            .join(".git")
+            .join("info")
+            .join("exclude");
+
+        GitExcludeOverride::new(path).await
     }
 
     fn path_for_index_id(&self, id: Uuid) -> PathBuf {
@@ -1955,6 +2030,65 @@ mod tests {
             repo.compare_checkpoints(checkpoint2, checkpoint3)
                 .await
                 .unwrap()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_checkpoint_exclude_binary_files(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        let text_path = repo_dir.path().join("main.rs");
+        let bin_path = repo_dir.path().join("binary.o");
+
+        git2::Repository::init(repo_dir.path()).unwrap();
+
+        smol::fs::write(&text_path, "fn main() {}").await.unwrap();
+
+        smol::fs::write(&bin_path, "some binary file here")
+            .await
+            .unwrap();
+
+        let repo =
+            RealGitRepository::new(&repo_dir.path().join(".git"), None, cx.executor()).unwrap();
+
+        // initial commit
+        repo.stage_paths(
+            vec![RepoPath::from_str("main.rs")],
+            Arc::new(HashMap::default()),
+        )
+        .await
+        .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        let checkpoint = repo.checkpoint().await.unwrap();
+
+        smol::fs::write(&text_path, "fn main() { println!(\"Modified\"); }")
+            .await
+            .unwrap();
+        smol::fs::write(&bin_path, "Modified binary file")
+            .await
+            .unwrap();
+
+        repo.restore_checkpoint(checkpoint).await.unwrap();
+
+        // Text files should be restored to checkpoint state,
+        // but binaries should not (they aren't tracked)
+        assert_eq!(
+            smol::fs::read_to_string(&text_path).await.unwrap(),
+            "fn main() {}"
+        );
+
+        assert_eq!(
+            smol::fs::read_to_string(&bin_path).await.unwrap(),
+            "Modified binary file"
         );
     }
 

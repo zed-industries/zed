@@ -36,7 +36,7 @@ use project::Project;
 use prompt_store::PromptStore;
 use proto::Plan;
 use settings::Settings;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use theme::ThemeSettings;
 use ui::{Disclosure, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use util::{ResultExt as _, maybe};
@@ -65,6 +65,7 @@ pub struct MessageEditor {
     prompt_store: Option<Entity<PromptStore>>,
     context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
+    send_time: Option<Instant>,
     model_selector: Entity<AgentModelSelector>,
     last_loaded_context: Option<ContextLoadResult>,
     load_context_task: Option<Shared<Task<()>>>,
@@ -220,6 +221,7 @@ impl MessageEditor {
             prompt_store,
             context_strip,
             context_picker_menu_handle,
+            send_time: None,
             load_context_task: None,
             last_loaded_context: None,
             model_selector,
@@ -296,8 +298,11 @@ impl MessageEditor {
             return;
         }
 
+        dbg!("remove_all_context");
         self.set_editor_is_expanded(false, cx);
+        self.send_time = Some(Instant::now());
         self.send_to_model(window, cx);
+        dbg!("sent to model");
 
         cx.notify();
     }
@@ -318,10 +323,13 @@ impl MessageEditor {
             return;
         };
 
+        dbg!(1);
+
         if provider.must_accept_terms(cx) {
             cx.notify();
             return;
         }
+        dbg!(2);
 
         let (user_message, user_message_creases) = self.editor.update(cx, |editor, cx| {
             let creases = extract_message_creases(editor, cx);
@@ -338,13 +346,25 @@ impl MessageEditor {
         let checkpoint = git_store.update(cx, |git_store, cx| git_store.checkpoint(cx));
         let context_task = self.reload_context(cx);
         let window_handle = window.window_handle();
+        dbg!(3);
 
-        cx.spawn(async move |_this, cx| {
+        cx.spawn(async move |this, cx| {
             let (checkpoint, loaded_context) = future::join(checkpoint, context_task).await;
             let loaded_context = loaded_context.unwrap_or_default();
 
+            this.update(cx, |this, _cx| {
+                if let Some(send_time) = this.send_time.take() {
+                    let elapsed = send_time.elapsed();
+                    println!("Time between 'sent to model' and dbg(4): {:?}", elapsed);
+                }
+            })
+            .log_err();
+
+            dbg!(4);
+
             thread
                 .update(cx, |thread, cx| {
+                    dbg!(5);
                     thread.insert_user_message(
                         user_message,
                         loaded_context,
@@ -352,13 +372,16 @@ impl MessageEditor {
                         user_message_creases,
                         cx,
                     );
+                    dbg!(6);
                 })
                 .log_err();
 
             thread
                 .update(cx, |thread, cx| {
+                    dbg!(7);
                     thread.advance_prompt_id();
                     thread.send_to_model(model, Some(window_handle), cx);
+                    dbg!(8);
                 })
                 .log_err();
         })

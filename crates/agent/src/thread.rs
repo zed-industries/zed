@@ -1160,13 +1160,16 @@ impl Thread {
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
+        dbg!("send_to_model");
         if self.remaining_turns == 0 {
             return;
         }
 
         self.remaining_turns -= 1;
 
+        dbg!(10);
         let request = self.to_completion_request(model.clone(), cx);
+        dbg!(11);
 
         self.stream_completion(request, model, window, cx);
     }
@@ -1199,6 +1202,7 @@ impl Thread {
             temperature: AssistantSettings::temperature_for_model(&model, cx),
         };
 
+        dbg!(12);
         let available_tools = self.available_tools(cx, model.clone());
         let available_tool_names = available_tools
             .iter()
