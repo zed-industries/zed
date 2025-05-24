@@ -49,8 +49,8 @@ impl PythonDebugAdapter {
                     .join(Self::ADAPTER_PATH)
                     .to_string_lossy()
                     .to_string(),
-                format!("--port={}", port),
                 format!("--host={}", host),
+                format!("--port={}", port),
             ]
         } else if let Some(github_path) = github_adapter_path {
             vec![
@@ -58,8 +58,8 @@ impl PythonDebugAdapter {
                     .join(Self::ADAPTER_PATH)
                     .to_string_lossy()
                     .to_string(),
-                format!("--port={}", port),
                 format!("--host={}", host),
+                format!("--port={}", port),
             ]
         } else {
             // This shouldn't happen in practice, but provide a fallback
