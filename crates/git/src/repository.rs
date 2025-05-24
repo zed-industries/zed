@@ -1329,7 +1329,9 @@ impl GitRepository for RealGitRepository {
                 git.with_temp_index(async |git| {
                     let head_sha = git.run(&["rev-parse", "HEAD"]).await.ok();
                     let mut excludes = git.with_exclude_overrides().await?;
-                    excludes.add_excludes("*.o").await?;
+                    excludes
+                        .add_excludes(include_str!("./checkpoint.gitignore"))
+                        .await?;
                     git.run(&["add", "--all"]).await?;
                     let tree = git.run(&["write-tree"]).await?;
                     let checkpoint_sha = if let Some(head_sha) = head_sha.as_deref() {
@@ -1359,7 +1361,7 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let working_directory = working_directory?;
 
-                let mut git = GitBinary::new(git_binary_path, working_directory, executor);
+                let git = GitBinary::new(git_binary_path, working_directory, executor);
                 git.run(&[
                     "restore",
                     "--source",
@@ -1369,12 +1371,16 @@ impl GitRepository for RealGitRepository {
                 ])
                 .await?;
 
-                git.with_temp_index(async move |git| {
-                    git.run(&["read-tree", &checkpoint.commit_sha.to_string()])
-                        .await?;
-                    git.run(&["clean", "-d", "--force"]).await
-                })
-                .await?;
+                // TODO: We don't track binary and large files anymore,
+                //       so the following call would delete them.
+                //       Implement an alternative way to track files added by agent.
+                //
+                // git.with_temp_index(async move |git| {
+                //     git.run(&["read-tree", &checkpoint.commit_sha.to_string()])
+                //         .await?;
+                //     git.run(&["clean", "-d", "--force"]).await
+                // })
+                // .await?;
 
                 Ok(())
             })
@@ -1953,12 +1959,13 @@ mod tests {
                 .unwrap(),
             "1"
         );
-        assert_eq!(
-            smol::fs::read_to_string(repo_dir.path().join("new_file_after_checkpoint"))
-                .await
-                .ok(),
-            None
-        );
+        // See TODO above
+        // assert_eq!(
+        //     smol::fs::read_to_string(repo_dir.path().join("new_file_after_checkpoint"))
+        //         .await
+        //         .ok(),
+        //     None
+        // );
     }
 
     #[gpui::test]
@@ -1991,12 +1998,13 @@ mod tests {
                 .unwrap(),
             "foo"
         );
-        assert_eq!(
-            smol::fs::read_to_string(repo_dir.path().join("baz"))
-                .await
-                .ok(),
-            None
-        );
+        // See TODOs above
+        // assert_eq!(
+        //     smol::fs::read_to_string(repo_dir.path().join("baz"))
+        //         .await
+        //         .ok(),
+        //     None
+        // );
     }
 
     #[gpui::test]

@@ -327,7 +327,6 @@ impl PromptBuilder {
         context: &ProjectContext,
         model_context: &ModelContext,
     ) -> Result<String, RenderError> {
-        dbg!(13);
         let template_context = PromptTemplateContext {
             project: context.clone(),
             model: model_context.clone(),

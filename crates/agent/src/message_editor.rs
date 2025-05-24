@@ -298,11 +298,9 @@ impl MessageEditor {
             return;
         }
 
-        dbg!("remove_all_context");
         self.set_editor_is_expanded(false, cx);
         self.send_time = Some(Instant::now());
         self.send_to_model(window, cx);
-        dbg!("sent to model");
 
         cx.notify();
     }
@@ -323,13 +321,10 @@ impl MessageEditor {
             return;
         };
 
-        dbg!(1);
-
         if provider.must_accept_terms(cx) {
             cx.notify();
             return;
         }
-        dbg!(2);
 
         let (user_message, user_message_creases) = self.editor.update(cx, |editor, cx| {
             let creases = extract_message_creases(editor, cx);
@@ -346,7 +341,6 @@ impl MessageEditor {
         let checkpoint = git_store.update(cx, |git_store, cx| git_store.checkpoint(cx));
         let context_task = self.reload_context(cx);
         let window_handle = window.window_handle();
-        dbg!(3);
 
         cx.spawn(async move |this, cx| {
             let (checkpoint, loaded_context) = future::join(checkpoint, context_task).await;
@@ -360,11 +354,8 @@ impl MessageEditor {
             })
             .log_err();
 
-            dbg!(4);
-
             thread
                 .update(cx, |thread, cx| {
-                    dbg!(5);
                     thread.insert_user_message(
                         user_message,
                         loaded_context,
@@ -372,16 +363,13 @@ impl MessageEditor {
                         user_message_creases,
                         cx,
                     );
-                    dbg!(6);
                 })
                 .log_err();
 
             thread
                 .update(cx, |thread, cx| {
-                    dbg!(7);
                     thread.advance_prompt_id();
                     thread.send_to_model(model, Some(window_handle), cx);
-                    dbg!(8);
                 })
                 .log_err();
         })
