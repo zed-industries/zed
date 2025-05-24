@@ -5,7 +5,7 @@ use assistant_settings::{
     builtin_profiles,
 };
 use fs::Fs;
-use gpui::{Action, Entity, FocusHandle, Subscription, WeakEntity, prelude::*};
+use gpui::{Action, Empty, Entity, FocusHandle, Subscription, WeakEntity, prelude::*};
 use language_model::LanguageModelRegistry;
 use settings::{Settings as _, SettingsStore, update_settings_file};
 use ui::{
@@ -157,10 +157,11 @@ impl Render for ProfileSelector {
             let model_registry = LanguageModelRegistry::read_global(cx);
             model_registry.default_model()
         });
-        let supports_tools =
-            configured_model.map_or(false, |default| default.model.supports_tools());
+        let Some(configured_model) = configured_model else {
+            return Empty.into_any_element();
+        };
 
-        if supports_tools {
+        if configured_model.model.supports_tools() {
             let this = cx.entity().clone();
             let focus_handle = self.focus_handle.clone();
             let trigger_button = Button::new("profile-selector-model", selected_profile)
