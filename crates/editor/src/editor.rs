@@ -15444,7 +15444,7 @@ impl Editor {
         })
     }
 
-    fn restart_language_server(
+    pub fn restart_language_server(
         &mut self,
         _: &RestartLanguageServer,
         _: &mut Window,
@@ -15462,7 +15462,7 @@ impl Editor {
         }
     }
 
-    fn stop_language_server(
+    pub fn stop_language_server(
         &mut self,
         _: &StopLanguageServer,
         _: &mut Window,

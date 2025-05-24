@@ -1,22 +1,78 @@
+use std::sync::Arc;
+
 use collections::HashSet;
-use editor::Editor;
-use gpui::{Entity, WeakEntity};
+use editor::{
+    Editor,
+    actions::{RestartLanguageServer, StopLanguageServer},
+};
+use gpui::{Corner, Entity, WeakEntity};
+use language::CachedLspAdapter;
+use lsp::LanguageServer;
 use project::LspStore;
-use ui::{IconButtonShape, Tooltip, prelude::*};
+use ui::{ContextMenu, IconButtonShape, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 use workspace::{StatusItemView, Workspace};
 
 pub struct LspTool {
     active_editor: Option<WeakEntity<Editor>>,
     lsp_store: Entity<LspStore>,
+    popover_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 impl LspTool {
-    pub fn new(workspace: &Workspace, cx: &App) -> Self {
+    pub fn new(
+        popover_menu_handle: PopoverMenuHandle<ContextMenu>,
+        workspace: &Workspace,
+        cx: &App,
+    ) -> Self {
         let lsp_store = workspace.project().read(cx).lsp_store();
         Self {
             active_editor: None,
+            popover_menu_handle,
             lsp_store,
         }
+    }
+
+    fn build_lsp_context_menu(
+        &self,
+        editor: WeakEntity<Editor>,
+        applicable_language_servers: &[(Arc<CachedLspAdapter>, Arc<LanguageServer>)],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
+        ContextMenu::build(window, cx, move |menu, _, cx| {
+            menu.separator()
+                .entry(
+                    "Restart all servers",
+                    Some(Box::new(RestartLanguageServer)),
+                    {
+                        let editor = editor.clone();
+                        move |window, cx| {
+                            editor
+                                .update(cx, |editor, cx| {
+                                    editor.restart_language_server(
+                                        &RestartLanguageServer,
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .ok();
+                        }
+                    },
+                )
+                .entry(
+                    "Stop all servers",
+                    Some(Box::new(StopLanguageServer)),
+                    move |window, cx| {
+                        editor
+                            .update(cx, |editor, cx| {
+                                // TODO kb this will make the button disappear.
+                                // We need a better method to get "all language servers and statuses"
+                                editor.stop_language_server(&StopLanguageServer, window, cx);
+                            })
+                            .ok();
+                    },
+                )
+        })
     }
 }
 
@@ -51,7 +107,7 @@ impl Render for LspTool {
 
         let buffers = editor.read(cx).buffer().read(cx).all_buffers();
         let mut server_ids = HashSet::default();
-        let applicable_language_servers = self.lsp_store.update(cx, |lsp_store, cx| {
+        let applicable_language_servers = Arc::new(self.lsp_store.update(cx, |lsp_store, cx| {
             buffers
                 .iter()
                 .flat_map(|buffer| {
@@ -64,21 +120,34 @@ impl Render for LspTool {
                     })
                 })
                 .collect::<Vec<_>>()
-        });
-        dbg!(applicable_language_servers.len());
+        }));
         if applicable_language_servers.is_empty() {
             return div();
         }
 
-        div().child(
-            IconButton::new("zed-lsp-tool-button", IconName::Bolt)
-                .shape(IconButtonShape::Square)
-                .icon_size(IconSize::XSmall)
-                .indicator_border_color(Some(cx.theme().colors().status_bar_background))
-                .tooltip(move |_, cx| Tooltip::simple("Language servers", cx))
-                .on_click(cx.listener(move |_, _, _window, _cx| {
-                    dbg!("????????");
-                })),
-        )
+        let icon_button = IconButton::new("zed-lsp-tool-button", IconName::Bolt)
+            .shape(IconButtonShape::Square)
+            .icon_size(IconSize::XSmall)
+            .indicator_border_color(Some(cx.theme().colors().status_bar_background))
+            .tooltip(move |_, cx| Tooltip::simple("Language servers", cx));
+
+        let lsp_tool = cx.entity().clone();
+
+        let popover_menu = PopoverMenu::new("lsp_servers")
+            .menu(move |window, cx| {
+                Some(lsp_tool.update(cx, |lsp_tool, cx| {
+                    lsp_tool.build_lsp_context_menu(
+                        editor.downgrade(),
+                        &applicable_language_servers,
+                        window,
+                        cx,
+                    )
+                }))
+            })
+            .anchor(Corner::BottomRight)
+            .with_handle(self.popover_menu_handle.clone())
+            .trigger(icon_button);
+
+        div().child(popover_menu.into_any_element())
     }
 }
