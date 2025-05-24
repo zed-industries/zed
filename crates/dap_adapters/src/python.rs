@@ -131,10 +131,8 @@ impl PythonDebugAdapter {
                 vec![
                     "-m".to_string(),
                     "debugpy.adapter".to_string(),
-                    "--host".to_string(),
-                    host.to_string(),
-                    "--port".to_string(),
-                    port.to_string(),
+                    format!("--host={}", host),
+                    format!("--port={}", port),
                 ]
             } else {
                 log::info!(
