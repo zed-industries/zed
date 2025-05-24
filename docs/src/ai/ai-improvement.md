@@ -4,7 +4,7 @@
 
 ### Opt-In
 
-When using the Zed Agent Panel, whether through Zed's hosted AI service or via connecting a non-Zed AI service via API key, Zed does not persistently store user content or use user content to evaluate and/or improve our AI features, unless it is explicitly shared with Zed. Each share is opt-in, and sharing once will not cause future content or data to be shared again.
+When using the Agent Panel, whether through Zed's hosted AI service or via connecting a non-Zed AI service via API key, Zed does not persistently store user content or use user content to evaluate and/or improve our AI features, unless it is explicitly shared with Zed. Each share is opt-in, and sharing once will not cause future content or data to be shared again.
 
 > Note that rating responses will send your data related to that response to Zed's servers.
 > **_If you don't want data persisted on Zed's servers, don't rate_**. We will not collect data for improving our Agentic offering without you explicitly rating responses.
@@ -13,7 +13,8 @@ When using upstream services through Zed AI, we require assurances from our serv
 
 > "Anthropic may not train models on Customer Content from paid Services."
 
-When you directly connect the Zed Assistant with a non Zed AI service (e.g. via API key) Zed does not have control over how your data is used by that service provider. You should reference your agreement with each service provider to understand what terms and conditions apply.
+When you directly connect Zed with a non Zed AI service (e.g., via API key) Zed does not have control over how your data is used by that service provider.
+You should reference your agreement with each service provider to understand what terms and conditions apply.
 
 ### Data we collect
 
@@ -90,7 +91,7 @@ This data includes:
 
 ### Data Handling
 
-Collected data is stored in Snowflake, a private database where we track other metrics. We periodically review this data to select training samples for inclusion in our model training dataset. We ensure any included data is anonymized and contains no sensitive information (access tokens, user IDs, email addresses, etc). This training dataset is publicly available at: [huggingface.co/datasets/zed-industries/zeta](https://huggingface.co/datasets/zed-industries/zeta).
+Collected data is stored in Snowflake, a private database where we track other metrics. We periodically review this data to select training samples for inclusion in our model training dataset. We ensure any included data is anonymized and contains no sensitive information (access tokens, user IDs, email addresses, etc). This training dataset is publicly available at  [huggingface.co/datasets/zed-industries/zeta](https://huggingface.co/datasets/zed-industries/zeta).
 
 ### Model Output
 
