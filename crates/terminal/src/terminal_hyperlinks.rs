@@ -811,7 +811,8 @@ mod tests {
                 let mut text_iter = text.iter();
                 if let Some(mut path_start) = text_iter.position(|c| *c == '«') {
                     path_start += 1;
-                    let mut path_end = text_iter
+                    text_iter.next();
+                    let mut path_end = path_start + text_iter
                         .position(|c| *c == '»')
                         .expect("Missing path end marker ('»')");
 
@@ -822,7 +823,7 @@ mod tests {
                         path_end += 2;
                     }
 
-                    for index in path_start..path_end {
+                    for index in path_start..=path_end {
                         if text[index] == '/' {
                             text[index] = '\\';
                         }
