@@ -2685,6 +2685,7 @@ impl LocalLspStore {
         buffer_to_edit: Entity<Buffer>,
         edits: Vec<lsp::TextEdit>,
         push_to_history: bool,
+        snapshot_version: &clock::Global,
         _: Arc<CachedLspAdapter>,
         language_server: Arc<LanguageServer>,
         cx: &mut AsyncApp,
@@ -2704,9 +2705,7 @@ impl LocalLspStore {
         let transaction = buffer_to_edit.update(cx, |buffer, cx| {
             buffer.finalize_last_transaction();
             buffer.start_transaction();
-            for (range, text) in edits {
-                buffer.edit([(range, text)], None, cx);
-            }
+            buffer.merge(edits, &snapshot_version, cx);
 
             if buffer.end_transaction(cx).is_some() {
                 let transaction = buffer.finalize_last_transaction().unwrap().clone();
@@ -4916,6 +4915,7 @@ impl LspStore {
                 .as_ref(),
             )
         });
+        let version = buffer.read(cx).version();
         self.request_lsp(
             buffer.clone(),
             LanguageServerToQuery::FirstCapable,
@@ -4924,6 +4924,7 @@ impl LspStore {
                 trigger,
                 options,
                 push_to_history,
+                snapshot_version: version,
             },
             cx,
         )

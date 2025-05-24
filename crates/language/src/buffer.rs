@@ -1544,18 +1544,20 @@ impl Buffer {
     }
 
     fn request_autoindent(&mut self, cx: &mut Context<Self>) {
-        if let Some(indent_sizes) = self.compute_autoindents() {
-            let indent_sizes = cx.background_spawn(indent_sizes);
+        if let Some(future) = self.compute_autoindents() {
+            let future = cx.background_spawn(future);
             match cx
                 .background_executor()
-                .block_with_timeout(Duration::from_micros(500), indent_sizes)
+                .block_with_timeout(Duration::from_micros(500), future)
             {
-                Ok(indent_sizes) => self.apply_autoindents(indent_sizes, cx),
-                Err(indent_sizes) => {
+                Ok((indent_sizes, snapshot_version)) => {
+                    self.apply_autoindents(&snapshot_version, indent_sizes, cx)
+                }
+                Err(future) => {
                     self.pending_autoindent = Some(cx.spawn(async move |this, cx| {
-                        let indent_sizes = indent_sizes.await;
+                        let (indent_sizes, snapshot_version) = future.await;
                         this.update(cx, |this, cx| {
-                            this.apply_autoindents(indent_sizes, cx);
+                            this.apply_autoindents(&snapshot_version, indent_sizes, cx);
                         })
                         .ok();
                     }));
@@ -1568,12 +1570,13 @@ impl Buffer {
 
     fn compute_autoindents(
         &self,
-    ) -> Option<impl Future<Output = BTreeMap<u32, IndentSize>> + use<>> {
+    ) -> Option<impl Future<Output = (BTreeMap<u32, IndentSize>, clock::Global)> + use<>> {
         let max_rows_between_yields = 100;
         let snapshot = self.snapshot();
         if snapshot.syntax.is_empty() || self.autoindent_requests.is_empty() {
             return None;
         }
+        let snapshot_version = self.version();
 
         let autoindent_requests = self.autoindent_requests.clone();
         Some(async move {
@@ -1725,21 +1728,25 @@ impl Buffer {
                 }
             }
 
-            indent_sizes
-                .into_iter()
-                .filter_map(|(row, (indent, ignore_empty_lines))| {
-                    if ignore_empty_lines && snapshot.line_len(row) == 0 {
-                        None
-                    } else {
-                        Some((row, indent))
-                    }
-                })
-                .collect()
+            (
+                indent_sizes
+                    .into_iter()
+                    .filter_map(|(row, (indent, ignore_empty_lines))| {
+                        if ignore_empty_lines && snapshot.line_len(row) == 0 {
+                            None
+                        } else {
+                            Some((row, indent))
+                        }
+                    })
+                    .collect(),
+                snapshot_version,
+            )
         })
     }
 
     fn apply_autoindents(
         &mut self,
+        version: &clock::Global,
         indent_sizes: BTreeMap<u32, IndentSize>,
         cx: &mut Context<Self>,
     ) {
@@ -1754,7 +1761,7 @@ impl Buffer {
             .collect();
 
         let preserve_preview = self.preserve_preview();
-        self.edit(edits, None, cx);
+        self.merge(edits, version, cx);
         if preserve_preview {
             self.refresh_preview();
         }
@@ -2164,6 +2171,87 @@ impl Buffer {
         T: Into<Arc<str>>,
     {
         self.edit([(self.len()..self.len(), text)], None, cx)
+    }
+
+    /// Merges incoming edits while skipping duplicates that exist in newer versions.
+    ///
+    /// Converts and adjusts edit ranges based on concurrent changes since `snapshot_version`
+    /// Requires sorted `edits_iter` to correctly compute offset adjustments
+    pub fn merge<I, S, T>(
+        &mut self,
+        edits_iter: I,
+        snapshot_version: &clock::Global,
+        cx: &mut Context<Self>,
+    ) -> Option<clock::Lamport>
+    where
+        I: IntoIterator<Item = (Range<S>, T)>,
+        S: ToOffset,
+        T: Into<Arc<str>>,
+    {
+        let mut final_edits: Vec<(Range<usize>, Arc<str>)> = Vec::new();
+
+        let mut concurrent_edits = self.edits_since::<usize>(snapshot_version).peekable();
+        let mut offset: i64 = 0;
+        let mut left_border: usize = 0;
+
+        for (range, new_text) in edits_iter {
+            let mut range = range.start.to_offset(self)..range.end.to_offset(self);
+            if range.start > range.end {
+                mem::swap(&mut range.start, &mut range.end);
+            }
+
+            let new_text = new_text.into();
+            if range.start as i64 + offset < left_border as i64 {
+                log::debug!(
+                    "Skipping invalid edit (wrong order): {:?}(offset: {}) '{}'",
+                    range,
+                    offset,
+                    new_text
+                );
+                continue;
+            }
+
+            range.start = (range.start as i64 + offset) as usize;
+            range.end = (range.end as i64 + offset) as usize;
+
+            let mut is_duplicate = false;
+            while let Some(concurrent_edit) = concurrent_edits.peek() {
+                if range.end < concurrent_edit.old.start {
+                    break;
+                }
+
+                let concurrent_diff =
+                    concurrent_edit.new_len() as i64 - concurrent_edit.old_len() as i64;
+                if concurrent_edit.old.end < range.start {
+                    offset += concurrent_diff;
+                    range.start = (range.start as i64 + concurrent_diff) as usize;
+                    range.end = (range.end as i64 + concurrent_diff) as usize;
+                    concurrent_edits.next();
+                    continue;
+                }
+
+                let new_diff = new_text.len() as i64 - range.len() as i64;
+                if concurrent_diff == new_diff
+                    && self
+                        .text_for_range(range.start..(range.start + new_text.len()))
+                        .equals_str(&new_text)
+                {
+                    is_duplicate = true;
+                }
+                break;
+            }
+
+            left_border = left_border.max(range.end);
+
+            if !is_duplicate {
+                final_edits.push((range, new_text));
+            } else {
+                log::debug!("Skipping duplicate edit: {:?} '{}'", range, new_text);
+            }
+        }
+
+        drop(concurrent_edits);
+        self.edit(final_edits, None, cx)
     }
 
     /// Applies the given edits to the buffer. Each edit is specified as a range of text to
