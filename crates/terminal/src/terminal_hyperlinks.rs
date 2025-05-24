@@ -633,7 +633,7 @@ mod tests {
                 )
             )]
             // <https://github.com/zed-industries/zed/issues/28194>
-            // TODO(davewa): #28194 was closed, but the link includes the description part (":in" here), which seems wrong...
+            // #28194 was closed, but the link includes the description part (":in" here), which seems wrong...
             fn issue_28194() {
                 test_path!(
                     "‹«test/controllers/template_items_controller_test.rb»:«20»›:in 'block (2 levels) in <class:TemplateItemsControllerTest>'"
