@@ -232,14 +232,16 @@ pub mod inspector_reflection {
 
     /// Information about a reflectable method
     #[derive(Clone, Copy)]
-    pub struct MethodReflection {
+    pub struct MethodReflection<T> {
         /// The name of the method
         pub name: &'static str,
-        /// The function
+        /// The method
         pub function: InvokeFn,
+        /// `PhantomData` for the type of the argument and result
+        pub _type: std::marker::PhantomData<T>,
     }
 
-    impl MethodReflection {
+    impl<T: 'static> MethodReflection<T> {
         /// Invoke this method on a value
         ///
         /// Returns the result of the method invocation.
@@ -247,7 +249,7 @@ pub mod inspector_reflection {
         /// # Panics
         ///
         /// Panics if the type erasure fails (this should not happen with correct usage).
-        pub fn invoke<T: 'static>(self, value: T) -> T {
+        pub fn invoke(self, value: T) -> T {
             let boxed = Box::new(value) as Box<dyn Any>;
             let result = (self.function)(boxed);
             *result

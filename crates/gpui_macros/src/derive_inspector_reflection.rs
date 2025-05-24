@@ -133,6 +133,7 @@ fn generate_reflected_trait(trait_item: ItemTrait) -> TokenStream {
             #inspector_reflection_path::MethodReflection {
                 name: #method_name_str,
                 function: #wrapper_name::<T>,
+                _type: ::std::marker::PhantomData,
             }
         }
     });
@@ -150,14 +151,14 @@ fn generate_reflected_trait(trait_item: ItemTrait) -> TokenStream {
             #(#wrapper_functions)*
 
             /// Get all reflectable methods for a concrete type implementing the trait
-            pub fn methods<T: #trait_name + 'static>() -> [#inspector_reflection_path::MethodReflection; #method_count] {
+            pub fn methods<T: #trait_name + 'static>() -> [#inspector_reflection_path::MethodReflection<T>; #method_count] {
                 [
                     #(#method_info_entries),*
                 ]
             }
 
             /// Find a method by name for a concrete type implementing the trait
-            pub fn find_method<T: #trait_name + 'static>(name: &str) -> Option<#inspector_reflection_path::MethodReflection> {
+            pub fn find_method<T: #trait_name + 'static>(name: &str) -> Option<#inspector_reflection_path::MethodReflection<T>> {
                 methods::<T>().into_iter().find(|m| m.name == name)
             }
         }
