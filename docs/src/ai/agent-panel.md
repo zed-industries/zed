@@ -116,7 +116,7 @@ Therefore, despite the presence of tools, some models may not have the ability t
 You should see a "No tools" label if you select a model that falls into this case.
 
 We want to support all of them, though!
-We may prioritize which ones to focus on based on popularity and user feedback, so feel free to help and contribute.
+We may prioritize which ones to focus on based on popularity and user feedback, so feel free to help and contribute to fast-track those that don't fit this bill.
 
 All [Zed's hosted models](./models.md) support tool calling out-of-the-box.
 
