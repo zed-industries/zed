@@ -9980,9 +9980,10 @@ async fn test_handle_input_for_show_signature_help_auto_signature_help_true(
 
     cx.editor(|editor, _, _| {
         let signature_help_state = editor.signature_help_state.popover().cloned();
+        let signature = signature_help_state.unwrap();
         assert_eq!(
-            signature_help_state.unwrap().label,
-            "param1: u8, param2: u8"
+            signature.signature[*signature.current_signature.borrow()].label,
+            "fn sample(param1: u8, param2: u8)"
         );
     });
 }
@@ -10151,9 +10152,10 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut TestA
     cx.update_editor(|editor, _, _| {
         let signature_help_state = editor.signature_help_state.popover().cloned();
         assert!(signature_help_state.is_some());
+        let signature = signature_help_state.unwrap();
         assert_eq!(
-            signature_help_state.unwrap().label,
-            "param1: u8, param2: u8"
+            signature.signature[*signature.current_signature.borrow()].label,
+            "fn sample(param1: u8, param2: u8)"
         );
         editor.signature_help_state = SignatureHelpState::default();
     });
@@ -10192,9 +10194,10 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut TestA
     cx.editor(|editor, _, _| {
         let signature_help_state = editor.signature_help_state.popover().cloned();
         assert!(signature_help_state.is_some());
+        let signature = signature_help_state.unwrap();
         assert_eq!(
-            signature_help_state.unwrap().label,
-            "param1: u8, param2: u8"
+            signature.signature[*signature.current_signature.borrow()].label,
+            "fn sample(param1: u8, param2: u8)"
         );
     });
 }
@@ -10253,9 +10256,10 @@ async fn test_signature_help(cx: &mut TestAppContext) {
     cx.editor(|editor, _, _| {
         let signature_help_state = editor.signature_help_state.popover().cloned();
         assert!(signature_help_state.is_some());
+        let signature = signature_help_state.unwrap();
         assert_eq!(
-            signature_help_state.unwrap().label,
-            "param1: u8, param2: u8"
+            signature.signature[*signature.current_signature.borrow()].label,
+            "fn sample(param1: u8, param2: u8)"
         );
     });
 
