@@ -3512,7 +3512,6 @@ impl Window {
                 let _handled = window.unborrow(self, || {
                     app.unborrow(cx, || platform_window.handle_native_event(native_event))
                 });
-                self.platform_window = platform_window;
             } else if let Some(input) = replay.keystroke.key_char.as_ref().cloned() {
                 if let Some(mut input_handler) = self.platform_window_mut().take_input_handler() {
                     input_handler.dispatch_input(&input, self, cx);

@@ -904,8 +904,10 @@ impl PlatformInputHandler {
     }
 
     pub(crate) fn finish_composition(&mut self, window: &mut Window, cx: &mut App) {
-        self.handler.unmark_text(window, cx);
-        window.platform_window.discard_marked_text();
+        if self.handler.marked_text_range(window, cx).is_some() {
+            self.handler.unmark_text(window, cx);
+            window.platform_window.discard_marked_text();
+        }
     }
 }
 
