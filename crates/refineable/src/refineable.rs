@@ -5,6 +5,7 @@ pub trait Refineable: Clone {
 
     fn refine(&mut self, refinement: &Self::Refinement);
     fn refined(self, refinement: Self::Refinement) -> Self;
+    fn is_superset_of(&self, refinement: &Self::Refinement) -> bool;
     fn from_cascade(cascade: &Cascade<Self>) -> Self
     where
         Self: Default + Sized,
