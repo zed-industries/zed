@@ -117,10 +117,10 @@ impl PythonDebugAdapter {
         };
 
         let python_command = python_path.context("failed to find binary path for Python")?;
-        log::info!("Using Python executable: {}", python_command);
+        log::debug!("Using Python executable: {}", python_command);
 
         let arguments = if installed_in_venv {
-            log::info!("Using venv-installed debugpy");
+            log::debug!("Using venv-installed debugpy");
             vec![
                 "-m".to_string(),
                 "debugpy.adapter".to_string(),
@@ -128,7 +128,7 @@ impl PythonDebugAdapter {
                 format!("--port={}", port),
             ]
         } else if let Some(user_installed_path) = user_installed_path {
-            log::info!(
+            log::debug!(
                 "Using user-installed debugpy adapter from: {}",
                 user_installed_path.display()
             );
@@ -151,7 +151,7 @@ impl PythonDebugAdapter {
                 .await
                 .context("Debugpy directory not found")?;
 
-            log::info!(
+            log::debug!(
                 "Using GitHub-downloaded debugpy adapter from: {}",
                 debugpy_dir.display()
             );
@@ -165,7 +165,7 @@ impl PythonDebugAdapter {
             ]
         };
 
-        log::info!(
+        log::debug!(
             "Starting debugpy adapter with command: {} {}",
             python_command,
             arguments.join(" ")
@@ -608,7 +608,7 @@ impl DebugAdapter for PythonDebugAdapter {
             if let Some(path) = Path::new(&toolchain.path.to_string()).parent() {
                 let debugpy_path = path.join("debugpy");
                 if smol::fs::metadata(&debugpy_path).await.is_ok() {
-                    log::info!(
+                    log::debug!(
                         "Found debugpy in toolchain environment: {}",
                         debugpy_path.display()
                     );
