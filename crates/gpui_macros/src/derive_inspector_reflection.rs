@@ -3,32 +3,10 @@ use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{
-    FnArg, Ident, Item, ItemTrait, Path, ReturnType, TraitItem, Type, parse_macro_input,
-    parse_quote,
+    Attribute, Expr, FnArg, Ident, Item, ItemTrait, Lit, Meta, Path, ReturnType, TraitItem, Type,
+    parse_macro_input, parse_quote,
     visit_mut::{self, VisitMut},
 };
-
-fn path_to_string(path: &Path) -> String {
-    path.segments
-        .iter()
-        .map(|seg| seg.ident.to_string())
-        .collect::<Vec<_>>()
-        .join("::")
-}
-
-fn parse_expanded_items(expanded: TokenStream) -> Option<Vec<TraitItem>> {
-    let tokens = TokenStream2::from(expanded);
-
-    // Try to parse the expanded tokens as trait items
-    // We need to wrap them in a dummy trait to parse properly
-    let dummy_trait: ItemTrait = parse_quote! {
-        trait Dummy {
-            #tokens
-        }
-    };
-
-    Some(dummy_trait.items)
-}
 
 pub fn derive_inspector_reflection(_args: TokenStream, input: TokenStream) -> TokenStream {
     let mut item = parse_macro_input!(input as Item);
@@ -96,7 +74,9 @@ fn generate_reflected_trait(trait_item: ItemTrait) -> TokenStream {
             // Include methods of form fn name(self) -> Self or fn name(mut self) -> Self
             // This includes methods with default implementations
             if has_valid_self_receiver && returns_self && param_count == 1 {
-                method_infos.push(method_name.clone());
+                // Extract documentation from attributes
+                let doc = extract_doc_comment(&method.attrs);
+                method_infos.push((method_name.clone(), doc));
             }
         }
     }
@@ -109,7 +89,7 @@ fn generate_reflected_trait(trait_item: ItemTrait) -> TokenStream {
 
     // Generate wrapper functions for each method
     // These wrappers use type erasure to allow runtime invocation
-    let wrapper_functions = method_infos.iter().map(|method_name| {
+    let wrapper_functions = method_infos.iter().map(|(method_name, _doc)| {
         let wrapper_name = Ident::new(
             &format!("__wrapper_{}", method_name),
             method_name.span(),
@@ -126,13 +106,18 @@ fn generate_reflected_trait(trait_item: ItemTrait) -> TokenStream {
     });
 
     // Generate method info entries
-    let method_info_entries = method_infos.iter().map(|method_name| {
+    let method_info_entries = method_infos.iter().map(|(method_name, doc)| {
         let method_name_str = method_name.to_string();
         let wrapper_name = Ident::new(&format!("__wrapper_{}", method_name), method_name.span());
+        let doc_expr = match doc {
+            Some(doc_str) => quote! { Some(#doc_str) },
+            None => quote! { None },
+        };
         quote! {
             #inspector_reflection_path::MethodReflection {
                 name: #method_name_str,
                 function: #wrapper_name::<T>,
+                doc: #doc_expr,
                 _type: ::std::marker::PhantomData,
             }
         }
@@ -165,6 +150,35 @@ fn generate_reflected_trait(trait_item: ItemTrait) -> TokenStream {
     };
 
     TokenStream::from(output)
+}
+
+fn extract_doc_comment(attrs: &[Attribute]) -> Option<String> {
+    let mut doc_lines = Vec::new();
+
+    for attr in attrs {
+        if attr.path().is_ident("doc") {
+            if let Meta::NameValue(meta) = &attr.meta {
+                if let Expr::Lit(expr_lit) = &meta.value {
+                    if let Lit::Str(lit_str) = &expr_lit.lit {
+                        let line = lit_str.value();
+                        // Trim leading space that rustdoc adds
+                        let trimmed = if line.starts_with(' ') {
+                            &line[1..]
+                        } else {
+                            &line
+                        };
+                        doc_lines.push(trimmed.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    if doc_lines.is_empty() {
+        None
+    } else {
+        Some(doc_lines.join("\n"))
+    }
 }
 
 fn is_called_from_gpui_crate(_span: Span) -> bool {
@@ -261,4 +275,26 @@ fn try_expand_macro(macro_item: &syn::TraitItemMacro) -> Option<Vec<TraitItem>> 
         }
         _ => None,
     }
+}
+
+fn path_to_string(path: &Path) -> String {
+    path.segments
+        .iter()
+        .map(|seg| seg.ident.to_string())
+        .collect::<Vec<_>>()
+        .join("::")
+}
+
+fn parse_expanded_items(expanded: TokenStream) -> Option<Vec<TraitItem>> {
+    let tokens = TokenStream2::from(expanded);
+
+    // Try to parse the expanded tokens as trait items
+    // We need to wrap them in a dummy trait to parse properly
+    let dummy_trait: ItemTrait = parse_quote! {
+        trait Dummy {
+            #tokens
+        }
+    };
+
+    Some(dummy_trait.items)
 }
