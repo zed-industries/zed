@@ -812,9 +812,10 @@ mod tests {
                 if let Some(mut path_start) = text_iter.position(|c| *c == '«') {
                     path_start += 1;
                     text_iter.next();
-                    let mut path_end = path_start + text_iter
-                        .position(|c| *c == '»')
-                        .expect("Missing path end marker ('»')");
+                    let mut path_end = path_start
+                        + text_iter
+                            .position(|c| *c == '»')
+                            .expect("Missing path end marker ('»')");
 
                     if text[path_start] == '/' {
                         text.insert(path_start, ':');
