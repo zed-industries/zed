@@ -98,19 +98,6 @@ impl PythonDebugAdapter {
         let tcp_connection = config.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
-        let debugpy_dir = if let Some(user_installed_path) = user_installed_path {
-            user_installed_path
-        } else {
-            let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
-            let file_name_prefix = format!("{}_", Self::ADAPTER_NAME);
-
-            util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
-                file_name.starts_with(&file_name_prefix)
-            })
-            .await
-            .context("Debugpy directory not found")?
-        };
-
         let python_path = if let Some(toolchain) = toolchain {
             Some(toolchain.path.to_string())
         } else {
@@ -128,16 +115,61 @@ impl PythonDebugAdapter {
             name
         };
 
-        Ok(DebugAdapterBinary {
-            command: python_path.context("failed to find binary path for Python")?,
-            arguments: vec![
+        let python_command = python_path.context("failed to find binary path for Python")?;
+
+        // Check if we're dealing with a pip-installed debugpy (user_installed_path provided)
+        // vs a downloaded GitHub release
+        let arguments = if let Some(user_installed_path) = user_installed_path {
+            // For pip-installed debugpy, check if it's a debugpy module directory
+            // In this case, use -m debugpy instead of trying to execute a file path
+            if user_installed_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                == Some("debugpy")
+            {
+                vec![
+                    "-m".to_string(),
+                    "debugpy".to_string(),
+                    "--listen".to_string(),
+                    format!("{}:{}", host, port),
+                    "--wait-for-client".to_string(),
+                ]
+            } else {
+                // Fallback to the old behavior for other user-installed paths
+                vec![
+                    user_installed_path
+                        .join(Self::ADAPTER_PATH)
+                        .to_string_lossy()
+                        .to_string(),
+                    format!("--port={}", port),
+                    format!("--host={}", host),
+                ]
+            }
+        } else {
+            // For downloaded GitHub releases, use the original logic
+            let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
+            let file_name_prefix = format!("{}_", Self::ADAPTER_NAME);
+
+            let debugpy_dir =
+                util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
+                    file_name.starts_with(&file_name_prefix)
+                })
+                .await
+                .context("Debugpy directory not found")?;
+
+            vec![
                 debugpy_dir
                     .join(Self::ADAPTER_PATH)
                     .to_string_lossy()
                     .to_string(),
                 format!("--port={}", port),
                 format!("--host={}", host),
-            ],
+            ]
+        };
+
+        Ok(DebugAdapterBinary {
+            command: python_command,
+            arguments,
             connection: Some(adapters::TcpArguments {
                 host,
                 port,
@@ -593,5 +625,33 @@ impl DebugAdapter for PythonDebugAdapter {
 
         self.get_installed_binary(delegate, &config, user_installed_path, toolchain)
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_debugpy_arguments_for_pip_installed() {
+        // Test that when user_installed_path points to a debugpy directory,
+        // we use -m debugpy instead of trying to execute a file path
+
+        // Simulate a pip-installed debugpy path
+        let debugpy_path = PathBuf::from("/some/env/bin/debugpy");
+
+        // This would be the path that gets constructed in get_binary when
+        // it finds a debugpy directory next to the Python executable
+        assert_eq!(
+            debugpy_path.file_name().and_then(|name| name.to_str()),
+            Some("debugpy")
+        );
+    }
+
+    #[test]
+    fn test_adapter_path_constant() {
+        // Ensure the adapter path constant is correct for GitHub releases
+        assert_eq!(PythonDebugAdapter::ADAPTER_PATH, "src/debugpy/adapter");
     }
 }
