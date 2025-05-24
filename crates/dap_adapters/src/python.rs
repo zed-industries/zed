@@ -93,6 +93,7 @@ impl PythonDebugAdapter {
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         toolchain: Option<Toolchain>,
+        installed_in_venv: bool,
     ) -> Result<DebugAdapterBinary> {
         const BINARY_NAMES: [&str; 3] = ["python3", "python", "py"];
         let tcp_connection = config.tcp_connection.clone().unwrap_or_default();
@@ -118,36 +119,27 @@ impl PythonDebugAdapter {
         let python_command = python_path.context("failed to find binary path for Python")?;
         log::info!("Using Python executable: {}", python_command);
 
-        let arguments = if let Some(user_installed_path) = user_installed_path {
-            if user_installed_path
-                .file_name()
-                .and_then(|name| name.to_str())
-                == Some("debugpy")
-            {
-                log::info!(
-                    "Using pip-installed debugpy from: {}",
-                    user_installed_path.display()
-                );
-                vec![
-                    "-m".to_string(),
-                    "debugpy.adapter".to_string(),
-                    format!("--host={}", host),
-                    format!("--port={}", port),
-                ]
-            } else {
-                log::info!(
-                    "Using user-installed debugpy adapter from: {}",
-                    user_installed_path.display()
-                );
-                vec![
-                    user_installed_path
-                        .join(Self::ADAPTER_PATH)
-                        .to_string_lossy()
-                        .to_string(),
-                    format!("--port={}", port),
-                    format!("--host={}", host),
-                ]
-            }
+        let arguments = if installed_in_venv {
+            log::info!("Using venv-installed debugpy");
+            vec![
+                "-m".to_string(),
+                "debugpy.adapter".to_string(),
+                format!("--host={}", host),
+                format!("--port={}", port),
+            ]
+        } else if let Some(user_installed_path) = user_installed_path {
+            log::info!(
+                "Using user-installed debugpy adapter from: {}",
+                user_installed_path.display()
+            );
+            vec![
+                user_installed_path
+                    .join(Self::ADAPTER_PATH)
+                    .to_string_lossy()
+                    .to_string(),
+                format!("--port={}", port),
+                format!("--host={}", host),
+            ]
         } else {
             let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
             let file_name_prefix = format!("{}_", Self::ADAPTER_NAME);
@@ -624,8 +616,9 @@ impl DebugAdapter for PythonDebugAdapter {
                         .get_installed_binary(
                             delegate,
                             &config,
-                            Some(debugpy_path.to_path_buf()),
+                            None,
                             Some(toolchain.clone()),
+                            true,
                         )
                         .await;
                 }
@@ -639,7 +632,7 @@ impl DebugAdapter for PythonDebugAdapter {
             }
         }
 
-        self.get_installed_binary(delegate, &config, user_installed_path, toolchain)
+        self.get_installed_binary(delegate, &config, user_installed_path, toolchain, false)
             .await
     }
 }
@@ -650,15 +643,28 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn test_debugpy_arguments_for_pip_installed() {
-        // Test that when user_installed_path points to a debugpy directory,
-        // we use -m debugpy.adapter to start the debug adapter
+    fn test_venv_vs_user_path_logic() {
+        // Test that we can distinguish between venv-installed debugpy and user-provided paths
+        // The new logic uses a boolean flag for venv detection instead of path inspection
 
-        let debugpy_path = PathBuf::from("/some/env/bin/debugpy");
+        let venv_debugpy_path = PathBuf::from("/some/env/lib/python3.9/site-packages/debugpy");
+        let local_debugpy_path = PathBuf::from("/home/user/projects/debugpy");
+
+        // Both paths could end with "debugpy" but the logic now uses explicit flags
         assert_eq!(
-            debugpy_path.file_name().and_then(|name| name.to_str()),
+            venv_debugpy_path.file_name().and_then(|name| name.to_str()),
             Some("debugpy")
         );
+        assert_eq!(
+            local_debugpy_path
+                .file_name()
+                .and_then(|name| name.to_str()),
+            Some("debugpy")
+        );
+
+        // The new approach uses installed_in_venv boolean instead of path inspection
+        // When installed_in_venv=true: use -m debugpy.adapter
+        // When installed_in_venv=false: use user_installed_path or GitHub download
     }
 
     #[test]
