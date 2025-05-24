@@ -2198,6 +2198,7 @@ dependencies = [
  "editor",
  "gpui",
  "itertools 0.14.0",
+ "settings",
  "theme",
  "ui",
  "workspace",

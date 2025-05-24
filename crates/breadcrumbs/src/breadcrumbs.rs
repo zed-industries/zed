@@ -1,14 +1,15 @@
 use editor::Editor;
 use gpui::{
-    Context, Element, EventEmitter, Focusable, IntoElement, ParentElement, Render, StyledText,
-    Subscription, Window,
+    Context, Element, EventEmitter, Focusable, FontWeight, IntoElement, ParentElement, Render,
+    StyledText, Subscription, Window,
 };
 use itertools::Itertools;
+use settings::Settings;
 use std::cmp;
 use theme::ActiveTheme;
 use ui::{ButtonLike, ButtonStyle, Label, Tooltip, prelude::*};
 use workspace::{
-    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+    TabBarSettings, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     item::{BreadcrumbText, ItemEvent, ItemHandle},
 };
 
@@ -71,15 +72,22 @@ impl Render for Breadcrumbs {
             );
         }
 
-        let highlighted_segments = segments.into_iter().map(|segment| {
+        let highlighted_segments = segments.into_iter().enumerate().map(|(index, segment)| {
             let mut text_style = window.text_style();
-            if let Some(font) = segment.font {
-                text_style.font_family = font.family;
-                text_style.font_features = font.features;
+            if let Some(ref font) = segment.font {
+                text_style.font_family = font.family.clone();
+                text_style.font_features = font.features.clone();
                 text_style.font_style = font.style;
                 text_style.font_weight = font.weight;
             }
             text_style.color = Color::Muted.color(cx);
+
+            if index == 0 && !TabBarSettings::get_global(cx).show && active_item.is_dirty(cx) {
+                if let Some(styled_element) = apply_dirty_filename_style(&segment, &text_style, cx)
+                {
+                    return styled_element;
+                }
+            }
 
             StyledText::new(segment.text.replace('\n', "⏎"))
                 .with_default_highlights(&text_style, segment.highlights.unwrap_or_default())
@@ -183,4 +191,47 @@ impl ToolbarItemView for Breadcrumbs {
     ) {
         self.pane_focused = pane_focused;
     }
+}
+
+fn apply_dirty_filename_style(
+    segment: &BreadcrumbText,
+    text_style: &gpui::TextStyle,
+    cx: &mut Context<Breadcrumbs>,
+) -> Option<gpui::AnyElement> {
+    let text = segment.text.replace('\n', "⏎");
+
+    let filename_position = std::path::Path::new(&segment.text)
+        .file_name()
+        .and_then(|f| {
+            let filename_str = f.to_string_lossy();
+            segment.text.rfind(filename_str.as_ref())
+        })?;
+
+    let bold_weight = FontWeight::BOLD;
+    let default_color = Color::Default.color(cx);
+
+    if filename_position == 0 {
+        let mut filename_style = text_style.clone();
+        filename_style.font_weight = bold_weight;
+        filename_style.color = default_color;
+
+        return Some(
+            StyledText::new(text)
+                .with_default_highlights(&filename_style, [])
+                .into_any(),
+        );
+    }
+
+    let highlight_style = gpui::HighlightStyle {
+        font_weight: Some(bold_weight),
+        color: Some(default_color),
+        ..Default::default()
+    };
+
+    let highlight = vec![(filename_position..text.len(), highlight_style)];
+    Some(
+        StyledText::new(text)
+            .with_default_highlights(&text_style, highlight)
+            .into_any(),
+    )
 }
