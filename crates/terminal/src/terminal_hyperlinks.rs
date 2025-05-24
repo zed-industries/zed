@@ -208,7 +208,7 @@ mod tests {
         vte::ansi::Handler,
     };
     use itertools::Itertools;
-    use std::{ops::RangeInclusive, path::PathBuf};
+    use std::{cell::RefCell, ops::RangeInclusive, path::PathBuf};
     use util::paths::PathWithPosition;
 
     fn re_test(re: &str, hay: &str, expected: Vec<&str>) {
@@ -219,6 +219,7 @@ mod tests {
             .collect();
         assert_eq!(results, expected);
     }
+
     #[test]
     fn test_url_regex() {
         re_test(
@@ -227,6 +228,7 @@ mod tests {
             vec!["http://example.com", "mailto:bob@example.com"],
         );
     }
+
     #[test]
     fn test_word_regex() {
         re_test(
@@ -235,6 +237,7 @@ mod tests {
             vec!["hello", "world", "What", "is", "this"],
         );
     }
+
     #[test]
     fn test_word_regex_with_linenum() {
         // filename(line) and filename(line,col) as used in MSBuild output
@@ -292,45 +295,46 @@ mod tests {
 
     macro_rules! test_hyperlink {
         ($($lines:expr),+; $is_iri:ident) => { {
+            use crate::terminal_hyperlinks::tests::line_cells_count;
+            use std::cmp;
+
             let test_lines = vec![$($lines),+];
-            let (total_chars, longest_line_chars) = test_lines
-                .iter()
-                .fold((0, 0), |state, line| {
-                    let line_chars = line.chars().filter(|c| "‹«»›".find(*c).is_none()).count();
-                    (state.0 + line_chars, std::cmp::max(state.1, line_chars))
-                });
-            // Alacritty has issues with 2 columns, use 3 as the minimum for now.
-            test_hyperlink!([3, longest_line_chars / 2, longest_line_chars + 1]; total_chars; &test_lines; $is_iri)
+            let (total_cells, longest_line_cells) =
+                test_lines.iter().copied()
+                    .map(line_cells_count)
+                    .fold((0, 0), |state, cells| (state.0 + cells, cmp::max(state.1, cells)));
+            test_hyperlink!(
+                // Alacritty has issues with 2 columns, use 3 as the minimum for now.
+                [3, longest_line_cells / 2, longest_line_cells + 1];
+                total_cells;
+                test_lines.iter().copied();
+                $is_iri
+            )
         } };
+
         ($($columns:literal),+; $($lines:expr),+; $is_iri:ident) => { {
+            use crate::terminal_hyperlinks::tests::line_cells_count;
             let test_lines = vec![$($lines),+];
-            let total_chars = test_lines
-                .iter()
-                .fold(0, |state, line| {
-                    state + line.chars().filter(|c| "‹«»›".find(*c).is_none()).count()
-                });
-            test_hyperlink!([ $($columns),+ ]; total_chars; &vec![$($lines),+]; $is_iri)
+            let total_cells = test_lines.iter().copied().map(line_cells_count).sum();
+            test_hyperlink!([ $($columns),+ ]; total_cells; test_lines.iter().copied(); $is_iri)
         } };
-        ([ $($columns:expr),+ ]; $total_chars:expr; $lines:expr; $is_iri:ident) => { {
+
+        ([ $($columns:expr),+ ]; $total_cells:expr; $lines:expr; $is_iri:ident) => { {
             for columns in vec![ $($columns),+] {
                 use crate::terminal_hyperlinks::tests::test_hyperlink;
-                test_hyperlink(columns, $total_chars, $lines, $is_iri,
-                    format!("{}:{}:{}", std::file!(), std::line!(), std::column!()));
+                test_hyperlink(columns, $total_cells, $lines, $is_iri,
+                    format!("{}:{}", std::file!(), std::line!()));
             }
         } };
     }
 
     mod iri {
-        /// By default tests with terminal column counts of `[3, longest_line / 2, and longest_line + 1]`.
-        /// Also accepts specific column count overrides as `test_iri!(3, 4, 5; "some stuff")`
+        /// [**`c₀, c₁, …, cₙ;`**]ₒₚₜ := use specified terminal widths of `c₀, c₁, …, cₙ` **columns**
+        /// (defaults to `3, longest_line_cells / 2, longest_line_cells + 1;`)
         ///
-        /// **`‹«aaaaa»›`** := **iri** match
-        ///
-        /// **I, J, ..., K; ** := use terminal widths of [I, J, ..., K] **columns**
         macro_rules! test_iri {
             ($iri:literal) => { { test_hyperlink!(concat!("‹«", $iri, "»›"); true) } };
             ($($columns:literal),+; $iri:literal) => { { test_hyperlink!($($columns),+; concat!("‹«", $iri, "»›"); true) } };
-            ([ $($columns:expr),+ ]; $total_chars:expr; $lines:expr) => { { test_hyperlink!([ $($columns),+ ]; $total_chars; $lines; true) } };
         }
 
         #[test]
@@ -358,6 +362,31 @@ mod tests {
             test_iri!("ftp://test/cool.ftp");
         }
 
+        #[test]
+        fn wide_chars() {
+            // In the order they appear in URL_REGEX, except 'file://' which is treated as a path
+            test_iri!(4, 20; "ipfs://例🏃🦀/cool.ipfs");
+            test_iri!(4, 20; "ipns://例🏃🦀/cool.ipns");
+            test_iri!(6, 20; "magnet://例🏃🦀/cool.git");
+            test_iri!(4, 20; "mailto:someone@somewhere.here");
+            test_iri!(4, 20; "gemini://somewhere.here");
+            test_iri!(4, 20; "gopher://somewhere.here");
+            test_iri!(4, 20; "http://例🏃🦀/cool/index.html");
+            test_iri!(4, 20; "http://10.10.10.10:1111/cool.html");
+            test_iri!(4, 20; "http://例🏃🦀/cool/index.html?amazing=1");
+            test_iri!(4, 20; "http://例🏃🦀/cool/index.html#right%20here");
+            test_iri!(4, 20; "http://例🏃🦀/cool/index.html?amazing=1#right%20here");
+            test_iri!(4, 20; "https://例🏃🦀/cool/index.html");
+            test_iri!(4, 20; "https://10.10.10.10:1111/cool.html");
+            test_iri!(4, 20; "https://例🏃🦀/cool/index.html?amazing=1");
+            test_iri!(4, 20; "https://例🏃🦀/cool/index.html#right%20here");
+            test_iri!(4, 20; "https://例🏃🦀/cool/index.html?amazing=1#right%20here");
+            test_iri!(4, 20; "news://例🏃🦀/cool.news");
+            test_iri!(5, 20; "git://例/cool.git");
+            test_iri!(5, 20; "ssh://user@somewhere.over.here:12345/例🏃🦀/cool.git");
+            test_iri!(7, 20; "ftp://例🏃🦀/cool.ftp");
+        }
+
         // There are likely more tests needed for IRI vs URI
         #[test]
         fn iris() {
@@ -375,24 +404,20 @@ mod tests {
     }
 
     mod path {
-        /// By default tests with terminal column counts of `[3, longest_line / 2, and longest_line + 1]`.
-        /// Also accepts specific column count overrides as `test_path!(3, 4, 5; "some stuff")`
+        /// 👉 := **hovered** on following char
         ///
-        /// 👉 := hovered on following char
+        /// 👈 := **hovered** on wide char spacer of previous full width char
         ///
-        /// 👈 := hovered on wide char spacer of previous full width char
+        /// **`‹›`** := expected **hyperlink** match
         ///
-        /// **`‹›`** := **hyperlink** match
+        /// **`«»`** := expected **path**, **row**, and **column** capture groups
         ///
-        /// **`«aaaaa»`** := **path** capture group
+        /// [**`c₀, c₁, …, cₙ;`**]ₒₚₜ := use specified terminal widths of `c₀, c₁, …, cₙ` **columns**
+        /// (defaults to `3, longest_line_cells / 2, longest_line_cells + 1;`)
         ///
-        /// **`«NN»`** := **row** or **column** capture group
-        ///
-        /// **I, J, ..., K; ** := use terminal widths of [I, J, ..., K] **columns**
         macro_rules! test_path {
             ($($lines:literal),+) => { test_hyperlink!($($lines),+; false) };
             ($($columns:literal),+; $($lines:literal),+) => { test_hyperlink!($($columns),+; $($lines),+; false) };
-            ([ $($columns:expr),+ ]; $total_chars:expr; $lines:expr) => { test_hyperlink!([ $($columns),+ ]; $total_chars; $lines; false) };
         }
 
         #[test]
@@ -702,6 +727,7 @@ mod tests {
             }
         }
     }
+
     struct ExpectedHyperlink {
         hovered_grid_point: AlacPoint,
         hovered_char: char,
@@ -715,25 +741,28 @@ mod tests {
     fn build_term_from_test_lines<'a>(
         is_iri: bool,
         term_size: TermSize,
-        test_lines: &(impl IntoIterator<Item = &'a str> + Clone),
+        test_lines: impl Iterator<Item = &'a str>,
     ) -> (Term<VoidListener>, ExpectedHyperlink) {
-        #[derive(Eq, PartialEq)]
+        #[derive(Default, Eq, PartialEq)]
         enum HoveredState {
+            #[default]
             HoveredScan,
             HoveredNextChar,
             Done,
         }
 
-        #[derive(Eq, PartialEq)]
+        #[derive(Default, Eq, PartialEq)]
         enum MatchState {
+            #[default]
             MatchScan,
             MatchNextChar,
             Match(AlacPoint),
             Done,
         }
 
-        #[derive(Eq, PartialEq)]
+        #[derive(Default, Eq, PartialEq)]
         enum CapturesState {
+            #[default]
             PathScan,
             PathNextChar,
             Path(AlacPoint),
@@ -760,29 +789,31 @@ mod tests {
             point
         }
 
+        const FILE_SCHEME: &str = "file://";
+
         let mut hovered_grid_point = AlacPoint::default();
         let mut hyperlink_match = AlacPoint::default()..=AlacPoint::default();
         let mut iri_or_path_is_file_iri = false;
-        let mut iri_or_path = String::new();
+        let mut iri_or_path = String::default();
         let mut row = None;
         let mut column = None;
         let mut prev_input_point = AlacPoint::default();
-        let mut hovered_state = HoveredState::HoveredScan;
-        let mut match_state = MatchState::MatchScan;
-        let mut captures_state = CapturesState::PathScan;
-        const FILE_SCHEME: &str = "file://";
-
+        let mut hovered_state = HoveredState::default();
+        let mut match_state = MatchState::default();
+        let mut captures_state = CapturesState::default();
         let mut term = Term::new(Config::default(), &term_size, VoidListener);
 
-        for text in test_lines.clone().into_iter() {
+        for text in test_lines {
             let mut text = text.chars().collect_vec();
 
             // Convert path to Windows style if on Windows
             if cfg!(windows) && !is_iri {
-                if let Some(mut path_start) =
-                    text.iter().position(|&c| c == '«').map(|index| index + 1)
-                {
-                    let mut path_end = text.iter().position(|&c| c == '»').unwrap() - 1;
+                let mut text_iter = text.iter();
+                if let Some(mut path_start) = text_iter.position(|c| *c == '«') {
+                    path_start += 1;
+                    let mut path_end = text_iter
+                        .position(|c| *c == '»')
+                        .expect("Missing path end marker ('»')");
 
                     if text[path_start] == '/' {
                         text.insert(path_start, ':');
@@ -791,7 +822,7 @@ mod tests {
                         path_end += 2;
                     }
 
-                    for index in path_start..=path_end {
+                    for index in path_start..path_end {
                         if text[index] == '/' {
                             text[index] = '\\';
                         }
@@ -799,8 +830,8 @@ mod tests {
                 }
             }
 
-            for index in 0..text.len() {
-                match text[index] {
+            for c in text {
+                match c {
                     '👉' => {
                         hovered_state = HoveredState::HoveredNextChar;
                     }
@@ -847,7 +878,7 @@ mod tests {
                             }
                         }
                     }
-                    c => {
+                    _ => {
                         if let CapturesState::Row(number) | CapturesState::Column(number) =
                             &mut captures_state
                         {
@@ -904,177 +935,206 @@ mod tests {
         )
     }
 
-    fn format_renderable_content(
-        term: &Term<VoidListener>,
-        expected_hyperlink: &ExpectedHyperlink,
-    ) -> String {
-        let mut result = format!("\nHovered on '{}'\n", expected_hyperlink.hovered_char);
-
-        let mut first_header_row = String::new();
-        let mut second_header_row = String::new();
-        let mut marker_header_row = String::new();
-        for index in 0..term.columns() {
-            let remainder = index % 10;
-            first_header_row.push_str(
-                &(index > 0 && remainder == 0)
-                    .then_some((index / 10).to_string())
-                    .unwrap_or(" ".into()),
-            );
-            second_header_row += &remainder.to_string();
-            marker_header_row.push(
-                (index == expected_hyperlink.hovered_grid_point.column.0)
-                    .then_some('↓')
-                    .unwrap_or(' '),
-            );
-        }
-
-        result += &format!("\n      [{}]\n", first_header_row);
-        result += &format!("      [{}]\n", second_header_row);
-        result += &format!("       {}", marker_header_row);
-
-        let spacers: Flags = Flags::LEADING_WIDE_CHAR_SPACER | Flags::WIDE_CHAR_SPACER;
-        for cell in term
-            .renderable_content()
-            .display_iter
-            .filter(|cell| !cell.flags.intersects(spacers))
-        {
-            if cell.point.column.0 == 0 {
-                let prefix = (cell.point.line == expected_hyperlink.hovered_grid_point.line)
-                    .then_some('→')
-                    .unwrap_or(' ');
-                result += &format!("\n{prefix}[{:>3}] ", cell.point.line.to_string());
-            }
-
-            result.push(cell.c);
-        }
-
-        result
+    fn line_cells_count(line: &str) -> usize {
+        use unicode_width::UnicodeWidthChar;
+        const CONTROL_CHARS: &str = "‹«👉👈»›";
+        line.chars()
+            .filter(|c| !CONTROL_CHARS.contains(*c))
+            .filter_map(UnicodeWidthChar::width)
+            .sum::<usize>()
     }
 
-    fn check_path_with_position_and_match(
-        term: &Term<VoidListener>,
-        expected_hyperlink: &ExpectedHyperlink,
-        path_with_position: PathWithPosition,
-        hyperlink_match: &Match,
-        source_location: String,
-    ) {
-        let format_path_with_position_and_match =
-            |path_with_position: &PathWithPosition, hyperlink_match: &Match| {
-                let mut result = format!("Path = «{}»", &path_with_position.path.to_string_lossy());
-                if let Some(row) = path_with_position.row {
-                    result += &format!(", line = {row}");
-                    if let Some(column) = path_with_position.column {
-                        result += &format!(", column = {column}");
+    use std::fmt::{self, Display};
+    struct TestMatch<'a>(&'a Match);
+    impl Display for TestMatch<'_> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(
+                f,
+                "({}, {})..=({}, {})",
+                self.0.start().line.0,
+                self.0.start().column.0,
+                self.0.end().line.0,
+                self.0.end().column.0
+            )
+        }
+    }
+
+    struct CheckHyperlinkMatch<'a> {
+        term: &'a Term<VoidListener>,
+        expected_hyperlink: &'a ExpectedHyperlink,
+        source_location: &'a str,
+    }
+
+    impl<'a> CheckHyperlinkMatch<'a> {
+        fn new(
+            term: &'a Term<VoidListener>,
+            expected_hyperlink: &'a ExpectedHyperlink,
+            source_location: &'a str,
+        ) -> Self {
+            Self {
+                term,
+                expected_hyperlink,
+                source_location,
+            }
+        }
+
+        fn check_path_with_position_and_match(
+            &self,
+            path_with_position: PathWithPosition,
+            hyperlink_match: &Match,
+        ) {
+            let format_path_with_position_and_match =
+                |path_with_position: &PathWithPosition, hyperlink_match: &Match| {
+                    let mut result =
+                        format!("Path = «{}»", &path_with_position.path.to_string_lossy());
+                    if let Some(row) = path_with_position.row {
+                        result += &format!(", line = {row}");
+                        if let Some(column) = path_with_position.column {
+                            result += &format!(", column = {column}");
+                        }
                     }
-                }
 
-                result += &format!(
-                    ", at grid cells ({}, {})..=({}, {})",
-                    hyperlink_match.start().line.0,
-                    hyperlink_match.start().column.0,
-                    hyperlink_match.end().line.0,
-                    hyperlink_match.end().column.0,
-                );
+                    result += &format!(", at grid cells {}", TestMatch(hyperlink_match));
+                    result
+                };
 
-                result
+            assert_eq!(
+                self.expected_hyperlink.is_iri,
+                false,
+                "\n    at {}\nExpected a iri, but was a path:\n{}",
+                self.source_location,
+                self.format_renderable_content()
+            );
+
+            assert_eq!(
+                format_path_with_position_and_match(
+                    &PathWithPosition {
+                        path: PathBuf::from(self.expected_hyperlink.iri_or_path.clone()),
+                        row: self.expected_hyperlink.row,
+                        column: self.expected_hyperlink.column
+                    },
+                    &self.expected_hyperlink.hyperlink_match
+                ),
+                format_path_with_position_and_match(&path_with_position, hyperlink_match),
+                "\n    at {}:\n{}",
+                self.source_location,
+                self.format_renderable_content()
+            );
+        }
+
+        fn check_iri_and_match(&self, iri: String, hyperlink_match: &Match) {
+            let format_iri_and_match = |iri: &String, hyperlink_match: &Match| {
+                format!(
+                    "Url = «{iri}», at grid cells {}",
+                    TestMatch(hyperlink_match)
+                )
             };
 
-        assert_eq!(
-            expected_hyperlink.is_iri,
-            false,
-            "\n    at {source_location}\nExpected a iri, but was a path:\n{}",
-            format_renderable_content(term, expected_hyperlink)
-        );
+            assert_eq!(
+                self.expected_hyperlink.is_iri,
+                true,
+                "\n    at {}\nExpected a path, but was a iri:\n{}",
+                self.source_location,
+                self.format_renderable_content()
+            );
 
-        assert_eq!(
-            format_path_with_position_and_match(
-                &PathWithPosition {
-                    path: PathBuf::from(expected_hyperlink.iri_or_path.clone()),
-                    row: expected_hyperlink.row,
-                    column: expected_hyperlink.column
-                },
-                &expected_hyperlink.hyperlink_match
-            ),
-            format_path_with_position_and_match(&path_with_position, hyperlink_match),
-            "\n    at {source_location}:\n{}",
-            format_renderable_content(term, expected_hyperlink)
-        );
-    }
+            assert_eq!(
+                format_iri_and_match(
+                    &self.expected_hyperlink.iri_or_path,
+                    &self.expected_hyperlink.hyperlink_match
+                ),
+                format_iri_and_match(&iri, hyperlink_match),
+                "\n    at {}:\n{}",
+                self.source_location,
+                self.format_renderable_content()
+            );
+        }
 
-    fn check_iri_and_match(
-        term: &Term<VoidListener>,
-        expected_hyperlink: &ExpectedHyperlink,
-        iri: String,
-        hyperlink_match: &Match,
-        source_location: String,
-    ) {
-        let format_iri_and_match = |iri: &String, hyperlink_match: &Match| {
-            format!(
-                "Url = «{}», at grid cells ({}, {})..=({}, {})",
-                iri,
-                hyperlink_match.start().line.0,
-                hyperlink_match.start().column.0,
-                hyperlink_match.end().line.0,
-                hyperlink_match.end().column.0,
-            )
-        };
+        fn format_renderable_content(&self) -> String {
+            let mut result = format!("\nHovered on '{}'\n", self.expected_hyperlink.hovered_char);
 
-        assert_eq!(
-            expected_hyperlink.is_iri,
-            true,
-            "\n    at {source_location}\nExpected a path, but was a iri:\n{}",
-            format_renderable_content(term, expected_hyperlink)
-        );
+            let mut first_header_row = String::new();
+            let mut second_header_row = String::new();
+            let mut marker_header_row = String::new();
+            for index in 0..self.term.columns() {
+                let remainder = index % 10;
+                first_header_row.push_str(
+                    &(index > 0 && remainder == 0)
+                        .then_some((index / 10).to_string())
+                        .unwrap_or(" ".into()),
+                );
+                second_header_row += &remainder.to_string();
+                if index == self.expected_hyperlink.hovered_grid_point.column.0 {
+                    marker_header_row.push('↓');
+                } else {
+                    marker_header_row.push(' ');
+                }
+            }
 
-        assert_eq!(
-            format_iri_and_match(
-                &expected_hyperlink.iri_or_path,
-                &expected_hyperlink.hyperlink_match
-            ),
-            format_iri_and_match(&iri, hyperlink_match),
-            "\n    at {source_location}:\n{}",
-            format_renderable_content(term, expected_hyperlink)
-        );
+            result += &format!("\n      [{}]\n", first_header_row);
+            result += &format!("      [{}]\n", second_header_row);
+            result += &format!("       {}", marker_header_row);
+
+            let spacers: Flags = Flags::LEADING_WIDE_CHAR_SPACER | Flags::WIDE_CHAR_SPACER;
+            for cell in self
+                .term
+                .renderable_content()
+                .display_iter
+                .filter(|cell| !cell.flags.intersects(spacers))
+            {
+                if cell.point.column.0 == 0 {
+                    let prefix =
+                        if cell.point.line == self.expected_hyperlink.hovered_grid_point.line {
+                            '→'
+                        } else {
+                            ' '
+                        };
+                    result += &format!("\n{prefix}[{:>3}] ", cell.point.line.to_string());
+                }
+
+                result.push(cell.c);
+            }
+
+            result
+        }
     }
 
     fn test_hyperlink<'a>(
         columns: usize,
-        total_chars: usize,
-        test_lines: &(impl IntoIterator<Item = &'a str> + Clone),
+        total_cells: usize,
+        test_lines: impl Iterator<Item = &'a str>,
         is_iri: bool,
         source_location: String,
     ) {
-        let screen_lines = total_chars / columns + 2;
-        let term_size = TermSize::new(columns, screen_lines);
+        thread_local! {
+            static HYPERLINK_FINDER: RefCell<HyperlinkFinder> = RefCell::new(HyperlinkFinder::new());
+        }
+
+        let term_size = TermSize::new(columns, total_cells / columns + 2);
         let (mut term, expected_hyperlink) =
             build_term_from_test_lines(is_iri, term_size, test_lines);
-        let mut hyperlink_finder = HyperlinkFinder::new();
-        match hyperlink_finder
-            .find_from_grid_point(&mut term, expected_hyperlink.hovered_grid_point)
-        {
+        let hyperlink_found = HYPERLINK_FINDER.with(|hyperlink_finder| {
+            hyperlink_finder
+                .borrow_mut()
+                .find_from_grid_point(&mut term, expected_hyperlink.hovered_grid_point)
+        });
+        let check_hyperlink_match =
+            CheckHyperlinkMatch::new(&term, &expected_hyperlink, &source_location);
+        match hyperlink_found {
             Some((hyperlink_word, false, hyperlink_match)) => {
-                check_path_with_position_and_match(
-                    &term,
-                    &expected_hyperlink,
+                check_hyperlink_match.check_path_with_position_and_match(
                     PathWithPosition::parse_str(&hyperlink_word),
                     &hyperlink_match,
-                    source_location,
                 );
             }
             Some((hyperlink_word, true, hyperlink_match)) => {
-                check_iri_and_match(
-                    &term,
-                    &expected_hyperlink,
-                    hyperlink_word,
-                    &hyperlink_match,
-                    source_location,
-                );
+                check_hyperlink_match.check_iri_and_match(hyperlink_word, &hyperlink_match);
             }
             _ => {
                 assert!(
                     false,
                     "No hyperlink found\n     at {source_location}:\n{}",
-                    format_renderable_content(&term, &expected_hyperlink)
+                    check_hyperlink_match.format_renderable_content()
                 )
             }
         }

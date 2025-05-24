@@ -14537,6 +14537,7 @@ dependencies = [
  "task",
  "theme",
  "thiserror 2.0.12",
+ "unicode-width 0.2.0",
  "url",
  "util",
  "windows 0.61.1",
