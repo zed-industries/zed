@@ -103,17 +103,15 @@ fn render_inspector_id(inspector_id: &InspectorElementId, cx: &App) -> Div {
     let source_location = inspector_id.path.source_location;
     v_flex()
         .child(Label::new("Element ID").size(LabelSize::Large))
-        .when(inspector_id.instance_id != 0, |this| {
-            this.child(
-                div()
-                    .id("instance-id")
-                    .text_ui(cx)
-                    .tooltip(Tooltip::text(
-                        "Disambiguates elements from the same source location",
-                    ))
-                    .child(format!("Instance {}", inspector_id.instance_id)),
-            )
-        })
+        .child(
+            div()
+                .id("instance-id")
+                .text_ui(cx)
+                .tooltip(Tooltip::text(
+                    "Disambiguates elements from the same source location",
+                ))
+                .child(format!("Instance {}", inspector_id.instance_id)),
+        )
         .child(
             div()
                 .id("source-location")
@@ -131,7 +129,7 @@ fn render_inspector_id(inspector_id: &InspectorElementId, cx: &App) -> Div {
             div()
                 .id("global-id")
                 .text_ui(cx)
-                .min_h_12()
+                .min_h_20()
                 .tooltip(Tooltip::text(
                     "GlobalElementId of the nearest ancestor with an ID",
                 ))
