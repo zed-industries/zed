@@ -1,101 +1,11 @@
 use proc_macro::TokenStream;
-use proc_macro2::{Span, TokenStream as TokenStream2};
-use quote::{ToTokens, quote};
+use proc_macro2::TokenStream as TokenStream2;
+use quote::quote;
 use syn::{
-    FnArg, Ident, Item, ItemMacro, ItemTrait, Path, ReturnType, TraitItem, Type, parse_macro_input,
+    FnArg, Ident, Item, ItemTrait, Path, ReturnType, TraitItem, Type, parse_macro_input,
     parse_quote,
     visit_mut::{self, VisitMut},
 };
-
-struct MacroExpander;
-
-impl VisitMut for MacroExpander {
-    fn visit_item_trait_mut(&mut self, trait_item: &mut ItemTrait) {
-        let mut expanded_items = Vec::new();
-        let mut items_to_keep = Vec::new();
-
-        for item in trait_item.items.drain(..) {
-            match item {
-                TraitItem::Macro(macro_item) => {
-                    // Try to expand known macros
-                    if let Some(expanded) = try_expand_macro(&macro_item) {
-                        expanded_items.extend(expanded);
-                    } else {
-                        // Keep unknown macros as-is
-                        items_to_keep.push(TraitItem::Macro(macro_item));
-                    }
-                }
-                other => {
-                    items_to_keep.push(other);
-                }
-            }
-        }
-
-        // Rebuild the items list with expanded content first, then original items
-        trait_item.items = expanded_items;
-        trait_item.items.extend(items_to_keep);
-
-        // Continue visiting
-        visit_mut::visit_item_trait_mut(self, trait_item);
-    }
-}
-
-fn try_expand_macro(macro_item: &syn::TraitItemMacro) -> Option<Vec<TraitItem>> {
-    let path = &macro_item.mac.path;
-
-    // Check if this is one of our known style macros
-    let macro_name = path_to_string(path);
-
-    // Handle the known macros by calling their implementations
-    match macro_name.as_str() {
-        "gpui_macros::style_helpers" | "style_helpers" => {
-            let tokens = macro_item.mac.tokens.clone();
-            let expanded = crate::styles::style_helpers(TokenStream::from(tokens));
-            parse_expanded_items(expanded)
-        }
-        "gpui_macros::visibility_style_methods" | "visibility_style_methods" => {
-            let tokens = macro_item.mac.tokens.clone();
-            let expanded = crate::styles::visibility_style_methods(TokenStream::from(tokens));
-            parse_expanded_items(expanded)
-        }
-        "gpui_macros::margin_style_methods" | "margin_style_methods" => {
-            let tokens = macro_item.mac.tokens.clone();
-            let expanded = crate::styles::margin_style_methods(TokenStream::from(tokens));
-            parse_expanded_items(expanded)
-        }
-        "gpui_macros::padding_style_methods" | "padding_style_methods" => {
-            let tokens = macro_item.mac.tokens.clone();
-            let expanded = crate::styles::padding_style_methods(TokenStream::from(tokens));
-            parse_expanded_items(expanded)
-        }
-        "gpui_macros::position_style_methods" | "position_style_methods" => {
-            let tokens = macro_item.mac.tokens.clone();
-            let expanded = crate::styles::position_style_methods(TokenStream::from(tokens));
-            parse_expanded_items(expanded)
-        }
-        "gpui_macros::overflow_style_methods" | "overflow_style_methods" => {
-            let tokens = macro_item.mac.tokens.clone();
-            let expanded = crate::styles::overflow_style_methods(TokenStream::from(tokens));
-            parse_expanded_items(expanded)
-        }
-        "gpui_macros::cursor_style_methods" | "cursor_style_methods" => {
-            let tokens = macro_item.mac.tokens.clone();
-            let expanded = crate::styles::cursor_style_methods(TokenStream::from(tokens));
-            parse_expanded_items(expanded)
-        }
-        "gpui_macros::border_style_methods" | "border_style_methods" => {
-            let tokens = macro_item.mac.tokens.clone();
-            let expanded = crate::styles::border_style_methods(TokenStream::from(tokens));
-            parse_expanded_items(expanded)
-        }
-        "gpui_macros::box_shadow_style_methods" | "box_shadow_style_methods" => {
-            let tokens = macro_item.mac.tokens.clone();
-            let expanded = crate::styles::box_shadow_style_methods(TokenStream::from(tokens));
-            parse_expanded_items(expanded)
-        }
-        _ => None,
-    }
-}
 
 fn path_to_string(path: &Path) -> String {
     path.segments
@@ -274,4 +184,94 @@ fn generate_reflected_trait(trait_item: ItemTrait) -> TokenStream {
     };
 
     TokenStream::from(output)
+}
+
+struct MacroExpander;
+
+impl VisitMut for MacroExpander {
+    fn visit_item_trait_mut(&mut self, trait_item: &mut ItemTrait) {
+        let mut expanded_items = Vec::new();
+        let mut items_to_keep = Vec::new();
+
+        for item in trait_item.items.drain(..) {
+            match item {
+                TraitItem::Macro(macro_item) => {
+                    // Try to expand known macros
+                    if let Some(expanded) = try_expand_macro(&macro_item) {
+                        expanded_items.extend(expanded);
+                    } else {
+                        // Keep unknown macros as-is
+                        items_to_keep.push(TraitItem::Macro(macro_item));
+                    }
+                }
+                other => {
+                    items_to_keep.push(other);
+                }
+            }
+        }
+
+        // Rebuild the items list with expanded content first, then original items
+        trait_item.items = expanded_items;
+        trait_item.items.extend(items_to_keep);
+
+        // Continue visiting
+        visit_mut::visit_item_trait_mut(self, trait_item);
+    }
+}
+
+fn try_expand_macro(macro_item: &syn::TraitItemMacro) -> Option<Vec<TraitItem>> {
+    let path = &macro_item.mac.path;
+
+    // Check if this is one of our known style macros
+    let macro_name = path_to_string(path);
+
+    // Handle the known macros by calling their implementations
+    match macro_name.as_str() {
+        "gpui_macros::style_helpers" | "style_helpers" => {
+            let tokens = macro_item.mac.tokens.clone();
+            let expanded = crate::styles::style_helpers(TokenStream::from(tokens));
+            parse_expanded_items(expanded)
+        }
+        "gpui_macros::visibility_style_methods" | "visibility_style_methods" => {
+            let tokens = macro_item.mac.tokens.clone();
+            let expanded = crate::styles::visibility_style_methods(TokenStream::from(tokens));
+            parse_expanded_items(expanded)
+        }
+        "gpui_macros::margin_style_methods" | "margin_style_methods" => {
+            let tokens = macro_item.mac.tokens.clone();
+            let expanded = crate::styles::margin_style_methods(TokenStream::from(tokens));
+            parse_expanded_items(expanded)
+        }
+        "gpui_macros::padding_style_methods" | "padding_style_methods" => {
+            let tokens = macro_item.mac.tokens.clone();
+            let expanded = crate::styles::padding_style_methods(TokenStream::from(tokens));
+            parse_expanded_items(expanded)
+        }
+        "gpui_macros::position_style_methods" | "position_style_methods" => {
+            let tokens = macro_item.mac.tokens.clone();
+            let expanded = crate::styles::position_style_methods(TokenStream::from(tokens));
+            parse_expanded_items(expanded)
+        }
+        "gpui_macros::overflow_style_methods" | "overflow_style_methods" => {
+            let tokens = macro_item.mac.tokens.clone();
+            let expanded = crate::styles::overflow_style_methods(TokenStream::from(tokens));
+            parse_expanded_items(expanded)
+        }
+        "gpui_macros::cursor_style_methods" | "cursor_style_methods" => {
+            let tokens = macro_item.mac.tokens.clone();
+            let expanded = crate::styles::cursor_style_methods(TokenStream::from(tokens));
+            parse_expanded_items(expanded)
+        }
+        "gpui_macros::border_style_methods" | "border_style_methods" => {
+            let tokens = macro_item.mac.tokens.clone();
+            let expanded = crate::styles::border_style_methods(TokenStream::from(tokens));
+            parse_expanded_items(expanded)
+        }
+        "gpui_macros::box_shadow_style_methods" | "box_shadow_style_methods" => {
+            let tokens = macro_item.mac.tokens.clone();
+            let expanded = crate::styles::box_shadow_style_methods(TokenStream::from(tokens));
+            parse_expanded_items(expanded)
+        }
+        _ => None,
+    }
 }
