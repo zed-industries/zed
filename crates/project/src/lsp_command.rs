@@ -229,6 +229,7 @@ pub(crate) struct OnTypeFormatting {
     pub trigger: String,
     pub options: lsp::FormattingOptions,
     pub push_to_history: bool,
+    pub snapshot_version: clock::Global,
 }
 
 #[derive(Debug)]
@@ -2728,6 +2729,7 @@ impl LspCommand for OnTypeFormatting {
                 buffer,
                 edits,
                 self.push_to_history,
+                &self.snapshot_version,
                 lsp_adapter,
                 lsp_server,
                 &mut cx,
@@ -2772,11 +2774,16 @@ impl LspCommand for OnTypeFormatting {
             )
         })?;
 
+        let (position, version) = buffer.update(&mut cx, |buffer, _| {
+            (position.to_point_utf16(buffer), buffer.version())
+        })?;
+
         Ok(Self {
-            position: buffer.update(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position,
             trigger: message.trigger.clone(),
             options,
             push_to_history: false,
+            snapshot_version: version,
         })
     }
 
