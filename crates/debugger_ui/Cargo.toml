@@ -65,6 +65,7 @@ workspace-hack.workspace = true
 env_logger = { workspace = true, optional = true }
 debugger_tools = { workspace = true, optional = true }
 unindent = { workspace = true, optional = true }
+zed_actions.workspace = true
 
 [dev-dependencies]
 dap = { workspace = true, features = ["test-support"] }
