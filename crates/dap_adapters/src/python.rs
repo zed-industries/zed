@@ -118,11 +118,7 @@ impl PythonDebugAdapter {
         let python_command = python_path.context("failed to find binary path for Python")?;
         log::info!("Using Python executable: {}", python_command);
 
-        // Check if we're dealing with a pip-installed debugpy (user_installed_path provided)
-        // vs a downloaded GitHub release
         let arguments = if let Some(user_installed_path) = user_installed_path {
-            // For pip-installed debugpy, check if it's a debugpy module directory
-            // In this case, use -m debugpy.adapter to start the debug adapter
             if user_installed_path
                 .file_name()
                 .and_then(|name| name.to_str())
@@ -141,7 +137,6 @@ impl PythonDebugAdapter {
                     port.to_string(),
                 ]
             } else {
-                // Fallback to the old behavior for other user-installed paths
                 log::info!(
                     "Using user-installed debugpy adapter from: {}",
                     user_installed_path.display()
@@ -156,7 +151,6 @@ impl PythonDebugAdapter {
                 ]
             }
         } else {
-            // For downloaded GitHub releases, use the original logic
             let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
             let file_name_prefix = format!("{}_", Self::ADAPTER_NAME);
 
@@ -662,11 +656,7 @@ mod tests {
         // Test that when user_installed_path points to a debugpy directory,
         // we use -m debugpy.adapter to start the debug adapter
 
-        // Simulate a pip-installed debugpy path
         let debugpy_path = PathBuf::from("/some/env/bin/debugpy");
-
-        // This would be the path that gets constructed in get_binary when
-        // it finds a debugpy directory next to the Python executable
         assert_eq!(
             debugpy_path.file_name().and_then(|name| name.to_str()),
             Some("debugpy")
@@ -675,7 +665,6 @@ mod tests {
 
     #[test]
     fn test_adapter_path_constant() {
-        // Ensure the adapter path constant is correct for GitHub releases
         assert_eq!(PythonDebugAdapter::ADAPTER_PATH, "src/debugpy/adapter");
     }
 }
