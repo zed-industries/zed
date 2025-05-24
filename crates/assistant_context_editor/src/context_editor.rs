@@ -2063,13 +2063,9 @@ impl ContextEditor {
 
     fn render_max_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let context = self.context().read(cx);
-        let active_model = match LanguageModelRegistry::read_global(cx)
+        let active_model = LanguageModelRegistry::read_global(cx)
             .default_model()
-            .map(|default| default.model)
-        {
-            Some(model) => model,
-            None => return None,
-        };
+            .map(|default| default.model)?;
         if !active_model.supports_max_mode() {
             return None;
         }
