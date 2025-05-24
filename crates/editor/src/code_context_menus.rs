@@ -50,11 +50,12 @@ impl CodeContextMenu {
     pub fn select_first(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> bool {
         if self.visible() {
             match self {
-                CodeContextMenu::Completions(menu) => menu.select_first(provider, cx),
+                CodeContextMenu::Completions(menu) => menu.select_first(provider, window, cx),
                 CodeContextMenu::CodeActions(menu) => menu.select_first(cx),
             }
             true
@@ -66,11 +67,12 @@ impl CodeContextMenu {
     pub fn select_prev(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> bool {
         if self.visible() {
             match self {
-                CodeContextMenu::Completions(menu) => menu.select_prev(provider, cx),
+                CodeContextMenu::Completions(menu) => menu.select_prev(provider, window, cx),
                 CodeContextMenu::CodeActions(menu) => menu.select_prev(cx),
             }
             true
@@ -82,11 +84,12 @@ impl CodeContextMenu {
     pub fn select_next(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> bool {
         if self.visible() {
             match self {
-                CodeContextMenu::Completions(menu) => menu.select_next(provider, cx),
+                CodeContextMenu::Completions(menu) => menu.select_next(provider, window, cx),
                 CodeContextMenu::CodeActions(menu) => menu.select_next(cx),
             }
             true
@@ -98,11 +101,12 @@ impl CodeContextMenu {
     pub fn select_last(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> bool {
         if self.visible() {
             match self {
-                CodeContextMenu::Completions(menu) => menu.select_last(provider, cx),
+                CodeContextMenu::Completions(menu) => menu.select_last(provider, window, cx),
                 CodeContextMenu::CodeActions(menu) => menu.select_last(cx),
             }
             true
@@ -290,6 +294,7 @@ impl CompletionsMenu {
     fn select_first(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
         let index = if self.scroll_handle.y_flipped() {
@@ -297,40 +302,56 @@ impl CompletionsMenu {
         } else {
             0
         };
-        self.update_selection_index(index, provider, cx);
+        self.update_selection_index(index, provider, window, cx);
     }
 
-    fn select_last(&mut self, provider: Option<&dyn CompletionProvider>, cx: &mut Context<Editor>) {
+    fn select_last(
+        &mut self,
+        provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
         let index = if self.scroll_handle.y_flipped() {
             0
         } else {
             self.entries.borrow().len() - 1
         };
-        self.update_selection_index(index, provider, cx);
+        self.update_selection_index(index, provider, window, cx);
     }
 
-    fn select_prev(&mut self, provider: Option<&dyn CompletionProvider>, cx: &mut Context<Editor>) {
+    fn select_prev(
+        &mut self,
+        provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
         let index = if self.scroll_handle.y_flipped() {
             self.next_match_index()
         } else {
             self.prev_match_index()
         };
-        self.update_selection_index(index, provider, cx);
+        self.update_selection_index(index, provider, window, cx);
     }
 
-    fn select_next(&mut self, provider: Option<&dyn CompletionProvider>, cx: &mut Context<Editor>) {
+    fn select_next(
+        &mut self,
+        provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
         let index = if self.scroll_handle.y_flipped() {
             self.prev_match_index()
         } else {
             self.next_match_index()
         };
-        self.update_selection_index(index, provider, cx);
+        self.update_selection_index(index, provider, window, cx);
     }
 
     fn update_selection_index(
         &mut self,
         match_index: usize,
         provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
         if self.selected_item != match_index {
@@ -338,6 +359,9 @@ impl CompletionsMenu {
             self.scroll_handle
                 .scroll_to_item(self.selected_item, ScrollStrategy::Top);
             self.resolve_visible_completions(provider, cx);
+            if let Some(provider) = provider {
+                provider.selection_changed(&self.entries.borrow()[self.selected_item], window, cx)
+            }
             cx.notify();
         }
     }

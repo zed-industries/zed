@@ -1,11 +1,13 @@
 use anyhow::Result;
-use editor::{CompletionProvider, Editor, EditorEvent, EditorMode, ExcerptId, MultiBuffer};
+use editor::{Bias, CompletionProvider, Editor, EditorEvent, EditorMode, ExcerptId, MultiBuffer};
+use fuzzy::StringMatch;
 use gpui::{
     AsyncWindowContext, DivInspectorState, Entity, InspectorElementId, IntoElement,
     StyleRefinement, Task, Window, inspector_reflection::MethodReflection, styled_reflection,
 };
+
 use language::language_settings::SoftWrap;
-use language::{Anchor, Buffer, CodeLabel, Point, ToOffset as _, ToPoint as _};
+use language::{Anchor, Buffer, BufferSnapshot, CodeLabel, Point, ToOffset as _, ToPoint as _};
 use project::lsp_store::CompletionDocumentation;
 use project::{Completion, CompletionSource, Project, ProjectPath};
 use std::cell::RefCell;
@@ -25,22 +27,25 @@ const ZED_INSPECTOR_RUST_STYLE_PATH: &str = "/zed-inspector-style.rs";
 pub(crate) struct DivInspector {
     project: Entity<Project>,
     inspector_id: Option<InspectorElementId>,
-    state: Option<DivInspectorState>,
-    buffers: Option<Buffers>,
-    loaded: Option<Loaded>,
+    inspector_state: Option<DivInspectorState>,
+    state: State,
+    rust_completion: Option<String>,
+    rust_completion_position: Option<Anchor>,
     last_style_error: Option<SharedString>,
 }
 
-#[derive(Clone)]
-struct Buffers {
-    // todo! better naming
-    rust_style_buffer: Entity<Buffer>,
-    style_buffer: Entity<Buffer>,
-}
-
-struct Loaded {
-    rust_style_editor: Entity<Editor>,
-    style_editor: Entity<Editor>,
+enum State {
+    Loading,
+    BuffersLoaded {
+        rust_style_buffer: Entity<Buffer>,
+        style_buffer: Entity<Buffer>,
+    },
+    Ready {
+        rust_style_buffer: Entity<Buffer>,
+        rust_style_editor: Entity<Editor>,
+        style_buffer: Entity<Buffer>,
+        style_editor: Entity<Editor>,
+    },
 }
 
 impl DivInspector {
@@ -66,10 +71,10 @@ impl DivInspector {
                     Self::open_buffer(ZED_INSPECTOR_RUST_STYLE_PATH, &project, cx).await?;
 
                 this.update_in(cx, |this, window, cx| {
-                    this.buffers = Some(Buffers {
+                    this.state = State::BuffersLoaded {
                         style_buffer: style_buffer,
                         rust_style_buffer: rust_style_buffer,
-                    });
+                    };
                     this.refresh_inspected_element(window, cx);
                 })?;
 
@@ -81,18 +86,20 @@ impl DivInspector {
         DivInspector {
             project,
             inspector_id: None,
-            state: None,
-            buffers: None,
-            loaded: None,
+            inspector_state: None,
+            state: State::Loading,
+            rust_completion: None,
+            rust_completion_position: None,
             last_style_error: None,
         }
     }
 
     fn refresh_inspected_element(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(id) = self.inspector_id.clone() {
-            let state = window.with_inspector_state(Some(&id), cx, |state, _window| state.clone());
-            if let Some(state) = state {
-                self.update_inspected_element(&id, state, window, cx);
+            let inspector_state =
+                window.with_inspector_state(Some(&id), cx, |state, _window| state.clone());
+            if let Some(inspector_state) = inspector_state {
+                self.update_inspected_element(&id, inspector_state, window, cx);
                 cx.notify();
             }
         }
@@ -101,12 +108,12 @@ impl DivInspector {
     pub fn update_inspected_element(
         &mut self,
         id: &InspectorElementId,
-        state: DivInspectorState,
+        inspector_state: DivInspectorState,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let base_style = state.base_style.clone();
-        self.state = Some(state);
+        let base_style = inspector_state.base_style.clone();
+        self.inspector_state = Some(inspector_state);
 
         if self.inspector_id.as_ref() == Some(id) {
             return;
@@ -114,14 +121,26 @@ impl DivInspector {
             self.inspector_id = Some(id.clone());
         }
 
-        let Some(buffers) = self.buffers.clone() else {
-            return;
+        let (rust_style_buffer, style_buffer) = match &self.state {
+            State::BuffersLoaded {
+                rust_style_buffer,
+                style_buffer,
+            }
+            | State::Ready {
+                rust_style_buffer,
+                style_buffer,
+                ..
+            } => (rust_style_buffer.clone(), style_buffer.clone()),
+            State::Loading => return,
         };
 
         let base_style_json = match serde_json::to_string_pretty(&base_style) {
             Ok(base_style_json) => base_style_json,
             Err(err) => {
-                self.loaded = None;
+                self.state = State::BuffersLoaded {
+                    rust_style_buffer: rust_style_buffer.clone(),
+                    style_buffer: style_buffer.clone(),
+                };
                 self.last_style_error =
                     Some(format!("Failed to convert base_style to JSON: {err}").into());
                 return;
@@ -129,11 +148,11 @@ impl DivInspector {
         };
         self.last_style_error = None;
 
-        buffers.style_buffer.update(cx, |style_buffer, cx| {
+        style_buffer.update(cx, |style_buffer, cx| {
             style_buffer.set_text(base_style_json, cx)
         });
 
-        let style_editor = self.create_editor(buffers.style_buffer, window, cx);
+        let style_editor = self.create_editor(style_buffer.clone(), window, cx);
 
         cx.subscribe_in(&style_editor, window, {
             let id = id.clone();
@@ -145,9 +164,9 @@ impl DivInspector {
                             window.with_inspector_state::<DivInspectorState, _>(
                                 Some(&id),
                                 cx,
-                                |state, _window| {
-                                    if let Some(state) = state.as_mut() {
-                                        *state.base_style = new_base_style;
+                                |inspector_state, _window| {
+                                    if let Some(inspector_state) = inspector_state.as_mut() {
+                                        *inspector_state.base_style = new_base_style;
                                     }
                                 },
                             );
@@ -162,46 +181,115 @@ impl DivInspector {
         })
         .detach();
 
-        buffers
-            .rust_style_buffer
-            .update(cx, |rust_style_buffer, cx| {
-                rust_style_buffer.set_text(guess_rust_code_from_style(&base_style), cx)
-            });
+        rust_style_buffer.update(cx, |rust_style_buffer, cx| {
+            rust_style_buffer.set_text(guess_rust_code_from_style(&base_style), cx)
+        });
 
-        let rust_style_editor = self.create_editor(buffers.rust_style_buffer, window, cx);
+        let rust_style_editor = self.create_editor(rust_style_buffer.clone(), window, cx);
 
+        let div_inspector = cx.entity();
         rust_style_editor.update(cx, |rust_style_editor, _cx| {
-            rust_style_editor.set_completion_provider(Some(Box::new(RustStyleCompletionProvider)));
+            rust_style_editor.set_completion_provider(Some(Box::new(
+                RustStyleCompletionProvider { div_inspector },
+            )));
         });
 
         cx.subscribe_in(&rust_style_editor, window, {
             let style_editor = style_editor.clone();
-            move |_this, editor, event: &EditorEvent, window, cx| match event {
+            let rust_style_buffer = rust_style_buffer.clone();
+            move |this, _editor, event: &EditorEvent, window, cx| match event {
                 EditorEvent::BufferEdited => {
-                    let old_style_text = style_editor.read(cx).text(cx);
-                    match serde_json_lenient::from_str::<StyleRefinement>(&old_style_text) {
-                        // todo! handle
-                        Err(_) => {}
-                        Ok(style) => {
-                            let code = editor.read(cx).text(cx);
-                            let style = update_style_from_rust_code(style, &code);
-                            // todo!(unwrap)
-                            let json = serde_json::to_string_pretty(&style).unwrap();
-                            style_editor.update(cx, |style_editor, cx| {
-                                style_editor.set_text(json, window, cx);
-                            });
-                        }
-                    }
+                    this.update_json_style_from_rust(&style_editor, &rust_style_buffer, window, cx);
+                }
+                EditorEvent::CodeContextMenuClosed => {
+                    this.rust_completion = None;
+                    this.update_json_style_from_rust(&style_editor, &rust_style_buffer, window, cx);
                 }
                 _ => {}
             }
         })
         .detach();
 
-        self.loaded = Some(Loaded {
+        self.state = State::Ready {
+            rust_style_buffer,
             rust_style_editor,
+            style_buffer,
             style_editor,
-        });
+        };
+    }
+
+    fn handle_rust_completion_selection_change(
+        &mut self,
+        rust_completion: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.rust_completion = Some(rust_completion);
+        if let State::Ready {
+            rust_style_buffer,
+            style_editor,
+            ..
+        } = &self.state
+        {
+            self.update_json_style_from_rust(style_editor, rust_style_buffer, window, cx);
+        }
+    }
+
+    fn update_json_style_from_rust(
+        &self,
+        style_editor: &Entity<Editor>,
+        rust_style_buffer: &Entity<Buffer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let old_style_text = style_editor.read(cx).text(cx);
+        match serde_json_lenient::from_str::<StyleRefinement>(&old_style_text) {
+            // todo! handle
+            Err(_) => {}
+            Ok(style) => {
+                let rust_style_buffer = rust_style_buffer.read(cx);
+                let method_names = if let Some((completion, position)) = self
+                    .rust_completion
+                    .as_ref()
+                    .zip(self.rust_completion_position.as_ref())
+                {
+                    let snapshot = rust_style_buffer.snapshot();
+                    let Range { start, end } = completion_replace_range(&snapshot, position)
+                        .unwrap_or(position.clone()..position.clone());
+                    let before_text = snapshot
+                        .text_for_range(0..start.to_offset(&snapshot))
+                        .collect::<String>();
+                    let after_text = snapshot
+                        .text_for_range(
+                            end.to_offset(&snapshot)..snapshot.clip_offset(usize::MAX, Bias::Left),
+                        )
+                        .collect::<String>();
+                    let mut method_names = before_text
+                        .split(is_not_identifier_char)
+                        .map(|name| name.to_string())
+                        .collect::<Vec<_>>();
+                    method_names.push(completion.clone());
+                    method_names.extend(
+                        after_text
+                            .split(is_not_identifier_char)
+                            .map(|name| name.to_string()),
+                    );
+                    method_names
+                } else {
+                    rust_style_buffer
+                        .text()
+                        .split(is_not_identifier_char)
+                        .map(|name| name.to_string())
+                        .collect::<Vec<_>>()
+                };
+                let style = update_style_from_method_names(style, method_names);
+                // todo!(unwrap)
+                let json = serde_json::to_string_pretty(&style).unwrap();
+                style_editor.update(cx, |style_editor, cx| {
+                    style_editor.set_text(json, window, cx);
+                });
+            }
+        }
     }
 
     async fn open_buffer(
@@ -258,27 +346,38 @@ impl Render for DivInspector {
         v_flex()
             .size_full()
             .gap_2()
-            .when_some(self.state.as_ref(), |this, state| {
+            .when_some(self.inspector_state.as_ref(), |this, inspector_state| {
                 this.child(
                     v_flex()
                         .child(Label::new("Layout").size(LabelSize::Large))
-                        .child(render_layout_state(state, cx)),
+                        .child(render_layout_state(inspector_state, cx)),
                 )
             })
             .child(
                 v_flex()
                     .gap_2()
                     .child(Label::new("Rust Style").size(LabelSize::Large))
-                    .when_some(self.loaded.as_ref(), |this, editors| {
-                        this.child(div().h_64().child(editors.rust_style_editor.clone()))
+                    .map(|this| {
+                        if let State::Ready {
+                            rust_style_editor, ..
+                        } = &self.state
+                        {
+                            this.child(div().h_64().child(rust_style_editor.clone()))
+                        } else {
+                            this
+                        }
                     }),
             )
             .child(
                 v_flex()
                     .gap_2()
                     .child(Label::new("JSON Style").size(LabelSize::Large))
-                    .when_some(self.loaded.as_ref(), |this, editors| {
-                        this.child(div().h_128().child(editors.style_editor.clone()))
+                    .map(|this| {
+                        if let State::Ready { style_editor, .. } = &self.state {
+                            this.child(div().h_128().child(style_editor.clone()))
+                        } else {
+                            this
+                        }
                     })
                     .when_some(self.last_style_error.as_ref(), |this, last_error| {
                         this.child(
@@ -290,24 +389,36 @@ impl Render for DivInspector {
                         )
                     }),
             )
-            .when_none(&self.loaded, |this| this.child(Label::new("Loading...")))
+            .map(|this| {
+                if matches!(self.state, State::Ready { .. }) {
+                    this
+                } else {
+                    this.child(Label::new("Loading..."))
+                }
+            })
             .into_any_element()
     }
 }
 
-fn render_layout_state(state: &DivInspectorState, cx: &App) -> Div {
+fn render_layout_state(inspector_state: &DivInspectorState, cx: &App) -> Div {
     v_flex()
-        .child(div().text_ui(cx).child(format!("Bounds: {}", state.bounds)))
+        .child(
+            div()
+                .text_ui(cx)
+                .child(format!("Bounds: {}", inspector_state.bounds)),
+        )
         .child(
             div()
                 .id("content-size")
                 .text_ui(cx)
                 .tooltip(Tooltip::text("Size of the element's children"))
-                .child(if state.content_size != state.bounds.size {
-                    format!("Content size: {}", state.content_size)
-                } else {
-                    "".to_string()
-                }),
+                .child(
+                    if inspector_state.content_size != inspector_state.bounds.size {
+                        format!("Content size: {}", inspector_state.content_size)
+                    } else {
+                        "".to_string()
+                    },
+                ),
         )
 }
 
@@ -340,11 +451,12 @@ fn guess_rust_code_from_style(goal_style: &StyleRefinement) -> String {
     result
 }
 
-fn update_style_from_rust_code(mut style: StyleRefinement, code: &str) -> StyleRefinement {
-    for word in code.split(is_not_identifier_char) {
-        if let Some(method) = styled_reflection::find_method::<StyleRefinement>(word)
-            .or_else(|| styled_ext_reflection::find_method::<StyleRefinement>(word))
-        {
+fn update_style_from_method_names(
+    mut style: StyleRefinement,
+    method_names: impl IntoIterator<Item = String>,
+) -> StyleRefinement {
+    for name in method_names {
+        if let Some(method) = STYLE_METHODS.iter().find(|m| m.name == name) {
             style = method.invoke(style);
         }
     }
@@ -355,7 +467,9 @@ fn is_not_identifier_char(c: char) -> bool {
     !c.is_alphanumeric() && c != '_'
 }
 
-struct RustStyleCompletionProvider;
+struct RustStyleCompletionProvider {
+    div_inspector: Entity<DivInspector>,
+}
 
 impl CompletionProvider for RustStyleCompletionProvider {
     fn completions(
@@ -367,7 +481,12 @@ impl CompletionProvider for RustStyleCompletionProvider {
         _window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Task<Result<Option<Vec<project::Completion>>>> {
-        let Some(replace_range) = find_replace_range(buffer.read(cx), position) else {
+        self.div_inspector.update(cx, |div_inspector, _cx| {
+            div_inspector.rust_completion_position = Some(position.clone());
+        });
+
+        let Some(replace_range) = completion_replace_range(&buffer.read(cx).snapshot(), &position)
+        else {
             return Task::ready(Ok(Some(Vec::new())));
         };
 
@@ -408,17 +527,30 @@ impl CompletionProvider for RustStyleCompletionProvider {
         _: bool,
         cx: &mut Context<Editor>,
     ) -> bool {
-        find_replace_range(buffer.read(cx), position).is_some()
+        completion_replace_range(&buffer.read(cx).snapshot(), &position).is_some()
+    }
+
+    fn selection_changed(&self, mat: &StringMatch, window: &mut Window, cx: &mut App) {
+        let div_inspector = self.div_inspector.clone();
+        let rust_completion = mat.string.clone();
+        window.defer(cx, move |window, cx| {
+            div_inspector.update(cx, |div_inspector, cx| {
+                div_inspector.handle_rust_completion_selection_change(rust_completion, window, cx);
+            });
+        });
+    }
+
+    fn sort_completions(&self) -> bool {
+        false
     }
 }
 
-fn find_replace_range(buffer: &Buffer, anchor: Anchor) -> Option<Range<Anchor>> {
-    let snapshot = buffer.snapshot();
+fn completion_replace_range(snapshot: &BufferSnapshot, anchor: &Anchor) -> Option<Range<Anchor>> {
     let point = anchor.to_point(&snapshot);
     let offset = point.to_offset(&snapshot);
     let line_start = Point::new(point.row, 0).to_offset(&snapshot);
-    let line_end = Point::new(point.row, buffer.line_len(point.row)).to_offset(&snapshot);
-    let mut lines = buffer.text_for_range(line_start..line_end).lines();
+    let line_end = Point::new(point.row, snapshot.line_len(point.row)).to_offset(&snapshot);
+    let mut lines = snapshot.text_for_range(line_start..line_end).lines();
     let line = lines.next()?;
 
     let start_in_line = &line[..offset - line_start]

@@ -8166,6 +8166,7 @@ dependencies = [
  "anyhow",
  "command_palette_hooks",
  "editor",
+ "fuzzy",
  "gpui",
  "language",
  "project",
