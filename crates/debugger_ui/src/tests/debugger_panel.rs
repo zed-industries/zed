@@ -1439,13 +1439,7 @@ async fn test_we_send_arguments_from_user_config(
             client.on_request::<dap::requests::Launch, _>(move |_, args| {
                 launch_handler_called.store(true, Ordering::SeqCst);
 
-                let obj = args.raw.as_object().unwrap();
-                let sent_definition = serde_json::from_value::<DebugTaskDefinition>(
-                    obj.get(&"raw_request".to_owned()).unwrap().clone(),
-                )
-                .unwrap();
-
-                assert_eq!(sent_definition, debug_definition);
+                assert_eq!(args.raw, debug_definition.config);
 
                 Ok(())
             });
