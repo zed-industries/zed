@@ -232,13 +232,14 @@ pub mod inspector_reflection {
 
     /// Information about a reflectable method
     #[derive(Clone, Copy)]
-    pub struct MethodInfo {
+    pub struct MethodReflection {
         /// The name of the method
         pub name: &'static str,
-        function: InvokeFn,
+        /// The function
+        pub function: InvokeFn,
     }
 
-    impl MethodInfo {
+    impl MethodReflection {
         /// Invoke this method on a value
         ///
         /// Returns the result of the method invocation.

@@ -1,6 +1,6 @@
 use heck::ToSnakeCase as _;
 use proc_macro::TokenStream;
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
 use syn::{
     FnArg, Ident, Item, ItemTrait, Path, ReturnType, TraitItem, Type, parse_macro_input,
@@ -59,6 +59,14 @@ pub fn derive_inspector_reflection(_args: TokenStream, input: TokenStream) -> To
 fn generate_reflected_trait(trait_item: ItemTrait) -> TokenStream {
     let trait_name = &trait_item.ident;
     let vis = &trait_item.vis;
+
+    // Determine if we're being called from within the gpui crate
+    let call_site = Span::call_site();
+    let inspector_reflection_path = if is_called_from_gpui_crate(call_site) {
+        quote! { crate::inspector_reflection }
+    } else {
+        quote! { ::gpui::inspector_reflection }
+    };
 
     // Collect method information for methods of form fn name(self) -> Self or fn name(mut self) -> Self
     let mut method_infos = Vec::new();
@@ -122,7 +130,7 @@ fn generate_reflected_trait(trait_item: ItemTrait) -> TokenStream {
         let method_name_str = method_name.to_string();
         let wrapper_name = Ident::new(&format!("__wrapper_{}", method_name), method_name.span());
         quote! {
-            ::gpui::inspector_reflection::MethodInfo {
+            #inspector_reflection_path::MethodReflection {
                 name: #method_name_str,
                 function: #wrapper_name::<T>,
             }
@@ -142,20 +150,26 @@ fn generate_reflected_trait(trait_item: ItemTrait) -> TokenStream {
             #(#wrapper_functions)*
 
             /// Get all reflectable methods for a concrete type implementing the trait
-            pub fn methods<T: #trait_name + 'static>() -> [::gpui::inspector_reflection::MethodInfo; #method_count] {
+            pub fn methods<T: #trait_name + 'static>() -> [#inspector_reflection_path::MethodReflection; #method_count] {
                 [
                     #(#method_info_entries),*
                 ]
             }
 
             /// Find a method by name for a concrete type implementing the trait
-            pub fn find_method<T: #trait_name + 'static>(name: &str) -> Option<::gpui::inspector_reflection::MethodInfo> {
+            pub fn find_method<T: #trait_name + 'static>(name: &str) -> Option<#inspector_reflection_path::MethodReflection> {
                 methods::<T>().into_iter().find(|m| m.name == name)
             }
         }
     };
 
     TokenStream::from(output)
+}
+
+fn is_called_from_gpui_crate(_span: Span) -> bool {
+    // Check if we're being called from within the gpui crate by examining the call site
+    // This is a heuristic approach - we check if the current crate name is "gpui"
+    std::env::var("CARGO_PKG_NAME").map_or(false, |name| name == "gpui")
 }
 
 struct MacroExpander;

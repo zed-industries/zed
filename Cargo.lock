@@ -16831,6 +16831,7 @@ dependencies = [
  "component",
  "documented",
  "gpui",
+ "gpui_macros",
  "icons",
  "itertools 0.14.0",
  "menu",

@@ -1,26 +1,40 @@
 use anyhow::Result;
 use editor::{Editor, EditorEvent, EditorMode, MultiBuffer};
 use gpui::{
-    AsyncWindowContext, DivInspectorState, Entity, InspectorElementId, IntoElement, WeakEntity,
-    Window,
+    AsyncWindowContext, DivInspectorState, Entity, InspectorElementId, IntoElement,
+    StyleRefinement, Window, styled_reflection,
 };
 use language::Buffer;
 use language::language_settings::SoftWrap;
 use project::{Project, ProjectPath};
 use std::path::Path;
-use ui::{Label, LabelSize, Tooltip, prelude::*, v_flex};
+use ui::{Label, LabelSize, Tooltip, prelude::*, styled_ext_reflection, v_flex};
 
 /// Path used for unsaved buffer that contains style json. To support the json language server, this
 /// matches the name used in the generated schemas.
 const ZED_INSPECTOR_STYLE_PATH: &str = "/zed-inspector-style.json";
 
+const ZED_INSPECTOR_RUST_STYLE_PATH: &str = "/zed-inspector-style.rs";
+
 pub(crate) struct DivInspector {
     project: Entity<Project>,
     inspector_id: Option<InspectorElementId>,
     state: Option<DivInspectorState>,
-    style_buffer: Option<Entity<Buffer>>,
-    style_editor: Option<Entity<Editor>>,
-    last_error: Option<SharedString>,
+    buffers: Option<Buffers>,
+    loaded: Option<Loaded>,
+    last_style_error: Option<SharedString>,
+}
+
+#[derive(Clone)]
+struct Buffers {
+    // todo! better naming
+    rust_style_buffer: Entity<Buffer>,
+    style_buffer: Entity<Buffer>,
+}
+
+struct Loaded {
+    rust_style_editor: Entity<Editor>,
+    style_editor: Entity<Editor>,
 }
 
 impl DivInspector {
@@ -29,61 +43,53 @@ impl DivInspector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> DivInspector {
-        // Open the buffer once, so it can then be used for each editor.
+        // todo! better error handling
+
+        // Open the buffers once, so they can then be used for each editor.
         cx.spawn_in(window, {
             let project = project.clone();
-            async move |this, cx| Self::open_style_buffer(project, this, cx).await
+            async move |this, cx| {
+                let style_buffer =
+                    Self::open_buffer(ZED_INSPECTOR_STYLE_PATH, &project, cx).await?;
+                // Register with the JSON language server.
+                project.update(cx, |project, cx| {
+                    project.register_buffer_with_language_servers(&style_buffer, cx)
+                })?;
+
+                let rust_style_buffer =
+                    Self::open_buffer(ZED_INSPECTOR_RUST_STYLE_PATH, &project, cx).await?;
+
+                this.update_in(cx, |this, window, cx| {
+                    this.buffers = Some(Buffers {
+                        style_buffer: style_buffer,
+                        rust_style_buffer: rust_style_buffer,
+                    });
+                    this.refresh_inspected_element(window, cx);
+                })?;
+
+                anyhow::Ok(())
+            }
         })
-        .detach();
+        .detach_and_log_err(cx);
 
         DivInspector {
             project,
             inspector_id: None,
             state: None,
-            style_buffer: None,
-            style_editor: None,
-            last_error: None,
+            buffers: None,
+            loaded: None,
+            last_style_error: None,
         }
     }
 
-    async fn open_style_buffer(
-        project: Entity<Project>,
-        this: WeakEntity<DivInspector>,
-        cx: &mut AsyncWindowContext,
-    ) -> Result<()> {
-        let worktree = project
-            .update(cx, |project, cx| {
-                project.create_worktree(ZED_INSPECTOR_STYLE_PATH, false, cx)
-            })?
-            .await?;
-
-        let project_path = worktree.read_with(cx, |worktree, _cx| ProjectPath {
-            worktree_id: worktree.id(),
-            path: Path::new("").into(),
-        })?;
-
-        let style_buffer = project
-            .update(cx, |project, cx| project.open_path(project_path, cx))?
-            .await?
-            .1;
-
-        project.update(cx, |project, cx| {
-            project.register_buffer_with_language_servers(&style_buffer, cx)
-        })?;
-
-        this.update_in(cx, |this, window, cx| {
-            this.style_buffer = Some(style_buffer);
-            if let Some(id) = this.inspector_id.clone() {
-                let state =
-                    window.with_inspector_state(Some(&id), cx, |state, _window| state.clone());
-                if let Some(state) = state {
-                    this.update_inspected_element(&id, state, window, cx);
-                    cx.notify();
-                }
+    fn refresh_inspected_element(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(id) = self.inspector_id.clone() {
+            let state = window.with_inspector_state(Some(&id), cx, |state, _window| state.clone());
+            if let Some(state) = state {
+                self.update_inspected_element(&id, state, window, cx);
+                cx.notify();
             }
-        })?;
-
-        Ok(())
+        }
     }
 
     pub fn update_inspected_element(
@@ -93,7 +99,7 @@ impl DivInspector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let base_style_json = serde_json::to_string_pretty(&state.base_style);
+        let base_style = state.base_style.clone();
         self.state = Some(state);
 
         if self.inspector_id.as_ref() == Some(id) {
@@ -101,43 +107,27 @@ impl DivInspector {
         } else {
             self.inspector_id = Some(id.clone());
         }
-        let Some(style_buffer) = self.style_buffer.clone() else {
+
+        let Some(buffers) = self.buffers.clone() else {
             return;
         };
 
-        let base_style_json = match base_style_json {
+        let base_style_json = match serde_json::to_string_pretty(&base_style) {
             Ok(base_style_json) => base_style_json,
             Err(err) => {
-                self.style_editor = None;
-                self.last_error =
+                self.loaded = None;
+                self.last_style_error =
                     Some(format!("Failed to convert base_style to JSON: {err}").into());
                 return;
             }
         };
-        self.last_error = None;
+        self.last_style_error = None;
 
-        style_buffer.update(cx, |style_buffer, cx| {
+        buffers.style_buffer.update(cx, |style_buffer, cx| {
             style_buffer.set_text(base_style_json, cx)
         });
 
-        let style_editor = cx.new(|cx| {
-            let multi_buffer = cx.new(|cx| MultiBuffer::singleton(style_buffer, cx));
-            let mut editor = Editor::new(
-                EditorMode::full(),
-                multi_buffer,
-                Some(self.project.clone()),
-                window,
-                cx,
-            );
-            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-            editor.set_show_line_numbers(false, cx);
-            editor.set_show_code_actions(false, cx);
-            editor.set_show_breakpoints(false, cx);
-            editor.set_show_git_diff_gutter(false, cx);
-            editor.set_show_runnables(false, cx);
-            editor.set_show_edit_predictions(Some(false), window, cx);
-            editor
-        });
+        let style_editor = self.create_editor(buffers.style_buffer, window, cx);
 
         cx.subscribe_in(&style_editor, window, {
             let id = id.clone();
@@ -156,9 +146,9 @@ impl DivInspector {
                                 },
                             );
                             window.refresh();
-                            this.last_error = None;
+                            this.last_style_error = None;
                         }
-                        Err(err) => this.last_error = Some(err.to_string().into()),
+                        Err(err) => this.last_style_error = Some(err.to_string().into()),
                     }
                 }
                 _ => {}
@@ -166,8 +156,102 @@ impl DivInspector {
         })
         .detach();
 
-        self.style_editor = Some(style_editor);
+        buffers
+            .rust_style_buffer
+            .update(cx, |rust_style_buffer, cx| {
+                rust_style_buffer.set_text("", cx)
+            });
+
+        let rust_style_editor = self.create_editor(buffers.rust_style_buffer, window, cx);
+
+        cx.subscribe_in(&rust_style_editor, window, {
+            let style_editor = style_editor.clone();
+            move |_this, editor, event: &EditorEvent, window, cx| match event {
+                EditorEvent::BufferEdited => {
+                    let old_style_text = style_editor.read(cx).text(cx);
+                    match serde_json_lenient::from_str::<StyleRefinement>(&old_style_text) {
+                        // todo! handle
+                        Err(_) => {}
+                        Ok(style) => {
+                            let code = editor.read(cx).text(cx);
+                            let style = update_style_from_rust_code(style, &code);
+                            // todo!(unwrap)
+                            let json = serde_json::to_string_pretty(&style).unwrap();
+                            style_editor.update(cx, |style_editor, cx| {
+                                style_editor.set_text(json, window, cx);
+                            });
+                        }
+                    }
+                }
+                _ => {}
+            }
+        })
+        .detach();
+
+        self.loaded = Some(Loaded {
+            rust_style_editor,
+            style_editor,
+        });
     }
+
+    async fn open_buffer(
+        path: impl AsRef<Path>,
+        project: &Entity<Project>,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<Entity<Buffer>> {
+        let worktree = project
+            .update(cx, |project, cx| project.create_worktree(path, false, cx))?
+            .await?;
+
+        let project_path = worktree.read_with(cx, |worktree, _cx| ProjectPath {
+            worktree_id: worktree.id(),
+            path: Path::new("").into(),
+        })?;
+
+        let buffer = project
+            .update(cx, |project, cx| project.open_path(project_path, cx))?
+            .await?
+            .1;
+
+        Ok(buffer)
+    }
+
+    fn create_editor(
+        &self,
+        buffer: Entity<Buffer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<Editor> {
+        cx.new(|cx| {
+            let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+            let mut editor = Editor::new(
+                EditorMode::full(),
+                multi_buffer,
+                Some(self.project.clone()),
+                window,
+                cx,
+            );
+            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+            editor.set_show_line_numbers(false, cx);
+            editor.set_show_code_actions(false, cx);
+            editor.set_show_breakpoints(false, cx);
+            editor.set_show_git_diff_gutter(false, cx);
+            editor.set_show_runnables(false, cx);
+            editor.set_show_edit_predictions(Some(false), window, cx);
+            editor
+        })
+    }
+}
+
+fn update_style_from_rust_code(mut style: StyleRefinement, code: &str) -> StyleRefinement {
+    for word in code.split(|char: char| !char.is_alphanumeric() && char != '_') {
+        if let Some(method) = styled_reflection::find_method::<StyleRefinement>(word)
+            .or_else(|| styled_ext_reflection::find_method::<StyleRefinement>(word))
+        {
+            style = method.invoke(style);
+        }
+    }
+    style
 }
 
 impl Render for DivInspector {
@@ -182,26 +266,32 @@ impl Render for DivInspector {
                         .child(render_layout_state(state, cx)),
                 )
             })
-            .when_some(self.style_editor.as_ref(), |this, style_editor| {
-                this.child(
-                    v_flex()
-                        .gap_2()
-                        .child(Label::new("Style").size(LabelSize::Large))
-                        .child(div().h_128().child(style_editor.clone()))
-                        .when_some(self.last_error.as_ref(), |this, last_error| {
-                            this.child(
-                                div()
-                                    .w_full()
-                                    .border_1()
-                                    .border_color(Color::Error.color(cx))
-                                    .child(Label::new(last_error)),
-                            )
-                        }),
-                )
-            })
-            .when_none(&self.style_editor, |this| {
-                this.child(Label::new("Loading..."))
-            })
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(Label::new("Rust Style").size(LabelSize::Large))
+                    .when_some(self.loaded.as_ref(), |this, editors| {
+                        this.child(div().h_64().child(editors.rust_style_editor.clone()))
+                    }),
+            )
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(Label::new("JSON Style").size(LabelSize::Large))
+                    .when_some(self.loaded.as_ref(), |this, editors| {
+                        this.child(div().h_128().child(editors.style_editor.clone()))
+                    })
+                    .when_some(self.last_style_error.as_ref(), |this, last_error| {
+                        this.child(
+                            div()
+                                .w_full()
+                                .border_1()
+                                .border_color(Color::Error.color(cx))
+                                .child(Label::new(last_error)),
+                        )
+                    }),
+            )
+            .when_none(&self.loaded, |this| this.child(Label::new("Loading...")))
             .into_any_element()
     }
 }
