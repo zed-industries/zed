@@ -153,19 +153,29 @@ pub struct LanguageModelToolResult {
 pub enum LanguageModelToolResultContent {
     Text(Arc<str>),
     Image(LanguageModelImage),
+    WrappedText(WrappedTextContent),
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Hash)]
+pub struct WrappedTextContent {
+    #[serde(rename = "type")]
+    pub content_type: String,
+    pub text: Arc<str>,
 }
 
 impl LanguageModelToolResultContent {
     pub fn to_str(&self) -> Option<&str> {
         match self {
-            Self::Text(text) => Some(&text),
+            Self::Text(text) | Self::WrappedText(WrappedTextContent { text, .. }) => Some(&text),
             Self::Image(_) => None,
         }
     }
 
     pub fn is_empty(&self) -> bool {
         match self {
-            Self::Text(text) => text.chars().all(|c| c.is_whitespace()),
+            Self::Text(text) | Self::WrappedText(WrappedTextContent { text, .. }) => {
+                text.chars().all(|c| c.is_whitespace())
+            }
             Self::Image(_) => false,
         }
     }

@@ -57,7 +57,7 @@ impl Watcher for MacWatcher {
         Ok(())
     }
 
-    fn remove(&self, path: &Path) -> gpui::Result<()> {
+    fn remove(&self, path: &Path) -> anyhow::Result<()> {
         let handles = self
             .handles
             .upgrade()

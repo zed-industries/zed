@@ -2066,7 +2066,7 @@ async fn share_workspace(
     workspace: &Entity<Workspace>,
     cx: &mut VisualTestContext,
 ) -> anyhow::Result<u64> {
-    let project = workspace.update(cx, |workspace, _| workspace.project().clone());
+    let project = workspace.read_with(cx, |workspace, _| workspace.project().clone());
     cx.read(ActiveCall::global)
         .update(cx, |call, cx| call.share_project(project, cx))
         .await

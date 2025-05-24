@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources, VsCodeSettings};
 use util::serde::default_true;
 
+/// Imports from the VSCode settings at
+/// https://code.visualstudio.com/docs/reference/default-settings
 #[derive(Deserialize, Clone)]
 pub struct EditorSettings {
     pub cursor_blink: bool,
@@ -107,6 +109,7 @@ pub struct Toolbar {
     pub quick_actions: bool,
     pub selections_menu: bool,
     pub agent_review: bool,
+    pub code_actions: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -501,6 +504,10 @@ pub struct ToolbarContent {
     ///
     /// Default: true
     pub agent_review: Option<bool>,
+    /// Whether to display code action buttons in the editor toolbar.
+    ///
+    /// Default: true
+    pub code_actions: Option<bool>,
 }
 
 /// Scrollbar related settings
@@ -539,7 +546,7 @@ pub struct ScrollbarContent {
 }
 
 /// Minimap related settings
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct MinimapContent {
     /// When to show the minimap in the editor.
     ///
@@ -769,6 +776,33 @@ impl Settings for EditorSettings {
         if let Some(use_ignored) = vscode.read_bool("search.useIgnoreFiles") {
             let search = current.search.get_or_insert_default();
             search.include_ignored = use_ignored;
+        }
+
+        let mut minimap = MinimapContent::default();
+        let minimap_enabled = vscode.read_bool("editor.minimap.enabled").unwrap_or(true);
+        let autohide = vscode.read_bool("editor.minimap.autohide");
+        if minimap_enabled {
+            if let Some(false) = autohide {
+                minimap.show = Some(ShowMinimap::Always);
+            } else {
+                minimap.show = Some(ShowMinimap::Auto);
+            }
+        } else {
+            minimap.show = Some(ShowMinimap::Never);
+        }
+
+        vscode.enum_setting(
+            "editor.minimap.showSlider",
+            &mut minimap.thumb,
+            |s| match s {
+                "always" => Some(MinimapThumb::Always),
+                "mouseover" => Some(MinimapThumb::Hover),
+                _ => None,
+            },
+        );
+
+        if minimap != MinimapContent::default() {
+            current.minimap = Some(minimap)
         }
     }
 }

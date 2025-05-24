@@ -8,6 +8,7 @@ use crate::ui::{
     AnimatedLabel, MaxModeTooltip,
     preview::{AgentPreview, UsageCallout},
 };
+use assistant_context_editor::language_model_selector::ToggleModelSelector;
 use assistant_settings::{AssistantSettings, CompletionMode};
 use buffer_diff::BufferDiff;
 use client::UserStore;
@@ -30,7 +31,6 @@ use language_model::{
     ConfiguredModel, LanguageModelRequestMessage, MessageContent, RequestUsage,
     ZED_CLOUD_PROVIDER_ID,
 };
-use language_model_selector::ToggleModelSelector;
 use multi_buffer;
 use project::Project;
 use prompt_store::PromptStore;
@@ -401,7 +401,7 @@ impl MessageEditor {
     fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
         if self.context_picker_menu_handle.is_deployed() {
             cx.propagate();
-        } else {
+        } else if self.context_strip.read(cx).has_context_items(cx) {
             self.context_strip.focus_handle(cx).focus(window);
         }
     }
@@ -842,7 +842,7 @@ impl MessageEditor {
             .border_b_0()
             .border_color(border_color)
             .rounded_t_md()
-            .shadow(smallvec::smallvec![gpui::BoxShadow {
+            .shadow(vec![gpui::BoxShadow {
                 color: gpui::black().opacity(0.15),
                 offset: point(px(1.), px(-1.)),
                 blur_radius: px(3.),

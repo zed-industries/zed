@@ -2,13 +2,13 @@
   {
     "label": "Debug Zed (CodeLLDB)",
     "adapter": "CodeLLDB",
-    "program": "target/debug/zed",
+    "program": "$ZED_WORKTREE_ROOT/target/debug/zed",
     "request": "launch"
   },
   {
     "label": "Debug Zed (GDB)",
     "adapter": "GDB",
-    "program": "target/debug/zed",
+    "program": "$ZED_WORKTREE_ROOT/target/debug/zed",
     "request": "launch",
     "initialize_args": {
       "stopAtBeginningOfMainSubprogram": true
