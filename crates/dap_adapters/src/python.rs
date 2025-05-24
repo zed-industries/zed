@@ -698,10 +698,7 @@ mod tests {
         assert_eq!(venv_args[2], "--host=127.0.0.1");
         assert_eq!(venv_args[3], "--port=5678");
 
-        // Note: Case 3 (GitHub-downloaded debugpy) is now handled internally
-        // by the generate_debugpy_arguments function when neither user_installed_path
-        // nor installed_in_venv are provided, so we don't test it separately here
-        // as it would require setting up the actual file system structure.
+        // Note: Case 3 (GitHub-downloaded debugpy) is not tested since this requires mocking the Github API.
     }
 
     #[test]
