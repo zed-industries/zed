@@ -594,6 +594,16 @@ impl DebugAdapter for PythonDebugAdapter {
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
+        if let Some(local_path) = &user_installed_path {
+            log::debug!(
+                "Using user-installed debugpy adapter from: {}",
+                local_path.display()
+            );
+            return self
+                .get_installed_binary(delegate, &config, Some(local_path.clone()), None, false)
+                .await;
+        }
+
         let toolchain = delegate
             .toolchain_store()
             .active_toolchain(
@@ -632,7 +642,7 @@ impl DebugAdapter for PythonDebugAdapter {
             }
         }
 
-        self.get_installed_binary(delegate, &config, user_installed_path, toolchain, false)
+        self.get_installed_binary(delegate, &config, None, None, false)
             .await
     }
 }
