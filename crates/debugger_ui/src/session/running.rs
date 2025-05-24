@@ -18,7 +18,7 @@ use breakpoint_list::BreakpointList;
 use collections::{HashMap, IndexMap};
 use console::Console;
 use dap::{
-    Capabilities, DapRegistry, RunInTerminalRequestArguments, Thread,
+    Capabilities, DapRegistry, OutputEvent, RunInTerminalRequestArguments, Thread,
     adapters::{DebugAdapterName, DebugTaskDefinition},
     client::SessionId,
     debugger_settings::DebuggerSettings,
@@ -33,7 +33,7 @@ use loaded_source_list::LoadedSourceList;
 use module_list::ModuleList;
 use project::{
     Project, WorktreeId,
-    debugger::session::{Session, SessionEvent, ThreadId, ThreadStatus},
+    debugger::session::{OutputToken, Session, SessionEvent, ThreadId, ThreadStatus},
     terminals::TerminalKind,
 };
 use rpc::proto::ViewId;
@@ -45,6 +45,7 @@ use task::{
     substitute_variables_in_str,
 };
 use terminal_view::TerminalView;
+
 use ui::{
     ActiveTheme, AnyElement, App, ButtonCommon as _, Clickable as _, Context, FluentBuilder,
     IconButton, IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon as _,
@@ -495,24 +496,53 @@ pub(crate) fn new_debugger_pane(
 
 pub struct DebugTerminal {
     pub terminal: Option<Entity<TerminalView>>,
+    output_text: String,
     focus_handle: FocusHandle,
+    last_token: OutputToken,
 }
 
 impl DebugTerminal {
     fn empty(cx: &mut Context<Self>) -> Self {
         Self {
             terminal: None,
+            output_text: String::new(),
             focus_handle: cx.focus_handle(),
+            last_token: OutputToken(0),
         }
+    }
+
+    pub fn add_terminal_output<'a>(
+        &mut self,
+        events: impl Iterator<Item = &'a OutputEvent>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for event in events {
+            self.output_text.push_str(&event.output);
+        }
+        cx.notify();
     }
 }
 
 impl gpui::Render for DebugTerminal {
-    fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .size_full()
-            .track_focus(&self.focus_handle)
-            .children(self.terminal.clone())
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().track_focus(&self.focus_handle).child(
+            if let Some(terminal) = &self.terminal {
+                terminal.clone().into_any_element()
+            } else if !self.output_text.is_empty() {
+                div()
+                    .p_2()
+                    .text_color(cx.theme().colors().text)
+                    .child(self.output_text.clone())
+                    .into_any_element()
+            } else {
+                div()
+                    .p_2()
+                    .text_color(cx.theme().colors().text_muted)
+                    .child("Terminal output will appear here...")
+                    .into_any_element()
+            },
+        )
     }
 }
 impl Focusable for DebugTerminal {
@@ -654,6 +684,9 @@ impl RunningState {
                     SessionEvent::RunInTerminal { request, sender } => this
                         .handle_run_in_terminal(request, sender.clone(), window, cx)
                         .detach_and_log_err(cx),
+                    SessionEvent::TerminalOutput => {
+                        this.handle_terminal_output(window, cx);
+                    }
 
                     _ => {}
                 }
@@ -1053,6 +1086,29 @@ impl RunningState {
         });
 
         cx.background_spawn(async move { anyhow::Ok(sender.send(terminal_task.await).await?) })
+    }
+
+    fn handle_terminal_output(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let session = self.session.clone();
+        let token = self.debug_terminal.read(cx).last_token;
+
+        cx.spawn_in(window, async move |this, cx| {
+            _ = session.update_in(cx, move |session, window, cx| {
+                let (output, last_processed_token) = session.terminal_output(token);
+
+                _ = this.update(cx, |this, cx| {
+                    if last_processed_token == this.debug_terminal.read(cx).last_token {
+                        return;
+                    }
+
+                    this.debug_terminal.update(cx, |terminal, cx| {
+                        terminal.add_terminal_output(output, window, cx);
+                        terminal.last_token = last_processed_token;
+                    });
+                });
+            });
+        })
+        .detach();
     }
 
     fn create_sub_view(

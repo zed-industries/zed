@@ -101,7 +101,8 @@ impl DapStore {
     pub fn init(client: &AnyProtoClient, cx: &mut App) {
         static ADD_LOCATORS: Once = Once::new();
         ADD_LOCATORS.call_once(|| {
-            DapRegistry::global(cx).add_locator(Arc::new(locators::cargo::CargoLocator {}))
+            DapRegistry::global(cx).add_locator(Arc::new(locators::cargo::CargoLocator {}));
+            DapRegistry::global(cx).add_locator(Arc::new(locators::go::GoLocator {}));
         });
         client.add_entity_request_handler(Self::handle_run_debug_locator);
         client.add_entity_request_handler(Self::handle_get_debug_adapter_binary);

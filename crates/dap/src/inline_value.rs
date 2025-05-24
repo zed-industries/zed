@@ -122,6 +122,239 @@ impl InlineValueProvider for RustInlineValueProvider {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_go_inline_value_provider() {
+        let _provider = GoInlineValueProvider;
+    }
+}
+
+pub struct GoInlineValueProvider;
+
+impl InlineValueProvider for GoInlineValueProvider {
+    fn provide(
+        &self,
+        mut node: language::Node,
+        source: &str,
+        max_row: usize,
+    ) -> Vec<InlineValueLocation> {
+        let mut variables = Vec::new();
+        let mut variable_names = HashSet::new();
+        let mut scope = VariableScope::Local;
+
+        loop {
+            let mut variable_names_in_scope = HashMap::new();
+            for child in node.named_children(&mut node.walk()) {
+                if child.start_position().row >= max_row {
+                    break;
+                }
+
+                if scope == VariableScope::Local {
+                    match child.kind() {
+                        "var_declaration" => {
+                            // Handle var declarations like: var x int = 5
+                            for var_spec in child.named_children(&mut child.walk()) {
+                                if var_spec.kind() == "var_spec" {
+                                    if let Some(name_node) = var_spec.child_by_field_name("name") {
+                                        let variable_name =
+                                            source[name_node.byte_range()].to_string();
+
+                                        if variable_names.contains(&variable_name) {
+                                            continue;
+                                        }
+
+                                        if let Some(index) =
+                                            variable_names_in_scope.get(&variable_name)
+                                        {
+                                            variables.remove(*index);
+                                        }
+
+                                        variable_names_in_scope
+                                            .insert(variable_name.clone(), variables.len());
+                                        variables.push(InlineValueLocation {
+                                            variable_name,
+                                            scope: VariableScope::Local,
+                                            lookup: VariableLookupKind::Variable,
+                                            row: name_node.end_position().row,
+                                            column: name_node.end_position().column,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                        "short_var_declaration" => {
+                            // Handle short variable declarations like: x := 5
+                            if let Some(left_side) = child.child_by_field_name("left") {
+                                for identifier in left_side.named_children(&mut left_side.walk()) {
+                                    if identifier.kind() == "identifier" {
+                                        let variable_name =
+                                            source[identifier.byte_range()].to_string();
+
+                                        if variable_names.contains(&variable_name) {
+                                            continue;
+                                        }
+
+                                        if let Some(index) =
+                                            variable_names_in_scope.get(&variable_name)
+                                        {
+                                            variables.remove(*index);
+                                        }
+
+                                        variable_names_in_scope
+                                            .insert(variable_name.clone(), variables.len());
+                                        variables.push(InlineValueLocation {
+                                            variable_name,
+                                            scope: VariableScope::Local,
+                                            lookup: VariableLookupKind::Variable,
+                                            row: identifier.end_position().row,
+                                            column: identifier.end_position().column,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                        "assignment_statement" => {
+                            // Handle assignments like: x = 5
+                            if let Some(left_side) = child.child_by_field_name("left") {
+                                for identifier in left_side.named_children(&mut left_side.walk()) {
+                                    if identifier.kind() == "identifier" {
+                                        let variable_name =
+                                            source[identifier.byte_range()].to_string();
+
+                                        if variable_names.contains(&variable_name) {
+                                            continue;
+                                        }
+
+                                        if let Some(index) =
+                                            variable_names_in_scope.get(&variable_name)
+                                        {
+                                            variables.remove(*index);
+                                        }
+
+                                        variable_names_in_scope
+                                            .insert(variable_name.clone(), variables.len());
+                                        variables.push(InlineValueLocation {
+                                            variable_name,
+                                            scope: VariableScope::Local,
+                                            lookup: VariableLookupKind::Variable,
+                                            row: identifier.end_position().row,
+                                            column: identifier.end_position().column,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                        "function_declaration" | "method_declaration" => {
+                            // Handle function parameters
+                            if let Some(params) = child.child_by_field_name("parameters") {
+                                for param in params.named_children(&mut params.walk()) {
+                                    if param.kind() == "parameter_declaration" {
+                                        if let Some(name_node) = param.child_by_field_name("name") {
+                                            let variable_name =
+                                                source[name_node.byte_range()].to_string();
+
+                                            if variable_names.contains(&variable_name) {
+                                                continue;
+                                            }
+
+                                            if let Some(index) =
+                                                variable_names_in_scope.get(&variable_name)
+                                            {
+                                                variables.remove(*index);
+                                            }
+
+                                            variable_names_in_scope
+                                                .insert(variable_name.clone(), variables.len());
+                                            variables.push(InlineValueLocation {
+                                                variable_name,
+                                                scope: VariableScope::Local,
+                                                lookup: VariableLookupKind::Variable,
+                                                row: name_node.end_position().row,
+                                                column: name_node.end_position().column,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        "for_statement" => {
+                            // Handle for loop variables
+                            if let Some(init) = child.child_by_field_name("initializer") {
+                                if init.kind() == "short_var_declaration" {
+                                    if let Some(left_side) = init.child_by_field_name("left") {
+                                        for identifier in
+                                            left_side.named_children(&mut left_side.walk())
+                                        {
+                                            if identifier.kind() == "identifier" {
+                                                let variable_name =
+                                                    source[identifier.byte_range()].to_string();
+
+                                                if variable_names.contains(&variable_name) {
+                                                    continue;
+                                                }
+
+                                                if let Some(index) =
+                                                    variable_names_in_scope.get(&variable_name)
+                                                {
+                                                    variables.remove(*index);
+                                                }
+
+                                                variable_names_in_scope
+                                                    .insert(variable_name.clone(), variables.len());
+                                                variables.push(InlineValueLocation {
+                                                    variable_name,
+                                                    scope: VariableScope::Local,
+                                                    lookup: VariableLookupKind::Variable,
+                                                    row: identifier.end_position().row,
+                                                    column: identifier.end_position().column,
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                } else if child.kind() == "var_declaration" {
+                    // Handle global variables
+                    for var_spec in child.named_children(&mut child.walk()) {
+                        if var_spec.kind() == "var_spec" {
+                            if let Some(name_node) = var_spec.child_by_field_name("name") {
+                                let variable_name = source[name_node.byte_range()].to_string();
+                                variables.push(InlineValueLocation {
+                                    variable_name,
+                                    scope: VariableScope::Global,
+                                    lookup: VariableLookupKind::Expression,
+                                    row: name_node.end_position().row,
+                                    column: name_node.end_position().column,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            variable_names.extend(variable_names_in_scope.keys().cloned());
+
+            if matches!(node.kind(), "function_declaration" | "method_declaration") {
+                scope = VariableScope::Global;
+            }
+
+            if let Some(parent) = node.parent() {
+                node = parent;
+            } else {
+                break;
+            }
+        }
+
+        variables
+    }
+}
+
 pub struct PythonInlineValueProvider;
 
 impl InlineValueProvider for PythonInlineValueProvider {
