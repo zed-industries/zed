@@ -15,6 +15,7 @@ pub use language::*;
 mod bash;
 mod c;
 mod css;
+mod eslint;
 mod go;
 mod json;
 mod python;
@@ -75,7 +76,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
 
     let c_lsp_adapter = Arc::new(c::CLspAdapter);
     let css_lsp_adapter = Arc::new(css::CssLspAdapter::new(node.clone()));
-    let eslint_adapter = Arc::new(typescript::EsLintLspAdapter::new(node.clone()));
+    let eslint_adapter = Arc::new(eslint::EsLintLspAdapter::new(node.clone()));
     let go_context_provider = Arc::new(go::GoContextProvider);
     let go_lsp_adapter = Arc::new(go::GoLspAdapter);
     let json_context_provider = Arc::new(json_task_context());
