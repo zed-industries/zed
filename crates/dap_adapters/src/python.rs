@@ -35,15 +35,7 @@ impl PythonDebugAdapter {
         user_installed_path: Option<&Path>,
         installed_in_venv: bool,
     ) -> Result<Vec<String>> {
-        if installed_in_venv {
-            log::debug!("Using venv-installed debugpy");
-            Ok(vec![
-                "-m".to_string(),
-                "debugpy.adapter".to_string(),
-                format!("--host={}", host),
-                format!("--port={}", port),
-            ])
-        } else if let Some(user_installed_path) = user_installed_path {
+        if let Some(user_installed_path) = user_installed_path {
             log::debug!(
                 "Using user-installed debugpy adapter from: {}",
                 user_installed_path.display()
@@ -53,6 +45,14 @@ impl PythonDebugAdapter {
                     .join(Self::ADAPTER_PATH)
                     .to_string_lossy()
                     .to_string(),
+                format!("--host={}", host),
+                format!("--port={}", port),
+            ])
+        } else if installed_in_venv {
+            log::debug!("Using venv-installed debugpy");
+            Ok(vec![
+                "-m".to_string(),
+                "debugpy.adapter".to_string(),
                 format!("--host={}", host),
                 format!("--port={}", port),
             ])
@@ -635,7 +635,7 @@ impl DebugAdapter for PythonDebugAdapter {
         if let Some(toolchain) = &toolchain {
             if let Some(path) = Path::new(&toolchain.path.to_string()).parent() {
                 let debugpy_path = path.join("debugpy");
-                if smol::fs::metadata(&debugpy_path).await.is_ok() {
+                if delegate.fs().is_file(&debugpy_path).await {
                     log::debug!(
                         "Found debugpy in toolchain environment: {}",
                         debugpy_path.display()
