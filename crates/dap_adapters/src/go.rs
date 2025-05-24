@@ -130,8 +130,8 @@ impl DebugAdapter for GoDebugAdapter {
                 "description": "Hide system goroutines from call stack view."
             },
             "console": {
-                "default": "internalConsole",
-                "description": "Where to launch the debugger.",
+                "default": "integratedTerminal",
+                "description": "Where to launch the debug target.",
                 "enum": ["internalConsole", "integratedTerminal"]
             },
             "asRoot": {
@@ -195,6 +195,12 @@ impl DebugAdapter for GoDebugAdapter {
                 "type": "string",
                 "description": "Path to core dump file (for 'core' mode).",
                 "default": ""
+            },
+            "outputMode": {
+                "type": "string",
+                "enum": ["local", "remote"],
+                "description": "Where to send program output. 'remote' captures output in debugger, 'local' sends to terminal.",
+                "default": "remote"
             }
         });
 
@@ -307,14 +313,18 @@ impl DebugAdapter for GoDebugAdapter {
         let mut args = match &zed_scenario.request {
             dap::DebugRequest::Attach(attach_config) => {
                 json!({
+                    "request": "attach",
                     "processId": attach_config.process_id,
                 })
             }
             dap::DebugRequest::Launch(launch_config) => json!({
+                "request": "launch",
                 "program": launch_config.program,
                 "cwd": launch_config.cwd,
                 "args": launch_config.args,
-                "env": launch_config.env_json()
+                "env": launch_config.env_json(),
+                "console": "integratedTerminal",
+                "outputMode": "remote"
             }),
         };
 
@@ -375,6 +385,9 @@ impl DebugAdapter for GoDebugAdapter {
 
         let mut tcp_connection = task_definition.tcp_connection.clone().unwrap_or_default();
 
+        // Always use dynamic port allocation to avoid conflicts
+        tcp_connection.port = None;
+
         if tcp_connection.timeout.is_none()
             || tcp_connection.timeout.unwrap_or(0) < Self::DEFAULT_TIMEOUT_MS
         {
@@ -390,20 +403,14 @@ impl DebugAdapter for GoDebugAdapter {
             .map(PathBuf::from)
             .unwrap_or_else(|| delegate.worktree_root_path().to_path_buf());
 
-        let arguments = if cfg!(windows) {
-            vec![
-                "dap".into(),
-                "--listen".into(),
-                format!("{}:{}", host, port),
-                "--headless".into(),
-            ]
-        } else {
-            vec![
-                "dap".into(),
-                "--listen".into(),
-                format!("{}:{}", host, port),
-            ]
-        };
+        let arguments = vec![
+            "dap".into(),
+            "--listen".into(),
+            format!("{}:{}", host, port),
+            "--check-go-version=false".into(),
+            "--log".into(),
+            "--log-output=dap,debugger".into(),
+        ];
 
         Ok(DebugAdapterBinary {
             command: delve_path,
@@ -420,5 +427,99 @@ impl DebugAdapter for GoDebugAdapter {
                 request: self.validate_config(&task_definition.config)?,
             },
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dap::DebugRequest;
+    use serde_json::json;
+    use task::{AttachRequest, LaunchRequest, ZedDebugConfig};
+
+    #[test]
+    fn test_config_from_zed_format_includes_request_field() {
+        let adapter = GoDebugAdapter {};
+
+        let launch_config = ZedDebugConfig {
+            adapter: "go".into(),
+            label: "Test Launch".into(),
+            request: DebugRequest::Launch(LaunchRequest {
+                program: "main.go".to_string(),
+                args: vec![],
+                cwd: None,
+                env: Default::default(),
+            }),
+            stop_on_entry: None,
+        };
+
+        let result = adapter.config_from_zed_format(launch_config).unwrap();
+        let config_map = result.config.as_object().unwrap();
+
+        assert_eq!(
+            config_map.get("request").unwrap().as_str().unwrap(),
+            "launch"
+        );
+        assert_eq!(
+            config_map.get("program").unwrap().as_str().unwrap(),
+            "main.go"
+        );
+
+        let attach_config = ZedDebugConfig {
+            adapter: "go".into(),
+            label: "Test Attach".into(),
+            request: DebugRequest::Attach(AttachRequest {
+                process_id: Some(1234),
+            }),
+            stop_on_entry: None,
+        };
+
+        let result = adapter.config_from_zed_format(attach_config).unwrap();
+        let config_map = result.config.as_object().unwrap();
+
+        assert_eq!(
+            config_map.get("request").unwrap().as_str().unwrap(),
+            "attach"
+        );
+        assert_eq!(config_map.get("processId").unwrap().as_u64().unwrap(), 1234);
+    }
+
+    #[test]
+    fn test_validate_config_accepts_valid_request() {
+        let adapter = GoDebugAdapter {};
+
+        let launch_config = json!({
+            "request": "launch",
+            "program": "main.go"
+        });
+
+        let result = adapter.validate_config(&launch_config).unwrap();
+        assert_eq!(result, dap::StartDebuggingRequestArgumentsRequest::Launch);
+
+        let attach_config = json!({
+            "request": "attach",
+            "processId": 1234
+        });
+
+        let result = adapter.validate_config(&attach_config).unwrap();
+        assert_eq!(result, dap::StartDebuggingRequestArgumentsRequest::Attach);
+    }
+
+    #[test]
+    fn test_validate_config_rejects_missing_request() {
+        let adapter = GoDebugAdapter {};
+
+        let invalid_config = json!({
+            "program": "main.go"
+        });
+
+        let result = adapter.validate_config(&invalid_config);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("request argument is not found or invalid")
+        );
     }
 }

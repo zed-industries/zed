@@ -101,8 +101,17 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
                 .unwrap();
 
             assert_eq!(
-                "First console output line before thread stopped!\nFirst output line before thread stopped!\n",
-                active_debug_session_panel.read(cx).running_state().read(cx).console().read(cx).editor().read(cx).text(cx).as_str()
+                "First console output line before thread stopped!\n",
+                active_debug_session_panel
+                    .read(cx)
+                    .running_state()
+                    .read(cx)
+                    .console()
+                    .read(cx)
+                    .editor()
+                    .read(cx)
+                    .text(cx)
+                    .as_str()
             );
         })
         .unwrap();
@@ -150,7 +159,7 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
                 .unwrap();
 
             assert_eq!(
-                "First console output line before thread stopped!\nFirst output line before thread stopped!\nSecond output line after thread stopped!\nSecond console output line after thread stopped!\n",
+                "First console output line before thread stopped!\nSecond console output line after thread stopped!\n",
                 active_session_panel.read(cx).running_state().read(cx).console().read(cx).editor().read(cx).text(cx).as_str()
             );
         })
