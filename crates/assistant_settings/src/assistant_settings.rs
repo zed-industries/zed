@@ -31,6 +31,14 @@ pub enum AssistantDockPosition {
     Bottom,
 }
 
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AssistantPanelType {
+    #[default]
+    Agentic,
+    Text,
+}
+
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum NotifyWhenAgentWaiting {
@@ -93,6 +101,7 @@ pub struct AssistantSettings {
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub using_outdated_settings_version: bool,
     pub default_profile: AgentProfileId,
+    pub assistant_panel_type: AssistantPanelType,
     pub profiles: IndexMap<AgentProfileId, AgentProfile>,
     pub always_allow_tool_actions: bool,
     pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
@@ -267,6 +276,7 @@ impl AssistantSettingsContent {
                     thread_summary_model: None,
                     inline_alternatives: None,
                     default_profile: None,
+                    assistant_panel_type: None,
                     profiles: None,
                     always_allow_tool_actions: None,
                     notify_when_agent_waiting: None,
@@ -298,6 +308,7 @@ impl AssistantSettingsContent {
                 thread_summary_model: None,
                 inline_alternatives: None,
                 default_profile: None,
+                assistant_panel_type: None,
                 profiles: None,
                 always_allow_tool_actions: None,
                 notify_when_agent_waiting: None,
@@ -581,6 +592,7 @@ impl Default for VersionedAssistantSettingsContent {
             thread_summary_model: None,
             inline_alternatives: None,
             default_profile: None,
+            assistant_panel_type: None,
             profiles: None,
             always_allow_tool_actions: None,
             notify_when_agent_waiting: None,
@@ -630,6 +642,10 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: write
     default_profile: Option<AgentProfileId>,
+    /// The default assistant panel type.
+    ///
+    /// Default: agentic
+    assistant_panel_type: Option<AssistantPanelType>,
     /// The available agent profiles.
     pub profiles: Option<IndexMap<AgentProfileId, AgentProfileContent>>,
     /// Whenever a tool action would normally wait for your confirmation
@@ -871,6 +887,10 @@ impl Settings for AssistantSettings {
             merge(&mut settings.single_file_review, value.single_file_review);
             merge(&mut settings.default_profile, value.default_profile);
             merge(
+                &mut settings.assistant_panel_type,
+                value.assistant_panel_type,
+            );
+            merge(
                 &mut settings.preferred_completion_mode,
                 value.preferred_completion_mode,
             );
@@ -1006,6 +1026,7 @@ mod tests {
                                 default_width: None,
                                 default_height: None,
                                 default_profile: None,
+                                assistant_panel_type: None,
                                 profiles: None,
                                 always_allow_tool_actions: None,
                                 notify_when_agent_waiting: None,
