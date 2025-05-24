@@ -20741,7 +20741,7 @@ async fn test_indent_on_newline_for_python(cx: &mut TestAppContext) {
         ˇ
     "});
 
-    // test correct indent after newline in curly brackets
+    // test correct indent after newline in brackets
     cx.set_state(indoc! {"
         {ˇ}
     "});
@@ -20753,6 +20753,32 @@ async fn test_indent_on_newline_for_python(cx: &mut TestAppContext) {
         {
             ˇ
         }
+    "});
+
+    cx.set_state(indoc! {"
+        (ˇ)
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Newline, window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc! {"
+        (
+            ˇ
+        )
+    "});
+
+    // do not indent after empty lists or dictionaries
+    cx.set_state(indoc! {"
+        a = []ˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Newline, window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc! {"
+        a = []
+        ˇ
     "});
 }
 
