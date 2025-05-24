@@ -62,8 +62,9 @@ impl PythonDebugAdapter {
                 format!("--port={}", port),
             ]
         } else {
-            // This shouldn't happen in practice, but provide a fallback
-            vec![format!("--port={}", port), format!("--host={}", host)]
+            panic!(
+                "Invalid debugpy configuration: no valid adapter path found. This should never happen as the calling code ensures one of the conditions is met."
+            )
         }
     }
 
