@@ -140,7 +140,7 @@ impl ObjectFit {
 
 /// The CSS styling that can be applied to an element via the `Styled` trait
 #[derive(Clone, Refineable, Debug)]
-#[refineable(Debug, Serialize, Deserialize, JsonSchema)]
+#[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Style {
     /// What layout strategy should be used?
     pub display: Display,

@@ -1,13 +1,18 @@
 use anyhow::Result;
-use editor::{Editor, EditorEvent, EditorMode, MultiBuffer};
+use editor::{CompletionProvider, Editor, EditorEvent, EditorMode, ExcerptId, MultiBuffer};
 use gpui::{
     AsyncWindowContext, DivInspectorState, Entity, InspectorElementId, IntoElement,
-    StyleRefinement, Window, styled_reflection,
+    StyleRefinement, Task, Window, inspector_reflection::MethodReflection, styled_reflection,
 };
-use language::Buffer;
 use language::language_settings::SoftWrap;
-use project::{Project, ProjectPath};
+use language::{Anchor, Buffer, CodeLabel, Point, ToOffset as _, ToPoint as _};
+use project::{Completion, CompletionSource, Project, ProjectPath};
+use std::cell::RefCell;
+use std::fmt::Write as _;
+use std::ops::Range;
 use std::path::Path;
+use std::rc::Rc;
+use std::sync::LazyLock;
 use ui::{Label, LabelSize, Tooltip, prelude::*, styled_ext_reflection, v_flex};
 
 /// Path used for unsaved buffer that contains style json. To support the json language server, this
@@ -159,10 +164,14 @@ impl DivInspector {
         buffers
             .rust_style_buffer
             .update(cx, |rust_style_buffer, cx| {
-                rust_style_buffer.set_text("", cx)
+                rust_style_buffer.set_text(guess_rust_code_from_style(&base_style), cx)
             });
 
         let rust_style_editor = self.create_editor(buffers.rust_style_buffer, window, cx);
+
+        rust_style_editor.update(cx, |rust_style_editor, _cx| {
+            rust_style_editor.set_completion_provider(Some(Box::new(RustStyleCompletionProvider)));
+        });
 
         cx.subscribe_in(&rust_style_editor, window, {
             let style_editor = style_editor.clone();
@@ -243,17 +252,6 @@ impl DivInspector {
     }
 }
 
-fn update_style_from_rust_code(mut style: StyleRefinement, code: &str) -> StyleRefinement {
-    for word in code.split(|char: char| !char.is_alphanumeric() && char != '_') {
-        if let Some(method) = styled_reflection::find_method::<StyleRefinement>(word)
-            .or_else(|| styled_ext_reflection::find_method::<StyleRefinement>(word))
-        {
-            style = method.invoke(style);
-        }
-    }
-    style
-}
-
 impl Render for DivInspector {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
@@ -310,4 +308,129 @@ fn render_layout_state(state: &DivInspectorState, cx: &App) -> Div {
                     "".to_string()
                 }),
         )
+}
+
+static STYLE_METHODS: LazyLock<Vec<MethodReflection<StyleRefinement>>> = LazyLock::new(|| {
+    styled_ext_reflection::methods::<StyleRefinement>()
+        .into_iter()
+        .chain(styled_reflection::methods::<StyleRefinement>())
+        .collect()
+});
+
+fn guess_rust_code_from_style(goal_style: &StyleRefinement) -> String {
+    let mut subset_methods = Vec::new();
+    // Look in StyledExt first so that those take precedence.
+    for method in STYLE_METHODS.iter() {
+        if goal_style.is_superset_of(&method.invoke(StyleRefinement::default())) {
+            subset_methods.push(method);
+        }
+    }
+
+    let mut result = "fn build() -> Div {\n    div()".to_string();
+    let mut style = StyleRefinement::default();
+    for method in subset_methods {
+        let before_change = style.clone();
+        style = method.invoke(style);
+        if before_change != style {
+            let _ = write!(result, "\n        .{}()", &method.name);
+        }
+    }
+    result.push_str("\n}");
+    result
+}
+
+fn update_style_from_rust_code(mut style: StyleRefinement, code: &str) -> StyleRefinement {
+    for word in code.split(is_not_identifier_char) {
+        if let Some(method) = styled_reflection::find_method::<StyleRefinement>(word)
+            .or_else(|| styled_ext_reflection::find_method::<StyleRefinement>(word))
+        {
+            style = method.invoke(style);
+        }
+    }
+    style
+}
+
+fn is_not_identifier_char(c: char) -> bool {
+    !c.is_alphanumeric() && c != '_'
+}
+
+struct RustStyleCompletionProvider;
+
+impl CompletionProvider for RustStyleCompletionProvider {
+    fn completions(
+        &self,
+        _excerpt_id: ExcerptId,
+        buffer: &Entity<Buffer>,
+        position: Anchor,
+        _: editor::CompletionContext,
+        _window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> Task<Result<Option<Vec<project::Completion>>>> {
+        let Some(replace_range) = find_replace_range(buffer.read(cx), position) else {
+            return Task::ready(Ok(Some(Vec::new())));
+        };
+
+        Task::ready(Ok(Some(
+            STYLE_METHODS
+                .iter()
+                .map(|method| Completion {
+                    replace_range: replace_range.clone(),
+                    new_text: format!(".{}()", method.name),
+                    label: CodeLabel::plain(method.name.to_string(), None),
+                    icon_path: None,
+                    documentation: None,
+                    source: CompletionSource::Custom,
+                    insert_text_mode: None,
+                    confirm: None,
+                })
+                .collect(),
+        )))
+    }
+
+    fn resolve_completions(
+        &self,
+        _buffer: Entity<Buffer>,
+        _completion_indices: Vec<usize>,
+        _completions: Rc<RefCell<Box<[Completion]>>>,
+        _cx: &mut Context<Editor>,
+    ) -> Task<Result<bool>> {
+        Task::ready(Ok(true))
+    }
+
+    fn is_completion_trigger(
+        &self,
+        buffer: &Entity<language::Buffer>,
+        position: language::Anchor,
+        _: &str,
+        _: bool,
+        cx: &mut Context<Editor>,
+    ) -> bool {
+        find_replace_range(buffer.read(cx), position).is_some()
+    }
+}
+
+fn find_replace_range(buffer: &Buffer, anchor: Anchor) -> Option<Range<Anchor>> {
+    let snapshot = buffer.snapshot();
+    let point = anchor.to_point(&snapshot);
+    let offset = point.to_offset(&snapshot);
+    let line_start = Point::new(point.row, 0).to_offset(&snapshot);
+    let line_end = Point::new(point.row, buffer.line_len(point.row)).to_offset(&snapshot);
+    let mut lines = buffer.text_for_range(line_start..line_end).lines();
+    let line = lines.next()?;
+
+    let start_in_line = &line[..offset - line_start]
+        .rfind(|c| is_not_identifier_char(c) && c != '.')
+        .map(|ix| ix + 1)
+        .unwrap_or(0);
+    let end_in_line = &line[offset - line_start..]
+        .rfind(|c| is_not_identifier_char(c) && c != '(' && c != ')')
+        .unwrap_or(line_end - line_start);
+
+    if end_in_line > start_in_line {
+        let replace_start = snapshot.anchor_before(line_start + start_in_line);
+        let replace_end = snapshot.anchor_before(line_start + end_in_line);
+        Some(replace_start..replace_end)
+    } else {
+        None
+    }
 }

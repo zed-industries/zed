@@ -76,7 +76,7 @@ pub trait Along {
     JsonSchema,
     Hash,
 )]
-#[refineable(Debug, Serialize, Deserialize, JsonSchema)]
+#[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
 pub struct Point<T: Clone + Debug + Default + PartialEq> {
     /// The x coordinate of the point.
@@ -389,7 +389,7 @@ impl<T: Clone + Debug + Default + PartialEq + Display> Display for Point<T> {
 /// This struct is generic over the type `T`, which can be any type that implements `Clone`, `Default`, and `Debug`.
 /// It is commonly used to specify dimensions for elements in a UI, such as a window or element.
 #[derive(Refineable, Default, Clone, Copy, PartialEq, Div, Hash, Serialize, Deserialize)]
-#[refineable(Debug, Serialize, Deserialize, JsonSchema)]
+#[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
 pub struct Size<T: Clone + Debug + Default + PartialEq> {
     /// The width component of the size.
@@ -1685,7 +1685,7 @@ impl<T: Copy + Clone + Debug + Default + PartialEq> Copy for Bounds<T> {}
 /// assert_eq!(edges.left, 40.0);
 /// ```
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
-#[refineable(Debug, Serialize, Deserialize, JsonSchema)]
+#[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
 pub struct Edges<T: Clone + Debug + Default + PartialEq> {
     /// The size of the top edge.
@@ -2162,7 +2162,7 @@ impl Corner {
 ///
 /// Each field represents the size of the corner on one side of the box: `top_left`, `top_right`, `bottom_right`, and `bottom_left`.
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
-#[refineable(Debug, Serialize, Deserialize, JsonSchema)]
+#[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
 pub struct Corners<T: Clone + Debug + Default + PartialEq> {
     /// The value associated with the top left corner.
