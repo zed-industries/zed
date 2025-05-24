@@ -7123,6 +7123,7 @@ name = "gpui_macros"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "heck 0.5.0",
  "proc-macro2",
  "quote",
  "syn 2.0.101",
@@ -16830,6 +16831,7 @@ dependencies = [
  "component",
  "documented",
  "gpui",
+ "gpui_macros",
  "icons",
  "itertools 0.14.0",
  "menu",

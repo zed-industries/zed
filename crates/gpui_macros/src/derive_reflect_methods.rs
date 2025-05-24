@@ -1,3 +1,4 @@
+use heck::ToSnakeCase as _;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
@@ -94,7 +95,7 @@ fn generate_reflected_trait(trait_item: ItemTrait) -> TokenStream {
 
     // Generate the reflection module name
     let reflection_mod_name = Ident::new(
-        &format!("{}_reflection", trait_name.to_string().to_lowercase()),
+        &format!("{}_reflection", trait_name.to_string().to_snake_case()),
         trait_name.span(),
     );
 
