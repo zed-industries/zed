@@ -125,10 +125,113 @@ impl InlineValueProvider for RustInlineValueProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tree_sitter::Parser;
 
     #[test]
     fn test_go_inline_value_provider() {
-        let _provider = GoInlineValueProvider;
+        let provider = GoInlineValueProvider;
+        let source = r#"
+package main
+
+func main() {
+    items := []int{1, 2, 3, 4, 5}
+    for i, v := range items {
+        println(i, v)
+    }
+    for j := 0; j < 10; j++ {
+        println(j)
+    }
+}
+"#;
+
+        let mut parser = Parser::new();
+        if parser
+            .set_language(&tree_sitter_go::LANGUAGE.into())
+            .is_err()
+        {
+            return;
+        }
+        let Some(tree) = parser.parse(source, None) else {
+            return;
+        };
+        let root_node = tree.root_node();
+
+        let mut main_body = None;
+        for child in root_node.named_children(&mut root_node.walk()) {
+            if child.kind() == "function_declaration" {
+                if let Some(name) = child.child_by_field_name("name") {
+                    if &source[name.byte_range()] == "main" {
+                        if let Some(body) = child.child_by_field_name("body") {
+                            main_body = Some(body);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        let Some(main_body) = main_body else {
+            return;
+        };
+
+        let variables = provider.provide(main_body, source, 100);
+        assert!(variables.len() >= 2);
+
+        let variable_names: Vec<&str> =
+            variables.iter().map(|v| v.variable_name.as_str()).collect();
+        assert!(variable_names.contains(&"items"));
+        assert!(variable_names.contains(&"j"));
+    }
+
+    #[test]
+    fn test_go_inline_value_provider_counter_pattern() {
+        let provider = GoInlineValueProvider;
+        let source = r#"
+package main
+
+func main() {
+    N := 10
+    for i := range N {
+        println(i)
+    }
+}
+"#;
+
+        let mut parser = Parser::new();
+        if parser
+            .set_language(&tree_sitter_go::LANGUAGE.into())
+            .is_err()
+        {
+            return;
+        }
+        let Some(tree) = parser.parse(source, None) else {
+            return;
+        };
+        let root_node = tree.root_node();
+
+        let mut main_body = None;
+        for child in root_node.named_children(&mut root_node.walk()) {
+            if child.kind() == "function_declaration" {
+                if let Some(name) = child.child_by_field_name("name") {
+                    if &source[name.byte_range()] == "main" {
+                        if let Some(body) = child.child_by_field_name("body") {
+                            main_body = Some(body);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        let Some(main_body) = main_body else {
+            return;
+        };
+        let variables = provider.provide(main_body, source, 100);
+
+        let variable_names: Vec<&str> =
+            variables.iter().map(|v| v.variable_name.as_str()).collect();
+        assert!(variable_names.contains(&"N"));
+        assert!(variable_names.contains(&"i"));
     }
 }
 
@@ -155,7 +258,6 @@ impl InlineValueProvider for GoInlineValueProvider {
                 if scope == VariableScope::Local {
                     match child.kind() {
                         "var_declaration" => {
-                            // Handle var declarations like: var x int = 5
                             for var_spec in child.named_children(&mut child.walk()) {
                                 if var_spec.kind() == "var_spec" {
                                     if let Some(name_node) = var_spec.child_by_field_name("name") {
@@ -186,7 +288,6 @@ impl InlineValueProvider for GoInlineValueProvider {
                             }
                         }
                         "short_var_declaration" => {
-                            // Handle short variable declarations like: x := 5
                             if let Some(left_side) = child.child_by_field_name("left") {
                                 for identifier in left_side.named_children(&mut left_side.walk()) {
                                     if identifier.kind() == "identifier" {
@@ -217,7 +318,6 @@ impl InlineValueProvider for GoInlineValueProvider {
                             }
                         }
                         "assignment_statement" => {
-                            // Handle assignments like: x = 5
                             if let Some(left_side) = child.child_by_field_name("left") {
                                 for identifier in left_side.named_children(&mut left_side.walk()) {
                                     if identifier.kind() == "identifier" {
@@ -248,7 +348,6 @@ impl InlineValueProvider for GoInlineValueProvider {
                             }
                         }
                         "function_declaration" | "method_declaration" => {
-                            // Handle function parameters
                             if let Some(params) = child.child_by_field_name("parameters") {
                                 for param in params.named_children(&mut params.walk()) {
                                     if param.kind() == "parameter_declaration" {
@@ -281,36 +380,89 @@ impl InlineValueProvider for GoInlineValueProvider {
                             }
                         }
                         "for_statement" => {
-                            // Handle for loop variables
-                            if let Some(init) = child.child_by_field_name("initializer") {
-                                if init.kind() == "short_var_declaration" {
-                                    if let Some(left_side) = init.child_by_field_name("left") {
-                                        for identifier in
-                                            left_side.named_children(&mut left_side.walk())
-                                        {
-                                            if identifier.kind() == "identifier" {
-                                                let variable_name =
-                                                    source[identifier.byte_range()].to_string();
+                            if let Some(clause) = child.named_child(0) {
+                                if clause.kind() == "for_clause" {
+                                    if let Some(init) = clause.named_child(0) {
+                                        if init.kind() == "short_var_declaration" {
+                                            if let Some(left_side) =
+                                                init.child_by_field_name("left")
+                                            {
+                                                if left_side.kind() == "expression_list" {
+                                                    for identifier in left_side
+                                                        .named_children(&mut left_side.walk())
+                                                    {
+                                                        if identifier.kind() == "identifier" {
+                                                            let variable_name = source
+                                                                [identifier.byte_range()]
+                                                            .to_string();
 
-                                                if variable_names.contains(&variable_name) {
-                                                    continue;
+                                                            if variable_names
+                                                                .contains(&variable_name)
+                                                            {
+                                                                continue;
+                                                            }
+
+                                                            if let Some(index) =
+                                                                variable_names_in_scope
+                                                                    .get(&variable_name)
+                                                            {
+                                                                variables.remove(*index);
+                                                            }
+
+                                                            variable_names_in_scope.insert(
+                                                                variable_name.clone(),
+                                                                variables.len(),
+                                                            );
+                                                            variables.push(InlineValueLocation {
+                                                                variable_name,
+                                                                scope: VariableScope::Local,
+                                                                lookup:
+                                                                    VariableLookupKind::Variable,
+                                                                row: identifier.end_position().row,
+                                                                column: identifier
+                                                                    .end_position()
+                                                                    .column,
+                                                            });
+                                                        }
+                                                    }
                                                 }
+                                            }
+                                        }
+                                    }
+                                } else if clause.kind() == "range_clause" {
+                                    if let Some(left) = clause.child_by_field_name("left") {
+                                        if left.kind() == "expression_list" {
+                                            for identifier in left.named_children(&mut left.walk())
+                                            {
+                                                if identifier.kind() == "identifier" {
+                                                    let variable_name =
+                                                        source[identifier.byte_range()].to_string();
 
-                                                if let Some(index) =
-                                                    variable_names_in_scope.get(&variable_name)
-                                                {
-                                                    variables.remove(*index);
+                                                    if variable_name == "_" {
+                                                        continue;
+                                                    }
+
+                                                    if variable_names.contains(&variable_name) {
+                                                        continue;
+                                                    }
+
+                                                    if let Some(index) =
+                                                        variable_names_in_scope.get(&variable_name)
+                                                    {
+                                                        variables.remove(*index);
+                                                    }
+                                                    variable_names_in_scope.insert(
+                                                        variable_name.clone(),
+                                                        variables.len(),
+                                                    );
+                                                    variables.push(InlineValueLocation {
+                                                        variable_name,
+                                                        scope: VariableScope::Local,
+                                                        lookup: VariableLookupKind::Variable,
+                                                        row: identifier.end_position().row,
+                                                        column: identifier.end_position().column,
+                                                    });
                                                 }
-
-                                                variable_names_in_scope
-                                                    .insert(variable_name.clone(), variables.len());
-                                                variables.push(InlineValueLocation {
-                                                    variable_name,
-                                                    scope: VariableScope::Local,
-                                                    lookup: VariableLookupKind::Variable,
-                                                    row: identifier.end_position().row,
-                                                    column: identifier.end_position().column,
-                                                });
                                             }
                                         }
                                     }
@@ -320,7 +472,6 @@ impl InlineValueProvider for GoInlineValueProvider {
                         _ => {}
                     }
                 } else if child.kind() == "var_declaration" {
-                    // Handle global variables
                     for var_spec in child.named_children(&mut child.walk()) {
                         if var_spec.kind() == "var_spec" {
                             if let Some(name_node) = var_spec.child_by_field_name("name") {
