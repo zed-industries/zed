@@ -309,14 +309,12 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Always enable following
-        if let Some(workspace) = self.workspace.upgrade() {
-            workspace.update(cx, |workspace, cx| {
-                workspace.follow(CollaboratorId::Agent, window, cx);
-            });
-        }
+        self.workspace
+            .update(cx, |this, cx| {
+                this.follow(CollaboratorId::Agent, window, cx)
+            })
+            .log_err();
 
-        // Then proceed with the normal chat action
         self.chat(&Chat, window, cx);
     }
 
