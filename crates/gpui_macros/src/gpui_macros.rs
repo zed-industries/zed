@@ -181,16 +181,20 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
     test::test(args, function)
 }
 
-/// A procedural macro that generates runtime reflection capabilities for trait methods.
+/// When added to a trait, `#[derive_inspector_reflection]` generates a module which provides
+/// enumeration and lookup by name of all methods that have the shape `fn method(self) -> Self`.
 ///
-/// This macro specifically handles methods of the form `fn name(self) -> Self` or
-/// `fn name(mut self) -> Self`, allowing them to be invoked dynamically by name at runtime.
-/// Methods with default implementations are also supported. Other method signatures are filtered out.
+/// The generated module will have the name `<snake_case_trait_name>_reflection` and contain the
+/// following functions:
 ///
-/// This generates a reflection module with methods to:
-/// - Get all reflectable methods
-/// - Find a method by name
-/// - Invoke a method dynamically
+/// ```
+/// pub fn methods::<T: TheTrait + 'static>() -> [gpui::inspector_reflection::MethodReflection<T>];
+///
+/// pub fn find_method::<T: TheTrait + 'static>() -> Option<gpui::inspector_reflection::MethodReflection<T>>;
+/// ```
+///
+/// The `invoke` method on `MethodReflection` will run the method. `MethodReflection` also provides
+/// the documentation of the method.
 #[cfg(any(feature = "inspector", debug_assertions))]
 #[proc_macro_attribute]
 pub fn derive_inspector_reflection(_args: TokenStream, input: TokenStream) -> TokenStream {
