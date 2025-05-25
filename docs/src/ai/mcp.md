@@ -43,4 +43,4 @@ Alternatively, you can connect to MCP servers in Zed via adding their commands d
 }
 ```
 
-You can also add a custom server by reaching for the Agent Panel's Settigs view (also accesible via the `agent: open configuration` action) and adding the desired server through the modal that appears when clicking the "Add Custom Server" button.
+You can also add a custom server by reaching for the Agent Panel's Settings view (also accessible via the `agent: open configuration` action) and adding the desired server through the modal that appears when clicking the "Add Custom Server" button.
