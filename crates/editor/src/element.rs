@@ -1940,37 +1940,102 @@ impl EditorElement {
     fn layout_inline_code_actions(
         &self,
         display_row: DisplayRow,
-        _row_info: &RowInfo,
-        _line_layout: &LineWithInvisibles,
         em_width: Pixels,
         content_origin: gpui::Point<Pixels>,
         scroll_pixel_position: gpui::Point<Pixels>,
         line_height: Pixels,
-        _text_hitbox: &Hitbox,
+        snapshot: &EditorSnapshot,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
-        let editor = self.editor.read(cx);
-        if !editor.has_available_code_actions() {
+        if !self.editor.read(cx).has_available_code_actions() {
             return None;
         }
 
-        const INLINE_CODE_ACTIONS_PADDING_EM_WIDTHS: f32 = 1.0;
-        let padding = INLINE_CODE_ACTIONS_PADDING_EM_WIDTHS * em_width;
+        const OVERLFOW_CHAR_LIMIT: u32 = 2;
+        const MAX_ALTERNATE_DISTANCE: u32 = 8;
+        const MARGIN_LEFT_EM_WIDTHS: f32 = 2.;
 
+        let original_buffer_row = snapshot
+            .display_snapshot
+            .display_point_to_point(DisplayPoint::new(display_row, 0), text::Bias::Left)
+            .row;
+
+        let has_sufficient_leading_whitespace = |row_candidate: u32| -> bool {
+            if let Some((buffer_snapshot, line_range)) = snapshot
+                .display_snapshot
+                .buffer_snapshot
+                .buffer_line_for_row(MultiBufferRow(row_candidate))
+            {
+                let line_start = line_range.start;
+                let line_indent = text::LineIndent::from_iter(
+                    buffer_snapshot
+                        .text_for_range(line_range)
+                        .flat_map(|chunk| chunk.chars()),
+                );
+                if line_indent.is_line_blank() {
+                    true
+                } else {
+                    let tab_size = buffer_snapshot.settings_at(line_start, cx).tab_size.get();
+                    line_indent.len(tab_size) >= OVERLFOW_CHAR_LIMIT
+                }
+            } else {
+                false
+            }
+        };
+
+        let new_buffer_row = if has_sufficient_leading_whitespace(original_buffer_row) {
+            Some(original_buffer_row)
+        } else {
+            let mut result = None;
+            // expand alternating up and down
+            for offset in 1..=MAX_ALTERNATE_DISTANCE {
+                // up
+                if original_buffer_row >= offset {
+                    let row_above = original_buffer_row - offset;
+                    if has_sufficient_leading_whitespace(row_above) {
+                        result = Some(row_above);
+                        break;
+                    }
+                }
+                // down
+                let row_below = original_buffer_row + offset;
+                let max_row = snapshot.display_snapshot.buffer_snapshot.max_point().row;
+                if row_below <= max_row {
+                    if has_sufficient_leading_whitespace(row_below) {
+                        result = Some(row_below);
+                        break;
+                    }
+                }
+            }
+            // if not found, don't render
+            result
+        }?;
+
+        let display_row = snapshot
+            .display_snapshot
+            .point_to_display_point(
+                MultiBufferPoint {
+                    row: new_buffer_row,
+                    column: original_buffer_row,
+                },
+                text::Bias::Left,
+            )
+            .row();
+
+        // TODO: clean up this
+        let editor = self.editor.read(cx);
         let focus_handle = editor.focus_handle.clone();
         let editor_handle_click = self.editor.clone();
-        let mut element = IconButton::new("inline_code_actions", ui::IconName::Bolt)
+
+        let mut element = IconButton::new("inline_code_actions", ui::IconName::BoltFilled)
             .shape(ui::IconButtonShape::Square)
-            .icon_size(ui::IconSize::XSmall)
-            .icon_color(ui::Color::Muted)
+            .icon_size(ui::IconSize::Small)
+            .icon_color(ui::Color::Hidden)
             .tooltip(move |window, cx| {
                 ui::Tooltip::for_action_in(
                     "Code Actions",
-                    &crate::actions::ToggleCodeActions {
-                        deployed_from: None,
-                        quick_launch: false,
-                    },
+                    &crate::actions::ToggleCodeActions::default(),
                     &focus_handle,
                     window,
                     cx,
@@ -1984,7 +2049,7 @@ impl EditorElement {
                             deployed_from: Some(crate::actions::CodeActionSource::Indicator(
                                 display_row,
                             )),
-                            quick_launch: true,
+                            quick_launch: false,
                         },
                         window,
                         cx,
@@ -1995,19 +2060,17 @@ impl EditorElement {
 
         let start_y = content_origin.y
             + line_height * (display_row.as_f32() - scroll_pixel_position.y / line_height);
-
-        let start_x = content_origin.x - scroll_pixel_position.x + padding;
+        let start_x =
+            content_origin.x - scroll_pixel_position.x + (MARGIN_LEFT_EM_WIDTHS * em_width);
 
         let absolute_offset = gpui::point(start_x, start_y);
-        let _size = element.layout_as_root(gpui::AvailableSpace::min_size(), window, cx);
-
+        element.layout_as_root(gpui::AvailableSpace::min_size(), window, cx);
         element.prepaint_as_root(
             absolute_offset,
             gpui::AvailableSpace::min_size(),
             window,
             cx,
         );
-
         Some(element)
     }
 
@@ -8083,16 +8146,13 @@ impl Element for EditorElement {
                             let line_layout = &line_layouts[line_ix];
                             let crease_trailer_layout = crease_trailers[line_ix].as_ref();
 
-                            // Layout inline code actions first (at start of line)
                             inline_code_actions = self.layout_inline_code_actions(
                                 display_row,
-                                row_info,
-                                line_layout,
                                 em_width,
                                 content_origin,
                                 scroll_pixel_position,
                                 line_height,
-                                &text_hitbox,
+                                &snapshot,
                                 window,
                                 cx,
                             );
