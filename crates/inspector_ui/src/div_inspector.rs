@@ -7,7 +7,10 @@ use gpui::{
 };
 
 use language::language_settings::SoftWrap;
-use language::{Anchor, Buffer, BufferSnapshot, CodeLabel, Point, ToOffset as _, ToPoint as _};
+use language::{
+    Anchor, Buffer, BufferSnapshot, CodeLabel, Diagnostic, DiagnosticEntry, DiagnosticSet,
+    DiagnosticSeverity, LanguageServerId, Point, ToOffset as _, ToPoint as _,
+};
 use project::lsp_store::CompletionDocumentation;
 use project::{Completion, CompletionSource, Project, ProjectPath};
 use std::cell::RefCell;
@@ -17,6 +20,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::LazyLock;
 use ui::{Label, LabelSize, Tooltip, prelude::*, styled_ext_reflection, v_flex};
+use util::split_str_with_ranges;
 
 /// Path used for unsaved buffer that contains style json. To support the json language server, this
 /// matches the name used in the generated schemas.
@@ -193,8 +197,9 @@ impl DivInspector {
                             // match (initial_style + rust_style). This allows for user edits to
                             // the json style to stick around after switching to edit the rust
                             // style.
-                            let rust_style =
-                                this.style_from_rust_buffer(rust_style_buffer.read(cx));
+                            let (rust_style, _) = this.style_from_rust_buffer_snapshot(
+                                &rust_style_buffer.read(cx).snapshot(),
+                            );
                             let mut initial_plus_rust = this.initial_style.clone();
                             initial_plus_rust.refine(&rust_style);
                             this.json_style_overrides = new_style.subtract(&initial_plus_rust);
@@ -286,7 +291,27 @@ impl DivInspector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let rust_style = self.style_from_rust_buffer(rust_style_buffer.read(cx));
+        let rust_style = rust_style_buffer.update(cx, |rust_style_buffer, cx| {
+            let snapshot = rust_style_buffer.snapshot();
+            let (rust_style, unrecognized_ranges) = self.style_from_rust_buffer_snapshot(&snapshot);
+            let diagnostic_entries =
+                unrecognized_ranges
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ix, range)| DiagnosticEntry {
+                        range,
+                        diagnostic: Diagnostic {
+                            message: "unrecognized - won't be used".to_string(),
+                            severity: DiagnosticSeverity::WARNING,
+                            is_primary: true,
+                            group_id: ix,
+                            ..Default::default()
+                        },
+                    });
+            let diagnostics = DiagnosticSet::from_sorted_entries(diagnostic_entries, &snapshot);
+            rust_style_buffer.update_diagnostics(LanguageServerId(0), diagnostics, cx);
+            rust_style
+        });
 
         // Preserve parts of the json style which do not come from the initial style or rust style.
         // This way user edits to the json style are preserved when they are not overridden by the
@@ -312,13 +337,15 @@ impl DivInspector {
         }
     }
 
-    fn style_from_rust_buffer(&self, rust_style_buffer: &Buffer) -> StyleRefinement {
+    fn style_from_rust_buffer_snapshot(
+        &self,
+        snapshot: &BufferSnapshot,
+    ) -> (StyleRefinement, Vec<Range<Anchor>>) {
         let method_names = if let Some((completion, position)) = self
             .rust_completion
             .as_ref()
             .zip(self.rust_completion_position.as_ref())
         {
-            let snapshot = rust_style_buffer.snapshot();
             let Range { start, end } = completion_replace_range(&snapshot, position)
                 .unwrap_or(position.clone()..position.clone());
             let before_text = snapshot
@@ -329,25 +356,34 @@ impl DivInspector {
                     end.to_offset(&snapshot)..snapshot.clip_offset(usize::MAX, Bias::Left),
                 )
                 .collect::<String>();
-            let mut method_names = before_text
-                .split(is_not_identifier_char)
-                .map(|name| name.to_string())
+            let mut method_names = split_str_with_ranges(&before_text, is_not_identifier_char)
+                .into_iter()
+                .map(|(range, name)| (Some(range), name.to_string()))
                 .collect::<Vec<_>>();
-            method_names.push(completion.clone());
+            method_names.push((None, completion.clone()));
             method_names.extend(
-                after_text
-                    .split(is_not_identifier_char)
-                    .map(|name| name.to_string()),
+                split_str_with_ranges(&after_text, is_not_identifier_char)
+                    .into_iter()
+                    .map(|(range, name)| (Some(range), name.to_string())),
             );
             method_names
         } else {
-            rust_style_buffer
-                .text()
-                .split(is_not_identifier_char)
-                .map(|name| name.to_string())
+            split_str_with_ranges(&snapshot.text(), is_not_identifier_char)
+                .into_iter()
+                .map(|(range, name)| (Some(range), name.to_string()))
                 .collect::<Vec<_>>()
         };
-        style_from_method_names(method_names)
+        let mut style = StyleRefinement::default();
+        let mut unrecognized_ranges = Vec::new();
+        for (range, name) in method_names {
+            if let Some((_, method)) = STYLE_METHODS.iter().find(|(_, m)| m.name == name) {
+                style = method.invoke(style);
+            } else if let Some(range) = range {
+                unrecognized_ranges
+                    .push(snapshot.anchor_before(range.start)..snapshot.anchor_before(range.end));
+            }
+        }
+        (style, unrecognized_ranges)
     }
 
     async fn create_buffer_in_project(
@@ -504,16 +540,6 @@ fn guess_rust_code_from_style(goal_style: &StyleRefinement) -> String {
     }
     result.push_str("\n}");
     result
-}
-
-fn style_from_method_names(method_names: impl IntoIterator<Item = String>) -> StyleRefinement {
-    let mut style = StyleRefinement::default();
-    for name in method_names {
-        if let Some((_, method)) = STYLE_METHODS.iter().find(|(_, m)| m.name == name) {
-            style = method.invoke(style);
-        }
-    }
-    style
 }
 
 fn is_not_identifier_char(c: char) -> bool {
