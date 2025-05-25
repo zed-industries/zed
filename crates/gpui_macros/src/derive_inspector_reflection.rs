@@ -117,7 +117,7 @@ fn generate_reflected_trait(trait_item: ItemTrait) -> TokenStream {
             None => quote! { None },
         };
         quote! {
-            #inspector_reflection_path::MethodReflection {
+            #inspector_reflection_path::FunctionReflection {
                 name: #method_name_str,
                 function: #wrapper_name::<T>,
                 documentation: #doc_expr,
@@ -139,14 +139,14 @@ fn generate_reflected_trait(trait_item: ItemTrait) -> TokenStream {
             #(#wrapper_functions)*
 
             /// Get all reflectable methods for a concrete type implementing the trait
-            pub const fn methods<T: #trait_name + 'static>() -> [#inspector_reflection_path::MethodReflection<T>; #method_count] {
+            pub const fn methods<T: #trait_name + 'static>() -> [#inspector_reflection_path::FunctionReflection<T>; #method_count] {
                 [
                     #(#method_info_entries),*
                 ]
             }
 
             /// Find a method by name for a concrete type implementing the trait
-            pub fn find_method<T: #trait_name + 'static>(name: &str) -> Option<#inspector_reflection_path::MethodReflection<T>> {
+            pub fn find_method<T: #trait_name + 'static>(name: &str) -> Option<#inspector_reflection_path::FunctionReflection<T>> {
                 methods::<T>().into_iter().find(|m| m.name == name)
             }
         }

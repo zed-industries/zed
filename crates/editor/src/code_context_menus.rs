@@ -871,7 +871,7 @@ impl CompletionsMenu {
         if let Some(provider) = provider {
             cx.update(|window, cx| {
                 // Since this is async, it's possible the menu has been closed and possibly even
-                // another opened. `provider.selection_changed` should not be called in that case.
+                // another opened. `provider.selection_changed` should not be called in this case.
                 let this_menu_still_active = editor
                     .read_with(cx, |editor, _cx| {
                         if let Some(CodeContextMenu::Completions(completions_menu)) =

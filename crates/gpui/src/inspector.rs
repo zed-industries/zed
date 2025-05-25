@@ -227,30 +227,22 @@ mod conditional {
 pub mod inspector_reflection {
     use std::any::Any;
 
-    /// Type alias for the function pointer that invokes a method
-    pub type InvokeFn = fn(Box<dyn Any>) -> Box<dyn Any>;
-
-    /// Information about a reflectable method
+    /// Reification of a function that has the signature `fn some_fn(T) -> T`. Provides the name,
+    /// documentation, and ability to invoke the function.
     #[derive(Clone, Copy)]
-    pub struct MethodReflection<T> {
-        /// The name of the method
+    pub struct FunctionReflection<T> {
+        /// The name of the function
         pub name: &'static str,
         /// The method
-        pub function: InvokeFn,
-        /// Documentation for the method
+        pub function: fn(Box<dyn Any>) -> Box<dyn Any>,
+        /// Documentation for the function
         pub documentation: Option<&'static str>,
         /// `PhantomData` for the type of the argument and result
         pub _type: std::marker::PhantomData<T>,
     }
 
-    impl<T: 'static> MethodReflection<T> {
-        /// Invoke this method on a value
-        ///
-        /// Returns the result of the method invocation.
-        ///
-        /// # Panics
-        ///
-        /// Panics if the type erasure fails (this should not happen with correct usage).
+    impl<T: 'static> FunctionReflection<T> {
+        /// Invoke this method on a value and return the result.
         pub fn invoke(&self, value: T) -> T {
             let boxed = Box::new(value) as Box<dyn Any>;
             let result = (self.function)(boxed);

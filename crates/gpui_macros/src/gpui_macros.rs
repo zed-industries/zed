@@ -183,18 +183,20 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
 
 /// When added to a trait, `#[derive_inspector_reflection]` generates a module which provides
 /// enumeration and lookup by name of all methods that have the shape `fn method(self) -> Self`.
+/// This is used by the inspector so that it can use the builder methods in `Styled` and
+/// `StyledExt`.
 ///
 /// The generated module will have the name `<snake_case_trait_name>_reflection` and contain the
 /// following functions:
 ///
 /// ```
-/// pub fn methods::<T: TheTrait + 'static>() -> [gpui::inspector_reflection::MethodReflection<T>];
+/// pub fn methods::<T: TheTrait + 'static>() -> [gpui::inspector_reflection::FunctionReflection<T>];
 ///
-/// pub fn find_method::<T: TheTrait + 'static>() -> Option<gpui::inspector_reflection::MethodReflection<T>>;
+/// pub fn find_method::<T: TheTrait + 'static>() -> Option<gpui::inspector_reflection::FunctionReflection<T>>;
 /// ```
 ///
-/// The `invoke` method on `MethodReflection` will run the method. `MethodReflection` also provides
-/// the documentation of the method.
+/// The `invoke` method on `FunctionReflection` will run the method. `FunctionReflection` also
+/// provides the method's documentation.
 #[cfg(any(feature = "inspector", debug_assertions))]
 #[proc_macro_attribute]
 pub fn derive_inspector_reflection(_args: TokenStream, input: TokenStream) -> TokenStream {
