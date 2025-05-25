@@ -61,7 +61,7 @@ Although Zed's agent is very efficient at reading through your codebase to auton
 If you have a tab open when opening the Agent Panel, that tab appears as a suggested context in form of a dashed button.
 You can also add other forms of context by either mentioning them with `@` or hitting the `+` icon button.
 
-You can even add previous threads as context by mentioning them with `@thread`, or by selecting the "Start New From Summary" option from the top-right menu to continue a longer conversation, keeping it within the context window.
+You can even add previous threads as context by mentioning them with `@thread`, or by selecting the "New From Summary" option from the top-right menu to continue a longer conversation, keeping it within the context window.
 
 Pasting images as context is also supported by the Agent Panel.
 
