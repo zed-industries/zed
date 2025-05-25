@@ -205,9 +205,9 @@ impl DivInspector {
 
         let div_inspector = cx.entity();
         rust_style_editor.update(cx, |rust_style_editor, _cx| {
-            rust_style_editor.set_completion_provider(Some(Box::new(
-                RustStyleCompletionProvider { div_inspector },
-            )));
+            rust_style_editor.set_completion_provider(Some(Rc::new(RustStyleCompletionProvider {
+                div_inspector,
+            })));
         });
 
         cx.subscribe_in(&rust_style_editor, window, {

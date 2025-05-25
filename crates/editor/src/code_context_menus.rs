@@ -1,8 +1,8 @@
 use fuzzy::{StringMatch, StringMatchCandidate};
+use gpui::AsyncWindowContext;
 use gpui::{
-    AnyElement, BackgroundExecutor, Entity, Focusable, FontWeight, ListSizingBehavior,
-    ScrollStrategy, SharedString, Size, StrikethroughStyle, StyledText, UniformListScrollHandle,
-    div, px, uniform_list,
+    AnyElement, Entity, Focusable, FontWeight, ListSizingBehavior, ScrollStrategy, SharedString,
+    Size, StrikethroughStyle, StyledText, UniformListScrollHandle, div, px, uniform_list,
 };
 use language::Buffer;
 use language::CodeLabel;
@@ -777,7 +777,12 @@ impl CompletionsMenu {
         });
     }
 
-    pub async fn filter(&mut self, query: Option<&str>, executor: BackgroundExecutor) {
+    pub async fn filter(
+        &mut self,
+        query: Option<&str>,
+        provider: Option<Rc<dyn CompletionProvider>>,
+        cx: &mut AsyncWindowContext,
+    ) {
         let mut matches = if let Some(query) = query {
             fuzzy::match_strings(
                 &self.match_candidates,
@@ -785,7 +790,7 @@ impl CompletionsMenu {
                 query.chars().any(|c| c.is_uppercase()),
                 100,
                 &Default::default(),
-                executor,
+                cx.background_executor().clone(),
             )
             .await
         } else {
@@ -846,6 +851,12 @@ impl CompletionsMenu {
         self.selected_item = 0;
         // This keeps the display consistent when y_flipped.
         self.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
+        if let Some(provider) = provider {
+            cx.update(|window, cx| {
+                provider.selection_changed(&self.entries.borrow()[self.selected_item], window, cx);
+            })
+            .ok();
+        }
     }
 }
 
