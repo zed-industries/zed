@@ -31,8 +31,8 @@ use crate::{
     AnyWindowHandle, Bounds, Decorations, Globals, GpuSpecs, Modifiers, Output, Pixels,
     PlatformDisplay, PlatformInput, Point, PromptButton, PromptLevel, RequestFrameOptions,
     ResizeEdge, ScaledPixels, Size, Tiling, WaylandClientStatePtr, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowParams, px,
-    size,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls, WindowDecorations,
+    WindowParams, px, size,
 };
 
 #[derive(Default)]
@@ -980,6 +980,10 @@ impl PlatformWindow for WaylandWindow {
 
     fn on_close(&self, callback: Box<dyn FnOnce()>) {
         self.0.callbacks.borrow_mut().close = Some(callback);
+    }
+
+    fn on_hit_test_window_control(&self, _callback: Box<dyn FnMut() -> Option<WindowControlArea>>) {
+        unimplemented!()
     }
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
