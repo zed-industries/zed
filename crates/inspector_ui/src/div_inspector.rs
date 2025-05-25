@@ -22,8 +22,6 @@ use ui::{Label, LabelSize, Tooltip, prelude::*, styled_ext_reflection, v_flex};
 /// matches the name used in the generated schemas.
 const ZED_INSPECTOR_STYLE_JSON: &str = "/zed-inspector-style.json";
 
-const ZED_INSPECTOR_STYLE_RUST: &str = "/zed-inspector-style.rs";
-
 pub(crate) struct DivInspector {
     project: Entity<Project>,
     inspector_id: Option<InspectorElementId>,
@@ -61,13 +59,20 @@ impl DivInspector {
     ) -> DivInspector {
         // Open the buffers once, so they can then be used for each editor.
         cx.spawn_in(window, {
+            let languages = project.read(cx).languages().clone();
             let project = project.clone();
             async move |this, cx| {
+                // Open the JSON style buffer in the inspector-specific project, so that it runs the
+                // JSON language server.
                 let json_style_buffer =
-                    Self::open_buffer(ZED_INSPECTOR_STYLE_JSON, &project, cx).await;
+                    Self::create_buffer_in_project(ZED_INSPECTOR_STYLE_JSON, &project, cx).await;
 
-                let rust_style_buffer =
-                    Self::open_buffer(ZED_INSPECTOR_STYLE_RUST, &project, cx).await;
+                // Create Rust style buffer without adding it to the project / buffer_store, so that
+                // Rust Analyzer doesn't get started for it.
+                let rust_language_result = languages.language_for_name("Rust").await;
+                let rust_style_buffer = rust_language_result.and_then(|rust_language| {
+                    cx.new(|cx| Buffer::local("", cx).with_language(rust_language, cx))
+                });
 
                 match json_style_buffer.and_then(|json_style_buffer| {
                     rust_style_buffer
@@ -345,7 +350,7 @@ impl DivInspector {
         style_from_method_names(method_names)
     }
 
-    async fn open_buffer(
+    async fn create_buffer_in_project(
         path: impl AsRef<Path>,
         project: &Entity<Project>,
         cx: &mut AsyncWindowContext,
