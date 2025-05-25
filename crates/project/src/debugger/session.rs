@@ -900,7 +900,6 @@ impl Session {
                         location_reference: None,
                     };
                     this.push_output(event, cx);
-                    cx.emit(SessionEvent::ConsoleOutput);
                 })?;
             }
             anyhow::Ok(())
@@ -1316,21 +1315,7 @@ impl Session {
                     return;
                 }
 
-                // Route stdout/stderr to terminal, everything else to console
-                let is_terminal_output = event.category.as_ref().is_some_and(|category| {
-                    matches!(
-                        category,
-                        OutputEventCategory::Stdout | OutputEventCategory::Stderr
-                    )
-                });
-
                 self.push_output(event, cx);
-
-                if is_terminal_output {
-                    cx.emit(SessionEvent::TerminalOutput);
-                } else {
-                    cx.emit(SessionEvent::ConsoleOutput);
-                }
 
                 cx.notify();
             }
@@ -1509,9 +1494,23 @@ impl Session {
             });
     }
 
-    fn push_output(&mut self, event: OutputEvent, _cx: &mut Context<Self>) {
-        self.output.push_back(event);
+    fn push_output(&mut self, event: OutputEvent, cx: &mut Context<Self>) {
+        self.output.push_back(event.clone());
         self.output_token.0 += 1;
+
+        // Route stdout/stderr to terminal, everything else to console
+        let is_terminal_output = event.category.as_ref().is_some_and(|category| {
+            matches!(
+                category,
+                OutputEventCategory::Stdout | OutputEventCategory::Stderr
+            )
+        });
+
+        if is_terminal_output {
+            cx.emit(SessionEvent::TerminalOutput);
+        } else {
+            cx.emit(SessionEvent::ConsoleOutput);
+        }
     }
 
     pub fn any_stopped_thread(&self) -> bool {
@@ -2144,7 +2143,6 @@ impl Session {
             location_reference: None,
         };
         self.push_output(event, cx);
-        cx.emit(SessionEvent::ConsoleOutput);
         let request = self.mode.request_dap(EvaluateCommand {
             expression,
             context,
@@ -2168,7 +2166,6 @@ impl Session {
                             location_reference: None,
                         };
                         this.push_output(event, cx);
-                        cx.emit(SessionEvent::ConsoleOutput);
                     }
                     Err(e) => {
                         let event = dap::OutputEvent {
@@ -2183,7 +2180,6 @@ impl Session {
                             location_reference: None,
                         };
                         this.push_output(event, cx);
-                        cx.emit(SessionEvent::ConsoleOutput);
                     }
                 };
                 this.invalidate_command_type::<ScopesCommand>();
