@@ -165,25 +165,19 @@ impl DivInspector {
             State::Loading | State::LoadError { .. } => return,
         };
 
-        let style_json = match serde_json::to_string_pretty(&style) {
-            Ok(style_json) => style_json,
-            Err(err) => {
-                self.state = State::BuffersLoaded {
-                    rust_style_buffer: rust_style_buffer.clone(),
-                    json_style_buffer: json_style_buffer.clone(),
-                };
-                self.json_style_error =
-                    Some(format!("Failed to convert style to JSON: {err}").into());
-                return;
-            }
-        };
-        self.json_style_error = None;
+        let json_style_editor = self.create_editor(json_style_buffer.clone(), window, cx);
+        let rust_style_editor = self.create_editor(rust_style_buffer.clone(), window, cx);
 
-        json_style_buffer.update(cx, |json_style_buffer, cx| {
-            json_style_buffer.set_text(style_json, cx)
+        rust_style_editor.update(cx, {
+            let div_inspector = cx.entity();
+            |rust_style_editor, _cx| {
+                rust_style_editor.set_completion_provider(Some(Rc::new(
+                    RustStyleCompletionProvider { div_inspector },
+                )));
+            }
         });
 
-        let json_style_editor = self.create_editor(json_style_buffer.clone(), window, cx);
+        self.reset_style_editors(&rust_style_editor, &json_style_editor, window, cx);
 
         cx.subscribe_in(&json_style_editor, window, {
             let id = id.clone();
@@ -224,19 +218,6 @@ impl DivInspector {
         })
         .detach();
 
-        rust_style_buffer.update(cx, |rust_style_buffer, cx| {
-            rust_style_buffer.set_text(guess_rust_code_from_style(&style), cx)
-        });
-
-        let rust_style_editor = self.create_editor(rust_style_buffer.clone(), window, cx);
-
-        let div_inspector = cx.entity();
-        rust_style_editor.update(cx, |rust_style_editor, _cx| {
-            rust_style_editor.set_completion_provider(Some(Rc::new(RustStyleCompletionProvider {
-                div_inspector,
-            })));
-        });
-
         cx.subscribe_in(&rust_style_editor, window, {
             let json_style_editor = json_style_editor.clone();
             let rust_style_buffer = rust_style_buffer.clone();
@@ -260,6 +241,49 @@ impl DivInspector {
             json_style_buffer,
             json_style_editor,
         };
+    }
+
+    fn reset_style(&mut self, window: &mut Window, cx: &mut App) {
+        match &self.state {
+            State::Ready {
+                rust_style_editor,
+                json_style_editor,
+                ..
+            } => {
+                self.reset_style_editors(
+                    &rust_style_editor.clone(),
+                    &json_style_editor.clone(),
+                    window,
+                    cx,
+                );
+            }
+            _ => {}
+        }
+    }
+
+    fn reset_style_editors(
+        &mut self,
+        rust_style_editor: &Entity<Editor>,
+        json_style_editor: &Entity<Editor>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let json_text = match serde_json::to_string_pretty(&self.initial_style) {
+            Ok(json_text) => json_text,
+            Err(err) => {
+                self.json_style_error =
+                    Some(format!("Failed to convert style to JSON: {err}").into());
+                return;
+            }
+        };
+        self.json_style_error = None;
+
+        rust_style_editor.update(cx, |rust_style_editor, cx| {
+            rust_style_editor.set_text(guess_rust_code_from_style(&self.initial_style), window, cx);
+        });
+        json_style_editor.update(cx, |json_style_editor, cx| {
+            json_style_editor.set_text(json_text, window, cx);
+        });
     }
 
     fn handle_rust_completion_selection_change(
@@ -466,7 +490,18 @@ impl Render for DivInspector {
                     .child(
                         v_flex()
                             .gap_2()
-                            .child(Label::new("Rust Style").size(LabelSize::Large))
+                            .child(
+                                h_flex()
+                                    .justify_between()
+                                    .child(Label::new("Rust Style").size(LabelSize::Large))
+                                    .child(
+                                        IconButton::new("reset-style", IconName::Eraser)
+                                            .tooltip(Tooltip::text("Reset style"))
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.reset_style(window, cx);
+                                            })),
+                                    ),
+                            )
                             .child(div().h_64().child(rust_style_editor.clone())),
                     )
                     .child(
