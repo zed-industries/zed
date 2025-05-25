@@ -699,7 +699,6 @@ mod tests {
         assert_eq!(venv_args[3], "--port=5678");
 
         // Note: Case 3 (GitHub-downloaded debugpy) is not tested since this requires mocking the Github API.
-        // TODO: Maybe add a mock test later?
     }
 
     #[test]
