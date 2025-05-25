@@ -49,7 +49,7 @@ use terminal_view::TerminalView;
 use ui::{
     ActiveTheme, AnyElement, App, ButtonCommon as _, Clickable as _, Context, FluentBuilder,
     IconButton, IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon as _,
-    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Tab, Tooltip,
+    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, StyledTypography, Tab, Tooltip,
     VisibleOnHover, VisualContext, Window, div, h_flex, v_flex,
 };
 use util::ResultExt;
@@ -58,6 +58,7 @@ use workspace::{
     ActivePaneDecorator, DraggedTab, Item, ItemHandle, Member, Pane, PaneGroup, SplitDirection,
     Workspace, item::TabContentParams, move_item, pane::Event,
 };
+
 
 pub struct RunningState {
     session: Entity<Session>,
@@ -533,12 +534,14 @@ impl gpui::Render for DebugTerminal {
                 div()
                     .p_2()
                     .text_color(cx.theme().colors().text)
+                    .text_buffer(cx)
                     .child(self.output_text.clone())
                     .into_any_element()
             } else {
                 div()
                     .p_2()
                     .text_color(cx.theme().colors().text_muted)
+                    .text_buffer(cx)
                     .child("Terminal output will appear here...")
                     .into_any_element()
             },

@@ -4244,6 +4244,7 @@ dependencies = [
  "sysinfo",
  "task",
  "tasks_ui",
+ "terminal",
  "terminal_view",
  "theme",
  "ui",
