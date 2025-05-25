@@ -101,8 +101,17 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
                 .unwrap();
 
             assert_eq!(
-                "First console output line before thread stopped!\nFirst output line before thread stopped!\n",
-                active_debug_session_panel.read(cx).running_state().read(cx).console().read(cx).editor().read(cx).text(cx).as_str()
+                "First console output line before thread stopped!\n",
+                active_debug_session_panel
+                    .read(cx)
+                    .running_state()
+                    .read(cx)
+                    .console()
+                    .read(cx)
+                    .editor()
+                    .read(cx)
+                    .text(cx)
+                    .as_str()
             );
         })
         .unwrap();
@@ -150,11 +159,193 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
                 .unwrap();
 
             assert_eq!(
-                "First console output line before thread stopped!\nFirst output line before thread stopped!\nSecond output line after thread stopped!\nSecond console output line after thread stopped!\n",
+                "First console output line before thread stopped!\nSecond console output line after thread stopped!\n",
                 active_session_panel.read(cx).running_state().read(cx).console().read(cx).editor().read(cx).text(cx).as_str()
             );
         })
         .unwrap();
+}
+
+#[gpui::test]
+async fn test_output_event_separation(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "main.rs": "First line\nSecond line\nThird line\nFourth line",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.focus_panel::<DebugPanel>(window, cx);
+        })
+        .unwrap();
+
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
+    let client = session.read_with(cx, |session, _| session.adapter_client().unwrap());
+
+    client.on_request::<StackTrace, _>(move |_, _| {
+        Ok(dap::StackTraceResponse {
+            stack_frames: Vec::default(),
+            total_frames: None,
+        })
+    });
+
+    // Console output (category: None) - should go to console only
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: None,
+            output: "Console message".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+            location_reference: None,
+        }))
+        .await;
+
+    // Stdout (category: Stdout) - should go to terminal only
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "Stdout message".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+            location_reference: None,
+        }))
+        .await;
+
+    // Stderr (category: Stderr) - should go to terminal only
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stderr),
+            output: "Stderr message".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+            location_reference: None,
+        }))
+        .await;
+
+    // Console category - should go to console only
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Console),
+            output: "Console category message".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+            location_reference: None,
+        }))
+        .await;
+
+    // Important category - should go to console only
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Important),
+            output: "Important message".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+            location_reference: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    let _running_state =
+        active_debug_session_panel(workspace, cx).update_in(cx, |item, window, cx| {
+            cx.focus_self(window);
+            item.running_state().clone()
+        });
+
+    cx.run_until_parked();
+
+    // Console contains only non-stdout/stderr events
+    workspace
+        .update(cx, |workspace, _window, cx| {
+            let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+            let active_debug_session_panel = debug_panel
+                .update(cx, |this, _| this.active_session())
+                .unwrap();
+
+            let console_text = active_debug_session_panel
+                .read(cx)
+                .running_state()
+                .read(cx)
+                .console()
+                .read(cx)
+                .editor()
+                .read(cx)
+                .text(cx);
+
+            assert!(console_text.contains("Console message"));
+            assert!(console_text.contains("Console category message"));
+            assert!(console_text.contains("Important message"));
+            assert!(!console_text.contains("Stdout message"));
+            assert!(!console_text.contains("Stderr message"));
+        })
+        .unwrap();
+
+    // Terminal contains only stdout/stderr events
+    let terminal_messages = session.read_with(cx, |session, _cx| {
+        let terminal_token = project::debugger::session::OutputToken(0);
+        let (terminal_events, _) = session.terminal_output(terminal_token);
+        terminal_events
+            .map(|event| event.output.clone())
+            .collect::<Vec<String>>()
+    });
+
+    // Terminal should contain: stdout and stderr but no:
+    // console, important, or None category messages
+    assert!(
+        terminal_messages
+            .iter()
+            .any(|msg| msg.contains("Stdout message"))
+    );
+    assert!(
+        terminal_messages
+            .iter()
+            .any(|msg| msg.contains("Stderr message"))
+    );
+    assert!(
+        !terminal_messages
+            .iter()
+            .any(|msg| msg.contains("Console message"))
+    );
+    assert!(
+        !terminal_messages
+            .iter()
+            .any(|msg| msg.contains("Console category message"))
+    );
+    assert!(
+        !terminal_messages
+            .iter()
+            .any(|msg| msg.contains("Important message"))
+    );
 }
 
 // #[gpui::test]

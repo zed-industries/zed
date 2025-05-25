@@ -49,8 +49,8 @@ use terminal_view::TerminalView;
 use ui::{
     ActiveTheme, AnyElement, App, ButtonCommon as _, Clickable as _, Context, FluentBuilder,
     IconButton, IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon as _,
-    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, StyledTypography, Tab, Tooltip,
-    VisibleOnHover, VisualContext, Window, div, h_flex, v_flex,
+    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, StyledTypography, Tab,
+    Tooltip, VisibleOnHover, VisualContext, Window, div, h_flex, v_flex,
 };
 use util::ResultExt;
 use variable_list::VariableList;
@@ -58,7 +58,6 @@ use workspace::{
     ActivePaneDecorator, DraggedTab, Item, ItemHandle, Member, Pane, PaneGroup, SplitDirection,
     Workspace, item::TabContentParams, move_item, pane::Event,
 };
-
 
 pub struct RunningState {
     session: Entity<Session>,

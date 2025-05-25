@@ -1134,7 +1134,19 @@ impl Session {
             0
         };
 
-        (self.output.range(range_start..), self.output_token)
+        (
+            self.output
+                .range(range_start..)
+                .filter(|event: &&dap::OutputEvent| {
+                    !event.category.as_ref().is_some_and(|category| {
+                        matches!(
+                            category,
+                            OutputEventCategory::Stdout | OutputEventCategory::Stderr
+                        )
+                    })
+                }),
+            self.output_token,
+        )
     }
 
     pub fn terminal_output(
@@ -1494,9 +1506,9 @@ impl Session {
 
         if is_terminal_output {
             cx.emit(SessionEvent::TerminalOutput);
+        } else {
+            cx.emit(SessionEvent::ConsoleOutput);
         }
-
-        cx.emit(SessionEvent::ConsoleOutput);
     }
 
     pub fn any_stopped_thread(&self) -> bool {
