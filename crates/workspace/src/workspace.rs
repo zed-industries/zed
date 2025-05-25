@@ -3425,14 +3425,42 @@ impl Workspace {
             // We're in the center, so we first try to go to a different pane,
             // otherwise try to go to a dock.
             (Origin::Center, direction) => {
+                // 1. Check for a pane in the requested direction.
                 if let Some(pane) = self.find_pane_in_direction(direction, cx) {
                     Some(Target::Pane(pane))
                 } else {
-                    match direction {
-                        SplitDirection::Up => None,
-                        SplitDirection::Down => try_dock(&self.bottom_dock),
-                        SplitDirection::Left => try_dock(&self.left_dock),
-                        SplitDirection::Right => try_dock(&self.right_dock),
+                    // 2. Check for a dock on the same side.
+                    let primary_dock = match direction {
+                        SplitDirection::Left => &self.left_dock,
+                        SplitDirection::Right => &self.right_dock,
+                        SplitDirection::Up | SplitDirection::Down => &self.bottom_dock,
+                    };
+                    if let Some(dock) = try_dock(primary_dock) {
+                        Some(dock)
+                    } else {
+                        // 3. Wrap-around: try the opposite side dock.
+                        match direction {
+                            SplitDirection::Left => {
+                                if let Some(dock) = try_dock(&self.right_dock) {
+                                    Some(dock)
+                                } else {
+                                    // 4. Finally, wrap to the opposite edge pane.
+                                    Some(Target::Pane(self.center.last_pane()))
+                                }
+                            }
+                            SplitDirection::Right => {
+                                if let Some(dock) = try_dock(&self.left_dock) {
+                                    Some(dock)
+                                } else {
+                                    // 4. Finally, wrap to the opposite edge pane.
+                                    Some(Target::Pane(self.center.first_pane()))
+                                }
+                            }
+                            _ => {
+                                // For up/down directions, no secondary dock to try
+                                None
+                            }
+                        }
                     }
                 }
             }
