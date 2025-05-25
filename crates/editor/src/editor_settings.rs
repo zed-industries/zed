@@ -140,6 +140,10 @@ impl Minimap {
         self.show != ShowMinimap::Never
     }
 
+    pub fn on_active_buffer(&self) -> bool {
+        self.show == ShowMinimap::OnActiveBuffer
+    }
+
     pub fn with_show_override(self) -> Self {
         Self {
             show: ShowMinimap::Always,
@@ -187,6 +191,8 @@ pub enum ShowMinimap {
     /// Never show the minimap.
     #[default]
     Never,
+    // On active buffer.
+    OnActiveBuffer,
 }
 
 /// When to show the minimap thumb.
