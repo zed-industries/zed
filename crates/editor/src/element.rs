@@ -1772,6 +1772,9 @@ impl EditorElement {
         let minimap_editor = self.editor.read(cx).minimap().cloned()?;
 
         let minimap_settings = EditorSettings::get_global(cx).minimap;
+        if minimap_settings.on_active_buffer() && !self.editor.focus_handle(cx).is_focused(window) {
+            return None;
+        }
 
         if !snapshot.mode.is_full()
             || minimap_width.is_zero()
