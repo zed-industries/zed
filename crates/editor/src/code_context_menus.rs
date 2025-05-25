@@ -1,9 +1,9 @@
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::AsyncWindowContext;
 use gpui::{
     AnyElement, Entity, Focusable, FontWeight, ListSizingBehavior, ScrollStrategy, SharedString,
     Size, StrikethroughStyle, StyledText, UniformListScrollHandle, div, px, uniform_list,
 };
+use gpui::{AsyncWindowContext, WeakEntity};
 use language::Buffer;
 use language::CodeLabel;
 use markdown::{Markdown, MarkdownElement};
@@ -360,7 +360,7 @@ impl CompletionsMenu {
                 .scroll_to_item(self.selected_item, ScrollStrategy::Top);
             self.resolve_visible_completions(provider, cx);
             if let Some(provider) = provider {
-                provider.selection_changed(&self.entries.borrow()[self.selected_item], window, cx)
+                self.handle_selection_changed(provider, window, cx);
             }
             cx.notify();
         }
@@ -380,6 +380,21 @@ impl CompletionsMenu {
         } else {
             0
         }
+    }
+
+    fn handle_selection_changed(
+        &self,
+        provider: &dyn CompletionProvider,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let entries = self.entries.borrow();
+        let entry = if self.selected_item < entries.len() {
+            Some(&entries[self.selected_item])
+        } else {
+            None
+        };
+        provider.selection_changed(entry, window, cx);
     }
 
     pub fn resolve_visible_completions(
@@ -781,6 +796,7 @@ impl CompletionsMenu {
         &mut self,
         query: Option<&str>,
         provider: Option<Rc<dyn CompletionProvider>>,
+        editor: WeakEntity<Editor>,
         cx: &mut AsyncWindowContext,
     ) {
         let mut matches = if let Some(query) = query {
@@ -851,9 +867,25 @@ impl CompletionsMenu {
         self.selected_item = 0;
         // This keeps the display consistent when y_flipped.
         self.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
+
         if let Some(provider) = provider {
             cx.update(|window, cx| {
-                provider.selection_changed(&self.entries.borrow()[self.selected_item], window, cx);
+                // Since this is async, it's possible the menu has been closed and possibly even
+                // another opened. `provider.selection_changed` should not be called in that case.
+                let this_menu_still_active = editor
+                    .read_with(cx, |editor, _cx| {
+                        if let Some(CodeContextMenu::Completions(completions_menu)) =
+                            editor.context_menu.borrow().as_ref()
+                        {
+                            completions_menu.id == self.id
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap_or(false);
+                if this_menu_still_active {
+                    self.handle_selection_changed(&*provider, window, cx);
+                }
             })
             .ok();
         }

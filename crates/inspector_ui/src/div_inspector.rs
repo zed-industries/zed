@@ -217,10 +217,6 @@ impl DivInspector {
                 EditorEvent::BufferEdited => {
                     this.update_json_style_from_rust(&style_editor, &rust_style_buffer, window, cx);
                 }
-                EditorEvent::CodeContextMenuClosed => {
-                    this.rust_completion = None;
-                    this.update_json_style_from_rust(&style_editor, &rust_style_buffer, window, cx);
-                }
                 _ => {}
             }
         })
@@ -236,11 +232,11 @@ impl DivInspector {
 
     fn handle_rust_completion_selection_change(
         &mut self,
-        rust_completion: String,
+        rust_completion: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.rust_completion = Some(rust_completion);
+        self.rust_completion = rust_completion;
         if let State::Ready {
             rust_style_buffer,
             style_editor,
@@ -561,9 +557,9 @@ impl CompletionProvider for RustStyleCompletionProvider {
         completion_replace_range(&buffer.read(cx).snapshot(), &position).is_some()
     }
 
-    fn selection_changed(&self, mat: &StringMatch, window: &mut Window, cx: &mut App) {
+    fn selection_changed(&self, mat: Option<&StringMatch>, window: &mut Window, cx: &mut App) {
         let div_inspector = self.div_inspector.clone();
-        let rust_completion = mat.string.clone();
+        let rust_completion = mat.as_ref().map(|mat| mat.string.clone());
         window.defer(cx, move |window, cx| {
             div_inspector.update(cx, |div_inspector, cx| {
                 div_inspector.handle_rust_completion_selection_change(rust_completion, window, cx);

@@ -2683,7 +2683,7 @@ impl Editor {
                     let completion_provider = self.completion_provider.clone();
                     cx.spawn_in(window, async move |this, cx| {
                         completion_menu
-                            .filter(query.as_deref(), completion_provider, cx)
+                            .filter(query.as_deref(), completion_provider, this.clone(), cx)
                             .await;
 
                         this.update(cx, |this, cx| {
@@ -5070,6 +5070,7 @@ impl Editor {
                             None
                         },
                         provider,
+                        editor.clone(),
                         cx,
                     )
                     .await;
@@ -8603,7 +8604,11 @@ impl Editor {
         let context_menu = self.context_menu.borrow_mut().take();
         self.stale_inline_completion_in_menu.take();
         self.update_visible_inline_completion(window, cx);
-        cx.emit(EditorEvent::CodeContextMenuClosed);
+        if let Some(CodeContextMenu::Completions(_)) = &context_menu {
+            if let Some(completion_provider) = &self.completion_provider {
+                completion_provider.selection_changed(None, window, cx);
+            }
+        }
         context_menu
     }
 
@@ -19892,7 +19897,7 @@ pub trait CompletionProvider {
         cx: &mut Context<Editor>,
     ) -> bool;
 
-    fn selection_changed(&self, _mat: &StringMatch, _window: &mut Window, _cx: &mut App) {}
+    fn selection_changed(&self, _mat: Option<&StringMatch>, _window: &mut Window, _cx: &mut App) {}
 
     fn sort_completions(&self) -> bool {
         true
@@ -20791,7 +20796,6 @@ pub enum EditorEvent {
         anchor: Anchor,
         is_deactivate: bool,
     },
-    CodeContextMenuClosed,
 }
 
 impl EventEmitter<EditorEvent> for Editor {}
