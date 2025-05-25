@@ -21,7 +21,7 @@ You can click on the card that contains your message and re-submit it with an ad
 
 ### Checkpoints {#checkpoints}
 
-Every time the AI performs an edit, you should see a "Restore Checkpoint" button to the top of your message, allowing you you to return your codebase to the state it was in prior to that message.
+Every time the AI performs an edit, you should see a "Restore Checkpoint" button to the top of your message, allowing you to return your codebase to the state it was in prior to that message.
 
 ### Navigating History {#navigating-history}
 

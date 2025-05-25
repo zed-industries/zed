@@ -346,7 +346,7 @@ Example configuration for using X.ai Grok with Zed:
    lms get qwen2.5-coder-7b
    ```
 
-3. Make sure the LM Studio API server by running:
+3. Make sure the LM Studio API server is running by executing:
 
    ```sh
    lms server start
