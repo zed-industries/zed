@@ -1331,6 +1331,16 @@ pub struct ClipboardSelection {
     pub first_line_indent: u32,
 }
 
+#[derive(Clone, Debug)]
+pub struct KillRing {
+    pub text: String,
+    pub row: u32,
+    pub column: u32,
+    pub buffer_id: BufferId,
+}
+
+impl Global for KillRing {}
+
 // selections, scroll behavior, was newest selection reversed
 type SelectSyntaxNodeHistoryState = (
     Box<[Selection<usize>]>,
@@ -10831,15 +10841,52 @@ impl Editor {
 
     pub fn kill_ring_cut(&mut self, _: &KillRingCut, window: &mut Window, cx: &mut Context<Self>) {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
+        if self.selections.count() != 1 {
+            return;
+        }
         self.change_selections(None, window, cx, |s| {
             s.move_with(|snapshot, sel| {
                 if sel.is_empty() {
-                    sel.end = DisplayPoint::new(sel.end.row(), snapshot.line_len(sel.end.row()))
+                    let row = sel.start.row();
+                    let column = sel.start.column();
+                    let line_len = snapshot.line_len(row);
+                    let last_row = snapshot.max_point().row();
+                    if column < line_len {
+                        sel.end = DisplayPoint::new(row, line_len);
+                    } else if row < last_row {
+                        sel.end = DisplayPoint::new(row + 1, 0);
+                    }
                 }
             });
         });
-        let item = self.cut_common(window, cx);
-        cx.set_global(KillRing(item))
+
+        let selection: Selection<Point> = self.selections.first(cx);
+        if selection.is_empty() {
+            return;
+        }
+
+        let cut_item = self.cut_common(window, cx);
+        let row = selection.start.row;
+        let column = selection.start.column;
+        let anchor = self.selections.first_anchor();
+        let buffer_id = anchor.start.buffer_id.unwrap();
+
+        let cut_text = cut_item.text().unwrap_or_default().to_string();
+
+        let mut text = cut_text;
+
+        if let Some(ring) = cx.try_global::<KillRing>() {
+            if ring.row == row && ring.column == column && ring.buffer_id == buffer_id {
+                text = format!("{}{}", ring.text, text);
+            }
+        }
+
+        cx.set_global(KillRing {
+            text: text,
+            row: row,
+            column: column,
+            buffer_id: buffer_id,
+        });
     }
 
     pub fn kill_ring_yank(
@@ -10849,16 +10896,15 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
-        let (text, metadata) = if let Some(KillRing(item)) = cx.try_global() {
-            if let Some(ClipboardEntry::String(kill_ring)) = item.entries().first() {
-                (kill_ring.text().to_string(), kill_ring.metadata_json())
-            } else {
-                return;
-            }
-        } else {
-            return;
+
+        let kill_ring = match cx.try_global::<KillRing>() {
+            Some(kill_ring) => kill_ring,
+            None => return,
         };
-        self.do_paste(&text, metadata, false, window, cx);
+
+        let text = kill_ring.text.clone();
+
+        self.do_paste(&text, None, false, window, cx);
     }
 
     pub fn copy_and_trim(&mut self, _: &CopyAndTrim, _: &mut Window, cx: &mut Context<Self>) {
@@ -21165,8 +21211,6 @@ fn collapse_multiline_range(range: Range<Point>) -> Range<Point> {
         range.start..range.start
     }
 }
-pub struct KillRing(ClipboardItem);
-impl Global for KillRing {}
 
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 
