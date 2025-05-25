@@ -3465,6 +3465,17 @@ impl Workspace {
                 }
             }
 
+            (Origin::LeftDock, SplitDirection::Left) => {
+                if let Some(dock_target) = try_dock(&self.right_dock) {
+                    Some(dock_target)
+                } else if !self.panes.is_empty() {
+                    // Safe: we’ve established the center has at least one pane
+                    Some(Target::Pane(self.center.last_pane()))
+                } else {
+                    None
+                }
+            }
+
             (Origin::LeftDock, SplitDirection::Right) => {
                 if let Some(last_active_pane) = get_last_active_pane() {
                     Some(Target::Pane(last_active_pane))
@@ -3485,6 +3496,16 @@ impl Workspace {
                     Some(Target::Pane(last_active_pane))
                 } else {
                     try_dock(&self.bottom_dock).or_else(|| try_dock(&self.left_dock))
+                }
+            }
+
+            (Origin::RightDock, SplitDirection::Right) => {
+                if let Some(dock_target) = try_dock(&self.left_dock) {
+                    Some(dock_target)
+                } else if !self.panes.is_empty() {
+                    Some(Target::Pane(self.center.first_pane()))
+                } else {
+                    None
                 }
             }
 
