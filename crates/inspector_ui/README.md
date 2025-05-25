@@ -16,7 +16,25 @@ This is a tool for inspecting and manipulating rendered elements in Zed. It is o
 
 # Known bugs
 
-* The style inspector buffers will leak memory over time due to building up history on each change of inspected element. Instead of using `Project` to create it, should just directly build the `Buffer` and `File` each time the inspected element changes.
+## JSON style editor undo history doesn't get reset
+
+The JSON style editor appends to its undo stack on every change of the active inspected element.
+
+I attempted to fix it by creating a new buffer and setting the buffer associated with the `json_style_buffer` entity. Unfortunately this doesn't work because the language server uses the `version: clock::Global` to figure out the changes, so would need some way to start the new buffer's text at that version.
+
+```
+        json_style_buffer.update(cx, |json_style_buffer, cx| {
+            let language = json_style_buffer.language().cloned();
+            let file = json_style_buffer.file().cloned();
+
+            *json_style_buffer = Buffer::local("", cx);
+
+            json_style_buffer.set_language(language, cx);
+            if let Some(file) = file {
+                json_style_buffer.file_updated(file, cx);
+            }
+        });
+```
 
 # Future features
 
