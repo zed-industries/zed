@@ -1956,12 +1956,46 @@ impl EditorElement {
         const MAX_ALTERNATE_DISTANCE: u32 = 8;
         const MARGIN_LEFT_EM_WIDTHS: f32 = 2.;
 
-        let original_buffer_row = snapshot
+        let buffer_point = snapshot
             .display_snapshot
-            .display_point_to_point(DisplayPoint::new(display_row, 0), text::Bias::Left)
-            .row;
+            .display_point_to_point(DisplayPoint::new(display_row, 0), text::Bias::Left);
 
-        let has_sufficient_leading_whitespace = |row_candidate: u32| -> bool {
+        if let Some((buffer_snapshot, line_range)) = snapshot
+            .display_snapshot
+            .buffer_snapshot
+            .buffer_line_for_row(MultiBufferRow(buffer_point.row))
+        {
+            let line_indent = text::LineIndent::from_iter(
+                buffer_snapshot
+                    .text_for_range(line_range)
+                    .flat_map(|chunk| chunk.chars()),
+            );
+            if line_indent.is_line_blank() {
+                return None;
+            }
+        }
+
+        let excerpt_id = snapshot
+            .display_snapshot
+            .buffer_snapshot
+            .excerpt_containing(buffer_point..buffer_point)
+            .map(|excerpt| excerpt.id());
+
+        let is_valid_row_for_code_action = |row_candidate: u32| -> bool {
+            let candidate_point = MultiBufferPoint {
+                row: row_candidate,
+                column: 0,
+            };
+            let candidate_excerpt_id = snapshot
+                .display_snapshot
+                .buffer_snapshot
+                .excerpt_containing(candidate_point..candidate_point)
+                .map(|excerpt| excerpt.id());
+
+            if excerpt_id != candidate_excerpt_id {
+                return false;
+            }
+
             if let Some((buffer_snapshot, line_range)) = snapshot
                 .display_snapshot
                 .buffer_snapshot
@@ -1984,50 +2018,36 @@ impl EditorElement {
             }
         };
 
-        let new_buffer_row = if has_sufficient_leading_whitespace(original_buffer_row) {
-            Some(original_buffer_row)
+        let new_buffer_row = if is_valid_row_for_code_action(buffer_point.row) {
+            Some(buffer_point.row)
         } else {
-            let mut result = None;
-            // expand alternating up and down
-            for offset in 1..=MAX_ALTERNATE_DISTANCE {
-                // up
-                if original_buffer_row >= offset {
-                    let row_above = original_buffer_row - offset;
-                    if has_sufficient_leading_whitespace(row_above) {
-                        result = Some(row_above);
-                        break;
-                    }
+            let max_row = snapshot.display_snapshot.buffer_snapshot.max_point().row;
+            (1..=MAX_ALTERNATE_DISTANCE).find_map(|offset| {
+                let row_above = buffer_point.row.saturating_sub(offset);
+                let row_below = buffer_point.row + offset;
+                if row_above != buffer_point.row && is_valid_row_for_code_action(row_above) {
+                    Some(row_above)
+                } else if row_below <= max_row && is_valid_row_for_code_action(row_below) {
+                    Some(row_below)
+                } else {
+                    None
                 }
-                // down
-                let row_below = original_buffer_row + offset;
-                let max_row = snapshot.display_snapshot.buffer_snapshot.max_point().row;
-                if row_below <= max_row {
-                    if has_sufficient_leading_whitespace(row_below) {
-                        result = Some(row_below);
-                        break;
-                    }
-                }
-            }
-            // if not found, don't render
-            result
+            })
         }?;
 
         let display_row = snapshot
             .display_snapshot
             .point_to_display_point(
-                MultiBufferPoint {
+                Point {
                     row: new_buffer_row,
-                    column: original_buffer_row,
+                    column: buffer_point.column,
                 },
                 text::Bias::Left,
             )
             .row();
 
-        // TODO: clean up this
-        let editor = self.editor.read(cx);
-        let focus_handle = editor.focus_handle.clone();
-        let editor_handle_click = self.editor.clone();
-
+        let focus_handle = self.editor.focus_handle(cx);
+        let editor = self.editor.clone();
         let mut element = IconButton::new("inline_code_actions", ui::IconName::BoltFilled)
             .shape(ui::IconButtonShape::Square)
             .icon_size(ui::IconSize::Small)
@@ -2042,8 +2062,7 @@ impl EditorElement {
                 )
             })
             .on_click(move |_, window, cx| {
-                editor_handle_click.update(cx, |editor, cx| {
-                    window.focus(&editor.focus_handle);
+                editor.update(cx, |editor, cx| {
                     editor.toggle_code_actions(
                         &crate::actions::ToggleCodeActions {
                             deployed_from: Some(crate::actions::CodeActionSource::Indicator(
