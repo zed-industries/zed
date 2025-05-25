@@ -339,7 +339,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
                 }
             } else if is_optional {
                 quote! {
-                    #name: if self.#name == refinement.#name {
+                    #name: if &self.#name == &refinement.#name {
                         None
                     } else {
                         self.#name.clone()
@@ -347,8 +347,12 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
                 }
             } else {
                 quote! {
-                    #name: if Some(self.#name) == &refinement.#name {
-                        None
+                    #name: if let Some(refinement_value) = &refinement.#name {
+                        if &self.#name == refinement_value {
+                            None
+                        } else {
+                            Some(self.#name.clone())
+                        }
                     } else {
                         Some(self.#name.clone())
                     },
@@ -369,7 +373,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
                 }
             } else {
                 quote! {
-                    #name: if self.#name == refinement.#name {
+                    #name: if &self.#name == &refinement.#name {
                         None
                     } else {
                         self.#name.clone()
