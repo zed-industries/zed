@@ -66,7 +66,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         })
         .collect();
 
-    // Create trait bound that each wrapped type must implement Clone // & Default
+    // Create trait bound that each wrapped type must implement Clone
     let type_param_bounds: Vec<_> = wrapped_types
         .iter()
         .map(|ty| {
@@ -326,6 +326,59 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         })
         .collect();
 
+    let refineable_subtract_assignments: Vec<TokenStream2> = fields
+        .iter()
+        .map(|field| {
+            let name = &field.ident;
+            let is_refineable = is_refineable_field(field);
+            let is_optional = is_optional_field(field);
+
+            if is_refineable {
+                quote! {
+                    #name: self.#name.subtract(&refinement.#name),
+                }
+            } else if is_optional {
+                quote! {
+                    #name: if self.#name == refinement.#name {
+                        None
+                    } else {
+                        self.#name.clone()
+                    },
+                }
+            } else {
+                quote! {
+                    #name: if Some(self.#name) == &refinement.#name {
+                        None
+                    } else {
+                        Some(self.#name.clone())
+                    },
+                }
+            }
+        })
+        .collect();
+
+    let refinement_subtract_assignments: Vec<TokenStream2> = fields
+        .iter()
+        .map(|field| {
+            let name = &field.ident;
+            let is_refineable = is_refineable_field(field);
+
+            if is_refineable {
+                quote! {
+                    #name: self.#name.subtract(&refinement.#name),
+                }
+            } else {
+                quote! {
+                    #name: if self.#name == refinement.#name {
+                        None
+                    } else {
+                        self.#name.clone()
+                    },
+                }
+            }
+        })
+        .collect();
+
     let mut derive_stream = quote! {};
     for trait_to_derive in refinement_traits_to_derive {
         derive_stream.extend(quote! { #[derive(#trait_to_derive)] })
@@ -357,9 +410,17 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
                 self
             }
 
-            fn is_superset_of(&self, refinement: &Self::Refinement) -> bool {
+            fn is_superset_of(&self, refinement: &Self::Refinement) -> bool
+            {
                 #( #refineable_is_superset_conditions )*
                 true
+            }
+
+            fn subtract(&self, refinement: &Self::Refinement) -> Self::Refinement
+            {
+                #refinement_ident {
+                    #( #refineable_subtract_assignments )*
+                }
             }
         }
 
@@ -377,9 +438,17 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
                 self
             }
 
-            fn is_superset_of(&self, refinement: &Self::Refinement) -> bool {
+            fn is_superset_of(&self, refinement: &Self::Refinement) -> bool
+            {
                 #( #refinement_is_superset_conditions )*
                 true
+            }
+
+            fn subtract(&self, refinement: &Self::Refinement) -> Self::Refinement
+            {
+                #refinement_ident {
+                    #( #refinement_subtract_assignments )*
+                }
             }
         }
 

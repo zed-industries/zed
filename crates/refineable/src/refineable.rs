@@ -89,9 +89,16 @@ pub trait Refineable: Clone {
 
     /// Returns `true` if this instance would contain all values from the refinement.
     ///
-    /// For refineable fields, this recursively checks `is_superset_of`. For other fields,
-    /// this checks if the refinement's `Some` values match this instance's values.
+    /// For refineable fields, this recursively checks `is_superset_of`. For other fields, this
+    /// checks if the refinement's `Some` values match this instance's values.
     fn is_superset_of(&self, refinement: &Self::Refinement) -> bool;
+
+    /// Returns a refinement that represents the difference between this instance and the given
+    /// refinement.
+    ///
+    /// For refineable fields, this recursively calls `subtract`. For other fields, the field is
+    /// `None` if the field's value is equal to the refinement.
+    fn subtract(&self, refinement: &Self::Refinement) -> Self::Refinement;
 }
 
 pub trait IsEmpty {
