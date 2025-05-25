@@ -1772,8 +1772,19 @@ impl EditorElement {
         let minimap_editor = self.editor.read(cx).minimap().cloned()?;
 
         let minimap_settings = EditorSettings::get_global(cx).minimap;
-        if minimap_settings.on_active_buffer() && !self.editor.focus_handle(cx).is_focused(window) {
-            return None;
+
+        if minimap_settings.on_active_pane() && !snapshot.is_focused {
+            let editor = self.editor.read(cx);
+            let focus_handle = &editor.focus_handle;
+            if let Some(workspace) = editor.workspace() {
+                let focus = workspace
+                    .read(cx)
+                    .focus_handle(cx)
+                    .contains(focus_handle, window);
+                if !focus {
+                    return None;
+                }
+            }
         }
 
         if !snapshot.mode.is_full()

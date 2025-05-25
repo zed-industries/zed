@@ -400,6 +400,13 @@
     // 3. Never show the minimap:
     //    "never" (default)
     "show": "never",
+    // Where to show the minimap in the editor.
+    // This setting can take two values:
+    // 1. Show the minimap on the focused pane only:
+    //    "focused_pane"
+    // 2. Show the minimap on all open panes:
+    //    "all_panes" (default)
+    "display_scope": "all_panes",
     // When to show the minimap thumb.
     // This setting can take two values:
     // 1. Show the minimap thumb if the mouse is over the minimap:
