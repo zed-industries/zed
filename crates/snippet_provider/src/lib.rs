@@ -34,10 +34,11 @@ fn file_stem_to_key(stem: &str) -> SnippetKind {
 
 fn file_to_snippets(file_contents: VsSnippetsFile) -> Vec<Arc<Snippet>> {
     let mut snippets = vec![];
-    for (prefix, snippet) in file_contents.snippets {
+    for (name, snippet) in file_contents.snippets {
+        let snippet_name = name.clone();
         let prefixes = snippet
             .prefix
-            .map_or_else(move || vec![prefix], |prefixes| prefixes.into());
+            .map_or_else(move || vec![snippet_name], |prefixes| prefixes.into());
         let description = snippet
             .description
             .map(|description| description.to_string());
@@ -49,6 +50,7 @@ fn file_to_snippets(file_contents: VsSnippetsFile) -> Vec<Arc<Snippet>> {
             body,
             prefix: prefixes,
             description,
+            name,
         }));
     }
     snippets
@@ -59,6 +61,7 @@ pub struct Snippet {
     pub prefix: Vec<String>,
     pub body: String,
     pub description: Option<String>,
+    pub name: String,
 }
 
 async fn process_updates(

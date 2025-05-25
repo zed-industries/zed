@@ -4,7 +4,7 @@ use assistant_tool::{ActionLog, Tool, ToolResult};
 use futures::StreamExt;
 use gpui::{AnyWindowHandle, App, Entity, Task};
 use language::{OffsetRangeExt, ParseStatus, Point};
-use language_model::{LanguageModel, LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::{
     Project,
     search::{SearchQuery, SearchResult},
@@ -96,7 +96,7 @@ impl Tool for GrepTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         _model: Arc<dyn LanguageModel>,
@@ -109,7 +109,7 @@ impl Tool for GrepTool {
         let input = match serde_json::from_value::<GrepToolInput>(input) {
             Ok(input) => input,
             Err(error) => {
-                return Task::ready(Err(anyhow!("Failed to parse input: {}", error))).into();
+                return Task::ready(Err(anyhow!("Failed to parse input: {error}"))).into();
             }
         };
 
@@ -122,7 +122,7 @@ impl Tool for GrepTool {
         ) {
             Ok(matcher) => matcher,
             Err(error) => {
-                return Task::ready(Err(anyhow!("invalid include glob pattern: {}", error))).into();
+                return Task::ready(Err(anyhow!("invalid include glob pattern: {error}"))).into();
             }
         };
 
@@ -746,14 +746,15 @@ mod tests {
         let tool = Arc::new(GrepTool);
         let action_log = cx.new(|_cx| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
-        let task = cx.update(|cx| tool.run(input, &[], project, action_log, model, None, cx));
+        let task =
+            cx.update(|cx| tool.run(input, Arc::default(), project, action_log, model, None, cx));
 
         match task.output.await {
             Ok(result) => {
                 if cfg!(windows) {
-                    result.content.replace("root\\", "root/")
+                    result.content.as_str().unwrap().replace("root\\", "root/")
                 } else {
-                    result.content
+                    result.content.as_str().unwrap().to_string()
                 }
             }
             Err(e) => panic!("Failed to run grep tool: {}", e),

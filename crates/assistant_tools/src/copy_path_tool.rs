@@ -1,10 +1,10 @@
 use crate::schema::json_schema_for;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::AnyWindowHandle;
 use gpui::{App, AppContext, Entity, Task};
-use language_model::LanguageModelToolSchemaFormat;
-use language_model::{LanguageModel, LanguageModelRequestMessage};
+use language_model::LanguageModel;
+use language_model::{LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -74,7 +74,7 @@ impl Tool for CopyPathTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         _model: Arc<dyn LanguageModel>,
@@ -107,17 +107,13 @@ impl Tool for CopyPathTool {
         });
 
         cx.background_spawn(async move {
-            match copy_task.await {
-                Ok(_) => Ok(
-                    format!("Copied {} to {}", input.source_path, input.destination_path).into(),
-                ),
-                Err(err) => Err(anyhow!(
-                    "Failed to copy {} to {}: {}",
-                    input.source_path,
-                    input.destination_path,
-                    err
-                )),
-            }
+            let _ = copy_task.await.with_context(|| {
+                format!(
+                    "Copying {} to {}",
+                    input.source_path, input.destination_path
+                )
+            })?;
+            Ok(format!("Copied {} to {}", input.source_path, input.destination_path).into())
         })
         .into()
     }

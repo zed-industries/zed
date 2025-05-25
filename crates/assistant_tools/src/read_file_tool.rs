@@ -1,13 +1,17 @@
 use crate::schema::json_schema_for;
-use anyhow::{Result, anyhow};
-use assistant_tool::outline;
+use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
+use assistant_tool::{ToolResultContent, outline};
 use gpui::{AnyWindowHandle, App, Entity, Task};
+use project::{ImageItem, image_store};
 
+use assistant_tool::ToolResultOutput;
 use indoc::formatdoc;
 use itertools::Itertools;
 use language::{Anchor, Point};
-use language_model::{LanguageModel, LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use language_model::{
+    LanguageModel, LanguageModelImage, LanguageModelRequest, LanguageModelToolSchemaFormat,
+};
 use project::{AgentLocation, Project};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -83,10 +87,10 @@ impl Tool for ReadFileTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
-        _model: Arc<dyn LanguageModel>,
+        model: Arc<dyn LanguageModel>,
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
@@ -100,6 +104,42 @@ impl Tool for ReadFileTool {
         };
 
         let file_path = input.path.clone();
+
+        if image_store::is_image_file(&project, &project_path, cx) {
+            if !model.supports_images() {
+                return Task::ready(Err(anyhow!(
+                    "Attempted to read an image, but Zed doesn't currently sending images to {}.",
+                    model.name().0
+                )))
+                .into();
+            }
+
+            let task = cx.spawn(async move |cx| -> Result<ToolResultOutput> {
+                let image_entity: Entity<ImageItem> = cx
+                    .update(|cx| {
+                        project.update(cx, |project, cx| {
+                            project.open_image(project_path.clone(), cx)
+                        })
+                    })?
+                    .await?;
+
+                let image =
+                    image_entity.read_with(cx, |image_item, _| Arc::clone(&image_item.image))?;
+
+                let language_model_image = cx
+                    .update(|cx| LanguageModelImage::from_image(image, cx))?
+                    .await
+                    .context("processing image")?;
+
+                Ok(ToolResultOutput {
+                    content: ToolResultContent::Image(language_model_image),
+                    output: None,
+                })
+            });
+
+            return task.into();
+        }
+
         cx.spawn(async move |cx| {
             let buffer = cx
                 .update(|cx| {
@@ -112,7 +152,7 @@ impl Tool for ReadFileTool {
                     .as_ref()
                     .map_or(true, |file| !file.disk_state().exists())
             })? {
-                return Err(anyhow!("{} not found", file_path));
+                anyhow::bail!("{file_path} not found");
             }
 
             project.update(cx, |project, cx| {
@@ -231,7 +271,15 @@ mod test {
                     "path": "root/nonexistent_file.txt"
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, model, None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log,
+                        model,
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
@@ -262,11 +310,22 @@ mod test {
                     "path": "root/small_file.txt"
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, model, None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log,
+                        model,
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
-        assert_eq!(result.unwrap().content, "This is a small file content");
+        assert_eq!(
+            result.unwrap().content.as_str(),
+            Some("This is a small file content")
+        );
     }
 
     #[gpui::test]
@@ -295,7 +354,7 @@ mod test {
                 Arc::new(ReadFileTool)
                     .run(
                         input,
-                        &[],
+                        Arc::default(),
                         project.clone(),
                         action_log.clone(),
                         model.clone(),
@@ -306,6 +365,7 @@ mod test {
             })
             .await;
         let content = result.unwrap();
+        let content = content.as_str().unwrap();
         assert_eq!(
             content.lines().skip(4).take(6).collect::<Vec<_>>(),
             vec![
@@ -325,7 +385,15 @@ mod test {
                     "offset": 1
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, model, None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log,
+                        model,
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
@@ -341,6 +409,8 @@ mod test {
             .collect::<Vec<_>>();
         pretty_assertions::assert_eq!(
             content
+                .as_str()
+                .unwrap()
                 .lines()
                 .skip(4)
                 .take(expected_content.len())
@@ -372,11 +442,22 @@ mod test {
                     "end_line": 4
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, model, None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log,
+                        model,
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
-        assert_eq!(result.unwrap().content, "Line 2\nLine 3\nLine 4");
+        assert_eq!(
+            result.unwrap().content.as_str(),
+            Some("Line 2\nLine 3\nLine 4")
+        );
     }
 
     #[gpui::test]
@@ -406,7 +487,7 @@ mod test {
                 Arc::new(ReadFileTool)
                     .run(
                         input,
-                        &[],
+                        Arc::default(),
                         project.clone(),
                         action_log.clone(),
                         model.clone(),
@@ -416,7 +497,7 @@ mod test {
                     .output
             })
             .await;
-        assert_eq!(result.unwrap().content, "Line 1\nLine 2");
+        assert_eq!(result.unwrap().content.as_str(), Some("Line 1\nLine 2"));
 
         // end_line of 0 should result in at least 1 line
         let result = cx
@@ -429,7 +510,7 @@ mod test {
                 Arc::new(ReadFileTool)
                     .run(
                         input,
-                        &[],
+                        Arc::default(),
                         project.clone(),
                         action_log.clone(),
                         model.clone(),
@@ -439,7 +520,7 @@ mod test {
                     .output
             })
             .await;
-        assert_eq!(result.unwrap().content, "Line 1");
+        assert_eq!(result.unwrap().content.as_str(), Some("Line 1"));
 
         // when start_line > end_line, should still return at least 1 line
         let result = cx
@@ -450,11 +531,19 @@ mod test {
                     "end_line": 2
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, model, None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log,
+                        model,
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
-        assert_eq!(result.unwrap().content, "Line 3");
+        assert_eq!(result.unwrap().content.as_str(), Some("Line 3"));
     }
 
     fn init_test(cx: &mut TestAppContext) {

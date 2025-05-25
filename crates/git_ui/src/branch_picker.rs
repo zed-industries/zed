@@ -1,4 +1,4 @@
-use anyhow::{Context as _, anyhow};
+use anyhow::Context as _;
 use fuzzy::StringMatchCandidate;
 
 use collections::HashSet;
@@ -98,15 +98,18 @@ impl BranchList {
 
             let all_branches = cx
                 .background_spawn(async move {
-                    let upstreams: HashSet<_> = all_branches
+                    let remote_upstreams: HashSet<_> = all_branches
                         .iter()
                         .filter_map(|branch| {
-                            let upstream = branch.upstream.as_ref()?;
-                            Some(upstream.ref_name.clone())
+                            branch
+                                .upstream
+                                .as_ref()
+                                .filter(|upstream| upstream.is_remote())
+                                .map(|upstream| upstream.ref_name.clone())
                         })
                         .collect();
 
-                    all_branches.retain(|branch| !upstreams.contains(&branch.ref_name));
+                    all_branches.retain(|branch| !remote_upstreams.contains(&branch.ref_name));
 
                     all_branches.sort_by_key(|branch| {
                         branch
@@ -306,8 +309,7 @@ impl PickerDelegate for BranchListDelegate {
                     cx.background_executor().clone(),
                 )
                 .await
-                .iter()
-                .cloned()
+                .into_iter()
                 .map(|candidate| BranchEntry {
                     branch: all_branches[candidate.candidate_id].clone(),
                     positions: candidate.positions,
@@ -379,7 +381,7 @@ impl PickerDelegate for BranchListDelegate {
                         .delegate
                         .repo
                         .as_ref()
-                        .ok_or_else(|| anyhow!("No active repository"))?
+                        .context("No active repository")?
                         .clone();
 
                     let mut cx = cx.to_async();

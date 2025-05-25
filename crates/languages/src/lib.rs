@@ -2,6 +2,7 @@ use anyhow::Context as _;
 use gpui::{App, UpdateGlobal};
 use json::json_task_context;
 use node_runtime::NodeRuntime;
+use python::PyprojectTomlManifestProvider;
 use rust::CargoManifestProvider;
 use rust_embed::RustEmbed;
 use settings::SettingsStore;
@@ -302,7 +303,13 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
         anyhow::Ok(())
     })
     .detach();
-    project::ManifestProviders::global(cx).register(Arc::from(CargoManifestProvider));
+    let manifest_providers: [Arc<dyn ManifestProvider>; 2] = [
+        Arc::from(CargoManifestProvider),
+        Arc::from(PyprojectTomlManifestProvider),
+    ];
+    for provider in manifest_providers {
+        project::ManifestProviders::global(cx).register(provider);
+    }
 }
 
 #[derive(Default)]
@@ -325,7 +332,10 @@ fn register_language(
         languages.register_lsp_adapter(config.name.clone(), adapter);
     }
     languages.register_language(
-        config.clone(),
+        config.name.clone(),
+        config.grammar.clone(),
+        config.matcher.clone(),
+        config.hidden,
         Arc::new(move || {
             Ok(LoadedLanguage {
                 config: config.clone(),

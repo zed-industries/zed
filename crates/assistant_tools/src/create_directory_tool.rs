@@ -1,9 +1,9 @@
 use crate::schema::json_schema_for;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::AnyWindowHandle;
 use gpui::{App, Entity, Task};
-use language_model::{LanguageModel, LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -61,7 +61,7 @@ impl Tool for CreateDirectoryTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
         _model: Arc<dyn LanguageModel>,
@@ -86,7 +86,7 @@ impl Tool for CreateDirectoryTool {
                     project.create_entry(project_path.clone(), true, cx)
                 })?
                 .await
-                .map_err(|err| anyhow!("Unable to create directory {destination_path}: {err}"))?;
+                .with_context(|| format!("Creating directory {destination_path}"))?;
 
             Ok(format!("Created directory {destination_path}").into())
         })

@@ -1,13 +1,14 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::assistant_model_selector::{AssistantModelSelector, ModelType};
+use crate::agent_model_selector::{AgentModelSelector, ModelType};
 use crate::context::{AgentContextKey, ContextCreasesAddon, ContextLoadResult, load_context};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use crate::ui::{
     AnimatedLabel, MaxModeTooltip,
     preview::{AgentPreview, UsageCallout},
 };
+use assistant_context_editor::language_model_selector::ToggleModelSelector;
 use assistant_settings::{AssistantSettings, CompletionMode};
 use buffer_diff::BufferDiff;
 use client::UserStore;
@@ -30,7 +31,6 @@ use language_model::{
     ConfiguredModel, LanguageModelRequestMessage, MessageContent, RequestUsage,
     ZED_CLOUD_PROVIDER_ID,
 };
-use language_model_selector::ToggleModelSelector;
 use multi_buffer;
 use project::Project;
 use prompt_store::PromptStore;
@@ -65,7 +65,7 @@ pub struct MessageEditor {
     prompt_store: Option<Entity<PromptStore>>,
     context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
-    model_selector: Entity<AssistantModelSelector>,
+    model_selector: Entity<AgentModelSelector>,
     last_loaded_context: Option<ContextLoadResult>,
     load_context_task: Option<Shared<Task<()>>>,
     profile_selector: Entity<ProfileSelector>,
@@ -189,12 +189,22 @@ impl MessageEditor {
         ];
 
         let model_selector = cx.new(|cx| {
-            AssistantModelSelector::new(
+            AgentModelSelector::new(
                 fs.clone(),
                 model_selector_menu_handle,
                 editor.focus_handle(cx),
                 ModelType::Default(thread.clone()),
                 window,
+                cx,
+            )
+        });
+
+        let profile_selector = cx.new(|cx| {
+            ProfileSelector::new(
+                fs,
+                thread.clone(),
+                thread_store,
+                editor.focus_handle(cx),
                 cx,
             )
         });
@@ -215,8 +225,7 @@ impl MessageEditor {
             model_selector,
             edits_expanded: false,
             editor_is_expanded: false,
-            profile_selector: cx
-                .new(|cx| ProfileSelector::new(fs, thread_store, editor.focus_handle(cx), cx)),
+            profile_selector,
             last_estimated_token_count: None,
             update_token_count_task: None,
             _subscriptions: subscriptions,
@@ -392,7 +401,7 @@ impl MessageEditor {
     fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
         if self.context_picker_menu_handle.is_deployed() {
             cx.propagate();
-        } else {
+        } else if self.context_strip.read(cx).has_context_items(cx) {
             self.context_strip.focus_handle(cx).focus(window);
         }
     }
@@ -833,7 +842,7 @@ impl MessageEditor {
             .border_b_0()
             .border_color(border_color)
             .rounded_t_md()
-            .shadow(smallvec::smallvec![gpui::BoxShadow {
+            .shadow(vec![gpui::BoxShadow {
                 color: gpui::black().opacity(0.15),
                 offset: point(px(1.), px(-1.)),
                 blur_radius: px(3.),
@@ -1076,11 +1085,11 @@ impl MessageEditor {
         let plan = user_store
             .current_plan()
             .map(|plan| match plan {
-                Plan::Free => zed_llm_client::Plan::Free,
+                Plan::Free => zed_llm_client::Plan::ZedFree,
                 Plan::ZedPro => zed_llm_client::Plan::ZedPro,
                 Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
             })
-            .unwrap_or(zed_llm_client::Plan::Free);
+            .unwrap_or(zed_llm_client::Plan::ZedFree);
         let usage = self.thread.read(cx).last_usage().or_else(|| {
             maybe!({
                 let amount = user_store.model_request_usage_amount()?;
@@ -1242,6 +1251,7 @@ impl MessageEditor {
                         mode: None,
                         messages: vec![request_message],
                         tools: vec![],
+                        tool_choice: None,
                         stop: vec![],
                         temperature: AssistantSettings::temperature_for_model(&model.model, cx),
                     };

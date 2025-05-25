@@ -5,7 +5,7 @@ use assistant_settings::{
     builtin_profiles,
 };
 use fs::Fs;
-use gpui::{Action, Entity, FocusHandle, Subscription, WeakEntity, prelude::*};
+use gpui::{Action, Empty, Entity, FocusHandle, Subscription, WeakEntity, prelude::*};
 use language_model::LanguageModelRegistry;
 use settings::{Settings as _, SettingsStore, update_settings_file};
 use ui::{
@@ -14,11 +14,12 @@ use ui::{
 };
 use util::ResultExt as _;
 
-use crate::{ManageProfiles, ThreadStore, ToggleProfileSelector};
+use crate::{ManageProfiles, Thread, ThreadStore, ToggleProfileSelector};
 
 pub struct ProfileSelector {
     profiles: GroupedAgentProfiles,
     fs: Arc<dyn Fs>,
+    thread: Entity<Thread>,
     thread_store: WeakEntity<ThreadStore>,
     menu_handle: PopoverMenuHandle<ContextMenu>,
     focus_handle: FocusHandle,
@@ -28,6 +29,7 @@ pub struct ProfileSelector {
 impl ProfileSelector {
     pub fn new(
         fs: Arc<dyn Fs>,
+        thread: Entity<Thread>,
         thread_store: WeakEntity<ThreadStore>,
         focus_handle: FocusHandle,
         cx: &mut Context<Self>,
@@ -39,6 +41,7 @@ impl ProfileSelector {
         Self {
             profiles: GroupedAgentProfiles::from_settings(AssistantSettings::get_global(cx)),
             fs,
+            thread,
             thread_store,
             menu_handle: PopoverMenuHandle::default(),
             focus_handle,
@@ -62,8 +65,12 @@ impl ProfileSelector {
         ContextMenu::build(window, cx, |mut menu, _window, cx| {
             let settings = AssistantSettings::get_global(cx);
             for (profile_id, profile) in self.profiles.builtin.iter() {
-                menu =
-                    menu.item(self.menu_entry_for_profile(profile_id.clone(), profile, settings));
+                menu = menu.item(self.menu_entry_for_profile(
+                    profile_id.clone(),
+                    profile,
+                    settings,
+                    cx,
+                ));
             }
 
             if !self.profiles.custom.is_empty() {
@@ -73,6 +80,7 @@ impl ProfileSelector {
                         profile_id.clone(),
                         profile,
                         settings,
+                        cx,
                     ));
                 }
             }
@@ -93,6 +101,7 @@ impl ProfileSelector {
         profile_id: AgentProfileId,
         profile: &AgentProfile,
         settings: &AssistantSettings,
+        _cx: &App,
     ) -> ContextMenuEntry {
         let documentation = match profile.name.to_lowercase().as_str() {
             builtin_profiles::WRITE => Some("Get help to write anything."),
@@ -144,12 +153,15 @@ impl Render for ProfileSelector {
             .map(|profile| profile.name.clone())
             .unwrap_or_else(|| "Unknown".into());
 
-        let model_registry = LanguageModelRegistry::read_global(cx);
-        let supports_tools = model_registry
-            .default_model()
-            .map_or(false, |default| default.model.supports_tools());
+        let configured_model = self.thread.read(cx).configured_model().or_else(|| {
+            let model_registry = LanguageModelRegistry::read_global(cx);
+            model_registry.default_model()
+        });
+        let Some(configured_model) = configured_model else {
+            return Empty.into_any_element();
+        };
 
-        if supports_tools {
+        if configured_model.model.supports_tools() {
             let this = cx.entity().clone();
             let focus_handle = self.focus_handle.clone();
             let trigger_button = Button::new("profile-selector-model", selected_profile)

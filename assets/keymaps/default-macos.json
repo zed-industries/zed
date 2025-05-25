@@ -1,15 +1,4 @@
 [
-  // Moved before Standard macOS bindings so that `cmd-w` is not the last binding for
-  // `workspace::CloseWindow` and displayed/intercepted by macOS
-  {
-    "context": "PromptLibrary",
-    "use_key_equivalents": true,
-    "bindings": {
-      "cmd-n": "rules_library::NewRule",
-      "cmd-shift-s": "rules_library::ToggleDefaultRule",
-      "cmd-w": "workspace::CloseWindow"
-    }
-  },
   // Standard macOS bindings
   {
     "use_key_equivalents": true,
@@ -17,6 +6,7 @@
       "f4": "debugger::Start",
       "f5": "debugger::Continue",
       "shift-f5": "debugger::Stop",
+      "shift-cmd-f5": "debugger::Restart",
       "f6": "debugger::Pause",
       "f7": "debugger::StepOver",
       "f11": "debugger::StepInto",
@@ -259,26 +249,10 @@
     }
   },
   {
-    "context": "AssistantPanel",
-    "use_key_equivalents": true,
-    "bindings": {
-      "cmd-k c": "assistant::CopyCode",
-      "cmd-shift-e": "project_panel::ToggleFocus",
-      "cmd-g": "search::SelectNextMatch",
-      "cmd-shift-g": "search::SelectPreviousMatch",
-      "cmd-alt-/": "agent::ToggleModelSelector",
-      "cmd-k h": "assistant::DeployHistory",
-      "cmd-k l": "agent::OpenRulesLibrary",
-      "cmd-t": "assistant::NewChat",
-      "cmd-n": "assistant::NewChat"
-    }
-  },
-  {
     "context": "ContextEditor > Editor",
     "use_key_equivalents": true,
     "bindings": {
       "cmd-enter": "assistant::Assist",
-      "cmd-shift-enter": "assistant::Edit",
       "cmd-s": "workspace::Save",
       "cmd->": "assistant::QuoteSelection",
       "cmd-<": "assistant::InsertIntoEditor",
@@ -306,7 +280,7 @@
       "cmd-shift-a": "agent::ToggleContextPicker",
       "cmd-shift-o": "agent::ToggleNavigationMenu",
       "cmd-shift-i": "agent::ToggleOptionsMenu",
-      "shift-escape": "agent::ExpandMessageEditor",
+      "shift-alt-escape": "agent::ExpandMessageEditor",
       "cmd-alt-e": "agent::RemoveAllContext",
       "cmd-shift-e": "project_panel::ToggleFocus"
     }
@@ -384,15 +358,18 @@
     }
   },
   {
-    "context": "ThreadHistory",
-    "bindings": {
-      "ctrl--": "pane::GoBack"
-    }
-  },
-  {
     "context": "ThreadHistory > Editor",
     "bindings": {
       "shift-backspace": "agent::RemoveSelectedThread"
+    }
+  },
+  {
+    "context": "PromptLibrary",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-n": "rules_library::NewRule",
+      "cmd-shift-s": "rules_library::ToggleDefaultRule",
+      "cmd-w": "workspace::CloseWindow"
     }
   },
   {
@@ -604,6 +581,7 @@
       // "alt-cmd-o": ["projects::OpenRecent", {"create_new_window": true }],
       "alt-cmd-o": "projects::OpenRecent",
       "ctrl-cmd-o": "projects::OpenRemote",
+      "ctrl-cmd-shift-o": ["projects::OpenRemote", { "from_existing_connection": true }],
       "alt-cmd-b": "branches::OpenRecent",
       "ctrl-~": "workspace::NewTerminal",
       "cmd-s": "workspace::Save",
@@ -639,6 +617,7 @@
       "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-shift-b": "outline_panel::ToggleFocus",
       "ctrl-shift-g": "git_panel::ToggleFocus",
+      "cmd-shift-d": "debug_panel::ToggleFocus",
       "cmd-?": "agent::ToggleFocus",
       "cmd-alt-s": "workspace::SaveAll",
       "cmd-k m": "language_selector::Toggle",
@@ -756,7 +735,7 @@
       "ctrl-alt-cmd-f": "workspace::FollowNextCollaborator",
       // TODO: Move this to a dock open action
       "cmd-shift-c": "collab_panel::ToggleFocus",
-      "cmd-alt-i": "zed::DebugElements"
+      "cmd-alt-i": "dev::ToggleInspector"
     }
   },
   {
@@ -780,8 +759,8 @@
       "cmd-shift-a": "agent::ToggleContextPicker",
       "cmd-alt-/": "agent::ToggleModelSelector",
       "cmd-alt-e": "agent::RemoveAllContext",
-      "ctrl-[": "assistant::CyclePreviousInlineAssist",
-      "ctrl-]": "assistant::CycleNextInlineAssist"
+      "ctrl-[": "agent::CyclePreviousInlineAssist",
+      "ctrl-]": "agent::CycleNextInlineAssist"
     }
   },
   {
@@ -841,7 +820,7 @@
       "alt-cmd-r": "project_panel::RevealInFileManager",
       "ctrl-shift-enter": "project_panel::OpenWithSystem",
       "cmd-alt-backspace": ["project_panel::Delete", { "skip_prompt": false }],
-      "cmd-shift-f": "project_panel::NewSearchInDirectory",
+      "cmd-alt-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrevious",
       "escape": "menu::Cancel"
@@ -945,6 +924,13 @@
     }
   },
   {
+    "context": "DebugPanel",
+    "bindings": {
+      "cmd-t": "debugger::ToggleThreadPicker",
+      "cmd-i": "debugger::ToggleSessionPicker"
+    }
+  },
+  {
     "context": "CollabPanel && not_editing",
     "use_key_equivalents": true,
     "bindings": {
@@ -1027,7 +1013,7 @@
       "alt-right": ["terminal::SendText", "\u001bf"],
       "alt-b": ["terminal::SendText", "\u001bb"],
       "alt-f": ["terminal::SendText", "\u001bf"],
-      "alt-.": ["terminal::SendText", "\u001b."],
+      "ctrl-delete": ["terminal::SendText", "\u001bd"],
       // There are conflicting bindings for these keys in the global context.
       // these bindings override them, remove at your own risk:
       "up": ["terminal::SendKeystroke", "up"],
@@ -1037,6 +1023,7 @@
       "escape": ["terminal::SendKeystroke", "escape"],
       "enter": ["terminal::SendKeystroke", "enter"],
       "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
+      "ctrl-backspace": ["terminal::SendKeystroke", "ctrl-w"],
       "shift-pageup": "terminal::ScrollPageUp",
       "cmd-up": "terminal::ScrollPageUp",
       "shift-pagedown": "terminal::ScrollPageDown",
@@ -1053,7 +1040,8 @@
       "ctrl-alt-up": "pane::SplitUp",
       "ctrl-alt-down": "pane::SplitDown",
       "ctrl-alt-left": "pane::SplitLeft",
-      "ctrl-alt-right": "pane::SplitRight"
+      "ctrl-alt-right": "pane::SplitRight",
+      "cmd-alt-r": "terminal::RerunTask"
     }
   },
   {
@@ -1097,6 +1085,13 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-r": "diagnostics::ToggleDiagnosticsRefresh"
+    }
+  },
+  {
+    "context": "DebugConsole > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "menu::Confirm"
     }
   }
 ]

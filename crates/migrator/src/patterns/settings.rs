@@ -93,3 +93,18 @@ pub const SETTINGS_EDIT_PREDICTIONS_ASSISTANT_PATTERN: &str = r#"(document
     (#eq? @edit_predictions "edit_predictions")
     (#eq? @enabled_in_assistant "enabled_in_assistant")
 )"#;
+
+pub const SETTINGS_DUPLICATED_AGENT_PATTERN: &str = r#"(document
+    (object
+        (pair
+            key: (string (string_content) @agent1)
+            value: (_)
+        ) @pair1
+        (pair
+            key: (string (string_content) @agent2)
+            value: (_)
+        )
+    )
+    (#eq? @agent1 "agent")
+    (#eq? @agent2 "agent")
+)"#;

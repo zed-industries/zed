@@ -9,7 +9,7 @@ use crate::{branch_picker, picker_prompt, render_remote_button};
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
-use anyhow::Result;
+use anyhow::Context as _;
 use askpass::AskPassDelegate;
 use assistant_settings::AssistantSettings;
 use db::kvp::KEY_VALUE_STORE;
@@ -1051,8 +1051,8 @@ impl GitPanel {
                     repo.checkout_files(
                         "HEAD",
                         entries
-                            .iter()
-                            .map(|entries| entries.repo_path.clone())
+                            .into_iter()
+                            .map(|entries| entries.repo_path)
                             .collect(),
                         cx,
                     )
@@ -1626,14 +1626,12 @@ impl GitPanel {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl Future<Output = Result<bool, anyhow::Error>> + use<> {
+    ) -> impl Future<Output = anyhow::Result<bool>> + use<> {
         let repo = self.active_repository.clone();
         let mut cx = window.to_async(cx);
 
         async move {
-            let Some(repo) = repo else {
-                return Err(anyhow::anyhow!("No active repository"));
-            };
+            let repo = repo.context("No active repository")?;
 
             let pushed_to: Vec<SharedString> = repo
                 .update(&mut cx, |repo, _| repo.check_for_pushed_commits())?
@@ -1774,6 +1772,7 @@ impl GitPanel {
                         cache: false,
                     }],
                     tools: Vec::new(),
+                    tool_choice: None,
                     stop: Vec::new(),
                     temperature,
                 };
@@ -2089,22 +2088,16 @@ impl GitPanel {
         let mut cx = window.to_async(cx);
 
         async move {
-            let Some(repo) = repo else {
-                return Err(anyhow::anyhow!("No active repository"));
-            };
-
+            let repo = repo.context("No active repository")?;
             let mut current_remotes: Vec<Remote> = repo
                 .update(&mut cx, |repo, _| {
-                    let Some(current_branch) = repo.branch.as_ref() else {
-                        return Err(anyhow::anyhow!("No active branch"));
-                    };
-
-                    Ok(repo.get_remotes(Some(current_branch.name().to_string())))
+                    let current_branch = repo.branch.as_ref().context("No active branch")?;
+                    anyhow::Ok(repo.get_remotes(Some(current_branch.name().to_string())))
                 })??
                 .await??;
 
             if current_remotes.len() == 0 {
-                return Err(anyhow::anyhow!("No active remote"));
+                anyhow::bail!("No active remote");
             } else if current_remotes.len() == 1 {
                 return Ok(Some(current_remotes.pop().unwrap()));
             } else {
@@ -2582,19 +2575,18 @@ impl GitPanel {
         } else {
             workspace.update(cx, |workspace, cx| {
                 let workspace_weak = cx.weak_entity();
-                let toast =
-                    StatusToast::new(format!("git {} failed", action.clone()), cx, |this, _cx| {
-                        this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
-                            .action("View Log", move |window, cx| {
-                                let message = message.clone();
-                                let action = action.clone();
-                                workspace_weak
-                                    .update(cx, move |workspace, cx| {
-                                        Self::open_output(action, workspace, &message, window, cx)
-                                    })
-                                    .ok();
-                            })
-                    });
+                let toast = StatusToast::new(format!("git {} failed", action), cx, |this, _cx| {
+                    this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
+                        .action("View Log", move |window, cx| {
+                            let message = message.clone();
+                            let action = action.clone();
+                            workspace_weak
+                                .update(cx, move |workspace, cx| {
+                                    Self::open_output(action, workspace, &message, window, cx)
+                                })
+                                .ok();
+                        })
+                });
                 workspace.toggle_status_toast(toast, cx)
             });
         }
@@ -2764,9 +2756,9 @@ impl GitPanel {
         let potential_co_authors = self.potential_co_authors(cx);
 
         let (tooltip_label, icon) = if self.add_coauthors {
-            ("Add co-authored-by", IconName::UserCheck)
-        } else {
             ("Remove co-authored-by", IconName::Person)
+        } else {
+            ("Add co-authored-by", IconName::UserCheck)
         };
 
         if potential_co_authors.is_empty() {

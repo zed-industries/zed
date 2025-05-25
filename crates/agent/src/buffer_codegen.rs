@@ -1,7 +1,7 @@
 use crate::context::ContextLoadResult;
 use crate::inline_prompt_editor::CodegenStatus;
 use crate::{context::load_context, context_store::ContextStore};
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use assistant_settings::AssistantSettings;
 use client::telemetry::Telemetry;
 use collections::HashSet;
@@ -419,16 +419,16 @@ impl CodegenAlternative {
             if start_buffer.remote_id() == end_buffer.remote_id() {
                 (start_buffer.clone(), start_buffer_offset..end_buffer_offset)
             } else {
-                return Err(anyhow::anyhow!("invalid transformation range"));
+                anyhow::bail!("invalid transformation range");
             }
         } else {
-            return Err(anyhow::anyhow!("invalid transformation range"));
+            anyhow::bail!("invalid transformation range");
         };
 
         let prompt = self
             .builder
             .generate_inline_transformation_prompt(user_prompt, language_name, buffer, range)
-            .map_err(|e| anyhow::anyhow!("Failed to generate content prompt: {}", e))?;
+            .context("generating content prompt")?;
 
         let context_task = self.context_store.as_ref().map(|context_store| {
             if let Some(project) = self.project.upgrade() {
@@ -466,6 +466,7 @@ impl CodegenAlternative {
                 prompt_id: None,
                 mode: None,
                 tools: Vec::new(),
+                tool_choice: None,
                 stop: Vec::new(),
                 temperature,
                 messages: vec![request_message],

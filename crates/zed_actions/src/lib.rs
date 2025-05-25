@@ -35,6 +35,7 @@ actions!(
         Quit,
         OpenKeymap,
         About,
+        OpenDocs,
         OpenLicenses,
         OpenTelemetryLog,
     ]
@@ -110,6 +111,12 @@ impl_actions!(
     ]
 );
 
+pub mod dev {
+    use gpui::actions;
+
+    actions!(dev, [ToggleInspector]);
+}
+
 pub mod workspace {
     use gpui::action_with_deprecated_aliases;
 
@@ -139,6 +146,12 @@ pub mod git {
 
     actions!(git, [CheckoutBranch, Switch, SelectRepo]);
     action_with_deprecated_aliases!(git, Branch, ["branches::OpenRecent"]);
+}
+
+pub mod jj {
+    use gpui::actions;
+
+    actions!(jj, [BookmarkList]);
 }
 
 pub mod command_palette {
@@ -236,8 +249,14 @@ pub struct OpenRecent {
     pub create_new_window: bool,
 }
 
-impl_actions!(projects, [OpenRecent]);
-actions!(projects, [OpenRemote]);
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OpenRemote {
+    #[serde(default)]
+    pub from_existing_connection: bool,
+}
+
+impl_actions!(projects, [OpenRecent, OpenRemote]);
 
 /// Where to spawn the task in the UI.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

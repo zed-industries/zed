@@ -1,17 +1,24 @@
 use super::*;
-use crate::{ReadFileToolInput, edit_file_tool::EditFileToolInput, grep_tool::GrepToolInput};
+use crate::{
+    ReadFileToolInput,
+    edit_file_tool::{EditFileMode, EditFileToolInput},
+    grep_tool::GrepToolInput,
+    list_directory_tool::ListDirectoryToolInput,
+};
 use Role::*;
-use anyhow::anyhow;
+use assistant_tool::ToolRegistry;
 use client::{Client, UserStore};
 use collections::HashMap;
 use fs::FakeFs;
 use futures::{FutureExt, future::LocalBoxFuture};
 use gpui::{AppContext, TestAppContext};
-use indoc::indoc;
+use indoc::{formatdoc, indoc};
 use language_model::{
-    LanguageModelRegistry, LanguageModelToolResult, LanguageModelToolUse, LanguageModelToolUseId,
+    LanguageModelRegistry, LanguageModelRequestTool, LanguageModelToolResult,
+    LanguageModelToolResultContent, LanguageModelToolUse, LanguageModelToolUseId, SelectedModel,
 };
 use project::Project;
+use prompt_store::{ModelContext, ProjectContext, PromptBuilder, WorktreeContext};
 use rand::prelude::*;
 use reqwest_client::ReqwestClient;
 use serde_json::json;
@@ -19,6 +26,7 @@ use std::{
     cmp::Reverse,
     fmt::{self, Display},
     io::Write as _,
+    str::FromStr,
     sync::mpsc,
 };
 use util::path;
@@ -26,21 +34,39 @@ use util::path;
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_extract_handle_command_output() {
+    // Test how well agent generates multiple edit hunks.
+    //
+    // Model                       | Pass rate
+    // ----------------------------|----------
+    // claude-3.7-sonnet           |  0.98
+    // gemini-2.5-pro              |  0.86
+    // gemini-2.5-flash            |  0.11
+    // gpt-4.1                     |  1.00
+
     let input_file_path = "root/blame.rs";
     let input_file_content = include_str!("evals/fixtures/extract_handle_command_output/before.rs");
-    let output_file_content = include_str!("evals/fixtures/extract_handle_command_output/after.rs");
+    let possible_diffs = vec![
+        include_str!("evals/fixtures/extract_handle_command_output/possible-01.diff"),
+        include_str!("evals/fixtures/extract_handle_command_output/possible-02.diff"),
+        include_str!("evals/fixtures/extract_handle_command_output/possible-03.diff"),
+        include_str!("evals/fixtures/extract_handle_command_output/possible-04.diff"),
+        include_str!("evals/fixtures/extract_handle_command_output/possible-05.diff"),
+        include_str!("evals/fixtures/extract_handle_command_output/possible-06.diff"),
+        include_str!("evals/fixtures/extract_handle_command_output/possible-07.diff"),
+    ];
     let edit_description = "Extract `handle_command_output` method from `run_git_blame`.";
     eval(
         100,
-        0.95,
-        EvalInput {
-            conversation: vec![
+        0.7, // Taking the lower bar for Gemini
+        EvalInput::from_conversation(
+            vec![
                 message(
                     User,
-                    [text(indoc! {"
+                    [text(formatdoc! {"
                         Read the `{input_file_path}` file and extract a method in
                         the final stanza of `run_git_blame` to deal with command failures,
                         call it `handle_command_output` and take the std::process::Output as the only parameter.
+                        Do not document the method and do not add any comments.
 
                         Add it right next to `run_git_blame` and copy it verbatim from `run_git_blame`.
                     "})],
@@ -69,16 +95,14 @@ fn eval_extract_handle_command_output() {
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
-                            create_or_overwrite: false,
+                            mode: EditFileMode::Edit,
                         },
                     )],
                 ),
             ],
-            input_path: input_file_path.into(),
-            input_content: Some(input_file_content.into()),
-            edit_description: edit_description.into(),
-            assertion: EvalAssertion::assert_eq(output_file_content),
-        },
+            Some(input_file_content.into()),
+            EvalAssertion::assert_diff_any(possible_diffs),
+        ),
     );
 }
 
@@ -92,11 +116,11 @@ fn eval_delete_run_git_blame() {
     eval(
         100,
         0.95,
-        EvalInput {
-            conversation: vec![
+        EvalInput::from_conversation(
+            vec![
                 message(
                     User,
-                    [text(indoc! {"
+                    [text(formatdoc! {"
                         Read the `{input_file_path}` file and delete `run_git_blame`. Just that
                         one function, not its usages.
                     "})],
@@ -125,16 +149,67 @@ fn eval_delete_run_git_blame() {
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
-                            create_or_overwrite: false,
+                            mode: EditFileMode::Edit,
                         },
                     )],
                 ),
             ],
-            input_path: input_file_path.into(),
-            input_content: Some(input_file_content.into()),
-            edit_description: edit_description.into(),
-            assertion: EvalAssertion::assert_eq(output_file_content),
-        },
+            Some(input_file_content.into()),
+            EvalAssertion::assert_eq(output_file_content),
+        ),
+    );
+}
+
+#[test]
+#[cfg_attr(not(feature = "eval"), ignore)]
+fn eval_translate_doc_comments() {
+    let input_file_path = "root/canvas.rs";
+    let input_file_content = include_str!("evals/fixtures/translate_doc_comments/before.rs");
+    let edit_description = "Translate all doc comments to Italian";
+    eval(
+        200,
+        1.,
+        EvalInput::from_conversation(
+            vec![
+                message(
+                    User,
+                    [text(formatdoc! {"
+                        Read the {input_file_path} file and edit it (without overwriting it),
+                        translating all the doc comments to italian.
+                    "})],
+                ),
+                message(
+                    Assistant,
+                    [tool_use(
+                        "tool_1",
+                        "read_file",
+                        ReadFileToolInput {
+                            path: input_file_path.into(),
+                            start_line: None,
+                            end_line: None,
+                        },
+                    )],
+                ),
+                message(
+                    User,
+                    [tool_result("tool_1", "read_file", input_file_content)],
+                ),
+                message(
+                    Assistant,
+                    [tool_use(
+                        "tool_2",
+                        "edit_file",
+                        EditFileToolInput {
+                            display_description: edit_description.into(),
+                            path: input_file_path.into(),
+                            mode: EditFileMode::Edit,
+                        },
+                    )],
+                ),
+            ],
+            Some(input_file_content.into()),
+            EvalAssertion::judge_diff("Doc comments were translated to Italian"),
+        ),
     );
 }
 
@@ -148,11 +223,11 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
     eval(
         100,
         0.95,
-        EvalInput {
-            conversation: vec![
+        EvalInput::from_conversation(
+            vec![
                 message(
                     User,
-                    [text(indoc! {"
+                    [text(formatdoc! {"
                         Read the `{input_file_path}` file and change `compile_parser_to_wasm` to use `wasi-sdk` instead of emscripten.
                         Use `ureq` to download the SDK for the current platform and architecture.
                         Extract the archive into a sibling of `lib` inside the `tree-sitter` directory in the cache_dir.
@@ -160,7 +235,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
                         that's inside of the archive.
                         Don't re-download the SDK if that executable already exists.
 
-                        Use these clang flags: -fPIC -shared -Os -Wl,--export=tree_sitter_{language_name}
+                        Use these clang flags: -fPIC -shared -Os -Wl,--export=tree_sitter_{{language_name}}
 
                         Here are the available wasi-sdk assets:
                         - wasi-sdk-25.0-x86_64-macos.tar.gz
@@ -240,19 +315,17 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
-                            create_or_overwrite: false,
+                            mode: EditFileMode::Edit,
                         },
                     )],
                 ),
             ],
-            input_path: input_file_path.into(),
-            input_content: Some(input_file_content.into()),
-            edit_description: edit_description.into(),
-            assertion: EvalAssertion::judge_diff(indoc! {"
+            Some(input_file_content.into()),
+            EvalAssertion::judge_diff(indoc! {"
                 - The compile_parser_to_wasm method has been changed to use wasi-sdk
                 - ureq is used to download the SDK for current platform and architecture
             "}),
-        },
+        ),
     );
 }
 
@@ -261,13 +334,12 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
 fn eval_disable_cursor_blinking() {
     let input_file_path = "root/editor.rs";
     let input_file_content = include_str!("evals/fixtures/disable_cursor_blinking/before.rs");
-    let output_file_content = include_str!("evals/fixtures/disable_cursor_blinking/after.rs");
     let edit_description = "Comment out the call to `BlinkManager::enable`";
     eval(
-        200,
-        0.6, // TODO: make this eval better
-        EvalInput {
-            conversation: vec![
+        100,
+        0.95,
+        EvalInput::from_conversation(
+            vec![
                 message(User, [text("Let's research how to cursor blinking works.")]),
                 message(
                     Assistant,
@@ -316,16 +388,18 @@ fn eval_disable_cursor_blinking() {
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
-                            create_or_overwrite: false,
+                            mode: EditFileMode::Edit,
                         },
                     )],
                 ),
             ],
-            input_path: input_file_path.into(),
-            input_content: Some(input_file_content.into()),
-            edit_description: edit_description.into(),
-            assertion: EvalAssertion::assert_eq(output_file_content),
-        },
+            Some(input_file_content.into()),
+            EvalAssertion::judge_diff(indoc! {"
+                - Calls to BlinkManager in `observe_window_activation` were commented out
+                - The call to `blink_manager.enable` above the call to show_cursor_names was commented out
+                - All the edits have valid indentation
+            "}),
+        ),
     );
 }
 
@@ -338,8 +412,8 @@ fn eval_from_pixels_constructor() {
     eval(
         100,
         0.95,
-        EvalInput {
-            conversation: vec![
+        EvalInput::from_conversation(
+            vec![
                 message(
                     User,
                     [text(indoc! {"
@@ -506,19 +580,17 @@ fn eval_from_pixels_constructor() {
                         EditFileToolInput {
                             display_description: edit_description.into(),
                             path: input_file_path.into(),
-                            create_or_overwrite: false,
+                            mode: EditFileMode::Edit,
                         },
                     )],
                 ),
             ],
-            input_path: input_file_path.into(),
-            input_content: Some(input_file_content.into()),
-            edit_description: edit_description.into(),
-            assertion: EvalAssertion::judge_diff(indoc! {"
-                - The diff contains a new `from_pixels` constructor
-                - The diff contains new tests for the `from_pixels` constructor
-            "}),
-        },
+            Some(input_file_content.into()),
+            EvalAssertion::judge_diff(indoc! {"
+                    - The diff contains a new `from_pixels` constructor
+                    - The diff contains new tests for the `from_pixels` constructor
+                "}),
+        ),
     );
 }
 
@@ -526,12 +598,13 @@ fn eval_from_pixels_constructor() {
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_zode() {
     let input_file_path = "root/zode.py";
+    let input_content = None;
     let edit_description = "Create the main Zode CLI script";
     eval(
         200,
         1.,
-        EvalInput {
-            conversation: vec![
+        EvalInput::from_conversation(
+            vec![
                 message(User, [text(include_str!("evals/fixtures/zode/prompt.md"))]),
                 message(
                     Assistant,
@@ -583,20 +656,18 @@ fn eval_zode() {
                             EditFileToolInput {
                                 display_description: edit_description.into(),
                                 path: input_file_path.into(),
-                                create_or_overwrite: true,
+                                mode: EditFileMode::Create,
                             },
                         ),
                     ],
                 ),
             ],
-            input_path: input_file_path.into(),
-            input_content: None,
-            edit_description: edit_description.into(),
-            assertion: EvalAssertion::new(async move |sample, _, _cx| {
+            input_content,
+            EvalAssertion::new(async move |sample, _, _cx| {
                 let invalid_starts = [' ', '`', '\n'];
                 let mut message = String::new();
                 for start in invalid_starts {
-                    if sample.text.starts_with(start) {
+                    if sample.text_after.starts_with(start) {
                         message.push_str(&format!("The sample starts with a {:?}\n", start));
                         break;
                     }
@@ -616,7 +687,7 @@ fn eval_zode() {
                     })
                 }
             }),
-        },
+        ),
     );
 }
 
@@ -629,8 +700,8 @@ fn eval_add_overwrite_test() {
     eval(
         200,
         0.5, // TODO: make this eval better
-        EvalInput {
-            conversation: vec![
+        EvalInput::from_conversation(
+            vec![
                 message(
                     User,
                     [text(indoc! {"
@@ -828,19 +899,99 @@ fn eval_add_overwrite_test() {
                             EditFileToolInput {
                                 display_description: edit_description.into(),
                                 path: input_file_path.into(),
-                                create_or_overwrite: false,
+                                mode: EditFileMode::Edit,
                             },
                         ),
                     ],
                 ),
             ],
-            input_path: input_file_path.into(),
-            input_content: Some(input_file_content.into()),
-            edit_description: edit_description.into(),
-            assertion: EvalAssertion::judge_diff(
+            Some(input_file_content.into()),
+            EvalAssertion::judge_diff(
                 "A new test for overwritten files was created, without changing any previous test",
             ),
-        },
+        ),
+    );
+}
+
+#[test]
+#[cfg_attr(not(feature = "eval"), ignore)]
+fn eval_create_empty_file() {
+    // Check that Edit Agent can create a file without writing its
+    // thoughts into it. This issue is not specific to empty files, but
+    // it's easier to reproduce with them.
+    //
+    //
+    //  Model                          | Pass rate
+    // ============================================
+    //
+    // --------------------------------------------
+    //           Prompt version: 2025-05-21
+    // --------------------------------------------
+    //
+    //  claude-3.7-sonnet              |  1.00
+    //  gemini-2.5-pro-preview-03-25   |  1.00
+    //  gemini-2.5-flash-preview-04-17 |  1.00
+    //  gpt-4.1                        |  1.00
+    //
+    //
+    // TODO: gpt-4.1-mini errored 38 times:
+    // "data did not match any variant of untagged enum ResponseStreamResult"
+    //
+    let input_file_content = None;
+    let expected_output_content = String::new();
+    eval(
+        100,
+        0.99,
+        EvalInput::from_conversation(
+            vec![
+                message(User, [text("Create a second empty todo file ")]),
+                message(
+                    Assistant,
+                    [
+                        text(formatdoc! {"
+                        I'll help you create a second empty todo file.
+                        First, let me examine the project structure to see if there's already a todo file, which will help me determine the appropriate name and location for the second one.
+                        "}),
+                        tool_use(
+                            "toolu_01GAF8TtsgpjKxCr8fgQLDgR",
+                            "list_directory",
+                            ListDirectoryToolInput {
+                                path: "root".to_string(),
+                            },
+                        ),
+                    ],
+                ),
+                message(
+                    User,
+                    [tool_result(
+                        "toolu_01GAF8TtsgpjKxCr8fgQLDgR",
+                        "list_directory",
+                        "root/TODO\nroot/TODO2\nroot/new.txt\n",
+                    )],
+                ),
+                message(
+                    Assistant,
+                    [
+                        text(formatdoc! {"
+                        I can see there's already a `TODO` file in the `root` directory. Let me create a second empty todo file called `TODO3` in the same directory:
+                    "}),
+                        tool_use(
+                            "toolu_01Tb3iQ9griqSYMmVuykQPWU",
+                            "edit_file",
+                            EditFileToolInput {
+                                display_description: "Create empty TODO3 file".to_string(),
+                                mode: EditFileMode::Create,
+                                path: "root/TODO3".into(),
+                            },
+                        ),
+                    ],
+                ),
+            ],
+            input_file_content,
+            // Bad behavior is to write something like
+            // "I'll create an empty TODO3 file as requested."
+            EvalAssertion::assert_eq(expected_output_content),
+        ),
     );
 }
 
@@ -891,7 +1042,7 @@ fn tool_result(
         tool_use_id: LanguageModelToolUseId::from(id.into()),
         tool_name: name.into(),
         is_error: false,
-        content: result.into(),
+        content: LanguageModelToolResultContent::Text(result.into()),
         output: None,
     })
 }
@@ -899,15 +1050,50 @@ fn tool_result(
 #[derive(Clone)]
 struct EvalInput {
     conversation: Vec<LanguageModelRequestMessage>,
-    input_path: PathBuf,
+    edit_file_input: EditFileToolInput,
     input_content: Option<String>,
-    edit_description: String,
     assertion: EvalAssertion,
+}
+
+impl EvalInput {
+    fn from_conversation(
+        conversation: Vec<LanguageModelRequestMessage>,
+        input_content: Option<String>,
+        assertion: EvalAssertion,
+    ) -> Self {
+        let msg = conversation.last().expect("Conversation must not be empty");
+        if msg.role != Role::Assistant {
+            panic!("Conversation must end with an assistant message");
+        }
+        let tool_use = msg
+            .content
+            .iter()
+            .flat_map(|content| match content {
+                MessageContent::ToolUse(tool_use) if tool_use.name == "edit_file".into() => {
+                    Some(tool_use)
+                }
+                _ => None,
+            })
+            .next()
+            .expect("Conversation must end with an edit_file tool use")
+            .clone();
+
+        let edit_file_input: EditFileToolInput =
+            serde_json::from_value(tool_use.input.clone()).unwrap();
+
+        EvalInput {
+            conversation,
+            edit_file_input,
+            input_content,
+            assertion,
+        }
+    }
 }
 
 #[derive(Clone)]
 struct EvalSample {
-    text: String,
+    text_before: String,
+    text_after: String,
     edit_output: EditAgentOutput,
     diff: String,
 }
@@ -964,11 +1150,27 @@ impl EvalAssertion {
         let expected = expected.into();
         Self::new(async move |sample, _judge, _cx| {
             Ok(EvalAssertionOutcome {
-                score: if strip_empty_lines(&sample.text) == strip_empty_lines(&expected) {
+                score: if strip_empty_lines(&sample.text_after) == strip_empty_lines(&expected) {
                     100
                 } else {
                     0
                 },
+                message: None,
+            })
+        })
+    }
+
+    fn assert_diff_any(expected_diffs: Vec<impl Into<String>>) -> Self {
+        let expected_diffs: Vec<String> = expected_diffs.into_iter().map(Into::into).collect();
+        Self::new(async move |sample, _judge, _cx| {
+            let matches = expected_diffs.iter().any(|possible_diff| {
+                let expected =
+                    language::apply_diff_patch(&sample.text_before, possible_diff).unwrap();
+                strip_empty_lines(&expected) == strip_empty_lines(&sample.text_after)
+            });
+
+            Ok(EvalAssertionOutcome {
+                score: if matches { 100 } else { 0 },
                 message: None,
             })
         })
@@ -1012,10 +1214,7 @@ impl EvalAssertion {
                 }
             }
 
-            Err(anyhow!(
-                "No score found in response. Raw output: {}",
-                output
-            ))
+            anyhow::bail!("No score found in response. Raw output: {output}");
         })
     }
 
@@ -1031,7 +1230,8 @@ impl EvalAssertion {
 
 fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
     let mut evaluated_count = 0;
-    report_progress(evaluated_count, iterations);
+    let mut failed_count = 0;
+    report_progress(evaluated_count, failed_count, iterations);
 
     let (tx, rx) = mpsc::channel();
 
@@ -1048,7 +1248,6 @@ fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
     }
     drop(tx);
 
-    let mut failed_count = 0;
     let mut failed_evals = HashMap::default();
     let mut errored_evals = HashMap::default();
     let mut eval_outputs = Vec::new();
@@ -1056,12 +1255,12 @@ fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
     while let Ok(output) = rx.recv() {
         match output {
             Ok(output) => {
-                cumulative_parser_metrics += output.sample.edit_output._parser_metrics.clone();
+                cumulative_parser_metrics += output.sample.edit_output.parser_metrics.clone();
                 eval_outputs.push(output.clone());
                 if output.assertion.score < 80 {
                     failed_count += 1;
                     failed_evals
-                        .entry(output.sample.text.clone())
+                        .entry(output.sample.text_after.clone())
                         .or_insert(Vec::new())
                         .push(output);
                 }
@@ -1073,7 +1272,7 @@ fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
         }
 
         evaluated_count += 1;
-        report_progress(evaluated_count, iterations);
+        report_progress(evaluated_count, failed_count, iterations);
     }
 
     let actual_pass_ratio = (iterations - failed_count) as f32 / iterations as f32;
@@ -1137,15 +1336,26 @@ impl Display for EvalOutput {
         writeln!(
             f,
             "Parser Metrics:\n{:#?}",
-            self.sample.edit_output._parser_metrics
+            self.sample.edit_output.parser_metrics
         )?;
-        writeln!(f, "Raw Edits:\n{}", self.sample.edit_output._raw_edits)?;
+        writeln!(f, "Raw Edits:\n{}", self.sample.edit_output.raw_edits)?;
         Ok(())
     }
 }
 
-fn report_progress(evaluated_count: usize, iterations: usize) {
-    print!("\r\x1b[KEvaluated {}/{}", evaluated_count, iterations);
+fn report_progress(evaluated_count: usize, failed_count: usize, iterations: usize) {
+    let passed_count = evaluated_count - failed_count;
+    let passed_ratio = if evaluated_count == 0 {
+        0.0
+    } else {
+        passed_count as f64 / evaluated_count as f64
+    };
+    print!(
+        "\r\x1b[KEvaluated {}/{} ({:.2}% passed)",
+        evaluated_count,
+        iterations,
+        passed_ratio * 100.0
+    );
     std::io::stdout().flush().unwrap();
 }
 
@@ -1158,30 +1368,43 @@ struct EditAgentTest {
 impl EditAgentTest {
     async fn new(cx: &mut TestAppContext) -> Self {
         cx.executor().allow_parking();
-        cx.update(settings::init);
-        cx.update(Project::init_settings);
-        cx.update(language::init);
-        cx.update(gpui_tokio::init);
-        cx.update(client::init_settings);
 
         let fs = FakeFs::new(cx.executor().clone());
+        cx.update(|cx| {
+            settings::init(cx);
+            gpui_tokio::init(cx);
+            let http_client = Arc::new(ReqwestClient::user_agent("agent tests").unwrap());
+            cx.set_http_client(http_client);
+
+            client::init_settings(cx);
+            let client = Client::production(cx);
+            let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+
+            settings::init(cx);
+            Project::init_settings(cx);
+            language::init(cx);
+            language_model::init(client.clone(), cx);
+            language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
+            crate::init(client.http_client(), cx);
+        });
+
         fs.insert_tree("/root", json!({})).await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let agent_model = SelectedModel::from_str(
+            &std::env::var("ZED_AGENT_MODEL")
+                .unwrap_or("anthropic/claude-3-7-sonnet-latest".into()),
+        )
+        .unwrap();
+        let judge_model = SelectedModel::from_str(
+            &std::env::var("ZED_JUDGE_MODEL")
+                .unwrap_or("anthropic/claude-3-7-sonnet-latest".into()),
+        )
+        .unwrap();
         let (agent_model, judge_model) = cx
             .update(|cx| {
-                let http_client = ReqwestClient::user_agent("agent tests").unwrap();
-                cx.set_http_client(Arc::new(http_client));
-
-                let client = Client::production(cx);
-                let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-                language_model::init(client.clone(), cx);
-                language_models::init(user_store.clone(), client.clone(), fs.clone(), cx);
-
                 cx.spawn(async move |cx| {
-                    let agent_model =
-                        Self::load_model("anthropic", "claude-3-7-sonnet-latest", cx).await;
-                    let judge_model =
-                        Self::load_model("anthropic", "claude-3-7-sonnet-latest", cx).await;
+                    let agent_model = Self::load_model(&agent_model, cx).await;
+                    let judge_model = Self::load_model(&judge_model, cx).await;
                     (agent_model.unwrap(), judge_model.unwrap())
                 })
             })
@@ -1196,15 +1419,17 @@ impl EditAgentTest {
     }
 
     async fn load_model(
-        provider: &str,
-        id: &str,
+        selected_model: &SelectedModel,
         cx: &mut AsyncApp,
     ) -> Result<Arc<dyn LanguageModel>> {
         let (provider, model) = cx.update(|cx| {
             let models = LanguageModelRegistry::read_global(cx);
             let model = models
                 .available_models(cx)
-                .find(|model| model.provider_id().0 == provider && model.id().0 == id)
+                .find(|model| {
+                    model.provider_id() == selected_model.provider
+                        && model.id() == selected_model.model
+                })
                 .unwrap();
             let provider = models.provider(&model.provider_id()).unwrap();
             (provider, model)
@@ -1217,7 +1442,7 @@ impl EditAgentTest {
         let path = self
             .project
             .read_with(cx, |project, cx| {
-                project.find_project_path(eval.input_path, cx)
+                project.find_project_path(eval.edit_file_input.path, cx)
             })
             .unwrap();
         let buffer = self
@@ -1225,20 +1450,78 @@ impl EditAgentTest {
             .update(cx, |project, cx| project.open_buffer(path, cx))
             .await
             .unwrap();
-        let edit_output = if let Some(input_content) = eval.input_content.as_deref() {
-            buffer.update(cx, |buffer, cx| buffer.set_text(input_content, cx));
+        let tools = cx.update(|cx| {
+            ToolRegistry::default_global(cx)
+                .tools()
+                .into_iter()
+                .filter_map(|tool| {
+                    let input_schema = tool
+                        .input_schema(self.agent.model.tool_input_format())
+                        .ok()?;
+                    Some(LanguageModelRequestTool {
+                        name: tool.name(),
+                        description: tool.description(),
+                        input_schema,
+                    })
+                })
+                .collect::<Vec<_>>()
+        });
+        let tool_names = tools
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect::<Vec<_>>();
+        let worktrees = vec![WorktreeContext {
+            root_name: "root".to_string(),
+            rules_file: None,
+        }];
+        let prompt_builder = PromptBuilder::new(None)?;
+        let project_context = ProjectContext::new(worktrees, Vec::default());
+        let system_prompt = prompt_builder.generate_assistant_system_prompt(
+            &project_context,
+            &ModelContext {
+                available_tools: tool_names,
+            },
+        )?;
+
+        let has_system_prompt = eval
+            .conversation
+            .first()
+            .map_or(false, |msg| msg.role == Role::System);
+        let messages = if has_system_prompt {
+            eval.conversation
+        } else {
+            [LanguageModelRequestMessage {
+                role: Role::System,
+                content: vec![MessageContent::Text(system_prompt)],
+                cache: true,
+            }]
+            .into_iter()
+            .chain(eval.conversation)
+            .collect::<Vec<_>>()
+        };
+
+        let conversation = LanguageModelRequest {
+            messages,
+            tools,
+            ..Default::default()
+        };
+
+        let edit_output = if matches!(eval.edit_file_input.mode, EditFileMode::Edit) {
+            if let Some(input_content) = eval.input_content.as_deref() {
+                buffer.update(cx, |buffer, cx| buffer.set_text(input_content, cx));
+            }
             let (edit_output, _) = self.agent.edit(
                 buffer.clone(),
-                eval.edit_description,
-                eval.conversation,
+                eval.edit_file_input.display_description,
+                &conversation,
                 &mut cx.to_async(),
             );
             edit_output.await?
         } else {
             let (edit_output, _) = self.agent.overwrite(
                 buffer.clone(),
-                eval.edit_description,
-                eval.conversation,
+                eval.edit_file_input.display_description,
+                &conversation,
                 &mut cx.to_async(),
             );
             edit_output.await?
@@ -1251,7 +1534,8 @@ impl EditAgentTest {
                 eval.input_content.as_deref().unwrap_or_default(),
                 &buffer_text,
             ),
-            text: buffer_text,
+            text_before: eval.input_content.unwrap_or_default(),
+            text_after: buffer_text,
         };
         let assertion = eval
             .assertion

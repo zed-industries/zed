@@ -10,13 +10,15 @@ use crate::{
     terminals::{SshCommand, wrap_for_ssh},
     worktree_store::WorktreeStore,
 };
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use dap::{
     Capabilities, CompletionItem, CompletionsArguments, DapRegistry, DebugRequest,
     EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, Source, StackFrameId,
-    adapters::{DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition, TcpArguments},
+    adapters::{
+        DapDelegate, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition, TcpArguments,
+    },
     client::SessionId,
     inline_value::VariableLookupKind,
     messages::Message,
@@ -48,7 +50,7 @@ use std::{
     sync::{Arc, Once},
 };
 use task::{DebugScenario, SpawnInTerminal, TaskTemplate};
-use util::{ResultExt as _, merge_json_value_into};
+use util::ResultExt as _;
 use worktree::Worktree;
 
 #[derive(Debug)]
@@ -64,7 +66,6 @@ pub enum DapStoreEvent {
     RemoteHasInitialized,
 }
 
-#[allow(clippy::large_enum_variant)]
 enum DapStoreMode {
     Local(LocalDapStore),
     Ssh(SshDapStore),
@@ -194,10 +195,7 @@ impl DapStore {
                     .and_then(|s| s.binary.as_ref().map(PathBuf::from));
 
                 let delegate = self.delegate(&worktree, console, cx);
-                let cwd: Arc<Path> = definition
-                    .cwd()
-                    .unwrap_or(worktree.read(cx).abs_path().as_ref())
-                    .into();
+                let cwd: Arc<Path> = worktree.read(cx).abs_path().as_ref().into();
 
                 cx.spawn(async move |this, cx| {
                     let mut binary = adapter
@@ -236,9 +234,7 @@ impl DapStore {
                     let binary = DebugAdapterBinary::from_proto(response)?;
                     let mut ssh_command = ssh_client.update(cx, |ssh, _| {
                         anyhow::Ok(SshCommand {
-                            arguments: ssh
-                                .ssh_args()
-                                .ok_or_else(|| anyhow!("SSH arguments not found"))?,
+                            arguments: ssh.ssh_args().context("SSH arguments not found")?,
                         })
                     })??;
 
@@ -283,13 +279,14 @@ impl DapStore {
     pub fn debug_scenario_for_build_task(
         &self,
         build: TaskTemplate,
-        adapter: SharedString,
+        adapter: DebugAdapterName,
+        label: SharedString,
         cx: &mut App,
     ) -> Option<DebugScenario> {
         DapRegistry::global(cx)
             .locators()
             .values()
-            .find_map(|locator| locator.create_scenario(&build, &adapter))
+            .find_map(|locator| locator.create_scenario(&build, &label, adapter.clone()))
     }
 
     pub fn run_debug_locator(
@@ -314,10 +311,10 @@ impl DapStore {
                             return Ok(result);
                         }
 
-                        Err(anyhow!(
+                        anyhow::bail!(
                             "None of the locators for task `{}` completed successfully",
                             build_command.label
-                        ))
+                        )
                     })
                 } else {
                     Task::ready(Err(anyhow!(
@@ -410,15 +407,11 @@ impl DapStore {
         cx.spawn({
             let session = session.clone();
             async move |this, cx| {
-                let mut binary = this
+                let binary = this
                     .update(cx, |this, cx| {
                         this.get_debug_adapter_binary(definition.clone(), session_id, console, cx)
                     })?
                     .await?;
-
-                if let Some(args) = definition.initialize_args {
-                    merge_json_value_into(args, &mut binary.request_args.configuration);
-                }
 
                 session
                     .update(cx, |session, cx| {
@@ -488,14 +481,14 @@ impl DapStore {
         worktree: &Entity<Worktree>,
         console: UnboundedSender<String>,
         cx: &mut App,
-    ) -> DapAdapterDelegate {
+    ) -> Arc<dyn DapDelegate> {
         let Some(local_store) = self.as_local() else {
             unimplemented!("Starting session on remote side");
         };
 
-        DapAdapterDelegate::new(
+        Arc::new(DapAdapterDelegate::new(
             local_store.fs.clone(),
-            worktree.read(cx).id(),
+            worktree.read(cx).snapshot(),
             console,
             local_store.node_runtime.clone(),
             local_store.http_client.clone(),
@@ -503,7 +496,7 @@ impl DapStore {
             local_store.environment.update(cx, |env, cx| {
                 env.get_worktree_environment(worktree.clone(), cx)
             }),
-        )
+        ))
     }
 
     pub fn evaluate(
@@ -576,6 +569,17 @@ impl DapStore {
         let snapshot = buffer_handle.read(cx).snapshot();
         let all_variables = session.read(cx).variables_by_stack_frame_id(stack_frame_id);
 
+        fn format_value(mut value: String) -> String {
+            const LIMIT: usize = 100;
+
+            if value.len() > LIMIT {
+                value.truncate(LIMIT);
+                value.push_str("...");
+            }
+
+            format!(": {}", value)
+        }
+
         cx.spawn(async move |_, cx| {
             let mut inlay_hints = Vec::with_capacity(inline_value_locations.len());
             for inline_value_location in inline_value_locations.iter() {
@@ -596,7 +600,7 @@ impl DapStore {
 
                         inlay_hints.push(InlayHint {
                             position,
-                            label: InlayHintLabel::String(format!(": {}", variable.value)),
+                            label: InlayHintLabel::String(format_value(variable.value.clone())),
                             kind: Some(InlayHintKind::Type),
                             padding_left: false,
                             padding_right: false,
@@ -619,7 +623,7 @@ impl DapStore {
                         if let Some(response) = eval_task.await.log_err() {
                             inlay_hints.push(InlayHint {
                                 position,
-                                label: InlayHintLabel::String(format!(": {}", response.result)),
+                                label: InlayHintLabel::String(format_value(response.result)),
                                 kind: Some(InlayHintKind::Type),
                                 padding_left: false,
                                 padding_right: false,
@@ -722,7 +726,7 @@ impl DapStore {
         let task = envelope
             .payload
             .build_command
-            .ok_or_else(|| anyhow!("missing definition"))?;
+            .context("missing definition")?;
         let build_task = SpawnInTerminal::from_proto(task);
         let locator = envelope.payload.locator;
         let request = this
@@ -740,10 +744,7 @@ impl DapStore {
         mut cx: AsyncApp,
     ) -> Result<proto::DebugAdapterBinary> {
         let definition = DebugTaskDefinition::from_proto(
-            envelope
-                .payload
-                .definition
-                .ok_or_else(|| anyhow!("missing definition"))?,
+            envelope.payload.definition.context("missing definition")?,
         )?;
         let (tx, mut rx) = mpsc::unbounded();
         let session_id = envelope.payload.session_id;
@@ -800,7 +801,7 @@ impl DapStore {
 pub struct DapAdapterDelegate {
     fs: Arc<dyn Fs>,
     console: mpsc::UnboundedSender<String>,
-    worktree_id: WorktreeId,
+    worktree: worktree::Snapshot,
     node_runtime: NodeRuntime,
     http_client: Arc<dyn HttpClient>,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
@@ -810,7 +811,7 @@ pub struct DapAdapterDelegate {
 impl DapAdapterDelegate {
     pub fn new(
         fs: Arc<dyn Fs>,
-        worktree_id: WorktreeId,
+        worktree: worktree::Snapshot,
         status: mpsc::UnboundedSender<String>,
         node_runtime: NodeRuntime,
         http_client: Arc<dyn HttpClient>,
@@ -820,7 +821,7 @@ impl DapAdapterDelegate {
         Self {
             fs,
             console: status,
-            worktree_id,
+            worktree,
             http_client,
             node_runtime,
             toolchain_store,
@@ -829,12 +830,15 @@ impl DapAdapterDelegate {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl dap::adapters::DapDelegate for DapAdapterDelegate {
     fn worktree_id(&self) -> WorktreeId {
-        self.worktree_id
+        self.worktree.id()
     }
 
+    fn worktree_root_path(&self) -> &Path {
+        &self.worktree.abs_path()
+    }
     fn http_client(&self) -> Arc<dyn HttpClient> {
         self.http_client.clone()
     }
@@ -851,7 +855,7 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
         self.console.unbounded_send(msg).ok();
     }
 
-    fn which(&self, command: &OsStr) -> Option<PathBuf> {
+    async fn which(&self, command: &OsStr) -> Option<PathBuf> {
         which::which(command).ok()
     }
 
@@ -862,5 +866,17 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
 
     fn toolchain_store(&self) -> Arc<dyn LanguageToolchainStore> {
         self.toolchain_store.clone()
+    }
+    async fn read_text_file(&self, path: PathBuf) -> Result<String> {
+        let entry = self
+            .worktree
+            .entry_for_path(&path)
+            .with_context(|| format!("no worktree entry for path {path:?}"))?;
+        let abs_path = self
+            .worktree
+            .absolutize(&entry.path)
+            .with_context(|| format!("cannot absolutize path {path:?}"))?;
+
+        self.fs.load(&abs_path).await
     }
 }

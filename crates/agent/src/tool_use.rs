@@ -1,14 +1,16 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use assistant_tool::{AnyToolCard, Tool, ToolResultOutput, ToolUseStatus, ToolWorkingSet};
+use assistant_tool::{
+    AnyToolCard, Tool, ToolResultContent, ToolResultOutput, ToolUseStatus, ToolWorkingSet,
+};
 use collections::HashMap;
 use futures::FutureExt as _;
 use futures::future::Shared;
 use gpui::{App, Entity, SharedString, Task};
 use language_model::{
-    ConfiguredModel, LanguageModel, LanguageModelRequestMessage, LanguageModelToolResult,
-    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role,
+    ConfiguredModel, LanguageModel, LanguageModelRequest, LanguageModelToolResult,
+    LanguageModelToolResultContent, LanguageModelToolUse, LanguageModelToolUseId, Role,
 };
 use project::Project;
 use ui::{IconName, Window};
@@ -52,15 +54,19 @@ impl ToolUseState {
     /// Constructs a [`ToolUseState`] from the given list of [`SerializedMessage`]s.
     ///
     /// Accepts a function to filter the tools that should be used to populate the state.
+    ///
+    /// If `window` is `None` (e.g., when in headless mode or when running evals),
+    /// tool cards won't be deserialized
     pub fn from_serialized_messages(
         tools: Entity<ToolWorkingSet>,
         messages: &[SerializedMessage],
         project: Entity<Project>,
-        window: &mut Window,
+        window: Option<&mut Window>, // None in headless mode
         cx: &mut App,
     ) -> Self {
         let mut this = Self::new(tools);
         let mut tool_names_by_id = HashMap::default();
+        let mut window = window;
 
         for message in messages {
             match message.role {
@@ -105,12 +111,17 @@ impl ToolUseState {
                                 },
                             );
 
-                            if let Some(tool) = this.tools.read(cx).tool(tool_use, cx) {
-                                if let Some(output) = tool_result.output.clone() {
-                                    if let Some(card) =
-                                        tool.deserialize_card(output, project.clone(), window, cx)
-                                    {
-                                        this.tool_result_cards.insert(tool_use_id, card);
+                            if let Some(window) = &mut window {
+                                if let Some(tool) = this.tools.read(cx).tool(tool_use, cx) {
+                                    if let Some(output) = tool_result.output.clone() {
+                                        if let Some(card) = tool.deserialize_card(
+                                            output,
+                                            project.clone(),
+                                            window,
+                                            cx,
+                                        ) {
+                                            this.tool_result_cards.insert(tool_use_id, card);
+                                        }
                                     }
                                 }
                             }
@@ -165,10 +176,16 @@ impl ToolUseState {
 
             let status = (|| {
                 if let Some(tool_result) = tool_result {
+                    let content = tool_result
+                        .content
+                        .to_str()
+                        .map(|str| str.to_owned().into())
+                        .unwrap_or_default();
+
                     return if tool_result.is_error {
-                        ToolUseStatus::Error(tool_result.content.clone().into())
+                        ToolUseStatus::Error(content)
                     } else {
-                        ToolUseStatus::Finished(tool_result.content.clone().into())
+                        ToolUseStatus::Finished(content)
                     };
                 }
 
@@ -354,7 +371,7 @@ impl ToolUseState {
         tool_use_id: LanguageModelToolUseId,
         ui_text: impl Into<Arc<str>>,
         input: serde_json::Value,
-        messages: Arc<Vec<LanguageModelRequestMessage>>,
+        request: Arc<LanguageModelRequest>,
         tool: Arc<dyn Tool>,
     ) {
         if let Some(tool_use) = self.pending_tool_uses_by_id.get_mut(&tool_use_id) {
@@ -363,7 +380,7 @@ impl ToolUseState {
             let confirmation = Confirmation {
                 tool_use_id,
                 input,
-                messages,
+                request,
                 tool,
                 ui_text,
             };
@@ -399,21 +416,45 @@ impl ToolUseState {
                 let tool_result = output.content;
                 const BYTES_PER_TOKEN_ESTIMATE: usize = 3;
 
-                // Protect from clearly large output
+                let old_use = self.pending_tool_uses_by_id.remove(&tool_use_id);
+
+                // Protect from overly large output
                 let tool_output_limit = configured_model
                     .map(|model| model.model.max_token_count() * BYTES_PER_TOKEN_ESTIMATE)
                     .unwrap_or(usize::MAX);
 
-                let tool_result = if tool_result.len() <= tool_output_limit {
-                    tool_result
-                } else {
-                    let truncated = truncate_lines_to_byte_limit(&tool_result, tool_output_limit);
+                let content = match tool_result {
+                    ToolResultContent::Text(text) => {
+                        let text = if text.len() < tool_output_limit {
+                            text
+                        } else {
+                            let truncated = truncate_lines_to_byte_limit(&text, tool_output_limit);
+                            format!(
+                                "Tool result too long. The first {} bytes:\n\n{}",
+                                truncated.len(),
+                                truncated
+                            )
+                        };
+                        LanguageModelToolResultContent::Text(text.into())
+                    }
+                    ToolResultContent::Image(language_model_image) => {
+                        if language_model_image.estimate_tokens() < tool_output_limit {
+                            LanguageModelToolResultContent::Image(language_model_image)
+                        } else {
+                            self.tool_results.insert(
+                                tool_use_id.clone(),
+                                LanguageModelToolResult {
+                                    tool_use_id: tool_use_id.clone(),
+                                    tool_name,
+                                    content: "Tool responded with an image that would exceeded the remaining tokens".into(),
+                                    is_error: true,
+                                    output: None,
+                                },
+                            );
 
-                    format!(
-                        "Tool result too long. The first {} bytes:\n\n{}",
-                        truncated.len(),
-                        truncated
-                    )
+                            return old_use;
+                        }
+                    }
                 };
 
                 self.tool_results.insert(
@@ -421,12 +462,13 @@ impl ToolUseState {
                     LanguageModelToolResult {
                         tool_use_id: tool_use_id.clone(),
                         tool_name,
-                        content: tool_result.into(),
+                        content,
                         is_error: false,
                         output: output.output,
                     },
                 );
-                self.pending_tool_uses_by_id.remove(&tool_use_id)
+
+                old_use
             }
             Err(err) => {
                 self.tool_results.insert(
@@ -434,7 +476,7 @@ impl ToolUseState {
                     LanguageModelToolResult {
                         tool_use_id: tool_use_id.clone(),
                         tool_name,
-                        content: err.to_string().into(),
+                        content: LanguageModelToolResultContent::Text(err.to_string().into()),
                         is_error: true,
                         output: None,
                     },
@@ -449,72 +491,20 @@ impl ToolUseState {
         }
     }
 
-    pub fn attach_tool_uses(
-        &self,
-        message_id: MessageId,
-        request_message: &mut LanguageModelRequestMessage,
-    ) {
-        if let Some(tool_uses) = self.tool_uses_by_assistant_message.get(&message_id) {
-            for tool_use in tool_uses {
-                if self.tool_results.contains_key(&tool_use.id) {
-                    // Do not send tool uses until they are completed
-                    request_message
-                        .content
-                        .push(MessageContent::ToolUse(tool_use.clone()));
-                } else {
-                    log::debug!(
-                        "skipped tool use {:?} because it is still pending",
-                        tool_use
-                    );
-                }
-            }
-        }
-    }
-
     pub fn has_tool_results(&self, assistant_message_id: MessageId) -> bool {
         self.tool_uses_by_assistant_message
             .contains_key(&assistant_message_id)
     }
 
-    pub fn tool_results_message(
+    pub fn tool_results(
         &self,
         assistant_message_id: MessageId,
-    ) -> Option<LanguageModelRequestMessage> {
-        let tool_uses = self
-            .tool_uses_by_assistant_message
-            .get(&assistant_message_id)?;
-
-        if tool_uses.is_empty() {
-            return None;
-        }
-
-        let mut request_message = LanguageModelRequestMessage {
-            role: Role::User,
-            content: vec![],
-            cache: false,
-        };
-
-        for tool_use in tool_uses {
-            if let Some(tool_result) = self.tool_results.get(&tool_use.id) {
-                request_message
-                    .content
-                    .push(MessageContent::ToolResult(LanguageModelToolResult {
-                        tool_use_id: tool_use.id.clone(),
-                        tool_name: tool_result.tool_name.clone(),
-                        is_error: tool_result.is_error,
-                        content: if tool_result.content.is_empty() {
-                            // Surprisingly, the API fails if we return an empty string here.
-                            // It thinks we are sending a tool use without a tool result.
-                            "<Tool returned an empty string>".into()
-                        } else {
-                            tool_result.content.clone()
-                        },
-                        output: None,
-                    }));
-            }
-        }
-
-        Some(request_message)
+    ) -> impl Iterator<Item = (&LanguageModelToolUse, Option<&LanguageModelToolResult>)> {
+        self.tool_uses_by_assistant_message
+            .get(&assistant_message_id)
+            .into_iter()
+            .flatten()
+            .map(|tool_use| (tool_use, self.tool_results.get(&tool_use.id)))
     }
 }
 
@@ -535,7 +525,7 @@ pub struct Confirmation {
     pub tool_use_id: LanguageModelToolUseId,
     pub input: serde_json::Value,
     pub ui_text: Arc<str>,
-    pub messages: Arc<Vec<LanguageModelRequestMessage>>,
+    pub request: Arc<LanguageModelRequest>,
     pub tool: Arc<dyn Tool>,
 }
 

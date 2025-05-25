@@ -275,7 +275,7 @@ impl RateCompletionModal {
             completion,
             feedback_editor: cx.new(|cx| {
                 let mut editor = Editor::multi_line(window, cx);
-                editor.disable_scrollbars_and_minimap(cx);
+                editor.disable_scrollbars_and_minimap(window, cx);
                 editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
                 editor.set_show_line_numbers(false, cx);
                 editor.set_show_git_diff_gutter(false, cx);
