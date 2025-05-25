@@ -2282,7 +2282,10 @@ fn test_language_scope_at_with_javascript(cx: &mut App) {
 
         let config = snapshot.language_scope_at(0).unwrap();
         assert_eq!(config.line_comment_prefixes(), &[Arc::from("// ")]);
-        assert_eq!(config.block_comment_delimiters(), Some((&"/*".into(), &"*/".into())));
+        assert_eq!(
+            config.block_comment_delimiters(),
+            Some((&"/*".into(), &"*/".into()))
+        );
         // Both bracket pairs are enabled
         assert_eq!(
             config.brackets().map(|e| e.1).collect::<Vec<_>>(),
@@ -2301,7 +2304,10 @@ fn test_language_scope_at_with_javascript(cx: &mut App) {
             .language_scope_at(text.find("b\"").unwrap())
             .unwrap();
         assert_eq!(string_config.line_comment_prefixes(), &[Arc::from("// ")]);
-        assert_eq!(string_config.block_comment_delimiters(), Some((&"/*".into(), &"*/".into())));
+        assert_eq!(
+            string_config.block_comment_delimiters(),
+            Some((&"/*".into(), &"*/".into()))
+        );
         // Second bracket pair is disabled
         assert_eq!(
             string_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
@@ -2329,7 +2335,10 @@ fn test_language_scope_at_with_javascript(cx: &mut App) {
             .language_scope_at(text.find(" d=").unwrap() + 1)
             .unwrap();
         assert_eq!(tag_config.line_comment_prefixes(), &[Arc::from("// ")]);
-        assert_eq!(tag_config.block_comment_delimiters(), Some((&"/*".into(), &"*/".into())));
+        assert_eq!(
+            tag_config.block_comment_delimiters(),
+            Some((&"/*".into(), &"*/".into()))
+        );
         assert_eq!(
             tag_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
             &[true, true]
