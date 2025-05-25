@@ -16,6 +16,7 @@ use crate::provider::{
     copilot_chat::CopilotChatSettings,
     deepseek::DeepSeekSettings,
     google::GoogleSettings,
+    llamacpp::LlamaCppSettings,
     lmstudio::LmStudioSettings,
     mistral::MistralSettings,
     ollama::OllamaSettings,
@@ -67,6 +68,7 @@ pub struct AllLanguageModelSettings {
     pub lmstudio: LmStudioSettings,
     pub deepseek: DeepSeekSettings,
     pub mistral: MistralSettings,
+    pub llamacpp: LlamaCppSettings,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -82,6 +84,7 @@ pub struct AllLanguageModelSettingsContent {
     pub deepseek: Option<DeepseekSettingsContent>,
     pub copilot_chat: Option<CopilotChatSettingsContent>,
     pub mistral: Option<MistralSettingsContent>,
+    pub llamacpp: Option<LlamaCppSettingsContent>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -194,6 +197,14 @@ pub struct DeepseekSettingsContent {
 pub struct MistralSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<provider::mistral::AvailableModel>>,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct LlamaCppSettingsContent {
+    pub models_directory: Option<String>,
+    pub available_models: Option<Vec<provider::llamacpp::AvailableModel>>,
+    pub gpu_layers: Option<u32>,
+    pub thread_count: Option<usize>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -435,6 +446,24 @@ impl settings::Settings for AllLanguageModelSettings {
             merge(
                 &mut settings.mistral.available_models,
                 mistral.as_ref().and_then(|s| s.available_models.clone()),
+            );
+
+            // Llama.cpp
+            let llamacpp = value.llamacpp.clone();
+            if let Some(models_dir) = llamacpp.as_ref().and_then(|s| s.models_directory.clone()) {
+                settings.llamacpp.models_directory = std::path::PathBuf::from(models_dir);
+            }
+            merge(
+                &mut settings.llamacpp.available_models,
+                llamacpp.as_ref().and_then(|s| s.available_models.clone()),
+            );
+            merge(
+                &mut settings.llamacpp.gpu_layers,
+                llamacpp.as_ref().and_then(|s| s.gpu_layers),
+            );
+            merge(
+                &mut settings.llamacpp.thread_count,
+                llamacpp.as_ref().and_then(|s| s.thread_count),
             );
         }
 

@@ -1,0 +1,316 @@
+use std::sync::Arc;
+use anyhow::Result;
+use gpui::{
+    prelude::*,
+    App, AsyncApp, Context, Entity, Task, Window,
+};
+use http_client::HttpClient;
+use language_model::{
+    AuthenticateError, LanguageModel, LanguageModelId, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    language_model::{LanguageModel, LanguageModelProvider},
+    settings::{AllLanguageModelSettings, Settings},
+};
+use ui::{
+    Button, ButtonCommon, ButtonStyle, Clickable, IconButton, IconName, Indicator, Label,
+    LabelCommon, LabelSize, List, ListDirection, Switch, ToggleState,
+};
+use util::ResultExt;
+
+use crate::AllLanguageModelSettings;
+use super::{
+    PROVIDER_ID, PROVIDER_NAME,
+    model::LmStudioLanguageModel,
+    ui::ConfigurationView,
+};
+
+pub struct LmStudioLanguageModelProvider {
+    http_client: Arc<dyn HttpClient>,
+    state: Entity<State>,
+}
+
+pub struct State {
+    http_client: Arc<dyn HttpClient>,
+    available_models: Vec<lmstudio::Model>,
+    fetch_model_task: Option<Task<Result<()>>>,
+    _subscription: gpui::Subscription,
+}
+
+impl State {
+    fn is_authenticated(&self) -> bool {
+        if !self.available_models.is_empty() {
+            return true;
+        }
+        
+        if self.available_models.iter().any(|model| model.server_id.is_some()) {
+            return true;
+        }
+        
+        false
+    }
+
+    fn fetch_models(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        // Clear existing models
+        self.available_models.clear();
+        
+        // Create a new task to fetch models from all enabled servers
+        let http_client = self.http_client.clone();
+        let settings = AllLanguageModelSettings::get_global(cx).lmstudio.clone();
+        
+        cx.spawn({
+            let http_client = http_client.clone();
+            async move |this, cx| {
+                // Get all enabled servers
+                let enabled_servers: Vec<_> = settings.servers
+                    .into_iter()
+                    .filter(|server| server.enabled)
+                    .collect();
+                
+                if enabled_servers.is_empty() {
+                    this.update(cx, |this, cx| {
+                        this.available_models.clear();
+                        cx.notify();
+                    })?;
+                    return Ok(());
+                }
+                
+                let mut all_models = Vec::new();
+                
+                // Try to fetch models from each enabled server
+                for server in enabled_servers {
+                    log::info!("Checking connection to LM Studio server: {} at {}", server.name, server.api_url);
+                    
+                    // First check if the server is reachable
+                    match lmstudio::healthcheck(&*http_client, &server.api_url).await {
+                        Ok(true) => {
+                            log::info!("LM Studio server {} is reachable, fetching models", server.name);
+                        },
+                        Ok(false) => {
+                            log::warn!("LM Studio server {} is not reachable, skipping", server.name);
+                            continue;
+                        },
+                        Err(e) => {
+                            log::warn!("Error checking LM Studio server {}: {}", server.name, e);
+                            continue;
+                        }
+                    }
+                    
+                    log::info!("Fetching models from LM Studio server: {} at {}", server.name, server.api_url);
+                    
+                    match lmstudio::get_models(&*http_client, &server.api_url, None).await {
+                        Ok(local_models) => {
+                            // Log incoming models
+                            log::info!("Server {} returned {} models", server.name, local_models.len());
+                            
+                            for model in &local_models {
+                                log::info!("Retrieved model: id={}, type={:?}, state={:?}", 
+                                    model.id, model.r#type, model.state);
+                            }
+                            
+                            // Convert LocalModelListing to Model
+                            let models = local_models.into_iter()
+                                .map(|local_model| {
+                                    let id = local_model.id.clone();
+                                    log::info!("Converting model {} to internal format", id);
+                                    lmstudio::Model {
+                                        name: local_model.id,
+                                        display_name: Some(format!("{} - {}", id, server.name)),
+                                        max_tokens: local_model.max_context_length.unwrap_or(8192),
+                                        supports_tools: Some(true),
+                                        server_id: Some(server.id.clone()),
+                                    }
+                                })
+                                .collect::<Vec<_>>();
+                            
+                            log::info!("Converted {} models for server {}", models.len(), server.name);
+                            all_models.extend(models);
+                            log::info!("All models count after extending: {}", all_models.len());
+                        },
+                        Err(err) => {
+                            log::warn!("Failed to fetch models from server {}: {}", server.name, err);
+                        }
+                    }
+                }
+                
+                this.update(cx, |this, cx| {
+                    this.available_models = all_models;
+                    cx.notify();
+                })?;
+                
+                Ok(())
+            }
+        })
+    }
+
+    fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
+        let task = self.fetch_models(cx);
+        self.fetch_model_task.replace(task);
+    }
+
+    fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        if self.is_authenticated() {
+            return Task::ready(Ok(()));
+        }
+
+        let fetch_models_task = self.fetch_models(cx);
+        cx.spawn(async move |_this, _cx| Ok(fetch_models_task.await?))
+    }
+
+    pub fn public_restart_fetch_models_task(&mut self, cx: &mut gpui::Context<Self>) {
+        self.restart_fetch_models_task(cx);
+    }
+}
+
+impl LmStudioLanguageModelProvider {
+    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+        let state = cx.new(|cx| {
+            let mut state = State {
+                http_client: http_client.clone(),
+                available_models: Vec::new(),
+                fetch_model_task: None,
+                _subscription: cx.observe_global::<AllLanguageModelSettings>(|_, _| {}),
+            };
+            
+            state.restart_fetch_models_task(cx);
+            state
+        });
+
+        Self {
+            http_client,
+            state,
+        }
+    }
+    
+    fn create_language_model(&self, model: lmstudio::Model) -> Arc<dyn LanguageModel> {
+        Arc::new(LmStudioLanguageModel {
+            id: LanguageModelId::from(model.name.clone()),
+            model: model.clone(),
+            http_client: self.http_client.clone(),
+        }) as Arc<dyn LanguageModel>
+    }
+}
+
+impl LanguageModelProviderState for LmStudioLanguageModelProvider {
+    type ObservableEntity = State;
+
+    fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
+        Some(self.state.clone())
+    }
+}
+
+impl LanguageModelProvider for LmStudioLanguageModelProvider {
+    fn id(&self) -> LanguageModelProviderId {
+        LanguageModelProviderId(PROVIDER_ID.into())
+    }
+
+    fn name(&self) -> LanguageModelProviderName {
+        LanguageModelProviderName(PROVIDER_NAME.into())
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::AiLmStudio
+    }
+
+    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        self.provided_models(cx).into_iter().next()
+    }
+
+    fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        self.default_model(cx)
+    }
+
+    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+        let mut models: std::collections::BTreeMap<String, lmstudio::Model> = std::collections::BTreeMap::default();
+
+        // Add models from the LM Studio API
+        log::info!("Processing models from LM Studio API, available models count: {}", self.state.read(cx).available_models.len());
+        for model in self.state.read(cx).available_models.iter() {
+            log::info!("Adding model from state: {}", model.name);
+            models.insert(model.name.clone(), model.clone());
+        }
+
+        // Override with available models from settings and filter out disabled models
+        let servers = &AllLanguageModelSettings::get_global(cx).lmstudio.servers;
+        log::info!("Processing {} servers from settings", servers.len());
+        
+        // First, filter out any models on disabled servers
+        let enabled_servers: Vec<&super::types::LmStudioServer> = servers.iter()
+            .filter(|server| server.enabled)
+            .collect();
+            
+        log::info!("Found {} enabled servers", enabled_servers.len());
+        
+        // Then build a list of enabled models
+        let mut enabled_models = std::collections::HashSet::new();
+        for server in &enabled_servers {
+            if let Some(available_models) = &server.available_models {
+                for model in available_models {
+                    if model.enabled {
+                        // Only include enabled models from enabled servers
+                        if let Some(server_id) = &model.server_id {
+                            let key = format!("{}:{}", server_id, model.name);
+                            log::info!("Marking model as enabled: {}", &key);
+                            enabled_models.insert(key);
+                            
+                            // Update thread-local cache with custom max tokens if available
+                            if let Some(custom_max_tokens) = model.custom_max_tokens {
+                                log::info!("Updating custom max tokens for model {}: {}", model.name, custom_max_tokens);
+                                lmstudio::update_custom_max_tokens(server_id, &model.name, Some(custom_max_tokens));
+                            } else {
+                                // Clear any existing custom setting
+                                lmstudio::update_custom_max_tokens(server_id, &model.name, None);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Now filter out any models that aren't enabled
+        let final_models = models.into_iter()
+            .filter_map(|(name, model)| {
+                let server_id = model.server_id.as_ref()?;
+                let key = format!("{}:{}", server_id, name);
+                
+                if enabled_models.contains(&key) {
+                    log::info!("Including enabled model: {}", &key);
+                    Some(self.create_language_model(model))
+                } else {
+                    log::info!("Filtering out disabled model: {}", &key);
+                    None
+                }
+            })
+            .collect();
+
+        final_models
+    }
+
+    fn load_model(&self, model: Arc<dyn LanguageModel>, cx: &App) {
+        let settings = &AllLanguageModelSettings::get_global(cx).lmstudio;
+        let http_client = self.http_client.clone();
+        // Get the first enabled server or return if none
+        if let Some(server) = settings.first_enabled_server() {
+            let api_url = server.api_url.clone();
+            let id = model.id().0.to_string();
+            cx.spawn(async move |_| lmstudio::preload_model(http_client, &api_url, &id).await)
+                .detach_and_log_err(cx);
+        }
+    }
+
+    fn is_authenticated(&self, cx: &App) -> bool {
+        self.state.read(cx).is_authenticated()
+    }
+
+    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
+        self.state.update(cx, |state, cx| state.authenticate(cx))
+    }
+
+    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
+        let state = self.state.clone();
+        cx.new(|cx| ConfigurationView::new(state, cx)).into()
+    }
+
+    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
+        self.state.update(cx, |state, cx| state.fetch_models(cx))
+    }
+} 

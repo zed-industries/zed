@@ -1,0 +1,3238 @@
+// Allow warnings for deprecated fields needed for backward compatibility
+#![allow(deprecated)]
+
+use anyhow::{Result, anyhow};
+use futures::{FutureExt, future::BoxFuture, stream::BoxStream, StreamExt};
+use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task, UpdateGlobal, WindowOptions, WindowKind, Window, TitlebarOptions};
+use fs;
+use http_client::HttpClient;
+use language_model::{
+    AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelToolChoice, StopReason, LanguageModelToolUse, LanguageModelToolUseId,
+};
+use language_model::{
+    LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, Role,
+};
+use lmstudio::{
+    ChatCompletionRequest, ChatMessage, preload_model,
+};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use settings::{Settings, update_settings_file};
+use std::{collections::{BTreeMap, HashSet}, sync::Arc};
+// UI imports
+use ui::{ButtonLike, Indicator, List, prelude::*, ListItem, h_flex, v_flex, div, Label, Button, IconButton, LabelSize, Tooltip, Switch, SwitchColor, ToggleState, ButtonStyle, Color};
+use ui_input::SingleLineInput;
+use util::ResultExt;
+
+use crate::AllLanguageModelSettings;
+use crate::ui::InstructionListItem;
+
+const LMSTUDIO_DOWNLOAD_URL: &str = "https://lmstudio.ai/download";
+const LMSTUDIO_CATALOG_URL: &str = "https://lmstudio.ai/models";
+const LMSTUDIO_SITE: &str = "https://lmstudio.ai/";
+
+const PROVIDER_ID: &str = "lmstudio";
+const PROVIDER_NAME: &str = "LM Studio";
+
+#[derive(Default, Debug, Clone, PartialEq)]
+pub struct LmStudioSettings {
+    pub servers: Vec<LmStudioServer>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct LmStudioServer {
+    pub id: String, // UUID or unique identifier
+    pub name: String, // User-friendly name
+    pub api_url: String, // Server URL
+    pub enabled: bool, // Whether this server is enabled
+    pub available_models: Option<Vec<AvailableModel>>, // Models available on this server
+}
+
+impl LmStudioServer {
+    /// Check if the server is currently reachable
+    pub async fn healthcheck(&self, http_client: &dyn HttpClient) -> Result<bool> {
+        if !self.enabled {
+            return Ok(false);
+        }
+        
+        log::info!("Performing healthcheck for server {} at {}", self.name, self.api_url);
+        match lmstudio::healthcheck(http_client, &self.api_url).await {
+            Ok(healthy) => {
+                log::info!(
+                    "Server {} healthcheck result: {}", 
+                    self.name, 
+                    if healthy { "healthy" } else { "unhealthy" }
+                );
+                Ok(healthy)
+            },
+            Err(e) => {
+                log::warn!("Server {} healthcheck failed: {}", self.name, e);
+                Err(anyhow!("Healthcheck failed: {}", e))
+            }
+        }
+    }
+    
+    /// Check if the server appears to be connected based on available_models
+    pub fn has_models(&self) -> bool {
+        self.enabled && 
+            self.available_models.as_ref().map(|models| !models.is_empty()).unwrap_or(false)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AvailableModel {
+    /// The model name in the LM Studio API. e.g. qwen2.5-coder-7b, phi-4, etc
+    pub name: String,
+    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
+    pub display_name: Option<String>,
+    /// The model's context window size from server.
+    pub server_max_tokens: usize,
+    /// The model's context window size overridden by user (if None, use server_max_tokens).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_max_tokens: Option<usize>,
+    /// Which server this model belongs to
+    pub server_id: Option<String>,
+    /// Whether this model is enabled
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    
+    /// For backward compatibility, max_tokens field is retained but not used directly
+    #[serde(default)]
+    #[serde(skip_serializing_if = "max_tokens_is_default")]
+    #[deprecated(note = "Use server_max_tokens and custom_max_tokens instead")]
+    #[doc(hidden)]
+    max_tokens: usize,
+}
+
+pub struct LmStudioLanguageModelProvider {
+    http_client: Arc<dyn HttpClient>,
+    state: gpui::Entity<State>,
+}
+
+pub struct State {
+    http_client: Arc<dyn HttpClient>,
+    available_models: Vec<lmstudio::Model>,
+    fetch_model_task: Option<Task<Result<()>>>,
+    _subscription: Subscription,
+}
+
+impl State {
+    fn is_authenticated(&self) -> bool {
+        // A provider is considered authenticated if it has at least one model available
+        if !self.available_models.is_empty() {
+            return true;
+        }
+        
+        // Additional check: verify that at least one model has a valid server_id
+        // We're not checking if the server is enabled here, but our model refresh
+        // mechanism should have already removed models from disabled servers
+        if self.available_models.iter().any(|model| model.server_id.is_some()) {
+            return true;
+        }
+        
+        // No models in state, so we're not authenticated
+        false
+    }
+
+    fn fetch_models(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        // Clear existing models
+        self.available_models.clear();
+        
+        // Create a new task to fetch models from all enabled servers
+        let http_client = self.http_client.clone();
+        let settings = AllLanguageModelSettings::get_global(cx).lmstudio.clone();
+        
+        cx.spawn({
+            let http_client = http_client.clone();
+            async move |this, cx| {
+                // Get all enabled servers
+                let enabled_servers: Vec<LmStudioServer> = settings.servers
+                    .into_iter()
+                    .filter(|server| server.enabled)
+                    .collect();
+                
+                if enabled_servers.is_empty() {
+                    this.update(cx, |this, cx| {
+                        this.available_models.clear();
+                        cx.notify();
+                    })?;
+                    return Ok(());
+                }
+                
+                let mut all_models = Vec::new();
+                
+                // Try to fetch models from each enabled server
+                for server in enabled_servers {
+                    log::info!("Checking connection to LM Studio server: {} at {}", server.name, server.api_url);
+                    
+                    // First check if the server is reachable
+                    match lmstudio::healthcheck(&*http_client, &server.api_url).await {
+                        Ok(true) => {
+                            log::info!("LM Studio server {} is reachable, fetching models", server.name);
+                        },
+                        Ok(false) => {
+                            log::warn!("LM Studio server {} is not reachable, skipping", server.name);
+                            continue;
+                        },
+                        Err(e) => {
+                            log::warn!("Error checking LM Studio server {}: {}", server.name, e);
+                            continue;
+                        }
+                    }
+                    
+                    log::info!("Fetching models from LM Studio server: {} at {}", server.name, server.api_url);
+                    
+                    match lmstudio::get_models(&*http_client, &server.api_url, None).await {
+                        Ok(local_models) => {
+                            // Log incoming models
+                            log::info!("Server {} returned {} models", server.name, local_models.len());
+                            
+                            for model in &local_models {
+                                log::info!("Retrieved model: id={}, type={:?}, state={:?}", 
+                                    model.id, model.r#type, model.state);
+                            }
+                            
+                            // Convert LocalModelListing to Model
+                            let models = local_models.into_iter()
+                                .map(|local_model| {
+                                    let id = local_model.id.clone();
+                                    log::info!("Converting model {} to internal format", id);
+                                    lmstudio::Model {
+                                        name: local_model.id,
+                                        display_name: Some(format!("{} - {}", id, server.name)),
+                                        max_tokens: local_model.max_context_length.unwrap_or(8192),
+                                        supports_tools: Some(true),
+                                        server_id: Some(server.id.clone()),
+                                    }
+                                })
+                                .collect::<Vec<_>>();
+                            
+                            log::info!("Converted {} models for server {}", models.len(), server.name);
+                            all_models.extend(models.clone());
+                            log::info!("All models count after extending: {}", all_models.len());
+                            
+                            // Store these fetched models so we can update settings later
+                            let server_id = server.id.clone();
+                            
+                            // Get existing models to preserve enabled state
+                            let existing_models = if let Some(models) = &server.available_models {
+                                models.clone()
+                            } else {
+                                Vec::new()
+                            };
+                            
+                            let converted_models = models.into_iter()
+                                .map(|model| {
+                                    // Try to find this model in existing models to preserve settings
+                                    let existing_model = existing_models.iter()
+                                        .find(|m| m.name == model.name);
+                                        
+                                    let enabled = existing_model
+                                        .map(|m| m.enabled)
+                                        .unwrap_or(true); // Default to enabled for new models
+                                        
+                                    // Get custom max tokens from existing model if available
+                                    let custom_max_tokens = existing_model
+                                        .and_then(|m| m.custom_max_tokens);
+                                    
+                                    AvailableModel {
+                                        name: model.name.clone(),
+                                        display_name: model.display_name.clone()
+                                            .or_else(|| {
+                                                let model_name = model.name.clone();
+                                                let server_name = server.name.clone();
+                                                Some(format!("{} - {}", model_name, server_name))
+                                            }),
+                                        server_max_tokens: model.max_tokens,
+                                        custom_max_tokens, // Preserve custom value if it exists
+                                        #[allow(deprecated)]
+                                        max_tokens: 0, // For backward compatibility
+                                        server_id: Some(server_id.clone()),
+                                        enabled,
+                                    }
+                                })
+                                .collect::<Vec<_>>();
+                                
+                            // We'll update settings in the next phase
+                            this.update(cx, move |_this, cx| {
+                                // Now we have App context, so we can update settings
+                                log::info!("Updating settings with {} models for server {}", 
+                                    converted_models.len(), server_id);
+                                
+                                settings::SettingsStore::update_global(cx, |store, cx| {
+                                    store.update_settings_file::<crate::AllLanguageModelSettings>(
+                                        <dyn fs::Fs>::global(cx), 
+                                        move |settings, _| {
+                                            if let Some(lmstudio) = &mut settings.lmstudio {
+                                                if let Some(servers) = &mut lmstudio.servers {
+                                                    // Find the server by ID
+                                                    if let Some(server) = servers.iter_mut().find(|s| s.id == server_id) {
+                                                        // Update the models
+                                                        server.available_models = Some(converted_models.clone());
+                                                        log::info!("Updated server settings with {} models", converted_models.len());
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    );
+                                });
+                            }).ok();
+                        }
+                        Err(err) => {
+                            log::warn!("Failed to fetch models from server {}: {}", server.name, err);
+                        }
+                    }
+                }
+                
+                this.update(cx, |this, cx| {
+                    this.available_models = all_models;
+                    cx.notify();
+                })?;
+                
+                Ok(())
+            }
+        })
+    }
+
+    fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
+        let task = self.fetch_models(cx);
+        self.fetch_model_task.replace(task);
+    }
+
+    fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        if self.is_authenticated() {
+            return Task::ready(Ok(()));
+        }
+
+        let fetch_models_task = self.fetch_models(cx);
+        cx.spawn(async move |_this, _cx| Ok(fetch_models_task.await?))
+    }
+}
+
+impl LmStudioLanguageModelProvider {
+    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+        let state = cx.new(|cx| {
+            let mut state = State {
+                http_client: http_client.clone(),
+                available_models: Vec::new(),
+                fetch_model_task: None,
+                _subscription: cx.observe_global::<AllLanguageModelSettings>(|_, _| {}),
+            };
+            
+            // Fetch models when created
+            state.restart_fetch_models_task(cx);
+            state
+        });
+
+        Self {
+            http_client,
+            state,
+        }
+    }
+    
+    fn create_language_model(&self, model: lmstudio::Model) -> Arc<dyn LanguageModel> {
+        Arc::new(LmStudioLanguageModel {
+            id: LanguageModelId::from(model.name.clone()),
+            model: model.clone(),
+            http_client: self.http_client.clone(),
+        }) as Arc<dyn LanguageModel>
+    }
+}
+
+impl LanguageModelProviderState for LmStudioLanguageModelProvider {
+    type ObservableEntity = State;
+
+    fn observable_entity(&self) -> Option<gpui::Entity<Self::ObservableEntity>> {
+        Some(self.state.clone())
+    }
+}
+
+impl LanguageModelProvider for LmStudioLanguageModelProvider {
+    fn id(&self) -> LanguageModelProviderId {
+        LanguageModelProviderId(PROVIDER_ID.into())
+    }
+
+    fn name(&self) -> LanguageModelProviderName {
+        LanguageModelProviderName(PROVIDER_NAME.into())
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::AiLmStudio
+    }
+
+    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        self.provided_models(cx).into_iter().next()
+    }
+
+    fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        self.default_model(cx)
+    }
+
+    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+        let mut models: BTreeMap<String, lmstudio::Model> = BTreeMap::default();
+
+        // Add models from the LM Studio API
+        log::info!("Processing models from LM Studio API, available models count: {}", self.state.read(cx).available_models.len());
+        for model in self.state.read(cx).available_models.iter() {
+            log::info!("Adding model from state: {}", model.name);
+            models.insert(model.name.clone(), model.clone());
+        }
+
+        // Override with available models from settings and filter out disabled models
+        let servers = &AllLanguageModelSettings::get_global(cx).lmstudio.servers;
+        log::info!("Processing {} servers from settings", servers.len());
+        
+        // First, filter out any models on disabled servers
+        let enabled_servers: Vec<&LmStudioServer> = servers.iter()
+            .filter(|server| server.enabled)
+            .collect();
+            
+        log::info!("Found {} enabled servers", enabled_servers.len());
+        
+        // Then build a list of enabled models
+        let mut enabled_models = HashSet::new();
+        for server in &enabled_servers {
+            if let Some(available_models) = &server.available_models {
+                for model in available_models {
+                    if model.enabled {
+                        // Only include enabled models from enabled servers
+                        if let Some(server_id) = &model.server_id {
+                            let key = format!("{}:{}", server_id, model.name);
+                            log::info!("Marking model as enabled: {}", &key);
+                            enabled_models.insert(key);
+                            
+                            // Update thread-local cache with custom max tokens if available
+                            if let Some(custom_max_tokens) = model.custom_max_tokens {
+                                log::info!("Updating custom max tokens for model {}: {}", model.name, custom_max_tokens);
+                                lmstudio::update_custom_max_tokens(server_id, &model.name, Some(custom_max_tokens));
+                            } else {
+                                // Clear any existing custom setting
+                                lmstudio::update_custom_max_tokens(server_id, &model.name, None);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Now filter out any models that aren't enabled
+        let final_models = models.into_iter()
+            .filter_map(|(name, model)| {
+                let server_id = model.server_id.as_ref()?;
+                let key = format!("{}:{}", server_id, name);
+                
+                if enabled_models.contains(&key) {
+                    log::info!("Including enabled model: {}", &key);
+                    Some(self.create_language_model(model))
+                } else {
+                    log::info!("Filtering out disabled model: {}", &key);
+                    None
+                }
+            })
+            .collect();
+
+        final_models
+    }
+
+    fn load_model(&self, model: Arc<dyn LanguageModel>, cx: &App) {
+        let settings = &AllLanguageModelSettings::get_global(cx).lmstudio;
+        let http_client = self.http_client.clone();
+        // Get the first enabled server or return if none
+        if let Some(server) = settings.first_enabled_server() {
+            let api_url = server.api_url.clone();
+            let id = model.id().0.to_string();
+            cx.spawn(async move |_| preload_model(http_client, &api_url, &id).await)
+                .detach_and_log_err(cx);
+        }
+    }
+
+    fn is_authenticated(&self, cx: &App) -> bool {
+        self.state.read(cx).is_authenticated()
+    }
+
+    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
+        self.state.update(cx, |state, cx| state.authenticate(cx))
+    }
+
+    fn configuration_view(&self, _window: &mut Window, cx: &mut App) -> AnyView {
+        let state = self.state.clone();
+        cx.new(|cx| ConfigurationView::new(state, cx)).into()
+    }
+
+    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
+        self.state.update(cx, |state, cx| state.fetch_models(cx))
+    }
+}
+
+pub struct LmStudioLanguageModel {
+    id: LanguageModelId,
+    model: lmstudio::Model,
+    http_client: Arc<dyn HttpClient>,
+}
+
+impl LmStudioLanguageModel {
+    fn get_server_url(&self, cx: &App) -> Result<String> {
+        let settings = &AllLanguageModelSettings::get_global(cx).lmstudio;
+        
+        // If the model has a server_id, use that server's URL
+        if let Some(server_id) = &self.model.server_id {
+            for server in &settings.servers {
+                if &server.id == server_id && server.enabled {
+                    return Ok(server.api_url.clone());
+                }
+            }
+            
+            // If server was found but is disabled
+            for server in &settings.servers {
+                if &server.id == server_id {
+                    return Err(anyhow!("The server '{}' is disabled", server.name));
+                }
+            }
+            
+            // Don't fallback to another server, require a server match
+            return Err(anyhow!("Server not found for model {}", self.model.name));
+        }
+        
+        // For backwards compatibility with models that don't have a server_id
+        // Fallback to first enabled server
+        if let Some(server) = settings.first_enabled_server() {
+            log::warn!("Model {} has no server_id, using first enabled server", self.model.name);
+            return Ok(server.api_url.clone());
+        }
+        
+        // No servers configured
+        Err(anyhow!("No enabled LM Studio servers found"))
+    }
+
+    fn to_lmstudio_request(&self, request: LanguageModelRequest) -> ChatCompletionRequest {
+        // Make a deep clone of the tools for debugging and to preserve them
+        let tools_debug = request.tools.clone();
+        
+        // Check if tools are empty before moving them
+        let has_tools = !request.tools.is_empty();
+        
+        // Convert tools to LM Studio format
+        let tools = request
+            .tools
+            .into_iter()
+            .map(|tool| lmstudio::LmStudioTool::Function {
+                function: lmstudio::LmStudioFunctionTool {
+                    name: tool.name,
+                    description: Some(tool.description),
+                    parameters: Some(tool.input_schema),
+                },
+            })
+            .collect::<Vec<_>>();
+        
+        // Log the tools for debugging
+        if !tools.is_empty() {
+            log::debug!("LMStudio: Sending {} tools to model", tools.len());
+            for tool in &tools_debug {
+                log::debug!("  Tool: {}", tool.name);
+            }
+        }
+
+        // Convert tool choice to LM Studio format
+        let tool_choice = match request.tool_choice {
+            Some(choice) => match choice {
+                LanguageModelToolChoice::Auto => Some("auto"),
+                LanguageModelToolChoice::Any => Some("any"),
+                LanguageModelToolChoice::None => Some("none"),
+            },
+            None => if has_tools { Some("auto") } else { None },
+        };
+
+        ChatCompletionRequest {
+            model: self.model.name.clone(),
+            messages: request
+                .messages
+                .into_iter()
+                .map(|msg| match msg.role {
+                    Role::User => ChatMessage::User {
+                        content: msg.string_contents(),
+                    },
+                    Role::Assistant => ChatMessage::Assistant {
+                        content: Some(msg.string_contents()),
+                        tool_calls: None,
+                    },
+                    Role::System => ChatMessage::System {
+                        content: msg.string_contents(),
+                    },
+                })
+                .collect(),
+            stream: true,
+            max_tokens: Some(-1),
+            stop: Some(request.stop),
+            temperature: request.temperature.or(Some(0.0)),
+            tools,
+            tool_choice,
+        }
+    }
+}
+
+impl LanguageModel for LmStudioLanguageModel {
+    fn id(&self) -> LanguageModelId {
+        self.id.clone()
+    }
+
+    fn name(&self) -> LanguageModelName {
+        LanguageModelName::from(self.model.display_name().to_string())
+    }
+
+    fn provider_id(&self) -> LanguageModelProviderId {
+        LanguageModelProviderId(PROVIDER_ID.into())
+    }
+
+    fn provider_name(&self) -> LanguageModelProviderName {
+        LanguageModelProviderName(PROVIDER_NAME.into())
+    }
+
+    fn supports_tools(&self) -> bool {
+        // Return the model's supports_tools flag if available, otherwise default to true
+        self.model.supports_tools.unwrap_or(true)
+    }
+
+    fn supports_images(&self) -> bool {
+        false
+    }
+
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        match choice {
+            LanguageModelToolChoice::Auto | LanguageModelToolChoice::Any => self.supports_tools(),
+            LanguageModelToolChoice::None => true
+        }
+    }
+
+    fn telemetry_id(&self) -> String {
+        format!("lmstudio/{}", self.model.id())
+    }
+
+    fn max_token_count(&self) -> usize {
+        self.model.max_token_count()
+    }
+
+    fn count_tokens(
+        &self,
+        request: LanguageModelRequest,
+        _cx: &App,
+    ) -> BoxFuture<'static, Result<usize>> {
+        // Convert LanguageModelRequest to ChatMessage for token counting
+        let messages = self.to_lmstudio_request(request).messages;
+        
+        // Use the model's own token counting method
+        let total_tokens = messages.iter()
+            .map(|msg| {
+                match msg {
+                    lmstudio::ChatMessage::User { content } => 
+                        lmstudio::Model::estimate_tokens(content),
+                    lmstudio::ChatMessage::System { content } => 
+                        lmstudio::Model::estimate_tokens(content),
+                    lmstudio::ChatMessage::Assistant { content, tool_calls } => {
+                        let content_tokens = content.as_ref()
+                            .map_or(0, |c| lmstudio::Model::estimate_tokens(c));
+                        let tool_call_tokens = tool_calls.as_ref().map_or(0, |calls| {
+                            calls.iter().map(|call| {
+                                lmstudio::Model::estimate_tokens(&call.function.name) + 
+                                lmstudio::Model::estimate_tokens(&call.function.arguments)
+                            }).sum()
+                        });
+                        content_tokens + tool_call_tokens
+                    },
+                    lmstudio::ChatMessage::Tool { content, tool_call_id } => {
+                        lmstudio::Model::estimate_tokens(content) + 
+                        lmstudio::Model::estimate_tokens(tool_call_id)
+                    }
+                }
+            })
+            .sum::<usize>();
+        
+        // Check if we're approaching the model's token limit
+        let max_tokens = self.model.max_token_count();
+        if total_tokens > max_tokens * 9 / 10 {
+            log::warn!(
+                "LM Studio token count is approaching model limit: {}/{} ({}%)",
+                total_tokens,
+                max_tokens,
+                (total_tokens as f64 / max_tokens as f64 * 100.0) as usize
+            );
+        }
+        
+        async move { Ok(total_tokens) }.boxed()
+    }
+
+    fn stream_completion(
+        &self,
+        request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+        >,
+    > {
+        // Clone needed variables for the async block
+        let http_client = self.http_client.clone();
+        let model_name = self.model.name.clone();
+        let lmstudio_request = self.to_lmstudio_request(request);
+        let model_id = self.id.0.clone();
+        
+        // Get the server URL upfront before the async block
+        let server_url_result = cx.update(|app| {
+            self.get_server_url(app)
+        });
+        
+        async move {
+            // First get the server URL, which may fail if no servers are available
+            let server_url = match server_url_result {
+                Ok(url_result) => match url_result {
+                    Ok(url) => url,
+                    Err(e) => {
+                        log::error!("Failed to get server URL for model {}: {}", model_id, e);
+                        return Err(anyhow!("No available LM Studio server for model {}: {}", model_id, e));
+                    }
+                },
+                Err(e) => return Err(anyhow!("Failed during server URL lookup: {}", e)),
+            };
+            
+            log::info!("Streaming completion from LM Studio model {} at {}", model_name, server_url);
+
+            // Create stream mapper to handle the response
+            let mut stream_mapper = LmStudioStreamMapper::new();
+
+            // Get streaming response from LM Studio
+            let stream = match lmstudio::stream_chat_completion(
+                &*http_client,
+                &server_url,
+                lmstudio_request,
+            )
+            .await {
+                Ok(stream) => stream,
+                Err(err) => {
+                    log::error!("Error streaming from LM Studio: {}", err);
+                    return Err(anyhow!("Error connecting to LM Studio: {}", err));
+                }
+            };
+
+            // Map the stream to LanguageModelCompletionEvent
+            let mapped_stream = stream.map(move |fragment| {
+                match fragment {
+                    Ok(chat_response) => {
+                        match stream_mapper.process_fragment(chat_response) {
+                            Ok(Some(event)) => Ok(event),
+                            Ok(None) => Ok(LanguageModelCompletionEvent::Text(String::new())), // Send empty text for fragments that don't produce events
+                            Err(e) => Err(LanguageModelCompletionError::Other(e)),
+                        }
+                    }
+                    Err(e) => Err(LanguageModelCompletionError::Other(anyhow!("{}", e))),
+                }
+            })
+            .boxed();
+
+            Ok(mapped_stream)
+        }
+        .boxed()
+    }
+}
+
+#[derive(Clone)]
+struct LmStudioStreamMapper {
+    in_thinking_block: bool,
+    thinking_buffer: String,
+    pending_text: Option<String>,
+    // Tool call accumulation state
+    accumulating_tool_call: bool,
+    tool_call_id: Option<String>,
+    tool_call_name: Option<String>,
+    tool_call_args_buffer: String,
+}
+
+impl LmStudioStreamMapper {
+    fn new() -> Self {
+        Self {
+            in_thinking_block: false,
+            thinking_buffer: String::new(),
+            pending_text: None,
+            // Initialize tool call accumulation fields
+            accumulating_tool_call: false,
+            tool_call_id: None,
+            tool_call_name: None,
+            tool_call_args_buffer: String::new(),
+        }
+    }
+
+    fn process_fragment(&mut self, fragment: lmstudio::ChatResponse) -> Result<Option<LanguageModelCompletionEvent>> {
+        // Most of the time, there will be only one choice
+        let Some(choice) = fragment.choices.first() else {
+            return Ok(None);
+        };
+
+        // Check for finish reason first
+        if let Some(reason) = choice.finish_reason.as_deref() {
+            let stop_reason = match reason {
+                "length" => StopReason::MaxTokens,
+                "tool_calls" => StopReason::ToolUse,
+                _ => StopReason::EndTurn,
+            };
+            
+            // If we were accumulating a tool call, emit it before stopping
+            if self.accumulating_tool_call && self.tool_call_name.is_some() {
+                // We need to complete the current tool call
+                let tool_use = self.create_tool_use_from_buffer();
+                
+                // Reset accumulation state
+                self.reset_tool_call_state();
+                
+                // Return the tool use and we'll handle the stop in the next iteration
+                return Ok(Some(LanguageModelCompletionEvent::ToolUse(tool_use)));
+            }
+            
+            // Reset any state
+            self.in_thinking_block = false;
+            self.thinking_buffer.clear();
+            self.pending_text = None;
+            self.reset_tool_call_state();
+            
+            return Ok(Some(LanguageModelCompletionEvent::Stop(stop_reason)));
+        }
+
+        // Extract the delta content
+        if let Ok(delta) =
+            serde_json::from_value::<lmstudio::ResponseMessageDelta>(choice.delta.clone())
+        {
+            // Handle tool calls
+            if let Some(tool_calls) = delta.tool_calls {
+                for tool_call in tool_calls {
+                    if let Some(function) = tool_call.function {
+                        // Get or update the tool call ID
+                        if let Some(id) = tool_call.id {
+                            if self.tool_call_id.is_none() {
+                                log::debug!("LMStudio: Starting tool call accumulation with ID: {}", id);
+                                self.tool_call_id = Some(id);
+                                self.accumulating_tool_call = true;
+                            }
+                        }
+                        
+                        // Get or update the function name
+                        if let Some(name) = function.name {
+                            // Don't replace a valid name with an empty one
+                            if self.tool_call_name.is_none() && !name.trim().is_empty() {
+                                log::debug!("LMStudio: Tool call name: {}", name);
+                                self.tool_call_name = Some(name);
+                            } else if self.tool_call_name.is_none() && name.trim().is_empty() {
+                                // If we get an empty name and don't have one yet, log the warning
+                                log::warn!("LMStudio: Received empty function name, ignoring");
+                            }
+                        }
+                        
+                        // Accumulate arguments
+                        if let Some(args) = function.arguments {
+                            log::debug!("LMStudio: Received argument fragment: {}", args);
+                            self.tool_call_args_buffer.push_str(&args);
+                            
+                            // Check if the accumulated arguments form valid JSON
+                            if self.is_likely_complete_json(&self.tool_call_args_buffer) {
+                                log::debug!("LMStudio: Detected complete JSON arguments, emitting tool use");
+                                let tool_use = self.create_tool_use_from_buffer();
+                                
+                                // Reset accumulation state
+                                self.reset_tool_call_state();
+                                
+                                return Ok(Some(LanguageModelCompletionEvent::ToolUse(tool_use)));
+                            }
+                        }
+                        
+                        // We're still accumulating, so don't emit any events yet
+                        return Ok(None);
+                    }
+                }
+            }
+
+            // Handle text content (only if we're not accumulating a tool call)
+            if let Some(content) = delta.content {
+                if !content.is_empty() {
+                    // If we're accumulating a tool call, don't emit text events
+                    if self.accumulating_tool_call {
+                        return Ok(None);
+                    }
+                    
+                    // Process thinking tags in the content
+                    if self.in_thinking_block {
+                        // Already in a thinking block
+                        if content.contains("</think>") {
+                            // End of thinking block
+                            log::debug!("LMStudio: Ending thinking block");
+                            let parts: Vec<&str> = content.split("</think>").collect();
+                            let before_closing = parts[0];
+                            
+                            // Add text before closing tag to thinking buffer
+                            let thinking_text = before_closing.to_string();
+                            
+                            // Return thinking event
+                            self.in_thinking_block = false;
+                            
+                            // Store text after closing tag as pending
+                            if parts.len() > 1 && !parts[1].is_empty() {
+                                log::debug!("LMStudio: Storing pending text after thinking: {}", parts[1]);
+                                self.pending_text = Some(parts[1].to_string());
+                            }
+                            
+                            return Ok(Some(LanguageModelCompletionEvent::Thinking {
+                                text: thinking_text,
+                                signature: None,
+                            }));
+                        } else {
+                            // Continue thinking block
+                            log::debug!("LMStudio: Continuing thinking block: {}", content);
+                            return Ok(Some(LanguageModelCompletionEvent::Thinking {
+                                text: content,
+                                signature: None,
+                            }));
+                        }
+                    } else if content.contains("<think>") {
+                        // Start of a thinking block
+                        log::debug!("LMStudio: Starting thinking block");
+                        self.in_thinking_block = true;
+                        
+                        // Extract content before the tag
+                        let parts: Vec<&str> = content.split("<think>").collect();
+                        let before_tag = parts[0];
+                        
+                        // Handle text before tag if any
+                        if !before_tag.is_empty() {
+                            self.pending_text = Some(before_tag.to_string());
+                            
+                            // Process this first to maintain order
+                            return Ok(Some(LanguageModelCompletionEvent::Text(
+                                before_tag.to_string()
+                            )));
+                        }
+                        
+                        if parts.len() > 1 {
+                            let after_tag = parts[1];
+                            
+                            // Check if closing tag is in the same fragment
+                            if after_tag.contains("</think>") {
+                                // Complete thinking block in a single fragment
+                                let thinking_parts: Vec<&str> = after_tag.split("</think>").collect();
+                                let thinking_text = thinking_parts[0].trim();
+                                
+                                self.in_thinking_block = false;
+                                
+                                // Store text after closing tag as pending
+                                if thinking_parts.len() > 1 && !thinking_parts[1].is_empty() {
+                                    self.pending_text = Some(thinking_parts[1].to_string());
+                                }
+                                
+                                // Return thinking event
+                                return Ok(Some(LanguageModelCompletionEvent::Thinking {
+                                    text: thinking_text.to_string(),
+                                    signature: None,
+                                }));
+                            } else if !after_tag.is_empty() {
+                                // Beginning of thinking block
+                                return Ok(Some(LanguageModelCompletionEvent::Thinking {
+                                    text: after_tag.to_string(),
+                                    signature: None,
+                                }));
+                            }
+                        }
+                        
+                        // Just the tag with nothing after it
+                        return Ok(None);
+                    } else if let Some(pending) = self.pending_text.take() {
+                        // Return any pending text first
+                        self.pending_text = Some(content);
+                        return Ok(Some(LanguageModelCompletionEvent::Text(pending)));
+                    } else {
+                        // Regular text content
+                        return Ok(Some(LanguageModelCompletionEvent::Text(content)));
+                    }
+                }
+            }
+        }
+
+        // Check for any pending text
+        if let Some(text) = self.pending_text.take() {
+            return Ok(Some(LanguageModelCompletionEvent::Text(text)));
+        }
+
+        Ok(None)
+    }
+    
+    // Check if JSON is likely to be complete
+    fn is_likely_complete_json(&self, json: &str) -> bool {
+        // First, simple case - parse it as JSON
+        if serde_json::from_str::<serde_json::Value>(json).is_ok() {
+            return true;
+        }
+        
+        // If it can't be parsed, do some basic checks
+        // Count the number of opening and closing braces
+        let mut depth = 0;
+        let mut inside_string = false;
+        let mut was_escape = false;
+        
+        for c in json.chars() {
+            match c {
+                '"' if !was_escape => inside_string = !inside_string,
+                '\\' if inside_string => was_escape = !was_escape,
+                '{' if !inside_string => depth += 1,
+                '}' if !inside_string => depth -= 1,
+                _ => was_escape = false,
+            }
+        }
+        
+        // If we have no unclosed braces and the JSON starts with { and ends with }, it might be complete
+        depth == 0 && json.trim().starts_with('{') && json.trim().ends_with('}')
+    }
+    
+    // Create a tool use from the accumulated state
+    fn create_tool_use_from_buffer(&self) -> LanguageModelToolUse {
+        let id = self.tool_call_id.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        
+        // Get the function name, ensure it's not empty, and fall back to "unknown_function" if needed
+        let name = self.tool_call_name
+            .clone()
+            .unwrap_or_else(|| "unknown_function".to_string())
+            .trim()
+            .to_string();
+        
+        // If somehow we still have an empty name, use the fallback
+        let name = if name.is_empty() { 
+            log::warn!("LMStudio: Empty function name detected when creating tool use, using fallback name");
+            "unknown_function".to_string() 
+        } else { 
+            name 
+        };
+            
+        let args = self.tool_call_args_buffer.clone();
+        
+        log::debug!("LMStudio: Creating tool use - Name: {}, Args: {}", name, args);
+        
+        // Create the tool use with accumulated values
+        LanguageModelToolUse {
+            id: LanguageModelToolUseId::from(id),
+            name: name.into(),
+            raw_input: args.clone(),
+            input: serde_json::from_str(&args).unwrap_or(serde_json::json!({})),
+            is_input_complete: true,
+        }
+    }
+    
+    // Reset the tool call accumulation state
+    fn reset_tool_call_state(&mut self) {
+        self.accumulating_tool_call = false;
+        self.tool_call_id = None;
+        self.tool_call_name = None;
+        self.tool_call_args_buffer.clear();
+        log::debug!("LMStudio: Reset tool call accumulation state");
+    }
+}
+
+struct ConfigurationView {
+    state: gpui::Entity<State>,
+    loading_models_task: Option<Task<()>>,
+    editing_server_index: Option<usize>,
+    server_edit_name: String,
+    server_edit_url: String,
+    is_adding_model: bool,
+    new_model_name: String,
+    new_model_display_name: String,
+    new_model_max_tokens: String,
+    is_editing_max_tokens: bool,
+    editing_model_server_id: Option<String>,
+    editing_model_name: Option<String>,
+    edit_max_tokens_value: String,
+    is_adding_server: bool,
+    new_server_name: String,
+    new_server_url: String,
+    server_edit_name_input: Option<gpui::Entity<SingleLineInput>>,
+    server_edit_url_input: Option<gpui::Entity<SingleLineInput>>,
+    new_model_name_input: Option<gpui::Entity<SingleLineInput>>,
+    new_model_display_name_input: Option<gpui::Entity<SingleLineInput>>,
+    new_model_max_tokens_input: Option<gpui::Entity<SingleLineInput>>,
+    new_server_name_input: Option<gpui::Entity<SingleLineInput>>,
+    new_server_url_input: Option<gpui::Entity<SingleLineInput>>,
+    edit_max_tokens_input: Option<gpui::Entity<SingleLineInput>>,
+    server_connection_status: BTreeMap<String, bool>,
+    connection_check_tasks: BTreeMap<String, Task<Result<bool>>>,
+    expanded_server_models: HashSet<String>,
+}
+
+impl ConfigurationView {
+    pub fn new(state: gpui::Entity<State>, cx: &mut Context<Self>) -> Self {
+        let loading_models_task = Some(cx.spawn({
+            let state = state.clone();
+            async move |this, cx| {
+                if let Some(task) = state
+                    .update(cx, |state, cx| state.authenticate(cx))
+                    .log_err()
+                {
+                    task.await.log_err();
+                }
+                this.update(cx, |this, cx| {
+                    this.loading_models_task = None;
+                    // Start connection checks for all servers
+                    this.check_all_server_connections(cx);
+                    cx.notify();
+                })
+                .log_err();
+            }
+        }));
+
+        // Initialize server connection status map based on available models
+        let mut server_connection_status = BTreeMap::new();
+        let settings = AllLanguageModelSettings::get_global(cx);
+        
+        // Get available models from state to check which servers are already connected
+        let available_models = state.read(cx).available_models.clone();
+        
+        // Track which servers have models in the state (indicating they were connected)
+        let servers_with_models: HashSet<String> = available_models.iter()
+            .filter_map(|model| model.server_id.clone())
+            .collect();
+        
+        // Pre-populate all server IDs in the status map
+        for server in &settings.lmstudio.servers {
+            // Consider a server connected if it has models in the state
+            let is_connected = servers_with_models.contains(&server.id);
+            server_connection_status.insert(server.id.clone(), is_connected);
+        }
+
+        Self {
+            state,
+            loading_models_task,
+            editing_server_index: None,
+            server_edit_name: String::new(),
+            server_edit_url: String::new(),
+            is_adding_model: false,
+            new_model_name: String::new(),
+            new_model_display_name: String::new(),
+            new_model_max_tokens: String::new(),
+            is_editing_max_tokens: false,
+            editing_model_server_id: None,
+            editing_model_name: None,
+            edit_max_tokens_value: String::new(),
+            is_adding_server: false,
+            new_server_name: String::new(),
+            new_server_url: String::new(),
+            server_edit_name_input: None,
+            server_edit_url_input: None,
+            new_model_name_input: None,
+            new_model_display_name_input: None,
+            new_model_max_tokens_input: None,
+            new_server_name_input: None,
+            new_server_url_input: None,
+            edit_max_tokens_input: None,
+            server_connection_status,
+            connection_check_tasks: BTreeMap::new(),
+            expanded_server_models: HashSet::new(),
+        }
+    }
+
+    // Helper methods for text input creation and updates
+    fn create_server_edit_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Create server edit name input if it doesn't exist
+        if self.server_edit_name_input.is_none() {
+            let name_input = cx.new(|cx| {
+                let input = SingleLineInput::new(window, cx, "Server name");
+                if !self.server_edit_name.is_empty() {
+                    input.editor.update(cx, |editor, cx| {
+                        editor.set_text(self.server_edit_name.clone(), window, cx);
+                    });
+                }
+                input
+            });
+            self.server_edit_name_input = Some(name_input);
+        }
+
+        // Create server edit URL input if it doesn't exist
+        if self.server_edit_url_input.is_none() {
+            let url_input = cx.new(|cx| {
+                let input = SingleLineInput::new(window, cx, "Server URL");
+                if !self.server_edit_url.is_empty() {
+                    input.editor.update(cx, |editor, cx| {
+                        editor.set_text(self.server_edit_url.clone(), window, cx);
+                    });
+                }
+                input
+            });
+            self.server_edit_url_input = Some(url_input);
+        }
+    }
+
+    fn create_new_server_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Create new server name input if it doesn't exist
+        if self.new_server_name_input.is_none() {
+            let name_input = cx.new(|cx| {
+                let input = SingleLineInput::new(window, cx, "Server name");
+                if !self.new_server_name.is_empty() {
+                    input.editor.update(cx, |editor, cx| {
+                        editor.set_text(self.new_server_name.clone(), window, cx);
+                    });
+                }
+                input
+            });
+            self.new_server_name_input = Some(name_input);
+        }
+
+        // Create new server URL input if it doesn't exist
+        if self.new_server_url_input.is_none() {
+            let url_input = cx.new(|cx| {
+                let input = SingleLineInput::new(window, cx, "Server URL");
+                if !self.new_server_url.is_empty() {
+                    input.editor.update(cx, |editor, cx| {
+                        editor.set_text(self.new_server_url.clone(), window, cx);
+                    });
+                }
+                input
+            });
+            self.new_server_url_input = Some(url_input);
+        }
+    }
+
+    fn create_model_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Create model name input if it doesn't exist
+        if self.new_model_name_input.is_none() {
+            let name_input = cx.new(|cx| {
+                let input = SingleLineInput::new(window, cx, "Model name");
+                if !self.new_model_name.is_empty() {
+                    input.editor.update(cx, |editor, cx| {
+                        editor.set_text(self.new_model_name.clone(), window, cx);
+                    });
+                }
+                input
+            });
+            self.new_model_name_input = Some(name_input);
+        }
+
+        // Create model display name input if it doesn't exist
+        if self.new_model_display_name_input.is_none() {
+            let display_name_input = cx.new(|cx| {
+                let input = SingleLineInput::new(window, cx, "Display name (optional)");
+                if !self.new_model_display_name.is_empty() {
+                    input.editor.update(cx, |editor, cx| {
+                        editor.set_text(self.new_model_display_name.clone(), window, cx);
+                    });
+                }
+                input
+            });
+            self.new_model_display_name_input = Some(display_name_input);
+        }
+
+        // Create model max tokens input if it doesn't exist
+        if self.new_model_max_tokens_input.is_none() {
+            let max_tokens_input = cx.new(|cx| {
+                let input = SingleLineInput::new(window, cx, "Max tokens");
+                if !self.new_model_max_tokens.is_empty() {
+                    input.editor.update(cx, |editor, cx| {
+                        editor.set_text(self.new_model_max_tokens.clone(), window, cx);
+                    });
+                } else {
+                    input.editor.update(cx, |editor, cx| {
+                        editor.set_text("8192".to_string(), window, cx);
+                    });
+                }
+                input
+            });
+            self.new_model_max_tokens_input = Some(max_tokens_input);
+        }
+    }
+
+    fn update_field_from_input(&mut self, cx: &mut Context<Self>) {
+        // Update server edit fields
+        if let Some(name_input) = &self.server_edit_name_input {
+            self.server_edit_name = name_input.read(cx).editor.read(cx).text(cx).to_string();
+        }
+        if let Some(url_input) = &self.server_edit_url_input {
+            self.server_edit_url = url_input.read(cx).editor.read(cx).text(cx).to_string();
+        }
+
+        // Update new server fields
+        if let Some(name_input) = &self.new_server_name_input {
+            self.new_server_name = name_input.read(cx).editor.read(cx).text(cx).to_string();
+        }
+        if let Some(url_input) = &self.new_server_url_input {
+            self.new_server_url = url_input.read(cx).editor.read(cx).text(cx).to_string();
+        }
+
+        // Update model fields
+        if let Some(name_input) = &self.new_model_name_input {
+            self.new_model_name = name_input.read(cx).editor.read(cx).text(cx).to_string();
+        }
+        if let Some(display_name_input) = &self.new_model_display_name_input {
+            self.new_model_display_name = display_name_input.read(cx).editor.read(cx).text(cx).to_string();
+        }
+        if let Some(max_tokens_input) = &self.new_model_max_tokens_input {
+            self.new_model_max_tokens = max_tokens_input.read(cx).editor.read(cx).text(cx).to_string();
+        }
+        
+        // Update max tokens edit field
+        if let Some(max_tokens_input) = &self.edit_max_tokens_input {
+            self.edit_max_tokens_value = max_tokens_input.read(cx).editor.read(cx).text(cx).to_string();
+        }
+    }
+
+    
+    fn edit_server(&mut self, index: usize, cx: &mut Context<Self>) {
+        let settings = AllLanguageModelSettings::get_global(cx);
+        let servers = &settings.lmstudio.servers;
+        
+        if servers.is_empty() || index >= servers.len() {
+            log::error!("Cannot edit server: invalid index");
+            return;
+        }
+        
+        // Get the server data to edit
+        let server_name = servers[index].name.clone();
+        let server_url = servers[index].api_url.clone();
+        
+        // Create and open dialog window
+        if let Err(err) = cx.open_window(
+            WindowOptions {
+                window_bounds: Some(gpui::Bounds {
+                    origin: gpui::Point { x: 0.0, y: 0.0 },
+                    size: gpui::Size { width: 400.0, height: 250.0 },
+                }),
+                titlebar: Some(TitlebarOptions::default()),
+                show: true,
+                kind: WindowKind::Normal,
+                ..Default::default()
+            },
+            |window, cx| {
+                // Create the dialog view
+                cx.new_view(|cx| {
+                    MaxTokensEditDialog::new(server_id.clone(), model_name.clone(), current_max_tokens, cx)
+                        .on_save(move |server_id, model_name, max_tokens| {
+                            // This will be called when Save is clicked
+                            cx.update_global::<settings::SettingsStore, _>(|store, cx| {
+                                store.update_settings_file::<crate::AllLanguageModelSettings>(
+                                    <dyn fs::Fs>::global(cx), 
+                                    move |settings, _| {
+                                        if let Some(lmstudio) = &mut settings.lmstudio {
+                                            if let Some(servers) = &mut lmstudio.servers {
+                                                // Find the server with matching ID
+                                                for server in servers.iter_mut() {
+                                                    if server.id == server_id {
+                                                        if let Some(models) = &mut server.available_models {
+                                                            // Find the model with the matching name
+                                                            for model in models.iter_mut() {
+                                                                if model.name == model_name {
+                                                                    // Get the server default
+                                                                    let server_default = model.server_max_tokens;
+                                                                    
+                                                                    // Update the custom max tokens
+                                                                    if max_tokens == server_default {
+                                                                        // If value equals server default, remove the custom value
+                                                                        model.custom_max_tokens = None;
+                                                                        log::info!("Reset max tokens to server default for model {}", model_name);
+                                                                    } else {
+                                                                        model.custom_max_tokens = Some(max_tokens);
+                                                                        log::info!("Updated custom max tokens for model {} to {}", 
+                                                                            model_name, max_tokens);
+                                                                    }
+                                                                    break;
+                                                                }
+                                                            }
+                                                        }
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                            
+                                            // Immediately update the thread-local cache
+                                            let server_default = settings.lmstudio.servers
+                                                .iter()
+                                                .find(|s| s.id == server_id)
+                                                .and_then(|s| s.available_models.as_ref())
+                                                .and_then(|models| models.iter().find(|m| m.name == model_name))
+                                                .map(|m| m.server_max_tokens)
+                                                .unwrap_or(8192);
+                                                
+                                            if max_tokens == server_default {
+                                                // If setting to server default, clear custom value
+                                                lmstudio::update_custom_max_tokens(&server_id, &model_name, None);
+                                            } else {
+                                                // Otherwise set custom value
+                                                lmstudio::update_custom_max_tokens(&server_id, &model_name, Some(max_tokens));
+                                            }
+                                        }
+                                    }
+                                );
+                            });
+                        })
+                        .on_cancel(|| {
+                            // Handle cancel if needed
+                            log::info!("Max tokens edit canceled");
+                        })
+                })
+            },
+        ) {
+            log::error!("Failed to open max tokens edit dialog: {}", err);
+        }
+    }
+    
+    fn create_max_tokens_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.edit_max_tokens_input.is_none() {
+            let tokens_input = cx.new(|cx| {
+                let input = SingleLineInput::new(window, cx, "Max tokens");
+                if !self.edit_max_tokens_value.is_empty() {
+                    input.editor.update(cx, |editor, cx| {
+                        editor.set_text(self.edit_max_tokens_value.clone(), window, cx);
+                    });
+                }
+                input
+            });
+            self.edit_max_tokens_input = Some(tokens_input);
+        }
+    }
+    
+    fn save_max_tokens_edit(&mut self, cx: &mut Context<Self>) {
+        // Get necessary values
+        self.update_field_from_input(cx);
+        
+        // Parse the max tokens value
+        let Ok(max_tokens) = self.edit_max_tokens_value.trim().parse::<usize>() else {
+            log::error!("Invalid max tokens value: {}", self.edit_max_tokens_value);
+            return;
+        };
+        
+        if max_tokens == 0 {
+            log::error!("Max tokens value cannot be zero");
+            return;
+        }
+        
+        // Get server ID and model name
+        let Some(server_id) = self.editing_model_server_id.clone() else {
+            log::error!("No server ID for max tokens edit");
+            return;
+        };
+        
+        let Some(model_name) = self.editing_model_name.clone() else {
+            log::error!("No model name for max tokens edit");
+            return;
+        };
+        
+        log::info!("Updating max tokens for model {} to {}", model_name, max_tokens);
+        
+        // Get filesystem for settings update
+        let fs = <dyn fs::Fs>::global(cx);
+        
+        // Variables for the closure
+        let server_id_clone = server_id.clone();
+        let model_name_clone = model_name.clone();
+        let new_max_tokens = max_tokens;
+        
+        // Update settings
+        update_settings_file::<crate::AllLanguageModelSettings>(fs, cx, move |settings, _| {
+            if let Some(lmstudio) = &mut settings.lmstudio {
+                if let Some(servers) = &mut lmstudio.servers {
+                    // Find the server with matching ID
+                    for server in servers.iter_mut() {
+                        if server.id == server_id_clone {
+                            if let Some(models) = &mut server.available_models {
+                                // Find the model with the matching name
+                                for model in models.iter_mut() {
+                                    if model.name == model_name_clone {
+                                        // Get the server default
+                                        let server_default = model.server_max_tokens;
+                                        
+                                        // Log current state before update
+                                        log::info!("Before update: model {}, server_max_tokens={}, custom_max_tokens={:?}", 
+                                            model_name_clone, 
+                                            model.server_max_tokens,
+                                            model.custom_max_tokens);
+                                        
+                                        // Update the custom max tokens
+                                        if new_max_tokens == server_default {
+                                            // If value equals server default, remove the custom value
+                                            model.custom_max_tokens = None;
+                                            log::info!("Reset max tokens to server default for model {}", model_name_clone);
+                                        } else {
+                                            model.custom_max_tokens = Some(new_max_tokens);
+                                            log::info!("Updated custom max tokens for model {} to {}", 
+                                                model_name_clone, new_max_tokens);
+                                        }
+                                        
+                                        // Log state after update
+                                        log::info!("After update: model {}, server_max_tokens={}, custom_max_tokens={:?}", 
+                                            model_name_clone, 
+                                            model.server_max_tokens,
+                                            model.custom_max_tokens);
+                                        break;
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        
+        // Immediately update the thread-local cache
+        if new_max_tokens == self.edit_max_tokens_value.trim().parse::<usize>().unwrap_or(0) {
+            // Find the server default to check if we're resetting to default
+            let server_default = {
+                // Get current settings directly
+                let settings = AllLanguageModelSettings::get_global(cx);
+                settings.lmstudio.servers
+                    .iter()
+                    .find(|s| s.id == server_id)
+                    .and_then(|s| s.available_models.as_ref())
+                    .and_then(|models| models.iter().find(|m| m.name == model_name))
+                    .map(|m| m.server_max_tokens)
+                    .unwrap_or(8192)
+            };
+            
+            if new_max_tokens == server_default {
+                // If setting to server default, clear custom value
+                lmstudio::update_custom_max_tokens(&server_id, &model_name, None);
+                log::info!("Immediately cleared custom max tokens in thread-local cache for {}", model_name);
+            } else {
+                // Otherwise set custom value
+                lmstudio::update_custom_max_tokens(&server_id, &model_name, Some(new_max_tokens));
+                log::info!("Immediately updated custom max tokens in thread-local cache for {} to {}", 
+                    model_name, new_max_tokens);
+            }
+        }
+        
+        // Reset dialog state
+        self.is_editing_max_tokens = false;
+        self.editing_model_server_id = None;
+        self.editing_model_name = None;
+        self.edit_max_tokens_input = None;
+        
+        // Update in-memory models but don't refresh from server
+        self.state.update(cx, |_state, cx| {
+            // No need to change the in-memory model's max_tokens since the UI reads from settings
+            // We just need to trigger a UI refresh
+            cx.notify();
+        });
+        
+        cx.notify();
+    }
+    
+    fn cancel_max_tokens_edit(&mut self, cx: &mut Context<Self>) {
+        // Reset state
+        self.is_editing_max_tokens = false;
+        self.editing_model_server_id = None;
+        self.editing_model_name = None;
+        self.edit_max_tokens_input = None;
+        
+        cx.notify();
+    }
+
+    fn check_all_server_connections(&mut self, cx: &mut Context<Self>) {
+        // Get settings to find all enabled servers
+        let settings = AllLanguageModelSettings::get_global(cx);
+        
+        // Create a list of servers to check (ID, enabled status, URL)
+        // to avoid borrowing issues below
+        let servers_to_check: Vec<(String, bool, Option<String>)> = settings.lmstudio.servers
+            .iter()
+            .map(|server| (
+                server.id.clone(), 
+                server.enabled, 
+                if server.enabled { Some(server.api_url.clone()) } else { None }
+            ))
+            .collect();
+        
+        // Keep track of servers we're checking
+        let mut checking_servers = HashSet::new();
+        
+        // Check each enabled server (without resetting existing status)
+        for (server_id, enabled, maybe_url) in servers_to_check {
+            if enabled {
+                if let Some(_) = maybe_url {
+                    // Start a server check task and ignore the result
+                    let check_task = self.check_server_health(&server_id, cx);
+                    
+                    // Add to our set of checking servers
+                    checking_servers.insert(server_id.clone());
+                    
+                    // Store the task to track it
+                    self.connection_check_tasks.insert(server_id, check_task);
+                } else {
+                    // Mark as disconnected if URL isn't available (shouldn't happen)
+                    self.server_connection_status.insert(server_id, false);
+                }
+            } else {
+                // Mark disabled servers as disconnected
+                self.server_connection_status.insert(server_id, false);
+            }
+        }
+        
+        // Notify UI to refresh with updated status
+        cx.notify();
+    }
+
+        // This function is kept only for backward compatibility but is not used directly
+    // Use check_server_health instead, which avoids mutable borrowing issues
+    #[deprecated(note = "Use check_server_health instead")]
+    fn check_server_connection(&mut self, server_id: String, cx: &mut Context<Self>) {
+        let _ = self.check_server_health(&server_id, cx);
+    }
+
+    fn is_server_connected(&self, server_id: &str) -> bool {
+        // Check if we have connection status for this server
+        if let Some(status) = self.server_connection_status.get(server_id) {
+            *status
+        } else {
+            // If no status is available yet, default to connection status based on models
+            // This maintains backward compatibility with the existing approach
+            false
+        }
+    }
+
+    // Also add this helper method to get server connection status as a descriptive string
+    fn server_connection_status_text(&self, server: &LmStudioServer) -> &'static str {
+        if !server.enabled {
+            "Disabled"
+        } else if self.connection_check_tasks.contains_key(&server.id) {
+            // If there's an active check task, show "Checking" status
+            "Checking Connection..."
+        } else if self.is_server_connected(&server.id) {
+            "Connected"
+        } else if server.has_models() {
+            "Has models, not connected"
+        } else {
+            "Not connected"
+        }
+    }
+
+    fn toggle_max_tokens_edit(&mut self, cx: &mut Context<Self>) {
+        // Reset state
+        self.is_editing_max_tokens = false;
+        self.editing_model_server_id = None;
+        self.editing_model_name = None;
+        self.edit_max_tokens_input = None;
+        
+        cx.notify();
+    }
+
+    // Method to toggle the expanded state of a server's models section
+    fn toggle_models_expanded(&mut self, server_id: String, cx: &mut Context<Self>) {
+        if self.expanded_server_models.contains(&server_id) {
+            self.expanded_server_models.remove(&server_id);
+        } else {
+            self.expanded_server_models.insert(server_id);
+        }
+        cx.notify();
+    }
+
+    // Replace the select_server method which is no longer needed
+    fn toggle_add_model_form_for_server(&mut self, server_id: String, cx: &mut Context<Self>) {
+        // Create and open dialog window
+        if let Err(err) = cx.open_window(
+            WindowOptions {
+                window_bounds: Some(gpui::Bounds {
+                    origin: gpui::Point { x: 0.0, y: 0.0 },
+                    size: gpui::Size { width: 400.0, height: 300.0 },
+                }),
+                titlebar: Some(TitlebarOptions::default()),
+                show: true,
+                kind: WindowKind::Normal,
+                ..Default::default()
+            },
+            |window, cx| {
+                // Create the dialog view
+                cx.new_view(|cx| {
+                    NewModelDialog::new(server_id.clone(), cx)
+                        .on_save(move |server_id, model_name, display_name, max_tokens| {
+                            // This will be called when Add Model is clicked
+                            cx.update_global::<settings::SettingsStore, _>(|store, cx| {
+                                store.update_settings_file::<crate::AllLanguageModelSettings>(
+                                    <dyn fs::Fs>::global(cx), 
+                                    move |settings, _| {
+                                        if let Some(lmstudio) = &mut settings.lmstudio {
+                                            if let Some(servers) = &mut lmstudio.servers {
+                                                // Find the server to add the model to
+                                                for server in servers.iter_mut() {
+                                                    if server.id == server_id {
+                                                        // Initialize available_models if needed
+                                                        if server.available_models.is_none() {
+                                                            server.available_models = Some(Vec::new());
+                                                        }
+                                                        
+                                                        if let Some(models) = &mut server.available_models {
+                                                            // Check if a model with this name already exists
+                                                            if !models.iter().any(|m| m.name == model_name) {
+                                                                // Add the new model
+                                                                let display_name = if display_name.trim().is_empty() {
+                                                                    None
+                                                                } else {
+                                                                    Some(display_name.trim().to_string())
+                                                                };
+                                                                
+                                                                models.push(AvailableModel {
+                                                                    name: model_name.trim().to_string(),
+                                                                    display_name,
+                                                                    server_max_tokens: max_tokens,
+                                                                    custom_max_tokens: None,
+                                                                    server_id: Some(server_id.clone()),
+                                                                    enabled: true,
+                                                                    max_tokens: max_tokens, // For backward compatibility
+                                                                });
+                                                                
+                                                                log::info!("Added new model '{}' with max tokens {}", model_name, max_tokens);
+                                                            } else {
+                                                                log::warn!("Model '{}' already exists for this server", model_name);
+                                                            }
+                                                        }
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                );
+                            });
+                        })
+                        .on_cancel(|| {
+                            log::info!("Add model canceled");
+                        })
+                })
+            },
+        ) {
+            log::error!("Failed to open add model dialog: {}", err);
+        }
+    }
+
+    fn add_server(&mut self, cx: &mut Context<Self>) {
+        // Create and open dialog window
+        if let Err(err) = cx.open_window(
+            WindowOptions {
+                window_bounds: Some(gpui::Bounds {
+                    origin: gpui::Point { x: 0.0, y: 0.0 },
+                    size: gpui::Size { width: 400.0, height: 250.0 },
+                }),
+                titlebar: Some(TitlebarOptions::default()),
+                show: true,
+                kind: WindowKind::Normal,
+                ..Default::default()
+            },
+            |window, cx| {
+                // Create the dialog view
+                cx.new_view(|cx| {
+                    NewServerDialog::new(cx)
+                        .on_save(move |name, url| {
+                            // This will be called when Add Server is clicked
+                            cx.update_global::<settings::SettingsStore, _>(|store, cx| {
+                                store.update_settings_file::<crate::AllLanguageModelSettings>(
+                                    <dyn fs::Fs>::global(cx), 
+                                    move |settings, _| {
+                                        if let Some(lmstudio) = &mut settings.lmstudio {
+                                            if lmstudio.servers.is_none() {
+                                                lmstudio.servers = Some(Vec::new());
+                                            }
+                                            
+                                            if let Some(servers) = &mut lmstudio.servers {
+                                                // Create a new server with a unique ID
+                                                let id = format!("server_{}", nanoid::nanoid!(8));
+                                                
+                                                servers.push(LmStudioServer {
+                                                    id,
+                                                    name: name.trim().to_string(),
+                                                    api_url: url.trim().to_string(),
+                                                    enabled: false,
+                                                    available_models: None,
+                                                });
+                                                
+                                                log::info!("Added new server: {} at {}", name, url);
+                                            }
+                                        }
+                                    }
+                                );
+                            });
+                        })
+                        .on_cancel(|| {
+                            // Handle cancel if needed
+                            log::info!("Add server canceled");
+                        })
+                })
+            },
+        ) {
+            log::error!("Failed to open add server dialog: {}", err);
+        }
+    }
+}
+
+impl Render for ConfigurationView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Create inputs for any active forms at the beginning
+        if self.editing_server_index.is_some() {
+            self.create_server_edit_inputs(window, cx);
+        }
+        
+        if self.is_adding_server {
+            self.create_new_server_inputs(window, cx);
+        }
+        
+        if self.is_adding_model {
+            self.create_model_inputs(window, cx);
+        }
+        
+        if self.is_editing_max_tokens {
+            self.create_max_tokens_input(window, cx);
+        }
+        
+        // Now get settings and continue with rendering
+        let settings = AllLanguageModelSettings::get_global(cx);
+        let lmstudio_settings = &settings.lmstudio;
+        
+        let is_authenticated = self.state.read(cx).is_authenticated();
+        let servers = &lmstudio_settings.servers;
+
+        let lmstudio_intro = "Run local LLMs like Llama, Phi, and Qwen.";
+
+        // Build all list items combining servers and models in accordion style
+        let mut list_items: Vec<AnyElement> = Vec::new();
+        
+        // Add server and model items to the list
+        for (idx, server) in servers.iter().enumerate() {
+            let server_id = server.id.clone();
+            let is_expanded = self.expanded_server_models.contains(&server_id);
+            let is_connected = self.is_server_connected(&server_id);
+            let has_task = self.connection_check_tasks.contains_key(&server_id);
+            let status_text = self.server_connection_status_text(server);
+            
+            // Create the main server item
+            list_items.push(
+                ListItem::new(ElementId::NamedInteger("server".into(), idx as u64))
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .w_full()
+                            .gap_2()
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        // Add expand/collapse icon
+                                        Icon::new(
+                                            if is_expanded {
+                                                IconName::ChevronDown
+                                            } else {
+                                                IconName::ChevronRight
+                                            }
+                                        )
+                                    )
+                                    .child(
+                                        v_flex()
+                                            .gap_1()
+                                            .child(
+                                                h_flex()
+                                                    .gap_1()
+                                                    .child(Label::new(&server.name))
+                                            )
+                                            .child(
+                                                Label::new(&server.api_url)
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::XSmall)
+                                            )
+                                    )
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_2() // Increased gap for better spacing
+                                    .child({
+                                        // Just show a dot with tooltip showing the full status
+                                        if server.enabled {
+                                            if is_connected {
+                                                // Connected status - green dot
+                                                ButtonLike::new("server-status-connected")
+                                                    .tooltip(Tooltip::text("Connected"))
+                                                    .style(ButtonStyle::Subtle)
+                                                    .cursor_style(gpui::CursorStyle::Arrow)
+                                                    .disabled(true)
+                                                    .child(
+                                                        Indicator::dot().color(Color::Success).into_any_element()
+                                                    )
+                                            } else {
+                                                // Not connected status - yellow/orange dot
+                                                ButtonLike::new("server-status-disconnected")
+                                                    .tooltip(Tooltip::text(status_text))
+                                                    .style(ButtonStyle::Subtle)
+                                                    .cursor_style(gpui::CursorStyle::Arrow)
+                                                    .disabled(true)
+                                                    .child(
+                                                        Indicator::dot().color(Color::Warning).into_any_element()
+                                                    )
+                                            }
+                                        } else {
+                                            // Disabled status - grey dot
+                                            ButtonLike::new("server-status-disabled")
+                                                .tooltip(Tooltip::text("Disabled"))
+                                                .style(ButtonStyle::Subtle)
+                                                .cursor_style(gpui::CursorStyle::Arrow)
+                                                .disabled(true)
+                                                .child(
+                                                    Indicator::dot().color(Color::Muted).into_any_element()
+                                                )
+                                        }
+                                    })
+                                    .child(
+                                        Switch::new(
+                                            ElementId::NamedInteger("toggle-server".into(), idx as u64),
+                                            if server.enabled { ToggleState::Selected } else { ToggleState::Unselected }
+                                        )
+                                        .color(SwitchColor::Success)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.toggle_server(idx, cx);
+                                        }))
+                                    )
+                                    .child({
+                                        let server_id = server.id.clone();
+                                        let server_url = server.api_url.clone();
+                                        let server_enabled = server.enabled;
+                                        
+                                        // Choose which button to show based on state
+                                        if has_task {
+                                            // Show checking indicator when a connection check is in progress
+                                            Button::new("connect-server", "Checking Connection...")
+                                                .style(ButtonStyle::Filled)
+                                                .icon(IconName::Update)
+                                                .tooltip(Tooltip::text("Checking Connection Status"))
+                                                .disabled(true)
+                                        } else if server.enabled && !is_connected {
+                                            // Enhanced Connect button for enabled but not connected servers
+                                            Button::new("connect-server", "Connect")
+                                                .style(ButtonStyle::Filled)
+                                                .icon(IconName::Play)
+                                                .tooltip(Tooltip::text("Connect to Server"))
+                                                .on_click(cx.listener({
+                                                    let server_id = server_id.clone();
+                                                    let server_url = server_url.clone();
+                                                    move |this: &mut Self, _, _, cx| {
+                                                        // Immediately set connection status to false to show checking state
+                                                        this.server_connection_status.insert(server_id.clone(), false);
+                                                        // Start a task to check connection first
+                                                        let _ = this.check_server_health(&server_id, cx);
+                                                        // Then fetch models
+                                                        this.fetch_models_from_server(server_id.clone(), server_url.clone(), cx);
+                                                        // Make sure UI updates immediately
+                                                        cx.notify();
+                                                    }
+                                                }))
+                                        } else if server.enabled && is_connected {
+                                            // Show refresh button ONLY for connected servers
+                                            Button::new("fetch-models", "Refresh")
+                                                .style(ButtonStyle::Subtle)
+                                                .icon(IconName::Update)
+                                                .tooltip(Tooltip::text("Refresh Connection & Models"))
+                                                .disabled(has_task) // Disable when already checking
+                                                .on_click(cx.listener({
+                                                    let server_id = server_id.clone();
+                                                    let server_url = server_url.clone();
+                                                    let server_enabled = server_enabled;
+                                                    move |this: &mut Self, _, _, cx| {
+                                                        if server_enabled {
+                                                            // Always set connection status to false to show checking state
+                                                            this.server_connection_status.insert(server_id.clone(), false);
+                                                            
+                                                            // Start a check connection task
+                                                            let check_task = this.check_server_health(&server_id, cx);
+                                                            
+                                                            // Store the task to track it
+                                                            this.connection_check_tasks.insert(server_id.clone(), check_task);
+                                                            
+                                                            // Then fetch models
+                                                            this.fetch_models_from_server(server_id.clone(), server_url.clone(), cx);
+                                                            
+                                                            // Make sure UI updates immediately
+                                                            cx.notify();
+                                                        }
+                                                    }
+                                                }))
+                                        } else {
+                                            // For disabled servers, just show a connect button that's disabled
+                                            Button::new("empty-button", "Connect")
+                                                .style(ButtonStyle::Subtle)
+                                                .disabled(true)
+                                        }
+                                    })
+                                    .child(
+                                        IconButton::new("edit-server", IconName::Pencil)
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.edit_server(idx, cx);
+                                            }))
+                                            .icon_color(Color::Info)
+                                    )
+                                    .child(
+                                        IconButton::new("remove-server", IconName::Trash)
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.remove_server(idx, cx);
+                                            }))
+                                            .icon_color(Color::Error)
+                                    )
+                            )
+                    )
+                    .on_click({
+                        let server_id = server.id.clone();
+                        cx.listener(move |this, _, _, cx| {
+                            // Toggle expanded state when the server item is clicked
+                            this.toggle_models_expanded(server_id.clone(), cx);
+                        })
+                    })
+                    .into_any_element()
+            );
+            
+            // If expanded, add model items directly to the list
+            if is_expanded {
+                // Add header for models section
+                list_items.push(
+                    ListItem::new(ElementId::NamedInteger("models-header".into(), idx as u64))
+                        .indent_level(1)
+                        .child(
+                            h_flex()
+                                .justify_between()
+                                .w_full()
+                                .py_1()
+                                .child(
+                                    Label::new(
+                                        if let Some(models) = &server.available_models {
+                                            if models.is_empty() {
+                                                "No models available"
+                                            } else {
+                                                "Models"
+                                            }
+                                        } else {
+                                            "No models available"
+                                        }
+                                    )
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted)
+                                )
+                                .child(
+                                    Button::new("add-model", "Add Model")
+                                        .icon(IconName::Plus)
+                                        .icon_position(IconPosition::Start)
+                                        .on_click({
+                                            let server_id = server.id.clone();
+                                            cx.listener(move |this, _, _, cx| {
+                                                // Open add model form for this server
+                                                this.editing_model_server_id = Some(server_id.clone());
+                                                this.toggle_add_model_form(cx);
+                                            })
+                                        })
+                                )
+                        )
+                        .into_any_element()
+                );
+                
+                // Add model items
+                if let Some(models) = &server.available_models {
+                    if models.is_empty() {
+                        // Show empty state
+                        list_items.push(
+                            ListItem::new(ElementId::NamedInteger("no-models".into(), idx as u64))
+                                .indent_level(1)
+                                .child(
+                                    div()
+                                    .p_2()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border_variant)
+                                    .rounded_md()
+                                    .bg(cx.theme().colors().surface_background)
+                                    .child(
+                                        v_flex()
+                                            .gap_1()
+                                            .child(
+                                                Label::new("No models configured for this server")
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::Small)
+                                            )
+                                            .child(
+                                                Label::new("You can add a custom model or fetch models from the server.")
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::XSmall)
+                                            )
+                                    )
+                                )
+                                .into_any_element()
+                        );
+                    } else {
+                        // Add each model as a list item
+                        for (model_idx, model) in models.iter().enumerate() {
+                            let display_name = model.display_name.clone().unwrap_or_else(|| model.name.clone());
+                            
+                            // Format tokens text differently depending on if custom value is set
+                            let tokens_text = if let Some(custom) = model.custom_max_tokens {
+                                if custom != model.server_max_tokens {
+                                    format!("{}k tokens (server: {}k)", 
+                                        custom / 1000, 
+                                        model.server_max_tokens / 1000)
+                                } else {
+                                    format!("{}k tokens", custom / 1000)
+                                }
+                            } else {
+                                format!("{}k tokens (server default)", model.server_max_tokens / 1000)
+                            };
+                            
+                            let server_id = server.id.clone();
+                            let model_name = model.name.clone();
+                            let is_enabled = model.enabled;
+                            
+                            // Create a unique ID for each button
+                            let toggle_button = Switch::new(
+                                ElementId::NamedInteger("toggle".into(), ((idx * 1000) + model_idx) as u64),
+                                if is_enabled { ToggleState::Selected } else { ToggleState::Unselected }
+                            )
+                            .color(SwitchColor::Success);
+                            
+                            // Clone all the context needed for callbacks
+                            let model_name_for_edit = model_name.clone();
+                            let server_id_for_edit = server_id.clone();
+                            let theme_colors = cx.theme().colors().clone();
+                            
+                            list_items.push(
+                                ListItem::new(ElementId::NamedInteger("model".into(), ((idx * 1000) + model_idx) as u64))
+                                    .indent_level(1)
+                                    .child(
+                                        h_flex()
+                                            .justify_between()
+                                            .w_full()
+                                            .p_2()
+                                            .gap_2()
+                                            .border_b_1()
+                                            .border_color(theme_colors.border_variant)
+                                            .child(
+                                                v_flex()
+                                                    .gap_1()
+                                                    .child(Label::new(display_name))
+                                                    .child(
+                                                        h_flex()
+                                                            .gap_2()
+                                                            .child(
+                                                                Label::new(&model_name)
+                                                                    .color(Color::Muted)
+                                                                    .size(LabelSize::XSmall)
+                                                            )
+                                                            .child(
+                                                                Label::new(tokens_text)
+                                                                    .color(Color::Muted)
+                                                                    .size(LabelSize::XSmall)
+                                                            )
+                                                    )
+                                            )
+                                            .child(
+                                                h_flex()
+                                                .gap_1()
+                                                .child(
+                                                    // Add edit max tokens button
+                                                    IconButton::new(
+                                                        ElementId::NamedInteger("edit-tokens".into(), ((idx * 1000) + model_idx) as u64),
+                                                        IconName::Pencil
+                                                    )
+                                                    .tooltip(Tooltip::text("Edit Max Tokens"))
+                                                    .icon_color(Color::Info)
+                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                        this.show_edit_max_tokens_dialog(server_id_for_edit.clone(), model_name_for_edit.clone(), cx);
+                                                    }))
+                                                )
+                                                .child(
+                                                    // Add the toggle button 
+                                                    toggle_button
+                                                        .on_click(cx.listener({
+                                                            let model_name_for_toggle = model_name.clone();
+                                                            let server_id_for_toggle = server_id.clone();
+                                                            move |this, _toggle_state, _, cx| {
+                                                                log::info!("Toggle clicked for model: {}", model_name_for_toggle);
+                                                                this.toggle_model_enabled(server_id_for_toggle.clone(), model_name_for_toggle.clone(), cx);
+                                                            }
+                                                        }))
+                                                )
+                                                // Add a delete button for models
+                                                .child(
+                                                    IconButton::new(
+                                                        ElementId::NamedInteger("remove-model".into(), ((idx * 1000) + model_idx) as u64),
+                                                        IconName::Trash
+                                                    )
+                                                    .tooltip(Tooltip::text("Remove Model"))
+                                                    .icon_color(Color::Error)
+                                                    .on_click(cx.listener({
+                                                        let model_name_for_delete = model_name.clone();
+                                                        let server_id_for_delete = server_id.clone();
+                                                        move |this, _, _, cx| {
+                                                            this.remove_model(model_name_for_delete.clone(), server_id_for_delete.clone(), cx);
+                                                        }
+                                                    }))
+                                                )
+                                            )
+                                    )
+                                    .into_any_element()
+                            );
+                        }
+                    }
+                } else {
+                    // Show empty state for no models
+                    list_items.push(
+                        ListItem::new(ElementId::NamedInteger("no-models".into(), idx as u64))
+                            .indent_level(1)
+                            .child(
+                                div()
+                                .p_2()
+                                .border_1()
+                                .border_color(cx.theme().colors().border_variant)
+                                .rounded_md()
+                                .bg(cx.theme().colors().surface_background)
+                                .child(
+                                    v_flex()
+                                        .gap_1()
+                                        .child(
+                                            Label::new("No models configured for this server")
+                                                .color(Color::Muted)
+                                                .size(LabelSize::Small)
+                                        )
+                                        .child(
+                                            Label::new("You can add a custom model or fetch models from the server.")
+                                                .color(Color::Muted)
+                                                .size(LabelSize::XSmall)
+                                        )
+                                )
+                            )
+                            .into_any_element()
+                    );
+                }
+                
+                // Add model form if needed
+                if self.is_adding_model && self.editing_model_server_id.as_ref() == Some(&server.id) {
+                    list_items.push(
+                        ListItem::new(ElementId::NamedInteger("add-model-form".into(), idx as u64))
+                            .indent_level(1)
+                            .child(
+                                v_flex()
+                                    .gap_2()
+                                    .p_2()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .bg(cx.theme().colors().background)
+                                    .rounded_md()
+                                    .my_2()
+                                    .w_full()
+                                    .child(
+                                        Label::new("Add Custom Model")
+                                    )
+                                    .child(
+                                        v_flex()
+                                            .gap_2()
+                                            .w_full()
+                                            .child(
+                                                v_flex()
+                                                    .gap_1()
+                                                    .child(Label::new("Model Name:").size(LabelSize::Small))
+                                                    .child(self.new_model_name_input.clone().unwrap())
+                                            )
+                                            .child(
+                                                v_flex()
+                                                    .gap_1()
+                                                    .child(Label::new("Display Name (optional):").size(LabelSize::Small))
+                                                    .child(self.new_model_display_name_input.clone().unwrap())
+                                            )
+                                            .child(
+                                                v_flex()
+                                                    .gap_1()
+                                                    .child(Label::new("Max Tokens:").size(LabelSize::Small))
+                                                    .child(self.new_model_max_tokens_input.clone().unwrap())
+                                            )
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .justify_end()
+                                            .gap_2()
+                                            .mt_2()
+                                            .child(
+                                                Button::new("cancel-model", "Cancel")
+                                                    .style(ButtonStyle::Subtle)
+                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                        this.toggle_add_model_form(cx);
+                                                    }))
+                                            )
+                                            .child(
+                                                Button::new("add-new-model", "Add Model")
+                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                        this.add_custom_model(cx);
+                                                    }))
+                                            )
+                                    )
+                            )
+                            .into_any_element()
+                    );
+                }
+                
+                // Add max tokens edit dialog if needed
+                if self.is_editing_max_tokens && 
+                   self.editing_model_server_id.as_ref() == Some(&server.id) {
+                    list_items.push(
+                        ListItem::new(ElementId::NamedInteger("edit-max-tokens".into(), idx as u64))
+                            .indent_level(1)
+                            .child(
+                                v_flex()
+                                    .gap_2()
+                                    .p_2()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .bg(cx.theme().colors().background)
+                                    .rounded_md()
+                                    .my_2()
+                                    .w_full()
+                                    .child(Label::new("Edit Max Tokens"))
+                                    .child(
+                                        v_flex()
+                                            .gap_1()
+                                            .child(Label::new("Max Tokens:").size(LabelSize::Small))
+                                            .child(self.edit_max_tokens_input.clone().unwrap())
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .justify_end()
+                                            .gap_2()
+                                            .mt_2()
+                                            .child(
+                                                Button::new("cancel-max-tokens", "Cancel")
+                                                    .style(ButtonStyle::Subtle)
+                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                        this.cancel_max_tokens_edit(cx);
+                                                    }))
+                                            )
+                                            .child(
+                                                Button::new("save-max-tokens", "Save")
+                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                        this.save_max_tokens_edit(cx);
+                                                    }))
+                                            )
+                                    )
+                            )
+                            .into_any_element()
+                    );
+                }
+            }
+        }
+
+        if self.loading_models_task.is_some() {
+            div().child(Label::new("Loading models...")).into_any()
+        } else {
+            v_flex()
+                .gap_2()
+                .child(
+                    v_flex().gap_1().child(Label::new(lmstudio_intro)).child(
+                        List::new()
+                            .child(InstructionListItem::text_only(
+                                "LM Studio needs to be running with at least one model downloaded.",
+                            ))
+                            .child(InstructionListItem::text_only(
+                                "To get your first model, try running `lms get qwen2.5-coder-7b`",
+                            )),
+                    ),
+                )
+                .child(
+                    h_flex()
+                        .w_full()
+                        .justify_between()
+                        .gap_2()
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .gap_2()
+                                .map(|this| {
+                                    if is_authenticated {
+                                        this.child(
+                                            Button::new("lmstudio-site", "LM Studio")
+                                                .style(ButtonStyle::Subtle)
+                                                .icon(IconName::ArrowUpRight)
+                                                .icon_size(IconSize::XSmall)
+                                                .icon_color(Color::Muted)
+                                                .on_click(move |_, _window, cx| {
+                                                    cx.open_url(LMSTUDIO_SITE)
+                                                })
+                                                .into_any_element(),
+                                        )
+                                    } else {
+                                        this.child(
+                                            Button::new(
+                                                "download_lmstudio_button",
+                                                "Download LM Studio",
+                                            )
+                                            .style(ButtonStyle::Subtle)
+                                            .icon(IconName::ArrowUpRight)
+                                            .icon_size(IconSize::XSmall)
+                                            .icon_color(Color::Muted)
+                                            .on_click(move |_, _window, cx| {
+                                                cx.open_url(LMSTUDIO_DOWNLOAD_URL)
+                                            })
+                                            .into_any_element(),
+                                        )
+                                    }
+                                })
+                                .child(
+                                    Button::new("view-models", "Model Catalog")
+                                        .style(ButtonStyle::Subtle)
+                                        .icon(IconName::ArrowUpRight)
+                                        .icon_size(IconSize::XSmall)
+                                        .icon_color(Color::Muted)
+                                        .on_click(move |_, _window, cx| {
+                                            cx.open_url(LMSTUDIO_CATALOG_URL)
+                                        }),
+                                ),
+                        )
+                        .map(|this| {
+                            if is_authenticated {
+                                // Remove the global connection status indicator
+                                this
+                            } else {
+                                // No global connect button
+                                this
+                            }
+                        }),
+                )
+                // Server management section
+                .child(
+                    v_flex()
+                        .gap_2()
+                        .child(Label::new("LM Studio Servers").size(LabelSize::Small))
+                        // Add server form
+                        .child(
+                            if self.is_adding_server {
+                                // Add server form with SingleLineInput
+                                v_flex()
+                                    .gap_2()
+                                    .p_2()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .bg(cx.theme().colors().background)
+                                    .rounded_md()
+                                    .my_2()
+                                    .w_full()
+                                    .child(
+                                        Label::new("Add New Server")
+                                    )
+                                    .child(
+                                        v_flex()
+                                            .gap_2()
+                                            .w_full()
+                                            .child(
+                                                v_flex()
+                                                    .gap_1()
+                                                    .child(Label::new("Server Name:").size(LabelSize::Small))
+                                                    .child(self.new_server_name_input.clone().unwrap())
+                                            )
+                                            .child(
+                                                v_flex()
+                                                    .gap_1()
+                                                    .child(Label::new("Server URL:").size(LabelSize::Small))
+                                                    .child(self.new_server_url_input.clone().unwrap())
+                                            )
+                                        )
+                                        .child(
+                                            h_flex()
+                                                .justify_end()
+                                                .gap_2()
+                                                .mt_2()
+                                                .child(
+                                                    Button::new("cancel-add", "Cancel")
+                                                        .style(ButtonStyle::Subtle)
+                                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                                            this.toggle_add_server_form(cx);
+                                                        }))
+                                                )
+                                                .child(
+                                                    Button::new("add-new-server", "Add Server")
+                                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                                            this.add_new_server(cx);
+                                                        }))
+                                                )
+                                        )
+                            } else {
+                                div()
+                            }
+                        )
+                        // Server list
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .child(
+                                    if self.editing_server_index.is_some() {
+                                        // Editing form with SingleLineInput
+                                        v_flex()
+                                            .gap_2()
+                                            .p_2()
+                                            .border_1()
+                                            .border_color(cx.theme().colors().border)
+                                            .bg(cx.theme().colors().background)
+                                            .rounded_md()
+                                            .w_full()
+                                            .child(
+                                                Label::new("Edit Server")
+                                            )
+                                            .child(
+                                                v_flex()
+                                                    .gap_2()
+                                                    .w_full()
+                                                    .child(
+                                                        v_flex()
+                                                            .gap_1()
+                                                            .child(Label::new("Server Name:").size(LabelSize::Small))
+                                                            .child(self.server_edit_name_input.clone().unwrap())
+                                                    )
+                                                    .child(
+                                                        v_flex()
+                                                            .gap_1()
+                                                            .child(Label::new("Server URL:").size(LabelSize::Small))
+                                                            .child(self.server_edit_url_input.clone().unwrap())
+                                                    )
+                                            )
+                                            .child(
+                                                h_flex()
+                                                    .justify_end()
+                                                    .gap_2()
+                                                    .mt_2()
+                                                    .child(
+                                                        Button::new("cancel-edit", "Cancel")
+                                                            .style(ButtonStyle::Subtle)
+                                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                                this.cancel_server_edits(cx);
+                                                            }))
+                                                    )
+                                                    .child(
+                                                        Button::new("save-edit", "Save")
+                                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                                this.save_server_edits(cx);
+                                                            }))
+                                                    )
+                                            )
+                                            .into_any_element()
+                                    } else if servers.is_empty() {
+                                        div()
+                                            .p_2()
+                                            .border_1()
+                                            .child(
+                                                Label::new("No servers configured")
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::XSmall)
+                                            )
+                                            .into_any_element()
+                                    } else {
+                                        // Create list with combined server and model items
+                                        List::new()
+                                            .children(list_items)
+                                            .into_any_element()
+                                    }
+                                )
+                        )
+                        // Add server button
+                        .child(
+                            Button::new("add-server", "Add Server")
+                                .icon(IconName::Plus)
+                                .icon_position(IconPosition::Start)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.toggle_add_server_form(cx);
+                                }))
+                        )
+                )
+                .into_any()
+        }
+    }
+}
+
+// Add a method to get default settings for backward compatibility
+impl LmStudioSettings {
+    pub fn default_with_legacy() -> Self {
+        Self {
+            servers: Vec::new(),
+        }
+    }
+    
+    // Migrate from the old api_url format to the new servers format
+    pub fn migrate_from_legacy(legacy_api_url: &str) -> Self {
+        let mut settings = Self::default();
+        
+        // Create a default server with the legacy API URL
+        if !legacy_api_url.is_empty() {
+            let server = LmStudioServer {
+                id: uuid::Uuid::new_v4().to_string(),
+                name: "Default LM Studio Server".to_string(),
+                api_url: legacy_api_url.to_string(),
+                enabled: true,
+                available_models: None,
+            };
+            
+            settings.servers.push(server);
+        }
+        
+        settings
+    }
+    
+    // Get the first enabled server or None
+    pub fn first_enabled_server(&self) -> Option<&LmStudioServer> {
+        self.servers.iter().find(|server| server.enabled)
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn max_tokens_is_default(max_tokens: &usize) -> bool {
+    *max_tokens == 0
+}
+
+impl AvailableModel {
+    /// Gets the effective max tokens, prioritizing custom value if set
+    pub fn effective_max_tokens(&self) -> usize {
+        self.custom_max_tokens.unwrap_or(self.server_max_tokens)
+    }
+    
+    /// For backward compatibility when loading older settings
+    pub fn migrate_max_tokens(&mut self) {
+        #[allow(deprecated)]
+        let legacy_max_tokens = self.max_tokens;
+        
+        if legacy_max_tokens > 0 && self.custom_max_tokens.is_none() {
+            self.custom_max_tokens = Some(legacy_max_tokens);
+        }
+    }
+}
+
+// Add our modal dialog implementations after LmStudioStreamMapper and before ConfigurationView
+// ======================================================================================
+
+// Dialog implementation for editing an existing server
+struct ServerEditDialog {
+    server_index: usize,
+    server_name: String,
+    server_url: String,
+    name_input: Option<gpui::Entity<SingleLineInput>>,
+    url_input: Option<gpui::Entity<SingleLineInput>>,
+    on_save: Option<Box<dyn FnOnce(usize, String, String)>>,
+    on_cancel: Option<Box<dyn FnOnce()>>,
+}
+
+impl ServerEditDialog {
+    pub fn new(
+        server_index: usize, 
+        initial_name: String, 
+        initial_url: String,
+        cx: &mut Context<Self>
+    ) -> Self {
+        Self {
+            server_index,
+            server_name: initial_name,
+            server_url: initial_url,
+            name_input: None,
+            url_input: None,
+            on_save: None,
+            on_cancel: None,
+        }
+    }
+    
+    pub fn on_save(mut self, callback: impl FnOnce(usize, String, String) + 'static) -> Self {
+        self.on_save = Some(Box::new(callback));
+        self
+    }
+    
+    pub fn on_cancel(mut self, callback: impl FnOnce() + 'static) -> Self {
+        self.on_cancel = Some(Box::new(callback));
+        self
+    }
+    
+    fn update_from_inputs(&mut self, cx: &mut Context<Self>) {
+        // Update field values from inputs
+        if let Some(name_input) = &self.name_input {
+            self.server_name = name_input.read(cx).editor.read(cx).text(cx).to_string();
+        }
+        if let Some(url_input) = &self.url_input {
+            self.server_url = url_input.read(cx).editor.read(cx).text(cx).to_string();
+        }
+    }
+    
+    fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Update values from inputs first
+        self.update_from_inputs(cx);
+        
+        // Validate inputs
+        if self.server_name.trim().is_empty() || self.server_url.trim().is_empty() {
+            // Show error or handle validation failure
+            return;
+        }
+        
+        // Call the callback with the edited values
+        if let Some(on_save) = self.on_save.take() {
+            let server_index = self.server_index;
+            let server_name = self.server_name.clone();
+            let server_url = self.server_url.clone();
+            on_save(server_index, server_name, server_url);
+        }
+        
+        // Close the window
+        window.close(cx);
+    }
+    
+    fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Call the cancel callback if provided
+        if let Some(on_cancel) = self.on_cancel.take() {
+            on_cancel();
+        }
+        
+        // Close the window
+        window.close(cx);
+    }
+    
+    fn create_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Create name input if it doesn't exist
+        if self.name_input.is_none() {
+            let name_input = cx.new(|cx| {
+                let input = SingleLineInput::new(window, cx, "Server name");
+                if !self.server_name.is_empty() {
+                    input.editor.update(cx, |editor, cx| {
+                        editor.set_text(self.server_name.clone(), window, cx);
+                    });
+                }
+                input
+            });
+            self.name_input = Some(name_input);
+        }
+        
+        // Create URL input if it doesn't exist
+        if self.url_input.is_none() {
+            let url_input = cx.new(|cx| {
+                let input = SingleLineInput::new(window, cx, "Server URL");
+                if !self.server_url.is_empty() {
+                    input.editor.update(cx, |editor, cx| {
+                        editor.set_text(self.server_url.clone(), window, cx);
+                    });
+                }
+                input
+            });
+            self.url_input = Some(url_input);
+        }
+    }
+}
+
+impl Render for ServerEditDialog {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Create inputs first
+        self.create_inputs(window, cx);
+        
+        // Render the dialog UI
+        v_flex()
+            .gap_4()
+            .p_4()
+            .w_full()
+            .child(Label::new("Edit Server").size(LabelSize::Large))
+            .child(
+                v_flex()
+                    .gap_2()
+                    .w_full()
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(Label::new("Server Name:").size(LabelSize::Small))
+                            .child(self.name_input.clone().unwrap())
+                    )
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(Label::new("Server URL:").size(LabelSize::Small))
+                            .child(self.url_input.clone().unwrap())
+                    )
+            )
+            .child(
+                h_flex()
+                    .justify_end()
+                    .gap_2()
+                    .mt_2()
+                    .child(
+                        Button::new("cancel-edit", "Cancel")
+                            .style(ButtonStyle::Subtle)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.cancel(window, cx);
+                            }))
+                    )
+                    .child(
+                        Button::new("save-edit", "Save")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.save(window, cx);
+                            }))
+                    )
+            )
+            .into_any_element()
+    }
+}
+
+// ======================================================================================
+
+// Dialog implementation for adding a new server
+struct NewServerDialog {
+    server_name: String,
+    server_url: String,
+    name_input: Option<gpui::Entity<SingleLineInput>>,
+    url_input: Option<gpui::Entity<SingleLineInput>>,
+    on_save: Option<Box<dyn FnOnce(String, String)>>,
+    on_cancel: Option<Box<dyn FnOnce()>>,
+}
+
+impl NewServerDialog {
+    pub fn new(cx: &mut Context<Self>) -> Self {
+        Self {
+            server_name: String::new(),
+            server_url: String::new(),
+            name_input: None,
+            url_input: None,
+            on_save: None,
+            on_cancel: None,
+        }
+    }
+    
+    pub fn on_save(mut self, callback: impl FnOnce(String, String) + 'static) -> Self {
+        self.on_save = Some(Box::new(callback));
+        self
+    }
+    
+    pub fn on_cancel(mut self, callback: impl FnOnce() + 'static) -> Self {
+        self.on_cancel = Some(Box::new(callback));
+        self
+    }
+    
+    fn update_from_inputs(&mut self, cx: &mut Context<Self>) {
+        // Update field values from inputs
+        if let Some(name_input) = &self.name_input {
+            self.server_name = name_input.read(cx).editor.read(cx).text(cx).to_string();
+        }
+        if let Some(url_input) = &self.url_input {
+            self.server_url = url_input.read(cx).editor.read(cx).text(cx).to_string();
+        }
+    }
+    
+    fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Update values from inputs first
+        self.update_from_inputs(cx);
+        
+        // Validate inputs
+        if self.server_name.trim().is_empty() || self.server_url.trim().is_empty() {
+            // Show error or handle validation failure
+            return;
+        }
+        
+        // Call the callback with the new values
+        if let Some(on_save) = self.on_save.take() {
+            let server_name = self.server_name.clone();
+            let server_url = self.server_url.clone();
+            on_save(server_name, server_url);
+        }
+        
+        // Close the window
+        cx.remove_window();
+    }
+    
+    fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Call the cancel callback if provided
+        if let Some(on_cancel) = self.on_cancel.take() {
+            on_cancel();
+        }
+        
+        // Close the window
+        cx.remove_window();
+    }
+    
+    fn create_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Create name input if it doesn't exist
+        if self.name_input.is_none() {
+            let name_input = cx.new(|cx| {
+                SingleLineInput::new(window, cx, "Server name")
+            });
+            self.name_input = Some(name_input);
+        }
+        
+        // Create URL input if it doesn't exist
+        if self.url_input.is_none() {
+            let url_input = cx.new(|cx| {
+                SingleLineInput::new(window, cx, "Server URL")
+            });
+            self.url_input = Some(url_input);
+        }
+    }
+}
+
+impl Render for NewServerDialog {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Create inputs first
+        self.create_inputs(window, cx);
+        
+        // Render the dialog UI
+        v_flex()
+            .gap_4()
+            .p_4()
+            .w_full()
+            .child(Label::new("Add New Server").size(LabelSize::Large))
+            .child(
+                v_flex()
+                    .gap_2()
+                    .w_full()
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(Label::new("Server Name:").size(LabelSize::Small))
+                            .child(self.name_input.clone().unwrap())
+                    )
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(Label::new("Server URL:").size(LabelSize::Small))
+                            .child(
+                                v_flex()
+                                    .gap_1()
+                                    .child(self.url_input.clone().unwrap())
+                                    .child(Label::new("Example: http://localhost:1234").color(Color::Muted).size(LabelSize::Small))
+                            )
+                    )
+            )
+            .child(
+                h_flex()
+                    .justify_end()
+                    .gap_2()
+                    .mt_2()
+                    .child(
+                        Button::new("cancel-add", "Cancel")
+                            .style(ButtonStyle::Subtle)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.cancel(window, cx);
+                            }))
+                    )
+                    .child(
+                        Button::new("save-add", "Add Server")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.save(window, cx);
+                            }))
+                    )
+            )
+            .into_any_element()
+    }
+}
+
+// Dialog implementation for editing max tokens for a model
+struct MaxTokensEditDialog {
+    server_id: String,
+    model_name: String,
+    max_tokens: String,
+    max_tokens_input: Option<gpui::Entity<SingleLineInput>>,
+    on_save: Option<Box<dyn FnOnce(String, String, usize)>>,
+    on_cancel: Option<Box<dyn FnOnce()>>,
+}
+
+impl MaxTokensEditDialog {
+    pub fn new(
+        server_id: String, 
+        model_name: String,
+        current_max_tokens: usize,
+        cx: &mut Context<Self>
+    ) -> Self {
+        Self {
+            server_id,
+            model_name,
+            max_tokens: current_max_tokens.to_string(),
+            max_tokens_input: None,
+            on_save: None,
+            on_cancel: None,
+        }
+    }
+    
+    pub fn on_save(mut self, callback: impl FnOnce(String, String, usize) + 'static) -> Self {
+        self.on_save = Some(Box::new(callback));
+        self
+    }
+    
+    pub fn on_cancel(mut self, callback: impl FnOnce() + 'static) -> Self {
+        self.on_cancel = Some(Box::new(callback));
+        self
+    }
+    
+    fn update_from_inputs(&mut self, cx: &mut Context<Self>) {
+        // Update max tokens value from input
+        if let Some(input) = &self.max_tokens_input {
+            self.max_tokens = input.read(cx).editor.read(cx).text(cx).to_string();
+        }
+    }
+    
+    fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Update values from inputs first
+        self.update_from_inputs(cx);
+        
+        // Validate max tokens
+        if let Ok(max_tokens) = self.max_tokens.trim().parse::<usize>() {
+            if max_tokens == 0 {
+                // Invalid value
+                return;
+            }
+            
+            // Call the callback with the edited values
+            if let Some(on_save) = self.on_save.take() {
+                let server_id = self.server_id.clone();
+                let model_name = self.model_name.clone();
+                on_save(server_id, model_name, max_tokens);
+            }
+            
+            // Close the window
+            cx.remove_window();
+        }
+    }
+    
+    fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Call the cancel callback if provided
+        if let Some(on_cancel) = self.on_cancel.take() {
+            on_cancel();
+        }
+        
+        // Close the window
+        cx.remove_window();
+    }
+    
+    fn create_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Create max tokens input if it doesn't exist
+        if self.max_tokens_input.is_none() {
+            let input = cx.new(|cx| {
+                let input = SingleLineInput::new(window, cx, "Max tokens");
+                if !self.max_tokens.is_empty() {
+                    input.editor.update(cx, |editor, cx| {
+                        editor.set_text(self.max_tokens.clone(), window, cx);
+                    });
+                }
+                input
+            });
+            self.max_tokens_input = Some(input);
+        }
+    }
+}
+
+impl Render for MaxTokensEditDialog {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Create inputs first
+        self.create_inputs(window, cx);
+        
+        // Render the dialog UI
+        v_flex()
+            .gap_4()
+            .p_4()
+            .w_full()
+            .child(Label::new(format!("Edit Max Tokens for {}", self.model_name)).size(LabelSize::Large))
+            .child(
+                v_flex()
+                    .gap_2()
+                    .w_full()
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(Label::new("Max tokens:").size(LabelSize::Small))
+                            .child(self.max_tokens_input.clone().unwrap())
+                            .child(Label::new("Maximum number of tokens the model can generate").color(Color::Muted).size(LabelSize::Small))
+                    )
+            )
+            .child(
+                h_flex()
+                    .justify_end()
+                    .gap_2()
+                    .mt_2()
+                    .child(
+                        Button::new("cancel-max-tokens", "Cancel")
+                            .style(ButtonStyle::Subtle)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.cancel(window, cx);
+                            }))
+                    )
+                    .child(
+                        Button::new("save-max-tokens", "Save")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.save(window, cx);
+                            }))
+                    )
+            )
+            .into_any_element()
+    }
+}
+
+// ======================================================================================
+
+// Dialog implementation for adding a new model
+struct NewModelDialog {
+    server_id: String,
+    model_name: String,
+    display_name: String,
+    max_tokens: String,
+    name_input: Option<gpui::Entity<SingleLineInput>>,
+    display_name_input: Option<gpui::Entity<SingleLineInput>>,
+    max_tokens_input: Option<gpui::Entity<SingleLineInput>>,
+    on_save: Option<Box<dyn FnOnce(String, String, String, usize)>>,
+    on_cancel: Option<Box<dyn FnOnce()>>,
+}
+
+impl NewModelDialog {
+    pub fn new(server_id: String, cx: &mut Context<Self>) -> Self {
+        Self {
+            server_id,
+            model_name: String::new(),
+            display_name: String::new(),
+            max_tokens: "8192".to_string(), // Default value
+            name_input: None,
+            display_name_input: None,
+            max_tokens_input: None,
+            on_save: None,
+            on_cancel: None,
+        }
+    }
+    
+    pub fn on_save(mut self, callback: impl FnOnce(String, String, String, usize) + 'static) -> Self {
+        self.on_save = Some(Box::new(callback));
+        self
+    }
+    
+    pub fn on_cancel(mut self, callback: impl FnOnce() + 'static) -> Self {
+        self.on_cancel = Some(Box::new(callback));
+        self
+    }
+    
+    fn update_from_inputs(&mut self, cx: &mut Context<Self>) {
+        // Update field values from inputs
+        if let Some(name_input) = &self.name_input {
+            self.model_name = name_input.read(cx).editor.read(cx).text(cx).to_string();
+        }
+        if let Some(display_name_input) = &self.display_name_input {
+            self.display_name = display_name_input.read(cx).editor.read(cx).text(cx).to_string();
+        }
+        if let Some(max_tokens_input) = &self.max_tokens_input {
+            self.max_tokens = max_tokens_input.read(cx).editor.read(cx).text(cx).to_string();
+        }
+    }
+    
+    fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Update values from inputs first
+        self.update_from_inputs(cx);
+        
+        // Validate inputs
+        if self.model_name.trim().is_empty() {
+            // Show error or handle validation failure
+            return;
+        }
+        
+        // Parse max tokens
+        let max_tokens = match self.max_tokens.trim().parse::<usize>() {
+            Ok(val) if val > 0 => val,
+            _ => 8192, // Default if parsing fails or value is invalid
+        };
+        
+        // Call the callback with the values
+        if let Some(on_save) = self.on_save.take() {
+            let server_id = self.server_id.clone();
+            let model_name = self.model_name.clone();
+            let display_name = self.display_name.clone();
+            on_save(server_id, model_name, display_name, max_tokens);
+        }
+        
+        // Close the window
+        cx.remove_window();
+    }
+    
+    fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Call the cancel callback if provided
+        if let Some(on_cancel) = self.on_cancel.take() {
+            on_cancel();
+        }
+        
+        // Close the window
+        cx.remove_window();
+    }
+    
+    fn create_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Create name input if it doesn't exist
+        if self.name_input.is_none() {
+            let name_input = cx.new(|cx| {
+                SingleLineInput::new(window, cx, "Model name")
+            });
+            self.name_input = Some(name_input);
+        }
+        
+        // Create display name input if it doesn't exist
+        if self.display_name_input.is_none() {
+            let display_name_input = cx.new(|cx| {
+                SingleLineInput::new(window, cx, "Display name (optional)")
+            });
+            self.display_name_input = Some(display_name_input);
+        }
+        
+        // Create max tokens input if it doesn't exist
+        if self.max_tokens_input.is_none() {
+            let max_tokens_input = cx.new(|cx| {
+                let input = SingleLineInput::new(window, cx, "Max tokens");
+                input.editor.update(cx, |editor, cx| {
+                    editor.set_text(self.max_tokens.clone(), window, cx);
+                });
+                input
+            });
+            self.max_tokens_input = Some(max_tokens_input);
+        }
+    }
+}
+
+impl Render for NewModelDialog {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Create inputs first
+        self.create_inputs(window, cx);
+        
+        // Render the dialog UI
+        v_flex()
+            .gap_4()
+            .p_4()
+            .w_full()
+            .child(Label::new("Add New Model").size(LabelSize::Large))
+            .child(
+                v_flex()
+                    .gap_2()
+                    .w_full()
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(Label::new("Model Name:").size(LabelSize::Small))
+                            .child(self.name_input.clone().unwrap())
+                            .child(Label::new("The exact model name as used by LM Studio").color(Color::Muted).size(LabelSize::Small))
+                    )
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(Label::new("Display Name (optional):").size(LabelSize::Small))
+                            .child(self.display_name_input.clone().unwrap())
+                            .child(Label::new("Friendly name shown in Zed's UI").color(Color::Muted).size(LabelSize::Small))
+                    )
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(Label::new("Max Tokens:").size(LabelSize::Small))
+                            .child(self.max_tokens_input.clone().unwrap())
+                            .child(Label::new("Maximum number of tokens the model can generate").color(Color::Muted).size(LabelSize::Small))
+                    )
+            )
+            .child(
+                h_flex()
+                    .justify_end()
+                    .gap_2()
+                    .mt_2()
+                    .child(
+                        Button::new("cancel-model", "Cancel")
+                            .style(ButtonStyle::Subtle)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.cancel(window, cx);
+                            }))
+                    )
+                    .child(
+                        Button::new("save-model", "Add Model")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.save(window, cx);
+                            }))
+                    )
+            )
+            .into_any_element()
+    }
+}
+
+// ======================================================================================

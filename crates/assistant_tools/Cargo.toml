@@ -31,6 +31,7 @@ gpui.workspace = true
 handlebars = { workspace = true, features = ["rust-embed"] }
 html_to_markdown.workspace = true
 http_client.workspace = true
+icons.workspace = true
 indoc.workspace = true
 itertools.workspace = true
 language.workspace = true
@@ -48,6 +49,7 @@ schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+shellexpand.workspace = true
 smallvec.workspace = true
 streaming_diff.workspace = true
 strsim.workspace = true

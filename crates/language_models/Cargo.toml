@@ -38,6 +38,8 @@ lmstudio = { workspace = true, features = ["schemars"] }
 log.workspace = true
 menu.workspace = true
 mistral = { workspace = true, features = ["schemars"] }
+nanoid = "0.4.0"
+num_cpus = "1.16"
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
 parking_lot.workspace = true

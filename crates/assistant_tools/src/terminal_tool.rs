@@ -29,6 +29,7 @@ use util::{
     time::duration_alt_display,
 };
 use workspace::Workspace;
+use shellexpand;
 
 const COMMAND_OUTPUT_LIMIT: usize = 16 * 1024;
 
@@ -374,8 +375,12 @@ fn working_dir(
     cx: &mut App,
 ) -> Result<Option<PathBuf>> {
     let project = project.read(cx);
-    let cd = &input.cd;
-
+    
+    // Expand environment variables in the cd path
+    let cd = shellexpand::full(&input.cd)
+        .map_err(|e| anyhow!("Failed to expand environment variables in path: {}", e))?
+        .to_string();
+    
     if cd == "." || cd == "" {
         // Accept "." or "" as meaning "the one worktree" if we only have one worktree.
         let mut worktrees = project.worktrees(cx);
@@ -393,7 +398,7 @@ fn working_dir(
             None => Ok(None),
         }
     } else {
-        let input_path = Path::new(cd);
+        let input_path = Path::new(&cd);
 
         if input_path.is_absolute() {
             // Absolute paths are allowed, but only if they're in one of the project's worktrees.
@@ -404,7 +409,7 @@ fn working_dir(
                 return Ok(Some(input_path.into()));
             }
         } else {
-            if let Some(worktree) = project.worktree_for_root_name(cd, cx) {
+            if let Some(worktree) = project.worktree_for_root_name(&cd, cx) {
                 return Ok(Some(worktree.read(cx).abs_path().to_path_buf()));
             }
         }

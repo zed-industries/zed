@@ -372,7 +372,7 @@ impl AssistantSettingsContent {
                                     &model, 
                                     None,
                                     None, 
-                                    Some(language_model.supports_tools()),
+                                    Some(language_model.supports_tools().to_string()),
                                 )),
                                 api_url,
                             });

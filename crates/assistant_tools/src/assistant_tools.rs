@@ -1,3 +1,4 @@
+mod context_protocol_tool;
 mod copy_path_tool;
 mod create_directory_tool;
 mod delete_path_tool;
@@ -22,6 +23,7 @@ mod web_search_tool;
 use std::sync::Arc;
 
 use assistant_tool::ToolRegistry;
+use context_protocol_tool::ContextProtocolTool;
 use copy_path_tool::CopyPathTool;
 use gpui::{App, Entity};
 use http_client::HttpClientWithUrl;
@@ -67,6 +69,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(ThinkingTool);
     registry.register_tool(FetchTool::new(http_client));
     registry.register_tool(EditFileTool);
+    registry.register_tool(ContextProtocolTool::new());
 
     register_web_search_tool(&LanguageModelRegistry::global(cx), cx);
     cx.subscribe(
