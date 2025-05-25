@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use collections::HashSet;
 use editor::{
@@ -7,7 +7,7 @@ use editor::{
 };
 use gpui::{Corner, Entity, WeakEntity};
 use language::CachedLspAdapter;
-use lsp::LanguageServer;
+use lsp::{LanguageServer, LanguageServerName};
 use project::LspStore;
 use ui::{ContextMenu, IconButtonShape, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 use workspace::{StatusItemView, Workspace};
@@ -16,6 +16,11 @@ pub struct LspTool {
     active_editor: Option<WeakEntity<Editor>>,
     lsp_store: Entity<LspStore>,
     popover_menu_handle: PopoverMenuHandle<ContextMenu>,
+    selected_language_server: Option<(
+        LanguageServerName,
+        Weak<CachedLspAdapter>,
+        Weak<LanguageServer>,
+    )>,
 }
 
 impl LspTool {
@@ -26,21 +31,119 @@ impl LspTool {
     ) -> Self {
         let lsp_store = workspace.project().read(cx).lsp_store();
         Self {
-            active_editor: None,
-            popover_menu_handle,
             lsp_store,
+            popover_menu_handle,
+            active_editor: None,
+            selected_language_server: None,
         }
     }
 
-    fn build_lsp_context_menu(
+    fn build_language_servers_list(
         &self,
         editor: WeakEntity<Editor>,
-        applicable_language_servers: &[(Arc<CachedLspAdapter>, Arc<LanguageServer>)],
+        applicable_language_servers: Arc<Vec<(Weak<CachedLspAdapter>, Weak<LanguageServer>)>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
-        ContextMenu::build(window, cx, move |menu, _, cx| {
-            menu.separator()
+        let lsp_tool = cx.entity();
+        let selected_language_server = self.selected_language_server.clone();
+        dbg!(selected_language_server.is_some());
+
+        ContextMenu::build_persistent(window, cx, move |mut menu, _, cx| {
+            if let Some((selected_adapter, selected_server)) = selected_language_server
+                .as_ref()
+                .and_then(|(_, adapter, server)| Some((adapter.upgrade()?, server.upgrade()?)))
+            {
+                let editor = editor.clone();
+                menu = menu
+                    .header(selected_adapter.name.0.clone())
+                    .custom_row(|_, _| Label::new("Status: TODO kb").into_any_element())
+                    .separator()
+                    .entry("Open log", None, {
+                        let editor = editor.clone();
+                        move |_, _| {
+                            dbg!("open log");
+                        }
+                    })
+                    .separator()
+                    .entry("Restart", None, {
+                        let editor = editor.clone();
+                        move |_, _| {
+                            dbg!("Restart");
+                        }
+                    })
+                    .entry("Disable", None, {
+                        let editor = editor.clone();
+                        move |_, _| {
+                            dbg!("Disable");
+                        }
+                    })
+                    .separator()
+                    .separator()
+            }
+
+            for (adapter, server) in applicable_language_servers.iter().cloned() {
+                let Some(upgraded_adapter) = adapter.upgrade() else {
+                    continue;
+                };
+                let server_name = upgraded_adapter.name();
+                let context_menu = cx.entity();
+                menu = menu.custom_entry(
+                    {
+                        let server_name = server_name.clone();
+                        let selected_language_server = selected_language_server.clone();
+                        move |_, cx| {
+                            h_flex()
+                                .when(
+                                    Some(&server_name)
+                                        == selected_language_server.as_ref().map(
+                                            |(selected_server_name, _, _)| selected_server_name,
+                                        ),
+                                    |entry| entry.bg(cx.theme().colors().element_hover),
+                                )
+                                .child(Label::new(server_name.0.clone()))
+                                .child(IconButton::new("server-details", IconName::ChevronRight))
+                                .w_full()
+                                .justify_between()
+                                .into_any_element()
+                        }
+                    },
+                    {
+                        let lsp_tool = lsp_tool.clone();
+                        let server_name = server_name.clone();
+                        let context_menu = context_menu.clone();
+                        move |window, cx| {
+                            let adapter = adapter.clone();
+                            let server = server.clone();
+                            let server_name = server_name.clone();
+                            let context_menu = context_menu.clone();
+                            lsp_tool.update(cx, move |lsp_tool, cx| {
+                                if lsp_tool
+                                    .selected_language_server
+                                    .as_ref()
+                                    .map(|(selected_server_name, _, _)| selected_server_name)
+                                    == Some(&server_name)
+                                {
+                                    lsp_tool.selected_language_server = None;
+                                } else {
+                                    lsp_tool.selected_language_server =
+                                        Some((server_name, adapter, server));
+                                }
+
+                                // TODO kb why does it not work
+                                context_menu.update(cx, |context_menu, cx| {
+                                    context_menu.rebuild(window, cx);
+                                    cx.notify();
+                                });
+                                cx.notify();
+                            });
+                        }
+                    },
+                );
+            }
+
+            menu.keep_open_on_confirm(true)
+                .separator()
                 .entry(
                     "Restart all servers",
                     Some(Box::new(RestartLanguageServer)),
@@ -59,9 +162,8 @@ impl LspTool {
                         }
                     },
                 )
-                .entry(
-                    "Stop all servers",
-                    Some(Box::new(StopLanguageServer)),
+                .entry("Stop all servers", Some(Box::new(StopLanguageServer)), {
+                    let editor = editor.clone();
                     move |window, cx| {
                         editor
                             .update(cx, |editor, cx| {
@@ -70,8 +172,8 @@ impl LspTool {
                                 editor.stop_language_server(&StopLanguageServer, window, cx);
                             })
                             .ok();
-                    },
-                )
+                    }
+                })
         })
     }
 }
@@ -115,7 +217,9 @@ impl Render for LspTool {
                         lsp_store
                             .language_servers_for_local_buffer(buffer, cx)
                             .filter(|(_, server)| server_ids.insert(server.server_id()))
-                            .map(|(adapter, server)| (adapter.clone(), server.clone()))
+                            .map(|(adapter, server)| {
+                                (Arc::downgrade(adapter), Arc::downgrade(server))
+                            })
                             .collect::<Vec<_>>()
                     })
                 })
@@ -132,13 +236,12 @@ impl Render for LspTool {
             .tooltip(move |_, cx| Tooltip::simple("Language servers", cx));
 
         let lsp_tool = cx.entity().clone();
-
-        let popover_menu = PopoverMenu::new("lsp_servers")
+        let language_servers_list = PopoverMenu::new("language_servers")
             .menu(move |window, cx| {
                 Some(lsp_tool.update(cx, |lsp_tool, cx| {
-                    lsp_tool.build_lsp_context_menu(
+                    lsp_tool.build_language_servers_list(
                         editor.downgrade(),
-                        &applicable_language_servers,
+                        applicable_language_servers.clone(),
                         window,
                         cx,
                     )
@@ -148,6 +251,6 @@ impl Render for LspTool {
             .with_handle(self.popover_menu_handle.clone())
             .trigger(icon_button);
 
-        div().child(popover_menu.into_any_element())
+        div().child(language_servers_list)
     }
 }
