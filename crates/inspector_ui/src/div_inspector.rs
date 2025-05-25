@@ -29,6 +29,8 @@ pub(crate) struct DivInspector {
     inspector_id: Option<InspectorElementId>,
     inspector_state: Option<DivInspectorState>,
     state: State,
+    initial_style: StyleRefinement,
+    json_style_overrides: StyleRefinement,
     rust_completion: Option<String>,
     rust_completion_position: Option<Anchor>,
     last_style_error: Option<SharedString>,
@@ -88,6 +90,8 @@ impl DivInspector {
             inspector_id: None,
             inspector_state: None,
             state: State::Loading,
+            initial_style: StyleRefinement::default(),
+            json_style_overrides: StyleRefinement::default(),
             rust_completion: None,
             rust_completion_position: None,
             last_style_error: None,
@@ -112,7 +116,7 @@ impl DivInspector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let base_style = inspector_state.base_style.clone();
+        let style = (*inspector_state.base_style).clone();
         self.inspector_state = Some(inspector_state);
 
         if self.inspector_id.as_ref() == Some(id) {
@@ -120,6 +124,9 @@ impl DivInspector {
         } else {
             self.inspector_id = Some(id.clone());
         }
+
+        self.initial_style = style.clone();
+        self.json_style_overrides = StyleRefinement::default();
 
         let (rust_style_buffer, style_buffer) = match &self.state {
             State::BuffersLoaded {
@@ -134,39 +141,48 @@ impl DivInspector {
             State::Loading => return,
         };
 
-        let base_style_json = match serde_json::to_string_pretty(&base_style) {
-            Ok(base_style_json) => base_style_json,
+        let style_json = match serde_json::to_string_pretty(&style) {
+            Ok(style_json) => style_json,
             Err(err) => {
                 self.state = State::BuffersLoaded {
                     rust_style_buffer: rust_style_buffer.clone(),
                     style_buffer: style_buffer.clone(),
                 };
                 self.last_style_error =
-                    Some(format!("Failed to convert base_style to JSON: {err}").into());
+                    Some(format!("Failed to convert style to JSON: {err}").into());
                 return;
             }
         };
         self.last_style_error = None;
 
-        style_buffer.update(cx, |style_buffer, cx| {
-            style_buffer.set_text(base_style_json, cx)
-        });
+        style_buffer.update(cx, |style_buffer, cx| style_buffer.set_text(style_json, cx));
 
         let style_editor = self.create_editor(style_buffer.clone(), window, cx);
 
         cx.subscribe_in(&style_editor, window, {
             let id = id.clone();
+            let rust_style_buffer = rust_style_buffer.clone();
             move |this, editor, event: &EditorEvent, window, cx| match event {
                 EditorEvent::BufferEdited => {
-                    let base_style_json = editor.read(cx).text(cx);
-                    match serde_json_lenient::from_str(&base_style_json) {
-                        Ok(new_base_style) => {
+                    let style_json = editor.read(cx).text(cx);
+                    match serde_json_lenient::from_str::<StyleRefinement>(&style_json) {
+                        Ok(new_style) => {
+                            // `json_style_overrides` is the parts of the json style that do not
+                            // match (initial_style + rust_style). This allows for user edits to
+                            // the json style to stick around after switching to edit the rust
+                            // style.
+                            let rust_style =
+                                this.style_from_rust_buffer(rust_style_buffer.read(cx));
+                            let mut initial_plus_rust = this.initial_style.clone();
+                            initial_plus_rust.refine(&rust_style);
+                            this.json_style_overrides = new_style.subtract(&initial_plus_rust);
+
                             window.with_inspector_state::<DivInspectorState, _>(
                                 Some(&id),
                                 cx,
                                 |inspector_state, _window| {
                                     if let Some(inspector_state) = inspector_state.as_mut() {
-                                        *inspector_state.base_style = new_base_style;
+                                        *inspector_state.base_style = new_style;
                                     }
                                 },
                             );
@@ -182,7 +198,7 @@ impl DivInspector {
         .detach();
 
         rust_style_buffer.update(cx, |rust_style_buffer, cx| {
-            rust_style_buffer.set_text(guess_rust_code_from_style(&base_style), cx)
+            rust_style_buffer.set_text(guess_rust_code_from_style(&style), cx)
         });
 
         let rust_style_editor = self.create_editor(rust_style_buffer.clone(), window, cx);
@@ -231,65 +247,80 @@ impl DivInspector {
             ..
         } = &self.state
         {
-            self.update_json_style_from_rust(style_editor, rust_style_buffer, window, cx);
+            self.update_json_style_from_rust(
+                &style_editor.clone(),
+                &rust_style_buffer.clone(),
+                window,
+                cx,
+            );
         }
     }
 
     fn update_json_style_from_rust(
-        &self,
+        &mut self,
         style_editor: &Entity<Editor>,
         rust_style_buffer: &Entity<Buffer>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let old_style_text = style_editor.read(cx).text(cx);
-        match serde_json_lenient::from_str::<StyleRefinement>(&old_style_text) {
-            // todo! handle
-            Err(_) => {}
-            Ok(style) => {
-                let rust_style_buffer = rust_style_buffer.read(cx);
-                let method_names = if let Some((completion, position)) = self
-                    .rust_completion
-                    .as_ref()
-                    .zip(self.rust_completion_position.as_ref())
-                {
-                    let snapshot = rust_style_buffer.snapshot();
-                    let Range { start, end } = completion_replace_range(&snapshot, position)
-                        .unwrap_or(position.clone()..position.clone());
-                    let before_text = snapshot
-                        .text_for_range(0..start.to_offset(&snapshot))
-                        .collect::<String>();
-                    let after_text = snapshot
-                        .text_for_range(
-                            end.to_offset(&snapshot)..snapshot.clip_offset(usize::MAX, Bias::Left),
-                        )
-                        .collect::<String>();
-                    let mut method_names = before_text
-                        .split(is_not_identifier_char)
-                        .map(|name| name.to_string())
-                        .collect::<Vec<_>>();
-                    method_names.push(completion.clone());
-                    method_names.extend(
-                        after_text
-                            .split(is_not_identifier_char)
-                            .map(|name| name.to_string()),
-                    );
-                    method_names
-                } else {
-                    rust_style_buffer
-                        .text()
-                        .split(is_not_identifier_char)
-                        .map(|name| name.to_string())
-                        .collect::<Vec<_>>()
-                };
-                let style = update_style_from_method_names(style, method_names);
-                // todo!(unwrap)
-                let json = serde_json::to_string_pretty(&style).unwrap();
-                style_editor.update(cx, |style_editor, cx| {
-                    style_editor.set_text(json, window, cx);
-                });
-            }
-        }
+        let rust_style = self.style_from_rust_buffer(rust_style_buffer.read(cx));
+
+        // Preserve parts of the json style which do not come from the initial style or rust style.
+        // This way user edits to the json style are preserved when they are not overridden by the
+        // rust style.
+        //
+        // This results in a behavior where user changes to the json style that do overlap with the
+        // rust style will get set to the rust style when the user switches back to the rust style
+        // editor. It would be possible to update the rust style when the json style changes, but
+        // this is undesireable as the user may be working on the actual code in the rust style.
+        let mut new_style = self.initial_style.clone();
+        new_style.refine(&self.json_style_overrides);
+        let new_style = new_style.refined(rust_style);
+
+        // todo!(unwrap)
+        let json = serde_json::to_string_pretty(&new_style).unwrap();
+
+        style_editor.update(cx, |style_editor, cx| {
+            style_editor.set_text(json, window, cx);
+        });
+    }
+
+    fn style_from_rust_buffer(&self, rust_style_buffer: &Buffer) -> StyleRefinement {
+        let method_names = if let Some((completion, position)) = self
+            .rust_completion
+            .as_ref()
+            .zip(self.rust_completion_position.as_ref())
+        {
+            let snapshot = rust_style_buffer.snapshot();
+            let Range { start, end } = completion_replace_range(&snapshot, position)
+                .unwrap_or(position.clone()..position.clone());
+            let before_text = snapshot
+                .text_for_range(0..start.to_offset(&snapshot))
+                .collect::<String>();
+            let after_text = snapshot
+                .text_for_range(
+                    end.to_offset(&snapshot)..snapshot.clip_offset(usize::MAX, Bias::Left),
+                )
+                .collect::<String>();
+            let mut method_names = before_text
+                .split(is_not_identifier_char)
+                .map(|name| name.to_string())
+                .collect::<Vec<_>>();
+            method_names.push(completion.clone());
+            method_names.extend(
+                after_text
+                    .split(is_not_identifier_char)
+                    .map(|name| name.to_string()),
+            );
+            method_names
+        } else {
+            rust_style_buffer
+                .text()
+                .split(is_not_identifier_char)
+                .map(|name| name.to_string())
+                .collect::<Vec<_>>()
+        };
+        style_from_method_names(method_names)
     }
 
     async fn open_buffer(
@@ -453,10 +484,8 @@ fn guess_rust_code_from_style(goal_style: &StyleRefinement) -> String {
     result
 }
 
-fn update_style_from_method_names(
-    mut style: StyleRefinement,
-    method_names: impl IntoIterator<Item = String>,
-) -> StyleRefinement {
+fn style_from_method_names(method_names: impl IntoIterator<Item = String>) -> StyleRefinement {
+    let mut style = StyleRefinement::default();
     for name in method_names {
         if let Some((_, method)) = STYLE_METHODS.iter().find(|(_, m)| m.name == name) {
             style = method.invoke(style);
