@@ -4061,7 +4061,6 @@ dependencies = [
  "paths",
  "serde",
  "serde_json",
- "smol",
  "task",
  "util",
  "workspace-hack",
