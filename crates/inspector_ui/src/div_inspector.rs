@@ -185,18 +185,30 @@ impl DivInspector {
             move |this, editor, event: &EditorEvent, window, cx| match event {
                 EditorEvent::BufferEdited => {
                     let style_json = editor.read(cx).text(cx);
-                    match serde_json_lenient::from_str::<StyleRefinement>(&style_json) {
+                    match serde_json_lenient::from_str_lenient::<StyleRefinement>(&style_json) {
                         Ok(new_style) => {
-                            // `json_style_overrides` is the parts of the json style that do not
-                            // match (initial_style + rust_style). This allows for user edits to
-                            // the json style to stick around after switching to edit the rust
-                            // style.
                             let (rust_style, _) = this.style_from_rust_buffer_snapshot(
                                 &rust_style_buffer.read(cx).snapshot(),
                             );
                             let mut initial_plus_rust = this.initial_style.clone();
                             initial_plus_rust.refine(&rust_style);
-                            this.json_style_overrides = new_style.subtract(&initial_plus_rust);
+
+                            // The serialization of `DefiniteLength::Fraction` does not perfectly
+                            // roundtrip because with f32, `(x / 100.0 * 100.0) == x` is not always
+                            // true (such as for `p_1_3`). This can cause these values to
+                            // erroneously appear in `json_style_overrides` since they are not
+                            // perfectly equal. Roundtripping before `subtract` fixes this.
+                            initial_plus_rust = serde_json::to_string(dbg!(&initial_plus_rust))
+                                .ok()
+                                .and_then(|json| serde_json_lenient::from_str_lenient(&json).ok())
+                                .unwrap_or(initial_plus_rust);
+
+                            // `json_style_overrides` is the parts of the json style that do not
+                            // match (initial_style + rust_style). This allows for user edits to
+                            // the json style to stick around after switching to edit the rust
+                            // style.
+                            this.json_style_overrides =
+                                new_style.subtract(dbg!(&initial_plus_rust));
 
                             window.with_inspector_state::<DivInspectorState, _>(
                                 Some(&id),
@@ -342,9 +354,9 @@ impl DivInspector {
         // rust style.
         //
         // This results in a behavior where user changes to the json style that do overlap with the
-        // rust style will get set to the rust style when the user switches back to the rust style
-        // editor. It would be possible to update the rust style when the json style changes, but
-        // this is undesireable as the user may be working on the actual code in the rust style.
+        // rust style will get set to the rust style when the user edits the rust style. It would be
+        // possible to update the rust style when the json style changes, but this is undesireable
+        // as the user may be working on the actual code in the rust style.
         let mut new_style = self.initial_style.clone();
         new_style.refine(&self.json_style_overrides);
         let new_style = new_style.refined(rust_style);
