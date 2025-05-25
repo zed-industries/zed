@@ -163,8 +163,10 @@ actions!(
         CloseActiveDock,
         CloseAllDocks,
         CloseWindow,
+        DecreaseDockSize,
         Feedback,
         FollowNextCollaborator,
+        IncreaseDockSize,
         MoveFocusedPanelToNextPosition,
         NewCenterTerminal,
         NewFile,
@@ -5353,6 +5355,16 @@ impl Workspace {
                     workspace.reopen_closed_item(window, cx).detach();
                 },
             ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &IncreaseDockSize, window, cx| {
+                    adjust_active_docks_size_by_offset(workspace, window, cx, 1.);
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &DecreaseDockSize, window, cx| {
+                    adjust_active_docks_size_by_offset(workspace, window, cx, -1.);
+                },
+            ))
             .on_action(cx.listener(Workspace::toggle_centered_layout))
             .on_action(cx.listener(Workspace::cancel))
     }
@@ -5718,6 +5730,45 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
             }
         })
         .log_err();
+}
+
+fn adjust_active_docks_size_by_offset(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+    factor: f32,
+) {
+    const OFFSET: f32 = 4.;
+
+    let offset = px(OFFSET * factor);
+
+    workspace.left_dock().update(cx, |left_dock, cx| {
+        left_dock.resize_active_panel(
+            left_dock
+                .active_panel_size(window, cx)
+                .map(|size| size + offset),
+            window,
+            cx,
+        );
+    });
+    workspace.right_dock().update(cx, |right_dock, cx| {
+        right_dock.resize_active_panel(
+            right_dock
+                .active_panel_size(window, cx)
+                .map(|size| size + offset),
+            window,
+            cx,
+        );
+    });
+    workspace.bottom_dock().update(cx, |bottom_dock, cx| {
+        bottom_dock.resize_active_panel(
+            bottom_dock
+                .active_panel_size(window, cx)
+                .map(|size| size + offset),
+            window,
+            cx,
+        );
+    });
 }
 
 impl Focusable for Workspace {

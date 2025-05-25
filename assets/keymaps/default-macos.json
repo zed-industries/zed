@@ -630,7 +630,9 @@
       "cmd-k shift-right": "workspace::SwapPaneRight",
       "cmd-k shift-up": "workspace::SwapPaneUp",
       "cmd-k shift-down": "workspace::SwapPaneDown",
-      "cmd-shift-x": "zed::Extensions"
+      "cmd-shift-x": "zed::Extensions",
+      "cmd-shift-[": "workspace::IncreaseDockSize",
+      "cmd-shift-]": "workspace::DecreaseDockSize"
     }
   },
   {
