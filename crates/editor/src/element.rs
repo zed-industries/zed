@@ -1937,6 +1937,80 @@ impl EditorElement {
         elements
     }
 
+    fn layout_inline_code_actions(
+        &self,
+        display_row: DisplayRow,
+        _row_info: &RowInfo,
+        _line_layout: &LineWithInvisibles,
+        em_width: Pixels,
+        content_origin: gpui::Point<Pixels>,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        line_height: Pixels,
+        _text_hitbox: &Hitbox,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyElement> {
+        let editor = self.editor.read(cx);
+        if !editor.has_available_code_actions() {
+            return None;
+        }
+
+        const INLINE_CODE_ACTIONS_PADDING_EM_WIDTHS: f32 = 1.0;
+        let padding = INLINE_CODE_ACTIONS_PADDING_EM_WIDTHS * em_width;
+
+        let focus_handle = editor.focus_handle.clone();
+        let editor_handle_click = self.editor.clone();
+        let mut element = IconButton::new("inline_code_actions", ui::IconName::Bolt)
+            .shape(ui::IconButtonShape::Square)
+            .icon_size(ui::IconSize::XSmall)
+            .icon_color(ui::Color::Muted)
+            .tooltip(move |window, cx| {
+                ui::Tooltip::for_action_in(
+                    "Code Actions",
+                    &crate::actions::ToggleCodeActions {
+                        deployed_from: None,
+                        quick_launch: false,
+                    },
+                    &focus_handle,
+                    window,
+                    cx,
+                )
+            })
+            .on_click(move |_, window, cx| {
+                editor_handle_click.update(cx, |editor, cx| {
+                    window.focus(&editor.focus_handle);
+                    editor.toggle_code_actions(
+                        &crate::actions::ToggleCodeActions {
+                            deployed_from: Some(crate::actions::CodeActionSource::Indicator(
+                                display_row,
+                            )),
+                            quick_launch: true,
+                        },
+                        window,
+                        cx,
+                    );
+                });
+            })
+            .into_any_element();
+
+        let start_y = content_origin.y
+            + line_height * (display_row.as_f32() - scroll_pixel_position.y / line_height);
+
+        let start_x = content_origin.x - scroll_pixel_position.x + padding;
+
+        let absolute_offset = gpui::point(start_x, start_y);
+        let _size = element.layout_as_root(gpui::AvailableSpace::min_size(), window, cx);
+
+        element.prepaint_as_root(
+            absolute_offset,
+            gpui::AvailableSpace::min_size(),
+            window,
+            cx,
+        );
+
+        Some(element)
+    }
+
     fn layout_inline_blame(
         &self,
         display_row: DisplayRow,
@@ -5304,6 +5378,7 @@ impl EditorElement {
                 self.paint_cursors(layout, window, cx);
                 self.paint_inline_diagnostics(layout, window, cx);
                 self.paint_inline_blame(layout, window, cx);
+                self.paint_inline_code_actions(layout, window, cx);
                 self.paint_diff_hunk_controls(layout, window, cx);
                 window.with_element_namespace("crease_trailers", |window| {
                     for trailer in layout.crease_trailers.iter_mut().flatten() {
@@ -5925,6 +6000,19 @@ impl EditorElement {
         if let Some(mut inline_blame) = layout.inline_blame.take() {
             window.paint_layer(layout.position_map.text_hitbox.bounds, |window| {
                 inline_blame.paint(window, cx);
+            })
+        }
+    }
+
+    fn paint_inline_code_actions(
+        &mut self,
+        layout: &mut EditorLayout,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if let Some(mut inline_code_actions) = layout.inline_code_actions.take() {
+            window.paint_layer(layout.position_map.text_hitbox.bounds, |window| {
+                inline_code_actions.paint(window, cx);
             })
         }
     }
@@ -7984,6 +8072,7 @@ impl Element for EditorElement {
                     );
 
                     let mut inline_blame = None;
+                    let mut inline_code_actions = None;
                     if let Some(newest_selection_head) = newest_selection_head {
                         let display_row = newest_selection_head.row();
                         if (start_row..end_row).contains(&display_row)
@@ -7993,6 +8082,22 @@ impl Element for EditorElement {
                             let row_info = &row_infos[line_ix];
                             let line_layout = &line_layouts[line_ix];
                             let crease_trailer_layout = crease_trailers[line_ix].as_ref();
+
+                            // Layout inline code actions first (at start of line)
+                            inline_code_actions = self.layout_inline_code_actions(
+                                display_row,
+                                row_info,
+                                line_layout,
+                                em_width,
+                                content_origin,
+                                scroll_pixel_position,
+                                line_height,
+                                &text_hitbox,
+                                window,
+                                cx,
+                            );
+
+                            // Layout inline blame (at end of line)
                             inline_blame = self.layout_inline_blame(
                                 display_row,
                                 row_info,
@@ -8336,6 +8441,7 @@ impl Element for EditorElement {
                         blamed_display_rows,
                         inline_diagnostics,
                         inline_blame,
+                        inline_code_actions,
                         blocks,
                         cursors,
                         visible_cursors,
@@ -8516,6 +8622,7 @@ pub struct EditorLayout {
     blamed_display_rows: Option<Vec<AnyElement>>,
     inline_diagnostics: HashMap<DisplayRow, AnyElement>,
     inline_blame: Option<AnyElement>,
+    inline_code_actions: Option<AnyElement>,
     blocks: Vec<BlockLayout>,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
     highlighted_gutter_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
