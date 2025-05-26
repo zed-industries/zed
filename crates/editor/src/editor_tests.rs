@@ -27,7 +27,7 @@ use language::{
         AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
         LanguageSettingsContent, LspInsertMode, PrettierSettings,
     },
-    tree_sitter_python,
+    tree_sitter_python, tree_sitter_typescript,
 };
 use language_settings::{Formatter, FormatterList, IndentGuideSettings};
 use lsp::CompletionParams;
@@ -1035,6 +1035,174 @@ fn test_fold_action_whitespace_sensitive_language(cx: &mut TestAppContext) {
         assert_eq!(
             editor.display_text(cx),
             editor.buffer.read(cx).read(cx).text()
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_fold_action_tsx_multiline_comment(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language = Language::new(
+        LanguageConfig {
+            name: "JavaScript".into(),
+            block_comment: Some(("/*".into(), "*/".into())),
+            overrides: [(
+                "element".into(),
+                LanguageConfigOverride {
+                    block_comment: Override::Set(("{/*".into(), "*/}".into())),
+                    ..Default::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        },
+        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+    )
+    .with_override_query(
+        r#"
+            (jsx_element) @element
+            (string) @string
+            (comment) @comment.inclusive
+            [
+                (jsx_opening_element)
+                (jsx_closing_element)
+                (jsx_expression)
+            ] @default
+        "#,
+    )
+    .unwrap();
+
+    let mut editor_cx = EditorTestContext::new(cx).await;
+    editor_cx.update_buffer(|buffer, cx| buffer.set_language(Some(Arc::new(language)), cx));
+
+    editor_cx.set_state(indoc! {"
+        const Component = () => (
+          <div>
+            <p>Some text before</p>
+            {/* 
+            first line
+            second lineˇ
+            */}
+            <p>Some text after</p>
+          </div>
+        );
+        /*
+        abcde
+        */
+    "});
+    cx.executor().run_until_parked();
+
+    editor_cx.update_editor(|editor, window, cx| {
+        editor.fold(&Fold, window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            indoc! {"
+                const Component = () => (
+                  <div>
+                    <p>Some text before</p>
+                    {/* ⋯
+                    <p>Some text after</p>
+                  </div>
+                );
+                /*
+                abcde
+                */
+            "}
+        );
+
+        editor.change_selections(None, window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(7), 0)..DisplayPoint::new(DisplayRow(8), 0)
+            ]);
+        });
+        editor.fold(&Fold, window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            indoc! {"
+                const Component = () => (
+                  <div>
+                    <p>Some text before</p>
+                    {/* ⋯
+                    <p>Some text after</p>
+                  </div>
+                );
+                /*⋯
+            "}
+        );
+
+        editor.unfold_lines(&UnfoldLines, window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            indoc! {"
+                const Component = () => (
+                  <div>
+                    <p>Some text before</p>
+                    {/* ⋯
+                    <p>Some text after</p>
+                  </div>
+                );
+                /*
+                abcde
+                */
+            "}
+        );
+
+        editor.change_selections(None, window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(3), 0)..DisplayPoint::new(DisplayRow(4), 0)
+            ]);
+        });
+
+        editor.unfold_lines(&UnfoldLines, window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            indoc! {"
+                const Component = () => (
+                  <div>
+                    <p>Some text before</p>
+                    {/* 
+                    first line
+                    second line
+                    */}
+                    <p>Some text after</p>
+                  </div>
+                );
+                /*
+                abcde
+                */
+            "}
+        );
+
+        editor.fold_all(&FoldAll, window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            indoc! {"
+                const Component = () => (⋯
+                );
+                /*⋯
+            "}
+        );
+
+        editor.unfold_all(&UnfoldAll, window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            indoc! {"
+                const Component = () => (
+                  <div>
+                    <p>Some text before</p>
+                    {/* 
+                    first line
+                    second line
+                    */}
+                    <p>Some text after</p>
+                  </div>
+                );
+                /*
+                abcde
+                */
+            "}
         );
     });
 }

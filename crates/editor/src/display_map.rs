@@ -1316,6 +1316,43 @@ impl DisplaySnapshot {
                 render_trailer: None,
                 metadata: None,
             })
+        } else if let Some(scope) = self
+            .buffer_snapshot
+            .language_scope_at(Point::new(buffer_row.0, 0))
+        {
+            let (start_delim, end_delim) = scope.block_comment_delimiters()?;
+            let line_text: String = self
+                .buffer_snapshot
+                .text_for_range(Point::new(buffer_row.0, 0)..Point::new(buffer_row.0 + 1, 0))
+                .collect();
+
+            if !line_text.trim_start().starts_with(start_delim.as_ref())
+                || line_text.trim_end().contains(end_delim.as_ref())
+            {
+                return None;
+            }
+
+            let end_point_opt =
+                (buffer_row.0..=self.buffer_snapshot.max_row().0).find_map(|current_row_ix| {
+                    let line_content: String = self
+                        .buffer_snapshot
+                        .text_for_range(
+                            Point::new(current_row_ix, 0)..Point::new(current_row_ix + 1, 0),
+                        )
+                        .collect();
+
+                    if line_content.trim_end().contains(end_delim.as_ref()) {
+                        Some(Point::new(
+                            current_row_ix,
+                            self.buffer_snapshot
+                                .line_len(MultiBufferRow(current_row_ix)),
+                        ))
+                    } else {
+                        None
+                    }
+                });
+
+            end_point_opt.map(|ep| Crease::simple(start..ep, self.fold_placeholder.clone()))
         } else {
             None
         }
