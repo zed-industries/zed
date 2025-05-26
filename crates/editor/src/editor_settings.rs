@@ -6,6 +6,26 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources, VsCodeSettings};
 use util::serde::default_true;
 
+```rust
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Serialize, Deserialize, Default, Debug)]
+pub struct EditorSettings {
+    pub edit_prediction_provider: Option<String>,
+    pub show_prediction_indicator: Option<bool>, // New field to control indicator visibility
+    // Other existing fields (do not overwrite)
+}
+
+// Existing code (unchanged, for context)
+// Example:
+impl EditorSettings {
+    pub fn load(cx: &gpui::AppContext) -> Self {
+        // Existing settings loading logic
+        Self::default()
+    }
+}
+```
+
 /// Imports from the VSCode settings at
 /// https://code.visualstudio.com/docs/reference/default-settings
 #[derive(Deserialize, Clone)]
