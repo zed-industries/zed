@@ -1973,13 +1973,14 @@ impl EditorElement {
         });
         let mut button = button?;
 
-        const OVERLFOW_CHAR_LIMIT: u32 = 4;
+        const INLINE_SLOT_CHAR_LIMIT: u32 = 4;
         const MAX_ALTERNATE_DISTANCE: u32 = 8;
 
         let buffer_point = snapshot
             .display_snapshot
             .display_point_to_point(display_point, text::Bias::Left);
 
+        // do not show code action on blank line with cursor
         let line_indent = snapshot
             .display_snapshot
             .buffer_snapshot
@@ -1995,33 +1996,44 @@ impl EditorElement {
             .map(|excerpt| excerpt.id());
 
         let is_valid_row_for_code_action = |row_candidate: u32| -> bool {
-            let candidate_point = MultiBufferPoint {
-                row: row_candidate,
-                column: 0,
-            };
-            let candidate_excerpt_id = snapshot
-                .display_snapshot
-                .buffer_snapshot
-                .excerpt_containing(candidate_point..candidate_point)
-                .map(|excerpt| excerpt.id());
-            if excerpt_id != candidate_excerpt_id {
+            // move to other row if folded row
+            if snapshot.is_line_folded(MultiBufferRow(row_candidate)) {
                 return false;
             }
-            if buffer_point.row == row_candidate && buffer_point.column < OVERLFOW_CHAR_LIMIT {
-                return false;
+            if buffer_point.row == row_candidate {
+                // move to other row if cursor is in slot
+                if buffer_point.column < INLINE_SLOT_CHAR_LIMIT {
+                    return false;
+                }
+            } else {
+                let candidate_point = MultiBufferPoint {
+                    row: row_candidate,
+                    column: 0,
+                };
+                let candidate_excerpt_id = snapshot
+                    .display_snapshot
+                    .buffer_snapshot
+                    .excerpt_containing(candidate_point..candidate_point)
+                    .map(|excerpt| excerpt.id());
+                // move to other row if diffrent excerpt
+                if excerpt_id != candidate_excerpt_id {
+                    return false;
+                }
             }
             let line_indent = snapshot
                 .display_snapshot
                 .buffer_snapshot
                 .line_indent_for_row(MultiBufferRow(row_candidate));
+            // use this row if it's blank
             if line_indent.is_line_blank() {
                 true
             } else {
+                // use this row if code starts after slot
                 let indent_size = snapshot
                     .display_snapshot
                     .buffer_snapshot
                     .indent_size_for_line(MultiBufferRow(row_candidate));
-                indent_size.len >= OVERLFOW_CHAR_LIMIT
+                indent_size.len >= INLINE_SLOT_CHAR_LIMIT
             }
         };
 
