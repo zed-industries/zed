@@ -205,10 +205,8 @@ impl Model {
             | Self::FourOmniMini
             | Self::FourPointOne
             | Self::FourPointOneMini
-            | Self::FourPointOneNano
-            | Self::O1
-            | Self::O1Preview
-            | Self::O1Mini => true,
+            | Self::FourPointOneNano => true,
+            Self::O1 | Self::O1Preview | Self::O1Mini => false,
             _ => false,
         }
     }
