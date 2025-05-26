@@ -1146,7 +1146,7 @@ impl EditorElement {
                 .map_or(false, |bounds| bounds.contains(&event.position));
 
             if mouse_over_inline_blame || mouse_over_popover {
-                editor.show_blame_popover(&blame_entry, event.position, cx);
+                editor.show_blame_popover(&blame_entry, event.position, false, cx);
             } else {
                 editor.hide_blame_popover(cx);
             }

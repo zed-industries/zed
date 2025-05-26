@@ -6544,26 +6544,28 @@ impl Editor {
         // TODO: Render at the cursor position
         let position = window.mouse_position();
 
-        // TODO: Ignore delay
         // TODO: Don't hide when mouse is not over popover
-        self.show_blame_popover(&blame_entry, position, cx);
+        self.show_blame_popover(&blame_entry, position, true, cx);
     }
 
     fn show_blame_popover(
         &mut self,
         blame_entry: &BlameEntry,
         position: gpui::Point<Pixels>,
+        ignore_timeout: bool,
         cx: &mut Context<Self>,
     ) {
         if let Some(state) = &mut self.inline_blame_popover {
             state.hide_task.take();
         } else {
-            let delay = EditorSettings::get_global(cx).hover_popover_delay;
+            let blame_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
             let blame_entry = blame_entry.clone();
             let show_task = cx.spawn(async move |editor, cx| {
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(delay))
-                    .await;
+                if !ignore_timeout {
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(blame_popover_delay))
+                        .await;
+                }
                 editor
                     .update(cx, |editor, cx| {
                         editor.inline_blame_popover_show_task.take();
