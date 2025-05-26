@@ -64,6 +64,22 @@ Visit [the AI overview page](./ai/overview.md) to learn how to quickly get start
 
 ## Set up your key bindings
 
+# Settings
+
+## Editor Settings
+
+- `edit_prediction_provider`: Specifies the provider for edit predictions (e.g., `"zed"`, `"copilot"`, `"supermaven"`).
+- `show_prediction_indicator`: Boolean to control whether the prediction indicator (e.g., "Z-> Hold Alt" popup) is displayed. Set to `false` to disable the indicator while keeping predictions active. Default: `true`.
+
+### Example
+```json
+{
+  "editor": {
+    "edit_prediction_provider": "zed",
+    "show_prediction_indicator": false
+  }
+}
+
 To open your custom keymap to add your key bindings, use the {#kb zed::OpenKeymap} keybinding.
 
 To access the default key binding set, open the Command Palette with {#kb command_palette::Toggle} and search for "zed: open default keymap". See [Key Bindings](./key-bindings.md) for more info.
