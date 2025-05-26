@@ -818,7 +818,9 @@ pub const DEFAULT_COMPLETION_CONTEXT: CompletionContext = CompletionContext {
 #[derive(Clone, Debug)]
 pub struct LspPullDiagnostics {
     /// The id of the language server that produced diagnostics.
-    pub server_id: LanguageServerId,
+    ///
+    /// The absence of the server id means default response, not containing any diagnostics.
+    pub server_id: Option<LanguageServerId>,
     /// URI of the resource,
     pub uri: Option<lsp::Url>,
     /// The diagnostics produced by this language server.
@@ -828,8 +830,7 @@ pub struct LspPullDiagnostics {
 impl Default for LspPullDiagnostics {
     fn default() -> Self {
         Self {
-            // TODO(vs) is it ok?
-            server_id: LanguageServerId(0),
+            server_id: None,
             uri: None,
             diagnostics: Vec::new(),
         }

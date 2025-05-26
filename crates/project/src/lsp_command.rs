@@ -3900,19 +3900,19 @@ impl LspCommand for GetDocumentDiagnostics {
                         .with_context(|| "Failed to update diagnostics for related documents")?;
 
                     Ok(LspPullDiagnostics {
-                        server_id,
+                        server_id: Some(server_id),
                         uri,
                         diagnostics: report.full_document_diagnostic_report.items.clone(),
                     })
                 }
                 lsp::DocumentDiagnosticReport::Unchanged(_) => Ok(LspPullDiagnostics {
-                    server_id,
+                    server_id: Some(server_id),
                     uri,
                     diagnostics: Vec::new(),
                 }),
             },
             lsp::DocumentDiagnosticReportResult::Partial(_) => Ok(LspPullDiagnostics {
-                server_id,
+                server_id: Some(server_id),
                 uri,
                 diagnostics: Vec::new(),
             }),
@@ -3958,7 +3958,7 @@ impl LspCommand for GetDocumentDiagnostics {
             })
             .collect();
         proto::GetDocumentDiagnosticsResponse {
-            server_id: LanguageServerId::to_proto(response.server_id),
+            server_id: response.server_id.map(LanguageServerId::to_proto),
             uri: response.uri.unwrap().to_string(),
             diagnostics,
         }
@@ -3988,7 +3988,7 @@ impl LspCommand for GetDocumentDiagnostics {
             .collect();
 
         Ok(LspPullDiagnostics {
-            server_id: LanguageServerId::from_proto(response.server_id),
+            server_id: response.server_id.map(LanguageServerId::from_proto),
             uri: Some(uri),
             diagnostics,
         })

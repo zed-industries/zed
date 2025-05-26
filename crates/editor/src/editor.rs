@@ -20387,8 +20387,11 @@ impl SemanticsProvider for Entity<Project> {
         self.update(cx, |project, cx| {
             project.lsp_store().update(cx, |lsp_store, cx| {
                 for diagnostics_set in diagnostics {
-                    let adapter =
-                        lsp_store.language_server_adapter_for_id(diagnostics_set.server_id);
+                    let Some(server_id) = diagnostics_set.server_id else {
+                        continue;
+                    };
+
+                    let adapter = lsp_store.language_server_adapter_for_id(server_id);
                     let disk_based_sources = adapter
                         .as_ref()
                         .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
@@ -20398,7 +20401,7 @@ impl SemanticsProvider for Entity<Project> {
                     };
                     lsp_store
                         .merge_diagnostics(
-                            diagnostics_set.server_id,
+                            server_id,
                             lsp::PublishDiagnosticsParams {
                                 uri,
                                 diagnostics: diagnostics_set.diagnostics.clone(),
