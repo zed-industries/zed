@@ -1174,8 +1174,8 @@ impl PickerDelegate for FileFinderDelegate {
         let raw_query = raw_query.trim();
 
         let raw_query = match &raw_query.get(0..2) {
-            Some("./") => &raw_query[2..],
-            Some("a/") => {
+            Some(".\\") | Some("./") => &raw_query[2..],
+            Some("a\\") | Some("a/") => {
                 if self
                     .workspace
                     .upgrade()
@@ -1193,7 +1193,7 @@ impl PickerDelegate for FileFinderDelegate {
                     raw_query
                 }
             }
-            Some("b/") => {
+            Some("b\\") | Some("b/") => {
                 if self
                     .workspace
                     .upgrade()

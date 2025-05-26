@@ -207,8 +207,10 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
     for bandana_query in [
         "bandana",
         "./bandana",
-        "a/bandana",
+        ".\\bandana",
+        util::separator!("a/bandana"),
         "b/bandana",
+        "b\\bandana",
         " bandana",
         "bandana ",
         " bandana ",
@@ -227,7 +229,8 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
             assert_eq!(
                 picker.delegate.matches.len(),
                 1,
-                "Wrong number of matches for bandana query '{bandana_query}'"
+                "Wrong number of matches for bandana query '{bandana_query}'. Matches: {:?}",
+                picker.delegate.matches
             );
         });
         cx.dispatch_action(SelectNext);
