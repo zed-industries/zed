@@ -169,7 +169,7 @@ use project::{
 };
 use rand::prelude::*;
 use rpc::{ErrorExt, proto::*};
-use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
+use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide, UpdateResponse};
 use selections_collection::{
     MutableSelectionsCollection, SelectionsCollection, resolve_selections,
 };
@@ -1905,6 +1905,7 @@ impl Editor {
             change_list: ChangeList::new(),
             mode,
         };
+
         if let Some(breakpoints) = this.breakpoint_store.as_ref() {
             this._subscriptions
                 .push(cx.observe(breakpoints, |_, _, cx| {
@@ -19192,6 +19193,7 @@ impl Editor {
 
         self.read_scroll_position_from_db(item_id, workspace_id, window, cx);
     }
+
 }
 
 fn vim_enabled(cx: &App) -> bool {
@@ -20750,7 +20752,7 @@ impl Focusable for Editor {
 }
 
 impl Render for Editor {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
 
         let mut text_style = match self.mode {
@@ -20785,6 +20787,12 @@ impl Render for Editor {
             EditorMode::Full { .. } => cx.theme().colors().editor_background,
             EditorMode::Minimap { .. } => cx.theme().colors().editor_background.opacity(0.7),
         };
+
+        if self.scroll_manager.requires_animation_update() {
+            if let UpdateResponse::RequiresAnimationFrame{..} = self.scroll_manager.update_animation(window, cx) {
+                window.request_animation_frame();
+            }
+        }
 
         EditorElement::new(
             &cx.entity(),

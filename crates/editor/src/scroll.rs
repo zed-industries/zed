@@ -1,4 +1,5 @@
 mod actions;
+pub(crate) mod scroll_animation_manager;
 pub(crate) mod autoscroll;
 pub(crate) mod scroll_amount;
 
@@ -14,6 +15,8 @@ pub use autoscroll::{Autoscroll, AutoscrollStrategy};
 use core::fmt::Debug;
 use gpui::{App, Axis, Context, Global, Pixels, Task, Window, point, px};
 use language::{Bias, Point};
+use scroll_animation_manager::ScrollAnimationManager;
+pub(crate) use scroll_animation_manager::UpdateResponse;
 pub use scroll_amount::ScrollAmount;
 use settings::Settings;
 use std::{
@@ -146,10 +149,32 @@ impl ActiveScrollbarState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ScrollInstigator {
+    Other,
+    AnimationManager,
+}
+
+impl ScrollInstigator {
+    fn consume(&mut self) -> ScrollInstigator {
+        let value = *self;
+        *self = ScrollInstigator::default();
+        value
+    }
+}
+
+impl Default for ScrollInstigator {
+    fn default() -> Self {
+        ScrollInstigator::Other
+    }
+}
+
 pub struct ScrollManager {
     pub(crate) vertical_scroll_margin: f32,
     anchor: ScrollAnchor,
     ongoing: OngoingScroll,
+    scroll_instigator: ScrollInstigator,
+    animation_manager: ScrollAnimationManager,
     autoscroll_request: Option<(Autoscroll, bool)>,
     last_autoscroll: Option<(gpui::Point<f32>, f32, f32, AutoscrollStrategy)>,
     show_scrollbars: bool,
@@ -167,6 +192,8 @@ impl ScrollManager {
             vertical_scroll_margin: EditorSettings::get_global(cx).vertical_scroll_margin,
             anchor: ScrollAnchor::new(),
             ongoing: OngoingScroll::new(),
+            scroll_instigator: ScrollInstigator::default(),
+            animation_manager: ScrollAnimationManager::new(),
             autoscroll_request: None,
             show_scrollbars: true,
             hide_scrollbar_task: None,
@@ -201,6 +228,37 @@ impl ScrollManager {
         self.anchor.scroll_position(snapshot)
     }
 
+    pub(crate) fn requires_animation_update(&self) -> bool {
+        self.animation_manager.has_anim() 
+    }
+    
+    pub(crate) fn update_animation(&mut self, window: &mut Window, cx: &mut Context<Editor>) -> UpdateResponse {
+        let update_response = self.animation_manager.update();
+
+        let update_values = match update_response {
+            UpdateResponse::RequiresAnimationFrame { ref updated_position } => {
+                Some((updated_position.clone(), self.animation_manager.get_state().unwrap()))
+            },
+            UpdateResponse::Finished { ref end_position, ref state } => Some((end_position.clone(), state.clone())),
+            UpdateResponse::Nothing => None
+        };
+
+        if let Some((new_scroll, state)) = update_values {
+            self.scroll_instigator = ScrollInstigator::AnimationManager;
+            self.set_scroll_position(
+                new_scroll,
+                &state.snapshot,
+                true,
+                false,
+                state.workspace_id,
+                window,
+                cx
+            );
+        }
+
+        update_response
+    }
+
     fn set_scroll_position(
         &mut self,
         scroll_position: gpui::Point<f32>,
@@ -211,6 +269,21 @@ impl ScrollManager {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
+        // to my understanding this is a somewhat valid way of checking if the current scroll
+        // is triggered by a pixel-type hardware (like a trackpad), it does cause project_search
+        // to be an instantaneous scroll instead of a smooth one because it has an Axis::Vertical
+        // I think a more explicit way of checking should be implemented in OngoingScroll
+        let is_pixel_hardware = self.ongoing_scroll().axis.is_some();
+
+        let instigator = self.scroll_instigator.consume();
+
+        if instigator != ScrollInstigator::AnimationManager && !is_pixel_hardware {
+            let current = self.scroll_position(map);
+            self.animation_manager.start(current, scroll_position, map, workspace_id);
+            cx.notify();
+            return;
+        }
+
         let (new_anchor, top_row) = if scroll_position.y <= 0. {
             (
                 ScrollAnchor {
@@ -510,6 +583,7 @@ impl Editor {
             let current_position = self.scroll_position(cx);
             position.y = current_position.y;
         }
+
         self.set_scroll_position_internal(position, true, false, window, cx);
     }
 
