@@ -471,6 +471,10 @@
   // Scroll sensitivity multiplier. This multiplier is applied
   // to both the horizontal and vertical delta values while scrolling.
   "scroll_sensitivity": 1.0,
+   // Wether to scroll smoothly or instantaneously
+  "smooth_scroll": false,
+   // How much time in seconds it takes for a scrolling when smooth_scroll is enabled
+  "smooth_scroll_duration": 0.25,
   "relative_line_numbers": false,
   // If 'search_wrap' is disabled, search result do not wrap around the end of the file.
   "search_wrap": true,

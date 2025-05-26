@@ -26,6 +26,8 @@ pub struct EditorSettings {
     pub autoscroll_on_clicks: bool,
     pub horizontal_scroll_margin: f32,
     pub scroll_sensitivity: f32,
+    pub smooth_scroll: bool,
+    pub smooth_scroll_duration: f32,
     pub relative_line_numbers: bool,
     pub seed_search_query_from_cursor: SeedQuerySetting,
     pub use_smartcase_search: bool,
@@ -404,6 +406,14 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 1.0
     pub scroll_sensitivity: Option<f32>,
+    /// Wether to scroll smoothly or instantaneously
+    ///
+    /// Default: false
+    pub smooth_scroll: Option<bool>,
+    /// How much time in seconds it takes for a scrolling when smooth_scroll is enabled
+    ///
+    /// Default: 0.25
+    pub smooth_scroll_duration: Option<f32>,
     /// Whether the line numbers on editors gutter are relative or not.
     ///
     /// Default: false
