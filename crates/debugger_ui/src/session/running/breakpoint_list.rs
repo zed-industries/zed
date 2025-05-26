@@ -541,6 +541,10 @@ impl LineBreakpoint {
         )
         .child(
             v_flex()
+                .py_1()
+                .gap_1()
+                .h_6()
+                .justify_center()
                 .id(SharedString::from(format!(
                     "breakpoint-ui-on-click-go-to-line-{:?}/{}:{}",
                     self.dir, self.name, self.line
@@ -553,8 +557,6 @@ impl LineBreakpoint {
                     .ok();
                 })
                 .cursor_pointer()
-                .py_1()
-                .items_center()
                 .child(
                     h_flex()
                         .gap_1()
@@ -645,9 +647,11 @@ impl ExceptionBreakpoint {
                 .child(Indicator::icon(Icon::new(IconName::Flame)).color(color)),
         )
         .child(
-            div()
+            v_flex()
                 .py_1()
                 .gap_1()
+                .h_6()
+                .justify_center()
                 .child(
                     Label::new(self.data.label.clone())
                         .size(LabelSize::Small)
