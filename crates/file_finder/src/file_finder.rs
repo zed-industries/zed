@@ -11,7 +11,7 @@ use futures::future::join_all;
 pub use open_path_prompt::OpenPathDelegate;
 
 use collections::HashMap;
-use editor::Editor;
+use editor::{Editor, items::entry_git_aware_label_color};
 use file_finder_settings::{FileFinderSettings, FileFinderWidth};
 use file_icons::FileIcons;
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
@@ -1418,23 +1418,58 @@ impl PickerDelegate for FileFinderDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let settings = FileFinderSettings::get_global(cx);
+        let path_match = self.matches.get(ix)?;
 
-        let path_match = self
-            .matches
-            .get(ix)
-            .expect("Invalid matches state: no element for index {ix}");
+        let git_status_color = if settings.git_status {
+            let (entry, project_path) = match path_match {
+                Match::History { path, .. } => {
+                    let project = self.project.read(cx);
+                    let project_path = path.project.clone();
+                    let entry = project.entry_for_path(&project_path, cx)?;
+                    Some((entry, project_path))
+                }
+                Match::Search(mat) => {
+                    let project = self.project.read(cx);
+                    let project_path = ProjectPath {
+                        worktree_id: WorktreeId::from_usize(mat.0.worktree_id),
+                        path: mat.0.path.clone(),
+                    };
+                    let entry = project.entry_for_path(&project_path, cx)?;
+                    Some((entry, project_path))
+                }
+            }?;
 
-        let history_icon = match &path_match {
+            let git_status = self
+                .project
+                .read(cx)
+                .project_path_git_status(&project_path, cx)
+                .map(|status| status.summary())
+                .unwrap_or_default();
+            Some(entry_git_aware_label_color(
+                git_status,
+                entry.is_ignored,
+                selected,
+            ))
+        } else {
+            None
+        };
+
+        let history_icon = match path_match {
             Match::History { .. } => Icon::new(IconName::HistoryRerun)
-                .color(Color::Muted)
                 .size(IconSize::Small)
+                .color(Color::Muted)
                 .into_any_element(),
             Match::Search(_) => v_flex()
                 .flex_none()
                 .size(IconSize::Small.rems())
                 .into_any_element(),
         };
+
         let (file_name_label, full_path_label) = self.labels_for_match(path_match, window, cx, ix);
+        let file_name_label = match git_status_color {
+            Some(git_status_color) => file_name_label.color(git_status_color),
+            None => file_name_label,
+        };
 
         let file_icon = maybe!({
             if !settings.file_icons {
@@ -1442,7 +1477,7 @@ impl PickerDelegate for FileFinderDelegate {
             }
             let file_name = path_match.path().file_name()?;
             let icon = FileIcons::get_icon(file_name.as_ref(), cx)?;
-            Some(Icon::from_path(icon).color(Color::Muted))
+            Some(Icon::from_path(icon).color(git_status_color.unwrap_or(Color::Muted)))
         });
 
         Some(
