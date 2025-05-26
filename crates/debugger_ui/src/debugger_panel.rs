@@ -316,6 +316,45 @@ impl DebugPanel {
         .detach_and_log_err(cx);
     }
 
+    pub(crate) fn rerun_last_session(
+        &mut self,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let task_store = workspace.project().read(cx).task_store().clone();
+        let Some(task_inventory) = task_store.read(cx).task_inventory() else {
+            return;
+        };
+        let Some(scenario) = task_inventory.read(cx).last_scheduled_scenario().cloned() else {
+            return;
+        };
+        let workspace = self.workspace.clone();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let task_contexts = workspace
+                .update_in(cx, |workspace, window, cx| {
+                    tasks_ui::task_contexts(workspace, window, cx)
+                })?
+                .await;
+
+            let task_context = task_contexts.active_context().cloned().unwrap_or_default();
+            let worktree_id = task_contexts.worktree();
+
+            this.update_in(cx, |this, window, cx| {
+                this.start_session(
+                    scenario.clone(),
+                    task_context,
+                    None,
+                    worktree_id,
+                    window,
+                    cx,
+                );
+            })
+        })
+        .detach();
+    }
+
     pub(crate) async fn register_session(
         this: WeakEntity<Self>,
         session: Entity<Session>,

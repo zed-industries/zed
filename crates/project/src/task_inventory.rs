@@ -230,6 +230,10 @@ impl Inventory {
         }
     }
 
+    pub fn last_scheduled_scenario(&self) -> Option<&DebugScenario> {
+        self.last_scheduled_scenarios.back()
+    }
+
     pub fn list_debug_scenarios(
         &self,
         task_contexts: &TaskContexts,
