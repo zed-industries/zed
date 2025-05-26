@@ -2161,6 +2161,8 @@ impl Editor {
         let key_context = self.key_context_internal(true, window, cx);
         let in_conflict = self.edit_prediction_in_conflict();
 
+        // TODO: if the binding contains multiple keystrokes, display all of them, not
+        // just the first one.
         AcceptEditPredictionBinding(
             window
                 .bindings_for_action_in_context(&AcceptEditPrediction, key_context)

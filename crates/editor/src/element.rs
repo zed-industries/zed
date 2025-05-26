@@ -6636,7 +6636,7 @@ impl AcceptEditPredictionBinding {
     pub fn keystroke(&self) -> Option<&Keystroke> {
         if let Some(binding) = self.0.as_ref() {
             match &binding.keystrokes() {
-                [keystroke] => Some(keystroke),
+                [keystroke, ..] => Some(keystroke),
                 _ => None,
             }
         } else {
