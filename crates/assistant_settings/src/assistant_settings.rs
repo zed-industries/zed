@@ -614,19 +614,19 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: true
     enabled: Option<bool>,
-    /// Whether to show the assistant panel button in the status bar.
+    /// Whether to show the agent panel button in the status bar.
     ///
     /// Default: true
     button: Option<bool>,
-    /// Where to dock the assistant.
+    /// Where to dock the agent panel.
     ///
     /// Default: right
     dock: Option<AssistantDockPosition>,
-    /// Default width in pixels when the assistant is docked to the left or right.
+    /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640
     default_width: Option<f32>,
-    /// Default height in pixels when the assistant is docked to the bottom.
+    /// Default height in pixels when the agent panel is docked to the bottom.
     ///
     /// Default: 320
     default_height: Option<f32>,
@@ -644,7 +644,7 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: write
     default_profile: Option<AgentProfileId>,
-    /// Which view type to show by default in the Agent Panel.
+    /// Which view type to show by default in the agent panel.
     ///
     /// Default: "thread"
     default_view: Option<DefaultView>,
@@ -676,7 +676,6 @@ pub struct AssistantSettingsContentV2 {
     /// Default: []
     #[serde(default)]
     model_parameters: Vec<LanguageModelParameters>,
-
     /// What completion mode to enable for new threads
     ///
     /// Default: normal
