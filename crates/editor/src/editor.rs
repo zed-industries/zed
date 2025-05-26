@@ -15532,15 +15532,15 @@ impl Editor {
     }
 
     fn pull_diagnostics(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<()> {
+        let debounce = Duration::from_millis(
+            ProjectSettings::get_global(cx)
+                .diagnostics
+                .lsp_pull_diagnostics_debounce_ms?,
+        );
         let project = self.project.as_ref()?.downgrade();
         let buffers = self.buffer.read(cx).all_buffers();
 
         let background_executor = cx.background_executor().clone();
-        let debounce = Duration::from_millis(
-            ProjectSettings::get_global(cx)
-                .diagnostics
-                .lsp_pull_diagnostics_debounce_ms,
-        );
 
         self.tasks_pull_diagnostics_task = cx.spawn_in(window, async move |editor, cx| {
             let Some(project) = project.upgrade() else {

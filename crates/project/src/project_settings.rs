@@ -128,8 +128,8 @@ pub struct DiagnosticsSettings {
     pub include_warnings: bool,
 
     /// Minimum time to wait before pulling diagnostics from the language server(s).
-    /// 0 turns the debounce off.
-    pub lsp_pull_diagnostics_debounce_ms: u64,
+    /// 0 turns the debounce off, None disables the feature.
+    pub lsp_pull_diagnostics_debounce_ms: Option<u64>,
 
     /// Settings for showing inline diagnostics.
     pub inline: InlineDiagnosticsSettings,
@@ -213,7 +213,7 @@ impl Default for DiagnosticsSettings {
         Self {
             button: true,
             include_warnings: true,
-            lsp_pull_diagnostics_debounce_ms: 30,
+            lsp_pull_diagnostics_debounce_ms: Some(30),
             inline: InlineDiagnosticsSettings::default(),
             cargo: None,
         }
