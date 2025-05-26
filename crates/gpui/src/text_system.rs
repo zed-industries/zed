@@ -16,7 +16,7 @@ use crate::{
     Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, SharedString, Size,
     StrikethroughStyle, UnderlineStyle, px,
 };
-use anyhow::anyhow;
+use anyhow::{Context as _, anyhow};
 use collections::FxHashMap;
 use core::fmt;
 use derive_more::Deref;
@@ -100,7 +100,7 @@ impl TextSystem {
         fn clone_font_id_result(font_id: &Result<FontId>) -> Result<FontId> {
             match font_id {
                 Ok(font_id) => Ok(*font_id),
-                Err(err) => Err(anyhow!("{}", err)),
+                Err(err) => Err(anyhow!("{err}")),
             }
         }
 
@@ -174,7 +174,7 @@ impl TextSystem {
         let glyph_id = self
             .platform_text_system
             .glyph_for_char(font_id, character)
-            .ok_or_else(|| anyhow!("glyph not found for character '{}'", character))?;
+            .with_context(|| format!("glyph not found for character '{character}'"))?;
         let bounds = self
             .platform_text_system
             .typographic_bounds(font_id, glyph_id)?;
@@ -188,7 +188,7 @@ impl TextSystem {
         let glyph_id = self
             .platform_text_system
             .glyph_for_char(font_id, ch)
-            .ok_or_else(|| anyhow!("glyph not found for character '{}'", ch))?;
+            .with_context(|| format!("glyph not found for character '{ch}'"))?;
         let result = self.platform_text_system.advance(font_id, glyph_id)?
             / self.units_per_em(font_id) as f32;
 
@@ -583,7 +583,7 @@ impl DerefMut for LineWrapperHandle {
 
 /// The degree of blackness or stroke thickness of a font. This value ranges from 100.0 to 900.0,
 /// with 400.0 as normal.
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Deserialize, Serialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Serialize, Deserialize, JsonSchema)]
 pub struct FontWeight(pub f32);
 
 impl Default for FontWeight {
@@ -636,7 +636,7 @@ impl FontWeight {
 }
 
 /// Allows italic or oblique faces to be selected.
-#[derive(Clone, Copy, Eq, PartialEq, Debug, Hash, Default)]
+#[derive(Clone, Copy, Eq, PartialEq, Debug, Hash, Default, Serialize, Deserialize, JsonSchema)]
 pub enum FontStyle {
     /// A face that is neither italic not obliqued.
     #[default]

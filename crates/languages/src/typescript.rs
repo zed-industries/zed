@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
@@ -19,6 +19,8 @@ use std::{
     sync::Arc,
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
+use util::archive::extract_zip;
+use util::merge_json_value_into;
 use util::{ResultExt, fs::remove_matching, maybe};
 
 pub(super) fn typescript_task_context() -> ContextProviderWithTasks {
@@ -315,10 +317,7 @@ async fn get_cached_ts_server_binary(
                 arguments: typescript_server_binary_arguments(&old_server_path),
             })
         } else {
-            Err(anyhow!(
-                "missing executable in directory {:?}",
-                container_dir
-            ))
+            anyhow::bail!("missing executable in directory {container_dir:?}")
         }
     })
     .await
@@ -376,81 +375,55 @@ impl LspAdapter for EsLintLspAdapter {
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let workspace_root = delegate.worktree_root_path();
-
-        let eslint_user_settings = cx.update(|cx| {
-            language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)
-                .and_then(|s| s.settings.clone())
-                .unwrap_or_default()
-        })?;
-
-        let mut code_action_on_save = json!({
-            // We enable this, but without also configuring `code_actions_on_format`
-            // in the Zed configuration, it doesn't have an effect.
-            "enable": true,
-        });
-
-        if let Some(code_action_settings) = eslint_user_settings
-            .get("codeActionOnSave")
-            .and_then(|settings| settings.as_object())
-        {
-            if let Some(enable) = code_action_settings.get("enable") {
-                code_action_on_save["enable"] = enable.clone();
-            }
-            if let Some(mode) = code_action_settings.get("mode") {
-                code_action_on_save["mode"] = mode.clone();
-            }
-            if let Some(rules) = code_action_settings.get("rules") {
-                code_action_on_save["rules"] = rules.clone();
-            }
-        }
-
-        let working_directory = eslint_user_settings
-            .get("workingDirectory")
-            .cloned()
-            .unwrap_or_else(|| json!({"mode": "auto"}));
-
-        let problems = eslint_user_settings
-            .get("problems")
-            .cloned()
-            .unwrap_or_else(|| json!({}));
-
-        let rules_customizations = eslint_user_settings
-            .get("rulesCustomizations")
-            .cloned()
-            .unwrap_or_else(|| json!([]));
-
-        let node_path = eslint_user_settings.get("nodePath").unwrap_or(&Value::Null);
         let use_flat_config = Self::FLAT_CONFIG_FILE_NAMES
             .iter()
             .any(|file| workspace_root.join(file).is_file());
 
+        let mut default_workspace_configuration = json!({
+            "validate": "on",
+            "rulesCustomizations": [],
+            "run": "onType",
+            "nodePath": null,
+            "workingDirectory": {
+                "mode": "auto"
+            },
+            "workspaceFolder": {
+                "uri": workspace_root,
+                "name": workspace_root.file_name()
+                    .unwrap_or(workspace_root.as_os_str())
+                    .to_string_lossy(),
+            },
+            "problems": {},
+            "codeActionOnSave": {
+                // We enable this, but without also configuring code_actions_on_format
+                // in the Zed configuration, it doesn't have an effect.
+                "enable": true,
+            },
+            "codeAction": {
+                "disableRuleComment": {
+                    "enable": true,
+                    "location": "separateLine",
+                },
+                "showDocumentation": {
+                    "enable": true
+                }
+            },
+            "experimental": {
+                "useFlatConfig": use_flat_config,
+            },
+        });
+
+        let override_options = cx.update(|cx| {
+            language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)
+                .and_then(|s| s.settings.clone())
+        })?;
+
+        if let Some(override_options) = override_options {
+            merge_json_value_into(override_options, &mut default_workspace_configuration);
+        }
+
         Ok(json!({
-            "": {
-                "validate": "on",
-                "rulesCustomizations": rules_customizations,
-                "run": "onType",
-                "nodePath": node_path,
-                "workingDirectory": working_directory,
-                "workspaceFolder": {
-                    "uri": workspace_root,
-                    "name": workspace_root.file_name()
-                        .unwrap_or(workspace_root.as_os_str()),
-                },
-                "problems": problems,
-                "codeActionOnSave": code_action_on_save,
-                "codeAction": {
-                    "disableRuleComment": {
-                        "enable": true,
-                        "location": "separateLine",
-                    },
-                    "showDocumentation": {
-                        "enable": true
-                    }
-                },
-                "experimental": {
-                    "useFlatConfig": use_flat_config,
-                },
-            }
+            "": default_workspace_configuration
         }))
     }
 
@@ -491,7 +464,7 @@ impl LspAdapter for EsLintLspAdapter {
                 .http_client()
                 .get(&version.url, Default::default(), true)
                 .await
-                .map_err(|err| anyhow!("error downloading release: {}", err))?;
+                .context("downloading release")?;
             match Self::GITHUB_ASSET_KIND {
                 AssetKind::TarGz => {
                     let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
@@ -517,19 +490,16 @@ impl LspAdapter for EsLintLspAdapter {
                         })?;
                 }
                 AssetKind::Zip => {
-                    node_runtime::extract_zip(
-                        &destination_path,
-                        BufReader::new(response.body_mut()),
-                    )
-                    .await
-                    .with_context(|| {
-                        format!("unzipping {} to {:?}", version.url, destination_path)
-                    })?;
+                    extract_zip(&destination_path, response.body_mut())
+                        .await
+                        .with_context(|| {
+                            format!("unzipping {} to {:?}", version.url, destination_path)
+                        })?;
                 }
             }
 
             let mut dir = fs::read_dir(&destination_path).await?;
-            let first = dir.next().await.ok_or(anyhow!("missing first file"))??;
+            let first = dir.next().await.context("missing first file")??;
             let repo_root = destination_path.join("vscode-eslint");
             fs::rename(first.path(), &repo_root).await?;
 
@@ -580,9 +550,10 @@ impl LspAdapter for EsLintLspAdapter {
 
 #[cfg(target_os = "windows")]
 async fn handle_symlink(src_dir: PathBuf, dest_dir: PathBuf) -> Result<()> {
-    if fs::metadata(&src_dir).await.is_err() {
-        return Err(anyhow!("Directory {} not present.", src_dir.display()));
-    }
+    anyhow::ensure!(
+        fs::metadata(&src_dir).await.is_ok(),
+        "Directory {src_dir:?} is not present"
+    );
     if fs::metadata(&dest_dir).await.is_ok() {
         fs::remove_file(&dest_dir).await?;
     }

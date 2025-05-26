@@ -288,7 +288,7 @@ impl TryFrom<StaticColorScaleSet> for ColorScaleSet {
     type Error = anyhow::Error;
 
     fn try_from(value: StaticColorScaleSet) -> Result<Self, Self::Error> {
-        fn to_color_scale(scale: StaticColorScale) -> Result<ColorScale, anyhow::Error> {
+        fn to_color_scale(scale: StaticColorScale) -> anyhow::Result<ColorScale> {
             scale
                 .into_iter()
                 .map(|color| Rgba::try_from(color).map(Hsla::from))

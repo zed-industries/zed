@@ -5,6 +5,7 @@ use std::sync::{
 
 use crate::{
     DebugPanel,
+    persistence::DebuggerPaneItem,
     session::running::variable_list::{CollapseSelectedEntry, ExpandSelectedEntry},
     tests::{active_debug_session_panel, init_test, init_test_workspace, start_debug_session},
 };
@@ -706,7 +707,13 @@ async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestApp
             cx.focus_self(window);
             let running = item.running_state().clone();
 
-            let variable_list = running.read_with(cx, |state, _| state.variable_list().clone());
+            let variable_list = running.update(cx, |state, cx| {
+                // have to do this because the variable list pane should be shown/active
+                // for testing keyboard navigation
+                state.activate_item(DebuggerPaneItem::Variables, window, cx);
+
+                state.variable_list().clone()
+            });
             variable_list.update(cx, |_, cx| cx.focus_self(window));
             running
         });

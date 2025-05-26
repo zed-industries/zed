@@ -1,7 +1,7 @@
 # Configuration
 
 There are various aspects about the Agent Panel that you can customize.
-All of them can be seen by either visiting [the Configuring Zed page](/configuring-zed.md#agent) or by running the `zed: open default settings` action and searching for `"agent"`.
+All of them can be seen by either visiting [the Configuring Zed page](./configuring-zed.md#agent) or by running the `zed: open default settings` action and searching for `"agent"`.
 Alternatively, you can also visit the panel's Settings view by running the `agent: open configuration` action or going to the top-right menu and hitting "Settings".
 
 ## LLM Providers
@@ -9,22 +9,22 @@ Alternatively, you can also visit the panel's Settings view by running the `agen
 Zed supports multiple large language model providers.
 Here's an overview of the supported providers and tool call support:
 
-| Provider                                        | Tool Use Supported   |
-| ----------------------------------------------- | -------------------- |
-| [Anthropic](#anthropic)                         | ✅                   |
-| [Amazon Bedrock](#amazon-bedrock)               | Depends on the Model |
-| [GitHub Copilot Chat](#github-copilot-chat)     | In Some Cases        |
-| [Google AI](#google-ai)                         | ✅                   |
-| [Mistral](#mistral)                             | ✅                   |
-| [Ollama](#ollama)                               | ✅                   |
-| [OpenAI](#openai)                               | ✅                   |
-| [DeepSeek](#deepseek)                           | 🚫                   |
-| [OpenAI API Compatible](#openai-api-compatible) | 🚫                   |
-| [LM Studio](#lmstudio)                          | 🚫                   |
+| Provider                                        | Tool Use Supported                                                                                                                                                          |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Anthropic](#anthropic)                         | ✅                                                                                                                                                                          |
+| [GitHub Copilot Chat](#github-copilot-chat)     | For Some Models ([link](https://github.com/zed-industries/zed/blob/9e0330ba7d848755c9734bf456c716bddf0973f3/crates/language_models/src/provider/copilot_chat.rs#L189-L198)) |
+| [Google AI](#google-ai)                         | ✅                                                                                                                                                                          |
+| [Mistral](#mistral)                             | ✅                                                                                                                                                                          |
+| [Ollama](#ollama)                               | ✅                                                                                                                                                                          |
+| [OpenAI](#openai)                               | ✅                                                                                                                                                                          |
+| [DeepSeek](#deepseek)                           | 🚫                                                                                                                                                                          |
+| [OpenAI API Compatible](#openai-api-compatible) | 🚫                                                                                                                                                                          |
+| [LM Studio](#lmstudio)                          | 🚫                                                                                                                                                                          |
 
 ## Use Your Own Keys {#use-your-own-keys}
 
-While Zed offers hosted versions of models through [our various plans](/ai/plans-and-usage), we're always happy to support users wanting to supply their own API keys for LLM providers. Below, you can learn how to do that for each provider.
+While Zed offers hosted versions of models through [our various plans](/ai/plans-and-usage), we're always happy to support users wanting to supply their own API keys.
+Below, you can learn how to do that for each provider.
 
 > Using your own API keys is _free_—you do not need to subscribe to a Zed plan to use our AI features with your own keys.
 
@@ -421,7 +421,7 @@ Example configuration for using X.ai Grok with Zed:
    lms get qwen2.5-coder-7b
    ```
 
-3. Make sure the LM Studio API server by running:
+3. Make sure the LM Studio API server is running by executing:
 
    ```sh
    lms server start

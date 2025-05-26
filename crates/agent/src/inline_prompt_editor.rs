@@ -9,6 +9,7 @@ use crate::terminal_codegen::TerminalCodegen;
 use crate::thread_store::{TextThreadStore, ThreadStore};
 use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist};
 use crate::{RemoveAllContext, ToggleContextPicker};
+use assistant_context_editor::language_model_selector::ToggleModelSelector;
 use client::ErrorExt;
 use collections::VecDeque;
 use db::kvp::Dismissable;
@@ -24,7 +25,6 @@ use gpui::{
     Focusable, FontWeight, Subscription, TextStyle, WeakEntity, Window, anchored, deferred, point,
 };
 use language_model::{LanguageModel, LanguageModelRegistry};
-use language_model_selector::ToggleModelSelector;
 use parking_lot::Mutex;
 use settings::Settings;
 use std::cmp;
@@ -326,9 +326,7 @@ impl<T: 'static> PromptEditor<T> {
             EditorEvent::Edited { .. } => {
                 if let Some(workspace) = window.root::<Workspace>().flatten() {
                     workspace.update(cx, |workspace, cx| {
-                        let is_via_ssh = workspace
-                            .project()
-                            .update(cx, |project, _| project.is_via_ssh());
+                        let is_via_ssh = workspace.project().read(cx).is_via_ssh();
 
                         workspace
                             .client()
@@ -373,7 +371,7 @@ impl<T: 'static> PromptEditor<T> {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.context_store.update(cx, |store, _cx| store.clear());
+        self.context_store.update(cx, |store, cx| store.clear(cx));
         cx.notify();
     }
 

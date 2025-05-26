@@ -139,7 +139,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                         });
                     });
                 })?;
-                Ok::<_, anyhow::Error>(())
+                anyhow::Ok(())
             })
             .detach_and_log_err(cx);
             cx.emit(DismissEvent);

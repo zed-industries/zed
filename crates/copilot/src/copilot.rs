@@ -133,21 +133,20 @@ enum CopilotServer {
 impl CopilotServer {
     fn as_authenticated(&mut self) -> Result<&mut RunningCopilotServer> {
         let server = self.as_running()?;
-        if matches!(server.sign_in_status, SignInStatus::Authorized { .. }) {
-            Ok(server)
-        } else {
-            Err(anyhow!("must sign in before using copilot"))
-        }
+        anyhow::ensure!(
+            matches!(server.sign_in_status, SignInStatus::Authorized { .. }),
+            "must sign in before using copilot"
+        );
+        Ok(server)
     }
 
     fn as_running(&mut self) -> Result<&mut RunningCopilotServer> {
         match self {
-            CopilotServer::Starting { .. } => Err(anyhow!("copilot is still starting")),
-            CopilotServer::Disabled => Err(anyhow!("copilot is disabled")),
-            CopilotServer::Error(error) => Err(anyhow!(
-                "copilot was not started because of an error: {}",
-                error
-            )),
+            CopilotServer::Starting { .. } => anyhow::bail!("copilot is still starting"),
+            CopilotServer::Disabled => anyhow::bail!("copilot is disabled"),
+            CopilotServer::Error(error) => {
+                anyhow::bail!("copilot was not started because of an error: {error}")
+            }
             CopilotServer::Running(server) => Ok(server),
         }
     }
@@ -648,7 +647,7 @@ impl Copilot {
                 }
             };
 
-            cx.background_spawn(task.map_err(|err| anyhow!("{:?}", err)))
+            cx.background_spawn(task.map_err(|err| anyhow!("{err:?}")))
         } else {
             // If we're downloading, wait until download is finished
             // If we're in a stuck state, display to the user

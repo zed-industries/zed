@@ -50,7 +50,7 @@ use std::{
     sync::{Arc, Once},
 };
 use task::{DebugScenario, SpawnInTerminal, TaskTemplate};
-use util::{ResultExt as _, merge_json_value_into};
+use util::ResultExt as _;
 use worktree::Worktree;
 
 #[derive(Debug)]
@@ -195,10 +195,7 @@ impl DapStore {
                     .and_then(|s| s.binary.as_ref().map(PathBuf::from));
 
                 let delegate = self.delegate(&worktree, console, cx);
-                let cwd: Arc<Path> = definition
-                    .cwd()
-                    .unwrap_or(worktree.read(cx).abs_path().as_ref())
-                    .into();
+                let cwd: Arc<Path> = worktree.read(cx).abs_path().as_ref().into();
 
                 cx.spawn(async move |this, cx| {
                     let mut binary = adapter
@@ -237,9 +234,7 @@ impl DapStore {
                     let binary = DebugAdapterBinary::from_proto(response)?;
                     let mut ssh_command = ssh_client.update(cx, |ssh, _| {
                         anyhow::Ok(SshCommand {
-                            arguments: ssh
-                                .ssh_args()
-                                .ok_or_else(|| anyhow!("SSH arguments not found"))?,
+                            arguments: ssh.ssh_args().context("SSH arguments not found")?,
                         })
                     })??;
 
@@ -316,10 +311,10 @@ impl DapStore {
                             return Ok(result);
                         }
 
-                        Err(anyhow!(
+                        anyhow::bail!(
                             "None of the locators for task `{}` completed successfully",
                             build_command.label
-                        ))
+                        )
                     })
                 } else {
                     Task::ready(Err(anyhow!(
@@ -412,15 +407,11 @@ impl DapStore {
         cx.spawn({
             let session = session.clone();
             async move |this, cx| {
-                let mut binary = this
+                let binary = this
                     .update(cx, |this, cx| {
                         this.get_debug_adapter_binary(definition.clone(), session_id, console, cx)
                     })?
                     .await?;
-
-                if let Some(args) = definition.initialize_args {
-                    merge_json_value_into(args, &mut binary.request_args.configuration);
-                }
 
                 session
                     .update(cx, |session, cx| {
@@ -735,7 +726,7 @@ impl DapStore {
         let task = envelope
             .payload
             .build_command
-            .ok_or_else(|| anyhow!("missing definition"))?;
+            .context("missing definition")?;
         let build_task = SpawnInTerminal::from_proto(task);
         let locator = envelope.payload.locator;
         let request = this
@@ -753,10 +744,7 @@ impl DapStore {
         mut cx: AsyncApp,
     ) -> Result<proto::DebugAdapterBinary> {
         let definition = DebugTaskDefinition::from_proto(
-            envelope
-                .payload
-                .definition
-                .ok_or_else(|| anyhow!("missing definition"))?,
+            envelope.payload.definition.context("missing definition")?,
         )?;
         let (tx, mut rx) = mpsc::unbounded();
         let session_id = envelope.payload.session_id;
