@@ -1,7 +1,7 @@
 //! Handles conversions of `language` items to and from the [`rpc`] protocol.
 
 use crate::{CursorShape, Diagnostic, DiagnosticSourceKind, diagnostic_set::DiagnosticEntry};
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use clock::ReplicaId;
 use lsp::{DiagnosticSeverity, LanguageServerId};
 use rpc::proto;
@@ -264,10 +264,7 @@ pub fn deserialize_anchor_range(range: proto::AnchorRange) -> Result<Range<Ancho
 /// Deserializes an [`crate::Operation`] from the RPC representation.
 pub fn deserialize_operation(message: proto::Operation) -> Result<crate::Operation> {
     Ok(
-        match message
-            .variant
-            .ok_or_else(|| anyhow!("missing operation variant"))?
-        {
+        match message.variant.context("missing operation variant")? {
             proto::operation::Variant::Edit(edit) => {
                 crate::Operation::Buffer(text::Operation::Edit(deserialize_edit_operation(edit)))
             }
@@ -317,7 +314,7 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<crate::Operati
                     line_mode: message.line_mode,
                     cursor_shape: deserialize_cursor_shape(
                         proto::CursorShape::from_i32(message.cursor_shape)
-                            .ok_or_else(|| anyhow!("Missing cursor shape"))?,
+                            .context("Missing cursor shape")?,
                     ),
                 }
             }
@@ -522,11 +519,7 @@ pub fn serialize_transaction(transaction: &Transaction) -> proto::Transaction {
 /// Deserializes a [`Transaction`] from the RPC representation.
 pub fn deserialize_transaction(transaction: proto::Transaction) -> Result<Transaction> {
     Ok(Transaction {
-        id: deserialize_timestamp(
-            transaction
-                .id
-                .ok_or_else(|| anyhow!("missing transaction id"))?,
-        ),
+        id: deserialize_timestamp(transaction.id.context("missing transaction id")?),
         edit_ids: transaction
             .edit_ids
             .into_iter()

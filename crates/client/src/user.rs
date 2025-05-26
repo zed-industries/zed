@@ -108,6 +108,8 @@ pub struct UserStore {
     edit_predictions_usage_amount: Option<u32>,
     edit_predictions_usage_limit: Option<proto::UsageLimit>,
     is_usage_based_billing_enabled: Option<bool>,
+    account_too_young: Option<bool>,
+    has_overdue_invoices: Option<bool>,
     current_user: watch::Receiver<Option<Arc<User>>>,
     accepted_tos_at: Option<Option<DateTime<Utc>>>,
     contacts: Vec<Arc<Contact>>,
@@ -174,6 +176,8 @@ impl UserStore {
             edit_predictions_usage_amount: None,
             edit_predictions_usage_limit: None,
             is_usage_based_billing_enabled: None,
+            account_too_young: None,
+            has_overdue_invoices: None,
             accepted_tos_at: None,
             contacts: Default::default(),
             incoming_contact_requests: Default::default(),
@@ -347,6 +351,8 @@ impl UserStore {
                 .trial_started_at
                 .and_then(|trial_started_at| DateTime::from_timestamp(trial_started_at as i64, 0));
             this.is_usage_based_billing_enabled = message.payload.is_usage_based_billing_enabled;
+            this.account_too_young = message.payload.account_too_young;
+            this.has_overdue_invoices = message.payload.has_overdue_invoices;
 
             if let Some(usage) = message.payload.usage {
                 this.model_request_usage_amount = Some(usage.model_requests_usage_amount);
@@ -388,9 +394,7 @@ impl UserStore {
                     // Users are fetched in parallel above and cached in call to get_users
                     // No need to parallelize here
                     let mut updated_contacts = Vec::new();
-                    let this = this
-                        .upgrade()
-                        .ok_or_else(|| anyhow!("can't upgrade user store handle"))?;
+                    let this = this.upgrade().context("can't upgrade user store handle")?;
                     for contact in message.contacts {
                         updated_contacts
                             .push(Arc::new(Contact::from_proto(contact, &this, cx).await?));
@@ -574,7 +578,7 @@ impl UserStore {
         let client = self.client.upgrade();
         cx.spawn(async move |_, _| {
             client
-                .ok_or_else(|| anyhow!("can't upgrade client reference"))?
+                .context("can't upgrade client reference")?
                 .request(proto::RespondToContactRequest {
                     requester_id,
                     response: proto::ContactRequestResponse::Dismiss as i32,
@@ -596,7 +600,7 @@ impl UserStore {
 
         cx.spawn(async move |this, cx| {
             let response = client
-                .ok_or_else(|| anyhow!("can't upgrade client reference"))?
+                .context("can't upgrade client reference")?
                 .request(request)
                 .await;
             this.update(cx, |this, cx| {
@@ -663,7 +667,7 @@ impl UserStore {
                         this.users
                             .get(user_id)
                             .cloned()
-                            .ok_or_else(|| anyhow!("user {} not found", user_id))
+                            .with_context(|| format!("user {user_id} not found"))
                     })
                     .collect()
             })?
@@ -703,7 +707,7 @@ impl UserStore {
                 this.users
                     .get(&user_id)
                     .cloned()
-                    .ok_or_else(|| anyhow!("server responded with no users"))
+                    .context("server responded with no users")
             })?
         })
     }
@@ -754,6 +758,16 @@ impl UserStore {
         self.current_user.clone()
     }
 
+    /// Returns whether the user's account is too new to use the service.
+    pub fn account_too_young(&self) -> bool {
+        self.account_too_young.unwrap_or(false)
+    }
+
+    /// Returns whether the current user has overdue invoices and usage should be blocked.
+    pub fn has_overdue_invoices(&self) -> bool {
+        self.has_overdue_invoices.unwrap_or(false)
+    }
+
     pub fn current_user_has_accepted_terms(&self) -> Option<bool> {
         self.accepted_tos_at
             .map(|accepted_tos_at| accepted_tos_at.is_some())
@@ -765,20 +779,17 @@ impl UserStore {
         };
 
         let client = self.client.clone();
-        cx.spawn(async move |this, cx| {
-            if let Some(client) = client.upgrade() {
-                let response = client
-                    .request(proto::AcceptTermsOfService {})
-                    .await
-                    .context("error accepting tos")?;
-
-                this.update(cx, |this, cx| {
-                    this.set_current_user_accepted_tos_at(Some(response.accepted_tos_at));
-                    cx.emit(Event::PrivateUserInfoUpdated);
-                })
-            } else {
-                Err(anyhow!("client not found"))
-            }
+        cx.spawn(async move |this, cx| -> anyhow::Result<()> {
+            let client = client.upgrade().context("client not found")?;
+            let response = client
+                .request(proto::AcceptTermsOfService {})
+                .await
+                .context("error accepting tos")?;
+            this.update(cx, |this, cx| {
+                this.set_current_user_accepted_tos_at(Some(response.accepted_tos_at));
+                cx.emit(Event::PrivateUserInfoUpdated);
+            })?;
+            Ok(())
         })
     }
 
@@ -897,7 +908,7 @@ impl Contact {
 impl Collaborator {
     pub fn from_proto(message: proto::Collaborator) -> Result<Self> {
         Ok(Self {
-            peer_id: message.peer_id.ok_or_else(|| anyhow!("invalid peer id"))?,
+            peer_id: message.peer_id.context("invalid peer id")?,
             replica_id: message.replica_id as ReplicaId,
             user_id: message.user_id as UserId,
             is_host: message.is_host,

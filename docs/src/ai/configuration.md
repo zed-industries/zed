@@ -1,7 +1,7 @@
 # Configuration
 
 There are various aspects about the Agent Panel that you can customize.
-All of them can be seen by either visiting [the Configuring Zed page](/configuring-zed.md#agent) or by running the `zed: open default settings` action and searching for `"agent"`.
+All of them can be seen by either visiting [the Configuring Zed page](./configuring-zed.md#agent) or by running the `zed: open default settings` action and searching for `"agent"`.
 Alternatively, you can also visit the panel's Settings view by running the `agent: open configuration` action or going to the top-right menu and hitting "Settings".
 
 ## LLM Providers
@@ -9,20 +9,22 @@ Alternatively, you can also visit the panel's Settings view by running the `agen
 Zed supports multiple large language model providers.
 Here's an overview of the supported providers and tool call support:
 
-| Provider                                        | Tool Use Supported |
-| ----------------------------------------------- | ------------------ |
-| [Anthropic](#anthropic)                         | ✅                 |
-| [GitHub Copilot Chat](#github-copilot-chat)     | In Some Cases      |
-| [Google AI](#google-ai)                         | ✅                 |
-| [Ollama](#ollama)                               | ✅                 |
-| [OpenAI](#openai)                               | ✅                 |
-| [DeepSeek](#deepseek)                           | 🚫                 |
-| [OpenAI API Compatible](#openai-api-compatible) | 🚫                 |
-| [LM Studio](#lmstudio)                          | 🚫                 |
+| Provider                                        | Tool Use Supported                                                                                                                                                          |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Anthropic](#anthropic)                         | ✅                                                                                                                                                                          |
+| [GitHub Copilot Chat](#github-copilot-chat)     | For Some Models ([link](https://github.com/zed-industries/zed/blob/9e0330ba7d848755c9734bf456c716bddf0973f3/crates/language_models/src/provider/copilot_chat.rs#L189-L198)) |
+| [Google AI](#google-ai)                         | ✅                                                                                                                                                                          |
+| [Mistral](#mistral)                             | ✅                                                                                                                                                                          |
+| [Ollama](#ollama)                               | ✅                                                                                                                                                                          |
+| [OpenAI](#openai)                               | ✅                                                                                                                                                                          |
+| [DeepSeek](#deepseek)                           | 🚫                                                                                                                                                                          |
+| [OpenAI API Compatible](#openai-api-compatible) | 🚫                                                                                                                                                                          |
+| [LM Studio](#lmstudio)                          | 🚫                                                                                                                                                                          |
 
 ## Use Your Own Keys {#use-your-own-keys}
 
-While Zed offers hosted versions of models through [our various plans](/ai/plans-and-usage), we're always happy to support users wanting to supply their own API keys for LLM providers. Below, you can learn how to do that for each provider.
+While Zed offers hosted versions of models through [our various plans](/ai/plans-and-usage), we're always happy to support users wanting to supply their own API keys.
+Below, you can learn how to do that for each provider.
 
 > Using your own API keys is _free_—you do not need to subscribe to a Zed plan to use our AI features with your own keys.
 
@@ -128,6 +130,44 @@ By default Zed will use `stable` versions of models, but you can use specific ve
 
 Custom models will be listed in the model dropdown in the Agent Panel.
 
+### Mistral {#mistral}
+
+> 🔨Supports tool use
+
+1. Visit the Mistral platform and [create an API key](https://console.mistral.ai/api-keys/)
+2. Open the configuration view (`assistant: show configuration`) and navigate to the Mistral section
+3. Enter your Mistral API key
+
+The Mistral API key will be saved in your keychain.
+
+Zed will also use the `MISTRAL_API_KEY` environment variable if it's defined.
+
+#### Mistral Custom Models {#mistral-custom-models}
+
+The Zed Assistant comes pre-configured with several Mistral models (codestral-latest, mistral-large-latest, mistral-medium-latest, mistral-small-latest, open-mistral-nemo, and open-codestral-mamba). All the default models support tool use. If you wish to use alternate models or customize their parameters, you can do so by adding the following to your Zed `settings.json`:
+
+```json
+{
+  "language_models": {
+    "mistral": {
+      "api_url": "https://api.mistral.ai/v1",
+      "available_models": [
+        {
+          "name": "mistral-tiny-latest",
+          "display_name": "Mistral Tiny",
+          "max_tokens": 32000,
+          "max_output_tokens": 4096,
+          "max_completion_tokens": 1024,
+          "supports_tools": true
+        }
+      ]
+    }
+  }
+}
+```
+
+Custom models will be listed in the model dropdown in the assistant panel.
+
 ### Ollama {#ollama}
 
 > ✅ Supports tool use
@@ -167,7 +207,8 @@ Depending on your hardware or use-case you may wish to limit or increase the con
         {
           "name": "qwen2.5-coder",
           "display_name": "qwen 2.5 coder 32K",
-          "max_tokens": 32768
+          "max_tokens": 32768,
+          "supports_tools": true
         }
       ]
     }
@@ -178,6 +219,12 @@ Depending on your hardware or use-case you may wish to limit or increase the con
 If you specify a context length that is too large for your hardware, Ollama will log an error. You can watch these logs by running: `tail -f ~/.ollama/logs/ollama.log` (MacOS) or `journalctl -u ollama -f` (Linux). Depending on the memory available on your machine, you may need to adjust the context length to a smaller value.
 
 You may also optionally specify a value for `keep_alive` for each available model. This can be an integer (seconds) or alternately a string duration like "5m", "10m", "1h", "1d", etc., For example `"keep_alive": "120s"` will allow the remote server to unload the model (freeing up GPU VRAM) after 120seconds.
+
+The `supports_tools` option controls whether or not the model will use additional tools.
+If the model is tagged with `tools` in the Ollama catalog this option should be supplied, and built in profiles `Ask` and `Write` can be used.
+If the model is not tagged with `tools` in the Ollama catalog, this
+option can still be supplied with value `true`; however be aware that only the
+`Minimal` built in profile will work.
 
 ### OpenAI {#openai}
 
@@ -299,7 +346,7 @@ Example configuration for using X.ai Grok with Zed:
    lms get qwen2.5-coder-7b
    ```
 
-3. Make sure the LM Studio API server by running:
+3. Make sure the LM Studio API server is running by executing:
 
    ```sh
    lms server start
@@ -384,7 +431,7 @@ Example configuration:
 You can configure additional models that will be used to perform inline assists in parallel.
 When you do this, the inline assist UI will surface controls to cycle between the alternatives generated by each model.
 
-The models you specify here are always used in _addition_ to your [default model](./ai/configuration.md#default-model).
+The models you specify here are always used in _addition_ to your [default model](#default-model).
 For example, the following configuration will generate two outputs for every assist.
 One with Claude 3.7 Sonnet, and one with GPT-4o.
 

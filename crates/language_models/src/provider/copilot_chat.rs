@@ -23,7 +23,7 @@ use language_model::{
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelToolChoice, LanguageModelToolResultContent,
     LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, RateLimiter, Role,
-    StopReason,
+    StopReason, WrappedTextContent,
 };
 use settings::SettingsStore;
 use std::time::Duration;
@@ -60,10 +60,10 @@ impl State {
 impl CopilotChatLanguageModelProvider {
     pub fn new(cx: &mut App) -> Self {
         let state = cx.new(|cx| {
-            let _copilot_chat_subscription = CopilotChat::global(cx)
+            let copilot_chat_subscription = CopilotChat::global(cx)
                 .map(|copilot_chat| cx.observe(&copilot_chat, |_, _, cx| cx.notify()));
             State {
-                _copilot_chat_subscription,
+                _copilot_chat_subscription: copilot_chat_subscription,
                 _settings_subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                     cx.notify();
                 }),
@@ -455,7 +455,11 @@ fn into_copilot_chat(
                 for content in &message.content {
                     if let MessageContent::ToolResult(tool_result) = content {
                         let content = match &tool_result.content {
-                            LanguageModelToolResultContent::Text(text) => text.to_string().into(),
+                            LanguageModelToolResultContent::Text(text)
+                            | LanguageModelToolResultContent::WrappedText(WrappedTextContent {
+                                text,
+                                ..
+                            }) => text.to_string().into(),
                             LanguageModelToolResultContent::Image(image) => {
                                 if model.supports_vision() {
                                     ChatMessageContent::Multipart(vec![ChatMessagePart::Image {

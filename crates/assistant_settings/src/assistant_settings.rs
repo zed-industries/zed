@@ -8,8 +8,9 @@ use anyhow::{Result, bail};
 use collections::IndexMap;
 use deepseek::Model as DeepseekModel;
 use gpui::{App, Pixels, SharedString};
-use language_model::{CloudModel, LanguageModel};
+use language_model::LanguageModel;
 use lmstudio::Model as LmStudioModel;
+use mistral::Model as MistralModel;
 use ollama::Model as OllamaModel;
 use schemars::{JsonSchema, schema::Schema};
 use serde::{Deserialize, Serialize};
@@ -44,7 +45,7 @@ pub enum NotifyWhenAgentWaiting {
 #[schemars(deny_unknown_fields)]
 pub enum AssistantProviderContentV1 {
     #[serde(rename = "zed.dev")]
-    ZedDotDev { default_model: Option<CloudModel> },
+    ZedDotDev { default_model: Option<String> },
     #[serde(rename = "openai")]
     OpenAi {
         default_model: Option<OpenAiModel>,
@@ -69,6 +70,11 @@ pub enum AssistantProviderContentV1 {
     #[serde(rename = "deepseek")]
     DeepSeek {
         default_model: Option<DeepseekModel>,
+        api_url: Option<String>,
+    },
+    #[serde(rename = "mistral")]
+    Mistral {
+        default_model: Option<MistralModel>,
         api_url: Option<String>,
     },
 }
@@ -216,7 +222,7 @@ impl AssistantSettingsContent {
                             AssistantProviderContentV1::ZedDotDev { default_model } => {
                                 default_model.map(|model| LanguageModelSelection {
                                     provider: "zed.dev".into(),
-                                    model: model.id().to_string(),
+                                    model,
                                 })
                             }
                             AssistantProviderContentV1::OpenAi { default_model, .. } => {
@@ -246,6 +252,12 @@ impl AssistantSettingsContent {
                             AssistantProviderContentV1::DeepSeek { default_model, .. } => {
                                 default_model.map(|model| LanguageModelSelection {
                                     provider: "deepseek".into(),
+                                    model: model.id().to_string(),
+                                })
+                            }
+                            AssistantProviderContentV1::Mistral { default_model, .. } => {
+                                default_model.map(|model| LanguageModelSelection {
+                                    provider: "mistral".into(),
                                     model: model.id().to_string(),
                                 })
                             }
@@ -371,7 +383,9 @@ impl AssistantSettingsContent {
                                 _ => None,
                             };
                             settings.provider = Some(AssistantProviderContentV1::LmStudio {
-                                default_model: Some(lmstudio::Model::new(&model, None, None)),
+                                default_model: Some(lmstudio::Model::new(
+                                    &model, None, None, false,
+                                )),
                                 api_url,
                             });
                         }
@@ -692,7 +706,7 @@ impl JsonSchema for LanguageModelProviderSetting {
         schemars::schema::SchemaObject {
             enum_values: Some(vec![
                 "anthropic".into(),
-                "bedrock".into(),
+                "amazon-bedrock".into(),
                 "google".into(),
                 "lmstudio".into(),
                 "ollama".into(),
@@ -700,6 +714,7 @@ impl JsonSchema for LanguageModelProviderSetting {
                 "zed.dev".into(),
                 "copilot_chat".into(),
                 "deepseek".into(),
+                "mistral".into(),
             ]),
             ..Default::default()
         }

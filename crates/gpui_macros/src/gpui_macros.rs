@@ -1,6 +1,5 @@
 mod derive_app_context;
 mod derive_into_element;
-mod derive_path_static_str;
 mod derive_render;
 mod derive_visual_context;
 mod register_action;
@@ -29,12 +28,6 @@ pub fn derive_into_element(input: TokenStream) -> TokenStream {
 #[doc(hidden)]
 pub fn derive_render(input: TokenStream) -> TokenStream {
     derive_render::derive_render(input)
-}
-
-#[proc_macro_derive(PathStaticStr)]
-#[doc(hidden)]
-pub fn derive_path_static_str(input: TokenStream) -> TokenStream {
-    derive_path_static_str::derive_path_static_str(input)
 }
 
 /// #[derive(AppContext)] is used to create a context out of anything that holds a `&mut App`
@@ -190,7 +183,7 @@ pub(crate) fn get_simple_attribute_field(ast: &DeriveInput, name: &'static str) 
         syn::Data::Struct(data_struct) => data_struct
             .fields
             .iter()
-            .find(|field| field.attrs.iter().any(|attr| attr.path.is_ident(name)))
+            .find(|field| field.attrs.iter().any(|attr| attr.path().is_ident(name)))
             .map(|field| field.ident.clone().unwrap()),
         syn::Data::Enum(_) => None,
         syn::Data::Union(_) => None,

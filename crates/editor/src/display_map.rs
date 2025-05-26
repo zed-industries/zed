@@ -960,8 +960,11 @@ impl DisplaySnapshot {
             }) {
                 if chunk.is_unnecessary {
                     diagnostic_highlight.fade_out = Some(editor_style.unnecessary_code_fade);
-                }
-                if editor_style.show_underlines {
+                // https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnosticTag
+                // states that
+                // > Clients are allowed to render diagnostics with this tag faded out instead of having an error squiggle.
+                // for the unnecessary diagnostics, so do not underline them.
+                } else if editor_style.show_underlines {
                     let diagnostic_color = super::diagnostic_style(severity, &editor_style.status);
                     diagnostic_highlight.underline = Some(UnderlineStyle {
                         color: Some(diagnostic_color),
@@ -1026,9 +1029,7 @@ impl DisplaySnapshot {
         }
 
         let font_size = editor_style.text.font_size.to_pixels(*rem_size);
-        text_system
-            .layout_line(&line, font_size, &runs)
-            .expect("we expect the font to be loaded because it's rendered by the editor")
+        text_system.layout_line(&line, font_size, &runs)
     }
 
     pub fn x_for_display_point(

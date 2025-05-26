@@ -17,7 +17,7 @@ use crate::{
     task_context::RunnableRange,
     text_diff::text_diff,
 };
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use async_watch as watch;
 pub use clock::ReplicaId;
 use clock::{AGENT_REPLICA_ID, Lamport};
@@ -501,7 +501,7 @@ pub struct Diff {
     pub edits: Vec<(Range<usize>, Arc<str>)>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct DiagnosticEndpoint {
     offset: usize,
     is_start: bool,
@@ -825,13 +825,11 @@ impl Buffer {
         message: proto::BufferState,
         file: Option<Arc<dyn File>>,
     ) -> Result<Self> {
-        let buffer_id = BufferId::new(message.id)
-            .with_context(|| anyhow!("Could not deserialize buffer_id"))?;
+        let buffer_id = BufferId::new(message.id).context("Could not deserialize buffer_id")?;
         let buffer = TextBuffer::new(replica_id, buffer_id, message.base_text);
         let mut this = Self::build(buffer, file, capability);
         this.text.set_line_ending(proto::deserialize_line_ending(
-            rpc::proto::LineEnding::from_i32(message.line_ending)
-                .ok_or_else(|| anyhow!("missing line_ending"))?,
+            rpc::proto::LineEnding::from_i32(message.line_ending).context("missing line_ending")?,
         ));
         this.saved_version = proto::deserialize_version(&message.saved_version);
         this.saved_mtime = message.saved_mtime.map(|time| time.into());
@@ -2912,7 +2910,7 @@ impl BufferSnapshot {
                 end
             };
             if let Some((start, end)) = start.zip(end) {
-                if start.row == end.row && !significant_indentation {
+                if start.row == end.row && (!significant_indentation || start.column < end.column) {
                     continue;
                 }
                 let range = start..end;
@@ -4603,7 +4601,7 @@ impl<'a> Iterator for BufferChunks<'a> {
                 syntax_highlight_id: highlight_id,
                 diagnostic_severity: self.current_diagnostic_severity(),
                 is_unnecessary: self.current_code_is_unnecessary(),
-                ..Default::default()
+                ..Chunk::default()
             })
         } else {
             None
