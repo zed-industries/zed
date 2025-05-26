@@ -1,11 +1,10 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use editor::{Bias, CompletionProvider, Editor, EditorEvent, EditorMode, ExcerptId, MultiBuffer};
 use fuzzy::StringMatch;
 use gpui::{
     AsyncWindowContext, DivInspectorState, Entity, InspectorElementId, IntoElement,
     StyleRefinement, Task, Window, inspector_reflection::FunctionReflection, styled_reflection,
 };
-
 use language::language_settings::SoftWrap;
 use language::{
     Anchor, Buffer, BufferSnapshot, CodeLabel, Diagnostic, DiagnosticEntry, DiagnosticSet,
@@ -27,15 +26,22 @@ use util::split_str_with_ranges;
 const ZED_INSPECTOR_STYLE_JSON: &str = "/zed-inspector-style.json";
 
 pub(crate) struct DivInspector {
+    state: State,
     project: Entity<Project>,
     inspector_id: Option<InspectorElementId>,
     inspector_state: Option<DivInspectorState>,
-    state: State,
+    /// Value of `DivInspectorState.base_style` when initially picked.
     initial_style: StyleRefinement,
+    /// Portion of `initial_style` that can't be converted to rust code.
+    unconvertible_style: StyleRefinement,
+    /// Edits the user has made to the json buffer: `json_editor - (unconvertible_style + rust_editor)`.
     json_style_overrides: StyleRefinement,
+    /// Error to display from parsing the json, or if serialization errors somehow occur.
     json_style_error: Option<SharedString>,
+    /// Currently selected completion.
     rust_completion: Option<String>,
-    rust_completion_position: Option<Anchor>,
+    /// Range that will be replaced by the completion if selected.
+    rust_completion_replace_range: Option<Range<Anchor>>,
 }
 
 enum State {
@@ -122,14 +128,15 @@ impl DivInspector {
         .detach();
 
         DivInspector {
+            state: State::Loading,
             project,
             inspector_id: None,
             inspector_state: None,
-            state: State::Loading,
             initial_style: StyleRefinement::default(),
+            unconvertible_style: StyleRefinement::default(),
             json_style_overrides: StyleRefinement::default(),
             rust_completion: None,
-            rust_completion_position: None,
+            rust_completion_replace_range: None,
             json_style_error: None,
         }
     }
@@ -147,10 +154,9 @@ impl DivInspector {
         if self.inspector_id.as_ref() == Some(id) {
             return;
         }
-        self.inspector_id = Some(id.clone());
 
+        self.inspector_id = Some(id.clone());
         self.initial_style = style.clone();
-        self.json_style_overrides = StyleRefinement::default();
 
         let (rust_style_buffer, json_style_buffer) = match &self.state {
             State::BuffersLoaded {
@@ -177,7 +183,17 @@ impl DivInspector {
             }
         });
 
-        self.reset_style_editors(&rust_style_editor, &json_style_editor, window, cx);
+        let rust_style =
+            match self.reset_style_editors(&rust_style_editor, &json_style_editor, window, cx) {
+                Ok(rust_style) => {
+                    self.json_style_error = None;
+                    rust_style
+                }
+                Err(err) => {
+                    self.json_style_error = Some(format!("{err}").into());
+                    return;
+                }
+            };
 
         cx.subscribe_in(&json_style_editor, window, {
             let id = id.clone();
@@ -190,25 +206,25 @@ impl DivInspector {
                             let (rust_style, _) = this.style_from_rust_buffer_snapshot(
                                 &rust_style_buffer.read(cx).snapshot(),
                             );
-                            let mut initial_plus_rust = this.initial_style.clone();
-                            initial_plus_rust.refine(&rust_style);
+
+                            let mut unconvertible_plus_rust = this.unconvertible_style.clone();
+                            unconvertible_plus_rust.refine(&rust_style);
 
                             // The serialization of `DefiniteLength::Fraction` does not perfectly
                             // roundtrip because with f32, `(x / 100.0 * 100.0) == x` is not always
                             // true (such as for `p_1_3`). This can cause these values to
                             // erroneously appear in `json_style_overrides` since they are not
                             // perfectly equal. Roundtripping before `subtract` fixes this.
-                            initial_plus_rust = serde_json::to_string(dbg!(&initial_plus_rust))
-                                .ok()
-                                .and_then(|json| serde_json_lenient::from_str_lenient(&json).ok())
-                                .unwrap_or(initial_plus_rust);
+                            unconvertible_plus_rust =
+                                serde_json::to_string(&unconvertible_plus_rust)
+                                    .ok()
+                                    .and_then(|json| {
+                                        serde_json_lenient::from_str_lenient(&json).ok()
+                                    })
+                                    .unwrap_or(unconvertible_plus_rust);
 
-                            // `json_style_overrides` is the parts of the json style that do not
-                            // match (initial_style + rust_style). This allows for user edits to
-                            // the json style to stick around after switching to edit the rust
-                            // style.
                             this.json_style_overrides =
-                                new_style.subtract(dbg!(&initial_plus_rust));
+                                new_style.subtract(&unconvertible_plus_rust);
 
                             window.with_inspector_state::<DivInspectorState, _>(
                                 Some(&id),
@@ -247,6 +263,8 @@ impl DivInspector {
         })
         .detach();
 
+        self.unconvertible_style = style.subtract(&rust_style);
+        self.json_style_overrides = StyleRefinement::default();
         self.state = State::Ready {
             rust_style_buffer,
             rust_style_editor,
@@ -262,40 +280,44 @@ impl DivInspector {
                 json_style_editor,
                 ..
             } => {
-                self.reset_style_editors(
+                if let Err(err) = self.reset_style_editors(
                     &rust_style_editor.clone(),
                     &json_style_editor.clone(),
                     window,
                     cx,
-                );
+                ) {
+                    self.json_style_error = Some(format!("{err}").into());
+                } else {
+                    self.json_style_error = None;
+                }
             }
             _ => {}
         }
     }
 
     fn reset_style_editors(
-        &mut self,
+        &self,
         rust_style_editor: &Entity<Editor>,
         json_style_editor: &Entity<Editor>,
         window: &mut Window,
         cx: &mut App,
-    ) {
+    ) -> Result<StyleRefinement> {
         let json_text = match serde_json::to_string_pretty(&self.initial_style) {
             Ok(json_text) => json_text,
             Err(err) => {
-                self.json_style_error =
-                    Some(format!("Failed to convert style to JSON: {err}").into());
-                return;
+                return Err(anyhow!("Failed to convert style to JSON: {err}"));
             }
         };
-        self.json_style_error = None;
 
+        let (rust_code, rust_style) = guess_rust_code_from_style(&self.initial_style);
         rust_style_editor.update(cx, |rust_style_editor, cx| {
-            rust_style_editor.set_text(guess_rust_code_from_style(&self.initial_style), window, cx);
+            rust_style_editor.set_text(rust_code, window, cx);
         });
         json_style_editor.update(cx, |json_style_editor, cx| {
             json_style_editor.set_text(json_text, window, cx);
         });
+
+        Ok(rust_style)
     }
 
     fn handle_rust_completion_selection_change(
@@ -349,15 +371,15 @@ impl DivInspector {
             rust_style
         });
 
-        // Preserve parts of the json style which do not come from the initial style or rust style.
-        // This way user edits to the json style are preserved when they are not overridden by the
-        // rust style.
+        // Preserve parts of the json style which do not come from the unconvertible style or rust
+        // style. This way user edits to the json style are preserved when they are not overridden
+        // by the rust style.
         //
         // This results in a behavior where user changes to the json style that do overlap with the
         // rust style will get set to the rust style when the user edits the rust style. It would be
         // possible to update the rust style when the json style changes, but this is undesireable
         // as the user may be working on the actual code in the rust style.
-        let mut new_style = self.initial_style.clone();
+        let mut new_style = self.unconvertible_style.clone();
         new_style.refine(&self.json_style_overrides);
         let new_style = new_style.refined(rust_style);
 
@@ -377,19 +399,18 @@ impl DivInspector {
         &self,
         snapshot: &BufferSnapshot,
     ) -> (StyleRefinement, Vec<Range<Anchor>>) {
-        let method_names = if let Some((completion, position)) = self
+        let method_names = if let Some((completion, completion_range)) = self
             .rust_completion
             .as_ref()
-            .zip(self.rust_completion_position.as_ref())
+            .zip(self.rust_completion_replace_range.as_ref())
         {
-            let Range { start, end } = completion_replace_range(&snapshot, position)
-                .unwrap_or(position.clone()..position.clone());
             let before_text = snapshot
-                .text_for_range(0..start.to_offset(&snapshot))
+                .text_for_range(0..completion_range.start.to_offset(&snapshot))
                 .collect::<String>();
             let after_text = snapshot
                 .text_for_range(
-                    end.to_offset(&snapshot)..snapshot.clip_offset(usize::MAX, Bias::Left),
+                    completion_range.end.to_offset(&snapshot)
+                        ..snapshot.clip_offset(usize::MAX, Bias::Left),
                 )
                 .collect::<String>();
             let mut method_names = split_str_with_ranges(&before_text, is_not_identifier_char)
@@ -568,7 +589,7 @@ static STYLE_METHODS: LazyLock<Vec<(Box<StyleRefinement>, FunctionReflection<Sty
             .collect()
     });
 
-fn guess_rust_code_from_style(goal_style: &StyleRefinement) -> String {
+fn guess_rust_code_from_style(goal_style: &StyleRefinement) -> (String, StyleRefinement) {
     let mut subset_methods = Vec::new();
     for (style, method) in STYLE_METHODS.iter() {
         if goal_style.is_superset_of(style) {
@@ -576,17 +597,17 @@ fn guess_rust_code_from_style(goal_style: &StyleRefinement) -> String {
         }
     }
 
-    let mut result = "fn build() -> Div {\n    div()".to_string();
+    let mut code = "fn build() -> Div {\n    div()".to_string();
     let mut style = StyleRefinement::default();
     for method in subset_methods {
         let before_change = style.clone();
         style = method.invoke(style);
         if before_change != style {
-            let _ = write!(result, "\n        .{}()", &method.name);
+            let _ = write!(code, "\n        .{}()", &method.name);
         }
     }
-    result.push_str("\n}");
-    result
+    code.push_str("\n}");
+    (code, style)
 }
 
 fn is_not_identifier_char(c: char) -> bool {
@@ -607,14 +628,14 @@ impl CompletionProvider for RustStyleCompletionProvider {
         _window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Task<Result<Option<Vec<project::Completion>>>> {
-        self.div_inspector.update(cx, |div_inspector, _cx| {
-            div_inspector.rust_completion_position = Some(position.clone());
-        });
-
         let Some(replace_range) = completion_replace_range(&buffer.read(cx).snapshot(), &position)
         else {
             return Task::ready(Ok(Some(Vec::new())));
         };
+
+        self.div_inspector.update(cx, |div_inspector, _cx| {
+            div_inspector.rust_completion_replace_range = Some(replace_range.clone());
+        });
 
         Task::ready(Ok(Some(
             STYLE_METHODS
