@@ -20,10 +20,10 @@ use project::{
     worktree_store::WorktreeStore,
 };
 use ui::{
-    App, ButtonCommon, Clickable, Color, Context, Div, Icon, IconButton, IconName, Indicator,
-    InteractiveElement, IntoElement, Label, LabelCommon, LabelSize, ListItem, ParentElement,
-    Render, Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement, Styled,
-    Toggleable, Tooltip, Window, div, h_flex, px, v_flex,
+    App, ButtonCommon, Clickable, Color, Context, Div, FluentBuilder as _, Icon, IconButton,
+    IconName, Indicator, InteractiveElement, IntoElement, Label, LabelCommon, LabelSize, ListItem,
+    ParentElement, Render, Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement,
+    Styled, Toggleable, Tooltip, Window, div, h_flex, px, v_flex,
 };
 use util::ResultExt;
 use workspace::Workspace;
@@ -652,17 +652,15 @@ impl ExceptionBreakpoint {
                 .gap_1()
                 .h_6()
                 .justify_center()
+                .id(("exception-breakpoint-label", ix))
                 .child(
                     Label::new(self.data.label.clone())
                         .size(LabelSize::Small)
                         .line_height_style(ui::LineHeightStyle::UiLabel),
                 )
-                .children(self.data.description.clone().map(|description| {
-                    Label::new(description)
-                        .size(LabelSize::XSmall)
-                        .line_height_style(ui::LineHeightStyle::UiLabel)
-                        .color(Color::Muted)
-                })),
+                .when_some(self.data.description.clone(), |el, description| {
+                    el.tooltip(Tooltip::text(description))
+                }),
         )
     }
 }
