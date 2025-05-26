@@ -779,9 +779,7 @@ impl FileFinderDelegate {
                 let worktree = worktree.read(cx);
                 PathMatchCandidateSet {
                     snapshot: worktree.snapshot(),
-                    include_ignored: worktree
-                        .root_entry()
-                        .map_or(false, |entry| entry.is_ignored),
+                    include_ignored: true,
                     include_root_name,
                     candidates: project::Candidates::Files,
                 }
