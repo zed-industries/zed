@@ -60,3 +60,9 @@
     "**/.settings"
   ]
 }
+{
+  "editor": {
+    "edit_prediction_provider": "zed",
+    "show_prediction_indicator": false
+  }
+}
