@@ -926,7 +926,7 @@ mod tests {
                             && chars.peek().is_some_and(|c| *c != '\\');
 
                         if is_windows_abs_path_start {
-                            // Convert linux abs_path_start into Windows abs path start so that the
+                            // Convert linux abs path start into Windows abs path start so that the
                             // same test can be used for both OSes.
                             term.input('C');
                             prev_input_point = prev_input_point_from_term(&term);
