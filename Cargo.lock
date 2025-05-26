@@ -4248,6 +4248,7 @@ dependencies = [
  "util",
  "workspace",
  "workspace-hack",
+ "zed_actions",
 ]
 
 [[package]]
