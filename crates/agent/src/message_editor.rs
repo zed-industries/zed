@@ -36,7 +36,7 @@ use project::Project;
 use prompt_store::PromptStore;
 use proto::Plan;
 use settings::Settings;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use theme::ThemeSettings;
 use ui::{Disclosure, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use util::{ResultExt as _, maybe};
@@ -65,7 +65,6 @@ pub struct MessageEditor {
     prompt_store: Option<Entity<PromptStore>>,
     context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
-    send_time: Option<Instant>,
     model_selector: Entity<AgentModelSelector>,
     last_loaded_context: Option<ContextLoadResult>,
     load_context_task: Option<Shared<Task<()>>>,
@@ -221,7 +220,6 @@ impl MessageEditor {
             prompt_store,
             context_strip,
             context_picker_menu_handle,
-            send_time: None,
             load_context_task: None,
             last_loaded_context: None,
             model_selector,
@@ -299,7 +297,6 @@ impl MessageEditor {
         }
 
         self.set_editor_is_expanded(false, cx);
-        self.send_time = Some(Instant::now());
         self.send_to_model(window, cx);
 
         cx.notify();
@@ -342,17 +339,9 @@ impl MessageEditor {
         let context_task = self.reload_context(cx);
         let window_handle = window.window_handle();
 
-        cx.spawn(async move |this, cx| {
+        cx.spawn(async move |_this, cx| {
             let (checkpoint, loaded_context) = future::join(checkpoint, context_task).await;
             let loaded_context = loaded_context.unwrap_or_default();
-
-            this.update(cx, |this, _cx| {
-                if let Some(send_time) = this.send_time.take() {
-                    let elapsed = send_time.elapsed();
-                    println!("Time between 'sent to model' and dbg(4): {:?}", elapsed);
-                }
-            })
-            .log_err();
 
             thread
                 .update(cx, |thread, cx| {

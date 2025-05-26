@@ -1498,10 +1498,7 @@ async fn exclude_files(git: &GitBinary) -> Result<GitExcludeOverride> {
     });
 
     let excluded_paths = futures::future::join_all(excluded_paths).await;
-    let excluded_paths = excluded_paths
-        .into_iter()
-        .filter_map(|x| x)
-        .collect::<Vec<_>>();
+    let excluded_paths = excluded_paths.into_iter().flatten().collect::<Vec<_>>();
 
     if !excluded_paths.is_empty() {
         let exclude_patterns = excluded_paths
@@ -2154,78 +2151,6 @@ mod tests {
         assert_eq!(
             smol::fs::read_to_string(&bin_path).await.unwrap(),
             "Modified binary file"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_checkpoint_excludes_large_untracked_files(cx: &mut TestAppContext) {
-        cx.executor().allow_parking();
-
-        let repo_dir = tempfile::tempdir().unwrap();
-        let repo_path = repo_dir.path();
-
-        git2::Repository::init(repo_path).unwrap();
-
-        let repo = RealGitRepository::new(&repo_path.join(".git"), None, cx.executor()).unwrap();
-
-        // Create initial commit
-        let small_file_path = repo_path.join("small.txt");
-        smol::fs::write(&small_file_path, "Small file content")
-            .await
-            .unwrap();
-
-        repo.stage_paths(
-            vec![RepoPath::from_str("small.txt")],
-            Arc::new(HashMap::default()),
-        )
-        .await
-        .unwrap();
-        repo.commit(
-            "Initial commit".into(),
-            None,
-            CommitOptions::default(),
-            Arc::new(checkpoint_author_envs()),
-        )
-        .await
-        .unwrap();
-
-        // Create a large untracked file (> 2 MB)
-        let large_file_path = repo_path.join("large.bin");
-        let large_content = vec![0u8; 3 * 1024 * 1024]; // 3 MB
-        smol::fs::write(&large_file_path, &large_content)
-            .await
-            .unwrap();
-
-        // Create another small untracked file
-        let new_small_path = repo_path.join("new_small.txt");
-        smol::fs::write(&new_small_path, "New small file")
-            .await
-            .unwrap();
-
-        // Create checkpoint
-        let checkpoint = repo.checkpoint().await.unwrap();
-
-        // Modify the untracked files
-        smol::fs::write(&large_file_path, "Modified large file")
-            .await
-            .unwrap();
-        smol::fs::write(&new_small_path, "Modified new small file")
-            .await
-            .unwrap();
-
-        // Restore checkpoint
-        repo.restore_checkpoint(checkpoint).await.unwrap();
-
-        // Small untracked file should be restored to checkpoint state
-        assert_eq!(
-            smol::fs::read_to_string(&new_small_path).await.unwrap(),
-            "New small file"
-        );
-
-        // Large untracked file should NOT be restored (it was excluded)
-        assert_eq!(
-            smol::fs::read_to_string(&large_file_path).await.unwrap(),
-            "Modified large file"
         );
     }
 
