@@ -57,14 +57,12 @@ fn render_inspector(
     let colors = cx.theme().colors();
     let inspector_id = inspector.active_element_id();
     v_flex()
-        .id("gpui-inspector")
         .size_full()
         .bg(colors.panel_background)
         .text_color(colors.text)
         .font(ui_font)
         .border_l_1()
         .border_color(colors.border)
-        .overflow_y_scroll()
         .child(
             h_flex()
                 .p_2()
@@ -89,6 +87,8 @@ fn render_inspector(
         )
         .child(
             v_flex()
+                .id("gpui-inspector-content")
+                .overflow_y_scroll()
                 .p_2()
                 .gap_2()
                 .when_some(inspector_id, |this, inspector_id| {
