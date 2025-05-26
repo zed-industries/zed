@@ -1533,9 +1533,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<MinimapLayout> {
-        let minimap_editor = self
-            .editor
-            .read_with(cx, |editor, _| editor.minimap().cloned())?;
+        let minimap_editor = self.editor.read(cx).minimap().cloned()?;
 
         let minimap_settings = EditorSettings::get_global(cx).minimap;
 
@@ -1581,12 +1579,10 @@ impl EditorElement {
         );
         let minimap_line_height = self.get_minimap_line_height(
             minimap_editor
-                .read_with(cx, |editor, _| {
-                    editor
-                        .text_style_refinement
-                        .as_ref()
-                        .and_then(|refinement| refinement.font_size)
-                })
+                .read(cx)
+                .text_style_refinement
+                .as_ref()
+                .and_then(|refinement| refinement.font_size)
                 .unwrap_or(MINIMAP_FONT_SIZE),
             window,
             cx,
@@ -7548,14 +7544,14 @@ impl Element for EditorElement {
                     let scrollbars_shown = settings.scrollbar.show != ShowScrollbar::Never;
                     let vertical_scrollbar_width = (scrollbars_shown
                         && settings.scrollbar.axes.vertical
-                        && self
-                            .editor
-                            .read_with(cx, |editor, _| editor.show_scrollbars))
-                    .then_some(style.scrollbar_width)
-                    .unwrap_or_default();
+                        && self.editor.read(cx).show_scrollbars)
+                        .then_some(style.scrollbar_width)
+                        .unwrap_or_default();
                     let minimap_width = self
                         .editor
-                        .read_with(cx, |editor, _| editor.minimap().is_some())
+                        .read(cx)
+                        .minimap()
+                        .is_some()
                         .then(|| match settings.minimap.show {
                             ShowMinimap::Auto => {
                                 scrollbars_shown.then_some(MinimapLayout::MINIMAP_WIDTH)
