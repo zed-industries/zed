@@ -4248,11 +4248,8 @@ dependencies = [
  "util",
  "workspace",
  "workspace-hack",
-<<<<<<< HEAD
  "zed_actions",
-=======
  "zlog",
->>>>>>> origin/main
 ]
 
 [[package]]
