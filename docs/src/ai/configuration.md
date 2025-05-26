@@ -119,7 +119,7 @@ Even if you pay for Claude Pro, you will still have to [pay for additional credi
 
 Zed will also use the `ANTHROPIC_API_KEY` environment variable if it's defined.
 
-#### Anthropic Custom Models {#anthropic-custom-models}
+#### Custom Models {#anthropic-custom-models}
 
 You can add custom models to the Anthropic provider by adding the following to your Zed `settings.json`:
 
@@ -174,7 +174,7 @@ The DeepSeek API key will be saved in your keychain.
 
 Zed will also use the `DEEPSEEK_API_KEY` environment variable if it's defined.
 
-#### DeepSeek Custom Models {#deepseek-custom-models}
+#### Custom Models {#deepseek-custom-models}
 
 The Zed Assistant comes pre-configured to use the latest version for common models (DeepSeek Chat, DeepSeek Reasoner). If you wish to use alternate models or customize the API endpoint, you can do so by adding the following to your Zed `settings.json`:
 
@@ -224,7 +224,7 @@ The Google AI API key will be saved in your keychain.
 
 Zed will also use the `GOOGLE_AI_API_KEY` environment variable if it's defined.
 
-#### Google AI custom models {#google-ai-custom-models}
+#### Custom Models {#google-ai-custom-models}
 
 By default, Zed will use `stable` versions of models, but you can use specific versions of models, including [experimental models](https://ai.google.dev/gemini-api/docs/models/experimental-models), with the Google AI provider by adding the following to your Zed `settings.json`:
 
@@ -279,7 +279,7 @@ The Mistral API key will be saved in your keychain.
 
 Zed will also use the `MISTRAL_API_KEY` environment variable if it's defined.
 
-#### Mistral Custom Models {#mistral-custom-models}
+#### Custom Models {#mistral-custom-models}
 
 The Zed Assistant comes pre-configured with several Mistral models (codestral-latest, mistral-large-latest, mistral-medium-latest, mistral-small-latest, open-mistral-nemo, and open-codestral-mamba). All the default models support tool use. If you wish to use alternate models or customize their parameters, you can do so by adding the following to your Zed `settings.json`:
 
@@ -376,7 +376,7 @@ The OpenAI API key will be saved in your keychain.
 
 Zed will also use the `OPENAI_API_KEY` environment variable if it's defined.
 
-#### OpenAI Custom Models {#openai-custom-models}
+#### Custom Models {#openai-custom-models}
 
 The Zed Assistant comes pre-configured to use the latest version for common models (GPT-3.5 Turbo, GPT-4, GPT-4 Turbo, GPT-4o, GPT-4o mini). If you wish to use alternate models, perhaps a preview release or a dated model release, or you wish to control the request parameters, you can do so by adding the following to your Zed `settings.json`:
 
@@ -405,7 +405,7 @@ The Zed Assistant comes pre-configured to use the latest version for common mode
 
 You must provide the model's Context Window in the `max_tokens` parameter; this can be found in the [OpenAI Model Docs](https://platform.openai.com/docs/models). OpenAI `o1` models should set `max_completion_tokens` as well to avoid incurring high reasoning token costs. Custom models will be listed in the model dropdown in the Agent Panel.
 
-### OpenAI API Compatible{#openai-api-compatible}
+### OpenAI API Compatible {#openai-api-compatible}
 
 Zed supports using OpenAI compatible APIs by specifying a custom `endpoint` and `available_models` for the OpenAI provider.
 
