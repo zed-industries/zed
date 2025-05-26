@@ -192,7 +192,7 @@ mod tests {
 
         let chunk_indices = chunk_indices
             .into_iter()
-            .map(|i| Some(i))
+            .map(Some)
             .chain(vec![None])
             .collect::<Vec<Option<usize>>>();
 
