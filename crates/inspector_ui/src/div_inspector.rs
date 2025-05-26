@@ -305,6 +305,14 @@ impl DivInspector {
         let (rust_code, rust_style) = guess_rust_code_from_style(&self.initial_style);
         rust_style_buffer.update(cx, |rust_style_buffer, cx| {
             rust_style_buffer.set_text(rust_code, cx);
+            let snapshot = rust_style_buffer.snapshot();
+            let (_, unrecognized_ranges) = self.style_from_rust_buffer_snapshot(&snapshot);
+            Self::set_rust_buffer_diagnostics(
+                unrecognized_ranges,
+                rust_style_buffer,
+                &snapshot,
+                cx,
+            );
         });
         json_style_buffer.update(cx, |json_style_buffer, cx| {
             json_style_buffer.set_text(json_text, cx);
@@ -342,22 +350,12 @@ impl DivInspector {
         let rust_style = rust_style_buffer.update(cx, |rust_style_buffer, cx| {
             let snapshot = rust_style_buffer.snapshot();
             let (rust_style, unrecognized_ranges) = self.style_from_rust_buffer_snapshot(&snapshot);
-            let diagnostic_entries =
-                unrecognized_ranges
-                    .into_iter()
-                    .enumerate()
-                    .map(|(ix, range)| DiagnosticEntry {
-                        range,
-                        diagnostic: Diagnostic {
-                            message: "unrecognized - won't be used".to_string(),
-                            severity: DiagnosticSeverity::WARNING,
-                            is_primary: true,
-                            group_id: ix,
-                            ..Default::default()
-                        },
-                    });
-            let diagnostics = DiagnosticSet::from_sorted_entries(diagnostic_entries, &snapshot);
-            rust_style_buffer.update_diagnostics(LanguageServerId(0), diagnostics, cx);
+            Self::set_rust_buffer_diagnostics(
+                unrecognized_ranges,
+                rust_style_buffer,
+                &snapshot,
+                cx,
+            );
             rust_style
         });
 
@@ -431,6 +429,29 @@ impl DivInspector {
             }
         }
         (style, unrecognized_ranges)
+    }
+
+    fn set_rust_buffer_diagnostics(
+        unrecognized_ranges: Vec<Range<Anchor>>,
+        rust_style_buffer: &mut Buffer,
+        snapshot: &BufferSnapshot,
+        cx: &mut Context<Buffer>,
+    ) {
+        let diagnostic_entries = unrecognized_ranges
+            .into_iter()
+            .enumerate()
+            .map(|(ix, range)| DiagnosticEntry {
+                range,
+                diagnostic: Diagnostic {
+                    message: "unrecognized - won't be used".to_string(),
+                    severity: DiagnosticSeverity::WARNING,
+                    is_primary: true,
+                    group_id: ix,
+                    ..Default::default()
+                },
+            });
+        let diagnostics = DiagnosticSet::from_sorted_entries(diagnostic_entries, snapshot);
+        rust_style_buffer.update_diagnostics(LanguageServerId(0), diagnostics, cx);
     }
 
     async fn create_buffer_in_project(
@@ -520,7 +541,7 @@ impl Render for DivInspector {
                                     .child(
                                         IconButton::new("reset-style", IconName::Eraser)
                                             .tooltip(Tooltip::text("Reset style"))
-                                            .on_click(cx.listener(|this, _, window, cx| {
+                                            .on_click(cx.listener(|this, _, _window, cx| {
                                                 this.reset_style(cx);
                                             })),
                                     ),
@@ -667,7 +688,7 @@ impl CompletionProvider for RustStyleCompletionProvider {
         completion_replace_range(&buffer.read(cx).snapshot(), &position).is_some()
     }
 
-    fn selection_changed(&self, mat: Option<&StringMatch>, window: &mut Window, cx: &mut App) {
+    fn selection_changed(&self, mat: Option<&StringMatch>, _window: &mut Window, cx: &mut App) {
         let div_inspector = self.div_inspector.clone();
         let rust_completion = mat.as_ref().map(|mat| mat.string.clone());
         cx.defer(move |cx| {
