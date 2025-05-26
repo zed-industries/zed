@@ -1542,13 +1542,13 @@ fn initialize_new_editor(
 ) -> Entity<Editor> {
     cx.new(|cx| {
         let mut editor = Editor::multi_line(window, cx);
+        editor.hide_minimap_by_default(window, cx);
         editor.set_text(content, window, cx);
         editor.set_show_git_diff_gutter(false, cx);
         editor.set_show_runnables(false, cx);
         editor.set_show_breakpoints(false, cx);
         editor.set_read_only(true);
         editor.set_show_edit_predictions(Some(false), window, cx);
-        editor.set_minimap_visibility(editor::MinimapVisibility::Disabled, window, cx);
         editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
         if move_to_end {
             editor.move_to_end(&MoveToEnd, window, cx);

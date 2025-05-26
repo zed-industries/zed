@@ -714,15 +714,36 @@ impl ScrollbarMarkerState {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum MinimapVisibility {
     Disabled,
-    Enabled(bool),
+    Enabled {
+        /// The configuration currently present in the users settings.
+        setting_configuration: bool,
+        /// Whether to override the currently set visibility from the users setting.
+        toggle_override: bool,
+    },
 }
 
 impl MinimapVisibility {
     fn for_mode(mode: &EditorMode, cx: &App) -> Self {
         if mode.is_full() {
-            Self::Enabled(EditorSettings::get_global(cx).minimap.minimap_enabled())
+            Self::Enabled {
+                setting_configuration: EditorSettings::get_global(cx).minimap.minimap_enabled(),
+                toggle_override: false,
+            }
         } else {
             Self::Disabled
+        }
+    }
+
+    fn hidden(&self) -> Self {
+        match *self {
+            Self::Enabled {
+                setting_configuration,
+                ..
+            } => Self::Enabled {
+                setting_configuration,
+                toggle_override: setting_configuration,
+            },
+            Self::Disabled => Self::Disabled,
         }
     }
 
@@ -733,16 +754,35 @@ impl MinimapVisibility {
         }
     }
 
+    fn settings_visibility(&self) -> bool {
+        match *self {
+            Self::Enabled {
+                setting_configuration,
+                ..
+            } => setting_configuration,
+            _ => false,
+        }
+    }
+
     fn visible(&self) -> bool {
         match *self {
-            Self::Enabled(visible) => visible,
+            Self::Enabled {
+                setting_configuration,
+                toggle_override,
+            } => setting_configuration ^ toggle_override,
             _ => false,
         }
     }
 
     fn toggle_visibility(&self) -> Self {
         match *self {
-            Self::Enabled(visible) => Self::Enabled(!visible),
+            Self::Enabled {
+                toggle_override,
+                setting_configuration,
+            } => Self::Enabled {
+                setting_configuration,
+                toggle_override: !toggle_override,
+            },
             Self::Disabled => Self::Disabled,
         }
     }
@@ -16699,6 +16739,10 @@ impl Editor {
         self.set_minimap_visibility(MinimapVisibility::Disabled, window, cx);
     }
 
+    pub fn hide_minimap_by_default(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_minimap_visibility(self.minimap_visibility.hidden(), window, cx);
+    }
+
     pub fn set_show_line_numbers(&mut self, show_line_numbers: bool, cx: &mut Context<Self>) {
         self.show_line_numbers = Some(show_line_numbers);
         cx.notify();
@@ -18198,9 +18242,9 @@ impl Editor {
             }
 
             let minimap_settings = EditorSettings::get_global(cx).minimap;
-            if self.minimap_visibility.visible() != minimap_settings.minimap_enabled() {
+            if self.minimap_visibility.settings_visibility() != minimap_settings.minimap_enabled() {
                 self.set_minimap_visibility(
-                    self.minimap_visibility.toggle_visibility(),
+                    MinimapVisibility::for_mode(self.mode(), cx),
                     window,
                     cx,
                 );
