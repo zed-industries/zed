@@ -333,8 +333,10 @@ mod tests {
         /// (defaults to `3, longest_line_cells / 2, longest_line_cells + 1;`)
         ///
         macro_rules! test_iri {
-            ($iri:literal) => { { test_hyperlink!(concat!("‹«", $iri, "»›"); true) } };
-            ($($columns:literal),+; $iri:literal) => { { test_hyperlink!($($columns),+; concat!("‹«", $iri, "»›"); true) } };
+            ($iri:literal) => { { test_hyperlink!(concat!("‹«👉", $iri, "»›"); true) } };
+            ($($columns:literal),+; $iri:literal) => { {
+                test_hyperlink!($($columns),+; concat!("‹«👉", $iri, "»›"); true)
+            } };
         }
 
         #[test]
@@ -555,15 +557,17 @@ mod tests {
         /// These likely rise to the level of being worth fixing.
         mod issues {
             #[test]
-            // We use custom columns in many tests to workaround this issue by ensuring a wrapped line
-            // never ends on a wide char.
+            // We use custom columns in many tests to workaround this issue by ensuring a wrapped
+            // line never ends on a wide char:
             //
-            // Any wide char at the end of a wrapped line is buggy in alacritty.
+            // <https://github.com/alacritty/alacritty/issues/8586>
             //
-            // This seems worth fixing, even if no one has reported it. It is most likely
-            // in the category of people experiencing failures, but somewhat randomly and not really
-            // understanding what situation is causing it to work or not work, which isn't a great experience,
-            // even though it might not have been reported as an actual issue with a clear repro case.
+            // Even if Alacritty chooses not to fix that bug, this seems worth implementing a
+            // workaround for in Zed, even if no one has reported it. It is most likely in the
+            // category of people experiencing failures, but somewhat randomly and not really
+            // understanding what situation is causing it to work or not work, which isn't a great
+            // experience, even though it might not have been reported as an actual issue with a
+            // clear repro case.
             #[cfg_attr(not(target_os = "windows"), should_panic(expected = "Path = «例»"))]
             #[cfg_attr(target_os = "windows", should_panic(expected = r#"Path = «C:\\例»"#))]
             fn issue_alacritty_bugs_with_wide_char_at_line_wrap() {
@@ -623,37 +627,35 @@ mod tests {
             #[cfg_attr(
                 not(target_os = "windows"),
                 should_panic(
-                    expected = "Path = «test/controllers/template_items_controller_test.rb», line = 20, at grid cells (0, 0)..=(18, 1)"
+                    expected = "Path = «test/controllers/template_items_controller_test.rb», line = 20, at grid cells (0, 0)..=(17, 1)"
                 )
             )]
             #[cfg_attr(
                 target_os = "windows",
                 should_panic(
-                    expected = r#"Path = «test\\controllers\\template_items_controller_test.rb», line = 20, at grid cells (0, 0)..=(18, 1)"#
+                    expected = r#"Path = «test\\controllers\\template_items_controller_test.rb», line = 20, at grid cells (0, 0)..=(17, 1)"#
                 )
             )]
             // <https://github.com/zed-industries/zed/issues/28194>
             // #28194 was closed, but the link includes the description part (":in" here), which seems wrong...
             fn issue_28194() {
                 test_path!(
-                    "‹«test/controllers/template_items_controller_test.rb»:«20»›:in 'block (2 levels) in <class:TemplateItemsControllerTest>'"
+                    "‹«test/c👉ontrollers/template_items_controller_test.rb»:«20»›:in 'block (2 levels) in <class:TemplateItemsControllerTest>'"
                 );
                 test_path!(
-                    "‹«test/controllers/template_items_controller_test.rb»:«19»›:in 'block in <class:TemplateItemsControllerTest>'"
+                    "‹«test/controllers/template_items_controller_test.rb»:«19»›:i👉n 'block in <class:TemplateItemsControllerTest>'"
                 );
             }
 
             #[test]
             #[cfg_attr(
                 not(target_os = "windows"),
-                should_panic(
-                    expected = "Path = «/test/%E1%BF%AC%CF%8C%CE%B4%CE%BF%CF%82/», at grid cells (0, 0)..=(15, 1)"
-                )
+                should_panic(expected = "Path = «/test/Ῥόδος/», at grid cells (0, 0)..=(15, 1)")
             )]
             #[cfg_attr(
                 target_os = "windows",
                 should_panic(
-                    expected = r#"Path = «C:\\test\\%E1%BF%AC%CF%8C%CE%B4%CE%BF%CF%82\\», at grid cells (0, 0)..=(16, 0)"#
+                    expected = r#"Path = «C:\\test\\Ῥόδος\\», at grid cells (0, 0)..=(16, 0)"#
                 )
             )]
             fn issue_file_iri_with_percent_encoded_characters() {
@@ -791,7 +793,7 @@ mod tests {
 
         const FILE_SCHEME: &str = "file://";
 
-        let mut hovered_grid_point = AlacPoint::default();
+        let mut hovered_grid_point: Option<AlacPoint> = None;
         let mut hyperlink_match = AlacPoint::default()..=AlacPoint::default();
         let mut iri_or_path_is_file_iri = false;
         let mut iri_or_path = String::default();
@@ -838,7 +840,7 @@ mod tests {
                         hovered_state = HoveredState::HoveredNextChar;
                     }
                     '👈' => {
-                        hovered_grid_point = prev_input_point.add(&term, Boundary::Grid, 1);
+                        hovered_grid_point = Some(prev_input_point.add(&term, Boundary::Grid, 1));
                     }
                     '«' | '»' => {
                         captures_state = match captures_state {
@@ -891,7 +893,7 @@ mod tests {
                         prev_input_point = prev_input_point_from_term(&term);
 
                         if hovered_state == HoveredState::HoveredNextChar {
-                            hovered_grid_point = prev_input_point;
+                            hovered_grid_point = Some(prev_input_point);
                             hovered_state = HoveredState::Done;
                         }
                         if captures_state == CapturesState::PathNextChar {
@@ -922,6 +924,7 @@ mod tests {
             iri_or_path = iri.to_file_path().unwrap().to_string_lossy().to_string();
         }
 
+        let hovered_grid_point = hovered_grid_point.expect("Missing hovered point (👉 or 👈)");
         let hovered_char = term.grid().index(hovered_grid_point).c;
         (
             term,
@@ -1102,6 +1105,8 @@ mod tests {
     }
 
     fn test_hyperlink<'a>(
+        // Note: No need to support column overrides if
+        // https://github.com/alacritty/alacritty/issues/8586 gets fixed.
         columns: usize,
         total_cells: usize,
         test_lines: impl Iterator<Item = &'a str>,
