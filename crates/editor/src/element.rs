@@ -2023,7 +2023,7 @@ impl EditorElement {
                     .buffer_snapshot
                     .excerpt_containing(candidate_point..candidate_point)
                     .map(|excerpt| excerpt.id());
-                // move to other row if diffrent excerpt
+                // move to other row if different excerpt
                 if excerpt_id != candidate_excerpt_id {
                     return false;
                 }
