@@ -9100,6 +9100,7 @@ impl LspStore {
             Some(key.0),
         ));
         cx.emit(LspStoreEvent::RefreshInlayHints);
+        cx.emit(LspStoreEvent::RefreshDocumentsDiagnostics);
 
         if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
             downstream_client

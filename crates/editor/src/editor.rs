@@ -15578,9 +15578,7 @@ impl Editor {
                                 return;
                             }
                         }
-                        Err(e) => {
-                            log::error!("Failed to update project diagnostics: {e:?}");
-                        }
+                        Err(e) => log::error!("Failed to update project diagnostics: {e:?}"),
                     }
                 }
             }
@@ -18291,12 +18289,10 @@ impl Editor {
         match event {
             multi_buffer::Event::Edited {
                 singleton_buffer_edited,
-                edited_buffer: buffer_edited,
+                edited_buffer,
             } => {
                 self.scrollbar_marker_state.dirty = true;
                 self.active_indent_guides_state.dirty = true;
-                // TODO(vs) lies, we need to refresh diagnostics everywhere in the pane group
-                self.pull_diagnostics(window, cx);
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(window, cx);
                 self.refresh_selected_text_highlights(true, window, cx);
@@ -18304,18 +18300,27 @@ impl Editor {
                 if self.has_active_inline_completion() {
                     self.update_visible_inline_completion(window, cx);
                 }
-                if let Some(buffer) = buffer_edited {
-                    let buffer_id = buffer.read(cx).remote_id();
-                    if !self.registered_buffers.contains_key(&buffer_id) {
-                        if let Some(project) = self.project.as_ref() {
-                            project.update(cx, |project, cx| {
+                if let Some(project) = self.project.as_ref() {
+                    project.update(cx, |project, cx| {
+                        // Diagnostics are not local: an edit within one file (`pub mod foo()` -> `pub mod bar()`), may cause errors in another files with `foo()`.
+                        // Hence, emit a project-wide event to pull for every buffer's diagnostics that has an open editor.
+                        if edited_buffer
+                            .as_ref()
+                            .is_some_and(|buffer| buffer.read(cx).file().is_some())
+                        {
+                            cx.emit(project::Event::RefreshDocumentsDiagnostics);
+                        }
+
+                        if let Some(buffer) = edited_buffer {
+                            let buffer_id = buffer.read(cx).remote_id();
+                            if !self.registered_buffers.contains_key(&buffer_id) {
                                 self.registered_buffers.insert(
                                     buffer_id,
                                     project.register_buffer_with_language_servers(&buffer, cx),
                                 );
-                            })
+                            }
                         }
-                    }
+                    });
                 }
                 cx.emit(EditorEvent::BufferEdited);
                 cx.emit(SearchEvent::MatchesInvalidated);
