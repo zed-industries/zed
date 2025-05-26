@@ -6541,11 +6541,13 @@ impl Editor {
             return;
         };
 
-        // TODO: Render at the cursor position
-        let position = window.mouse_position();
-
-        // TODO: Don't hide when mouse is not over popover
-        self.show_blame_popover(&blame_entry, position, true, cx);
+        // TODO: Place the popover in a more sensible place
+        let anchor = self.selections.newest_anchor().head();
+        let position = self.to_pixel_point(anchor, &snapshot, window);
+        if let Some(position) = position {
+            // TODO: Don't hide when mouse is not over popover
+            self.show_blame_popover(&blame_entry, position, true, cx);
+        }
     }
 
     fn show_blame_popover(
