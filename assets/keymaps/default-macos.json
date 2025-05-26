@@ -736,6 +736,7 @@
       "ctrl-alt-cmd-f": "workspace::FollowNextCollaborator",
       // TODO: Move this to a dock open action
       "cmd-shift-c": "collab_panel::ToggleFocus",
+      // Only available in debug builds: opens an element inspector for development.
       "cmd-alt-i": "dev::ToggleInspector"
     }
   },
