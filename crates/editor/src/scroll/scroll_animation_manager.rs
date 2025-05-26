@@ -17,6 +17,10 @@ pub(crate) enum UpdateResponse {
 pub(crate) struct PersistentState {
     pub(crate) snapshot: DisplaySnapshot,
     pub(crate) workspace_id: Option<WorkspaceId>,
+    #[allow(dead_code)]
+    pub(crate) autoscroll: bool,
+    #[allow(dead_code)]
+    pub(crate) local: bool,
 }
 
 pub(crate) struct Anim {
@@ -41,16 +45,21 @@ impl ScrollAnimationManager {
         &mut self, 
         from: Point<f32>, 
         to: Point<f32>, 
+        local: bool,
+        autoscroll: bool,
         snapshot: &DisplaySnapshot,
         workspace_id: Option<WorkspaceId>
     ) {
+        //log::info!("from: {from:?}; to: {to:?}");
         self.anim = Some(Anim {
             start: from.y,
             delta: to.y - from.y,
             start_moment: Instant::now(),
             state: PersistentState {
                 snapshot: snapshot.clone(),
-                workspace_id
+                workspace_id,
+                autoscroll,
+                local
             }
         });
     }
@@ -75,7 +84,7 @@ impl ScrollAnimationManager {
                     state: anim.state 
                 }
             } else {
-                let curr_y = anim.start + (time_since_start * anim.delta / MAX_DUR);
+                let curr_y = anim.start + (anim.delta * time_since_start / MAX_DUR);
                 UpdateResponse::RequiresAnimationFrame { updated_position: point(0.0, curr_y) }
             }
         } else {

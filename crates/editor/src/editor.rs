@@ -169,7 +169,7 @@ use project::{
 };
 use rand::prelude::*;
 use rpc::{ErrorExt, proto::*};
-use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide, UpdateResponse};
+use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
 use selections_collection::{
     MutableSelectionsCollection, SelectionsCollection, resolve_selections,
 };
@@ -20752,7 +20752,7 @@ impl Focusable for Editor {
 }
 
 impl Render for Editor {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
 
         let mut text_style = match self.mode {
@@ -20787,16 +20787,6 @@ impl Render for Editor {
             EditorMode::Full { .. } => cx.theme().colors().editor_background,
             EditorMode::Minimap { .. } => cx.theme().colors().editor_background.opacity(0.7),
         };
-
-        if self.scroll_manager.requires_animation_update() {
-            let update_response = self.scroll_manager.update_animation(window,cx);
-            match update_response {
-                UpdateResponse::RequiresAnimationFrame {..} => { 
-                    window.request_animation_frame();
-                }
-                _ => ()
-            }
-        }
 
         EditorElement::new(
             &cx.entity(),

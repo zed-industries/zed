@@ -279,7 +279,14 @@ impl ScrollManager {
 
         if instigator != ScrollInstigator::AnimationManager && !is_pixel_hardware {
             let current = self.scroll_position(map);
-            self.animation_manager.start(current, scroll_position, map, workspace_id);
+            self.animation_manager.start(
+                current,
+                scroll_position,
+                local,
+                autoscroll,
+                map,
+                workspace_id
+            );
             cx.notify();
             return;
         }
