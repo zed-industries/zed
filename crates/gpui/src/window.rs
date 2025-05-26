@@ -979,7 +979,7 @@ pub(crate) struct DispatchEventResult {
 /// to leave room to support more complex shapes in the future.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[repr(C)]
-pub struct ContentMask<P: Clone + Default + Debug> {
+pub struct ContentMask<P: Clone + Debug + Default + PartialEq> {
     /// The bounds
     pub bounds: Bounds<P>,
 }

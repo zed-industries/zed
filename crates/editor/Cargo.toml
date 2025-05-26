@@ -82,7 +82,6 @@ tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
 tree-sitter-python = { workspace = true, optional = true }
 unicode-segmentation.workspace = true
-unicode-script.workspace = true
 unindent = { workspace = true, optional = true }
 ui.workspace = true
 url.workspace = true
@@ -94,7 +93,6 @@ workspace-hack.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
-env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 languages = {workspace = true, features = ["test-support"] }
@@ -114,3 +112,4 @@ unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
+zlog.workspace = true

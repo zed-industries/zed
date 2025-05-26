@@ -47,6 +47,7 @@ pub struct EditorSettings {
     pub snippet_sort_order: SnippetSortOrder,
     #[serde(default)]
     pub diagnostics_max_severity: Option<DiagnosticSeverity>,
+    pub inline_code_actions: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -482,6 +483,11 @@ pub struct EditorSettingsContent {
     /// Default: warning
     #[serde(default)]
     pub diagnostics_max_severity: Option<DiagnosticSeverity>,
+
+    /// Whether to show code action button at start of buffer line.
+    ///
+    /// Default: true
+    pub inline_code_actions: Option<bool>,
 }
 
 // Toolbar related settings
@@ -506,7 +512,7 @@ pub struct ToolbarContent {
     pub agent_review: Option<bool>,
     /// Whether to display code action buttons in the editor toolbar.
     ///
-    /// Default: true
+    /// Default: false
     pub code_actions: Option<bool>,
 }
 

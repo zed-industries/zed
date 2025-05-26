@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::agent_model_selector::{AgentModelSelector, ModelType};
@@ -121,7 +122,7 @@ pub(crate) fn create_editor(
 
     let editor_entity = editor.downgrade();
     editor.update(cx, |editor, _| {
-        editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
+        editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
             workspace,
             context_store,
             Some(thread_store),

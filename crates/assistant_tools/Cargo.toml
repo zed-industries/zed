@@ -62,6 +62,7 @@ which.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
 zed_llm_client.workspace = true
+once_cell = "1.21.3"
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

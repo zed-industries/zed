@@ -1191,9 +1191,7 @@ mod tests {
     }
 
     fn init_test(_cx: &mut TestAppContext) {
-        if std::env::var("RUST_LOG").is_ok() {
-            env_logger::try_init().ok();
-        }
+        zlog::init_test();
         TaskStore::init(None);
     }
 

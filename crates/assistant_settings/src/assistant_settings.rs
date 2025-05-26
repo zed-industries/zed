@@ -31,6 +31,14 @@ pub enum AssistantDockPosition {
     Bottom,
 }
 
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DefaultView {
+    #[default]
+    Thread,
+    TextThread,
+}
+
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum NotifyWhenAgentWaiting {
@@ -93,6 +101,7 @@ pub struct AssistantSettings {
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub using_outdated_settings_version: bool,
     pub default_profile: AgentProfileId,
+    pub default_view: DefaultView,
     pub profiles: IndexMap<AgentProfileId, AgentProfile>,
     pub always_allow_tool_actions: bool,
     pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
@@ -267,6 +276,7 @@ impl AssistantSettingsContent {
                     thread_summary_model: None,
                     inline_alternatives: None,
                     default_profile: None,
+                    default_view: None,
                     profiles: None,
                     always_allow_tool_actions: None,
                     notify_when_agent_waiting: None,
@@ -298,6 +308,7 @@ impl AssistantSettingsContent {
                 thread_summary_model: None,
                 inline_alternatives: None,
                 default_profile: None,
+                default_view: None,
                 profiles: None,
                 always_allow_tool_actions: None,
                 notify_when_agent_waiting: None,
@@ -583,6 +594,7 @@ impl Default for VersionedAssistantSettingsContent {
             thread_summary_model: None,
             inline_alternatives: None,
             default_profile: None,
+            default_view: None,
             profiles: None,
             always_allow_tool_actions: None,
             notify_when_agent_waiting: None,
@@ -602,19 +614,19 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: true
     enabled: Option<bool>,
-    /// Whether to show the assistant panel button in the status bar.
+    /// Whether to show the agent panel button in the status bar.
     ///
     /// Default: true
     button: Option<bool>,
-    /// Where to dock the assistant.
+    /// Where to dock the agent panel.
     ///
     /// Default: right
     dock: Option<AssistantDockPosition>,
-    /// Default width in pixels when the assistant is docked to the left or right.
+    /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640
     default_width: Option<f32>,
-    /// Default height in pixels when the assistant is docked to the bottom.
+    /// Default height in pixels when the agent panel is docked to the bottom.
     ///
     /// Default: 320
     default_height: Option<f32>,
@@ -632,6 +644,10 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: write
     default_profile: Option<AgentProfileId>,
+    /// Which view type to show by default in the agent panel.
+    ///
+    /// Default: "thread"
+    default_view: Option<DefaultView>,
     /// The available agent profiles.
     pub profiles: Option<IndexMap<AgentProfileId, AgentProfileContent>>,
     /// Whenever a tool action would normally wait for your confirmation
@@ -660,7 +676,6 @@ pub struct AssistantSettingsContentV2 {
     /// Default: []
     #[serde(default)]
     model_parameters: Vec<LanguageModelParameters>,
-
     /// What completion mode to enable for new threads
     ///
     /// Default: normal
@@ -872,6 +887,7 @@ impl Settings for AssistantSettings {
             merge(&mut settings.stream_edits, value.stream_edits);
             merge(&mut settings.single_file_review, value.single_file_review);
             merge(&mut settings.default_profile, value.default_profile);
+            merge(&mut settings.default_view, value.default_view);
             merge(
                 &mut settings.preferred_completion_mode,
                 value.preferred_completion_mode,
@@ -1008,6 +1024,7 @@ mod tests {
                                 default_width: None,
                                 default_height: None,
                                 default_profile: None,
+                                default_view: None,
                                 profiles: None,
                                 always_allow_tool_actions: None,
                                 notify_when_agent_waiting: None,

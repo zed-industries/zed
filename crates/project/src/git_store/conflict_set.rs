@@ -463,7 +463,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_conflict_updates(executor: BackgroundExecutor, cx: &mut TestAppContext) {
-        env_logger::try_init().ok();
+        zlog::init_test();
         cx.update(|cx| {
             settings::init(cx);
             WorktreeSettings::register(cx);

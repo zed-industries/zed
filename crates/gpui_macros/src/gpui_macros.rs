@@ -6,6 +6,9 @@ mod register_action;
 mod styles;
 mod test;
 
+#[cfg(any(feature = "inspector", debug_assertions))]
+mod derive_inspector_reflection;
+
 use proc_macro::TokenStream;
 use syn::{DeriveInput, Ident};
 
@@ -176,6 +179,28 @@ pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
     test::test(args, function)
+}
+
+/// When added to a trait, `#[derive_inspector_reflection]` generates a module which provides
+/// enumeration and lookup by name of all methods that have the shape `fn method(self) -> Self`.
+/// This is used by the inspector so that it can use the builder methods in `Styled` and
+/// `StyledExt`.
+///
+/// The generated module will have the name `<snake_case_trait_name>_reflection` and contain the
+/// following functions:
+///
+/// ```ignore
+/// pub fn methods::<T: TheTrait + 'static>() -> Vec<gpui::inspector_reflection::FunctionReflection<T>>;
+///
+/// pub fn find_method::<T: TheTrait + 'static>() -> Option<gpui::inspector_reflection::FunctionReflection<T>>;
+/// ```
+///
+/// The `invoke` method on `FunctionReflection` will run the method. `FunctionReflection` also
+/// provides the method's documentation.
+#[cfg(any(feature = "inspector", debug_assertions))]
+#[proc_macro_attribute]
+pub fn derive_inspector_reflection(_args: TokenStream, input: TokenStream) -> TokenStream {
+    derive_inspector_reflection::derive_inspector_reflection(_args, input)
 }
 
 pub(crate) fn get_simple_attribute_field(ast: &DeriveInput, name: &'static str) -> Option<Ident> {
