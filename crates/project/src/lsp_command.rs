@@ -3965,13 +3965,9 @@ impl LspCommand for GetDocumentDiagnostics {
             .diagnostics
             .into_iter()
             .filter_map(|diagnostic| {
-                match GetDocumentDiagnostics::deserialize_lsp_diagnostic(diagnostic) {
-                    Ok(diagnostic) => Some(diagnostic),
-                    Err(error) => {
-                        log::error!("Failed to deserialize diagnostic: {}", error);
-                        None
-                    }
-                }
+                GetDocumentDiagnostics::deserialize_lsp_diagnostic(diagnostic)
+                    .context("deserializing diagnostics")
+                    .log_err()
             })
             .collect();
 

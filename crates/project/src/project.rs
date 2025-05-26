@@ -3662,7 +3662,7 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<LspPullDiagnostics>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.document_diagnostic(buffer_handle, cx)
+            lsp_store.pull_diagnostics(buffer_handle, cx)
         })
     }
 

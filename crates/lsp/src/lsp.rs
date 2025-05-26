@@ -797,7 +797,8 @@ impl LanguageServer {
                     diagnostic: Some(DiagnosticClientCapabilities {
                         dynamic_registration: Some(false),
                         related_document_support: Some(true),
-                    }),
+                    })
+                    .filter(|_| pull_diagnostics),
                     ..TextDocumentClientCapabilities::default()
                 }),
                 experimental: Some(json!({

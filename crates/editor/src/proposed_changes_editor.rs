@@ -523,7 +523,7 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         None
     }
 
-    fn update_pull_diagnostics_for_buffer(
+    fn pull_diagnostics_for_buffer(
         &self,
         _: &Entity<Buffer>,
         _: &mut App,

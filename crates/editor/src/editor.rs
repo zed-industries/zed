@@ -1028,7 +1028,7 @@ pub struct Editor {
     tasks_update_task: Option<Task<()>>,
     breakpoint_store: Option<Entity<BreakpointStore>>,
     gutter_breakpoint_indicator: (Option<PhantomBreakpointIndicator>, Option<Task<()>>),
-    tasks_pull_diagnostics_task: Task<()>,
+    pull_diagnostics_task: Task<()>,
     in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
@@ -1891,7 +1891,7 @@ impl Editor {
                 }),
             ],
             tasks_update_task: None,
-            tasks_pull_diagnostics_task: Task::ready(()),
+            pull_diagnostics_task: Task::ready(()),
             linked_edit_ranges: Default::default(),
             in_project_search: false,
             previous_search_ranges: None,
@@ -15541,18 +15541,14 @@ impl Editor {
         let buffers = self.buffer.read(cx).all_buffers();
 
         let background_executor = cx.background_executor().clone();
-        self.tasks_pull_diagnostics_task = cx.spawn_in(window, async move |editor, cx| {
+        self.pull_diagnostics_task = cx.spawn_in(window, async move |editor, cx| {
             background_executor.timer(debounce).await;
 
             let Ok(mut pull_diagnostics_tasks) = cx.update(|_, cx| {
                 buffers
                     .into_iter()
                     .flat_map(|buffer| {
-                        Some(
-                            project
-                                .upgrade()?
-                                .update_pull_diagnostics_for_buffer(&buffer, cx),
-                        )
+                        Some(project.upgrade()?.pull_diagnostics_for_buffer(&buffer, cx))
                     })
                     .collect::<FuturesUnordered<_>>()
             }) else {
@@ -15560,8 +15556,10 @@ impl Editor {
             };
 
             while let Some(pull_task) = pull_diagnostics_tasks.next().await {
-                if let Some((new_diagnostics, project)) = pull_task.log_err().zip(project.upgrade())
-                {
+                let Some(project) = project.upgrade() else {
+                    return;
+                };
+                if let Some(new_diagnostics) = pull_task.log_err() {
                     let Ok(update_task) =
                         cx.update(|_, cx| project.update_pull_diagnostics(new_diagnostics, cx))
                     else {
@@ -15578,12 +15576,13 @@ impl Editor {
                                 return;
                             }
                         }
-                        Err(e) => log::error!("Failed to update project diagnostics: {e:?}"),
+                        Err(e) => log::error!("Failed to update project diagnostics: {e:#}"),
                     }
                 }
             }
         });
-        None
+
+        Some(())
     }
 
     pub fn set_selections_from_remote(
@@ -19603,7 +19602,7 @@ pub trait SemanticsProvider {
         cx: &mut App,
     ) -> Option<Task<Result<ProjectTransaction>>>;
 
-    fn update_pull_diagnostics_for_buffer(
+    fn pull_diagnostics_for_buffer(
         &self,
         buffer: &Entity<Buffer>,
         cx: &mut App,
@@ -20126,14 +20125,14 @@ impl SemanticsProvider for Entity<Project> {
         }))
     }
 
-    fn update_pull_diagnostics_for_buffer(
+    fn pull_diagnostics_for_buffer(
         &self,
         buffer: &Entity<Buffer>,
         cx: &mut App,
     ) -> Task<Result<Vec<LspPullDiagnostics>>> {
         self.update(cx, |project, cx| {
             project.lsp_store().update(cx, |lsp_store, cx| {
-                lsp_store.document_diagnostic(buffer.clone(), cx)
+                lsp_store.pull_diagnostics(buffer.clone(), cx)
             })
         })
     }

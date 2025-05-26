@@ -5716,7 +5716,7 @@ impl LspStore {
         }
     }
 
-    pub fn document_diagnostic(
+    pub fn pull_diagnostics(
         &mut self,
         buffer_handle: Entity<Buffer>,
         cx: &mut Context<Self>,
@@ -9105,7 +9105,6 @@ impl LspStore {
             Some(key.0),
         ));
         cx.emit(LspStoreEvent::RefreshInlayHints);
-        cx.emit(LspStoreEvent::RefreshDocumentsDiagnostics);
 
         if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
             downstream_client
