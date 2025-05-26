@@ -65,7 +65,9 @@ use std::{num::NonZeroU32, sync::OnceLock};
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
 pub use task_context::{ContextProvider, RunnableRange};
-pub use text_diff::{DiffOptions, line_diff, text_diff, text_diff_with_options, unified_diff};
+pub use text_diff::{
+    DiffOptions, apply_diff_patch, line_diff, text_diff, text_diff_with_options, unified_diff,
+};
 use theme::SyntaxTheme;
 pub use toolchain::{LanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister};
 use tree_sitter::{self, Query, QueryCursor, WasmStore, wasmtime};
@@ -664,7 +666,7 @@ pub struct CodeLabel {
     pub filter_range: Range<usize>,
 }
 
-#[derive(Clone, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct LanguageConfig {
     /// Human-readable name of the language.
     pub name: LanguageName,
@@ -775,7 +777,7 @@ pub struct LanguageMatcher {
 }
 
 /// The configuration for JSX tag auto-closing.
-#[derive(Clone, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct JsxTagAutoCloseConfig {
     /// The name of the node for a opening tag
     pub open_tag_node_name: String,
@@ -808,7 +810,7 @@ pub struct JsxTagAutoCloseConfig {
 }
 
 /// The configuration for documentation block for this language.
-#[derive(Clone, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct DocumentationConfig {
     /// A start tag of documentation block.
     pub start: Arc<str>,

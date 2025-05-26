@@ -1,10 +1,10 @@
 use std::ops::Range;
 use std::path::Path;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
-use markdown::Markdown;
 use serde::{Deserialize, Serialize};
 
 use anyhow::{Result, anyhow};
@@ -13,10 +13,11 @@ use assistant_context_editor::{
     ContextSummary, SlashCommandCompletionProvider, humanize_token_count,
     make_lsp_adapter_delegate, render_remaining_tokens,
 };
-use assistant_settings::{AssistantDockPosition, AssistantSettings};
+use assistant_settings::{AssistantDockPosition, AssistantSettings, DefaultView};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 
+use assistant_context_editor::language_model_selector::ToggleModelSelector;
 use client::{UserStore, zed_urls};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use fs::Fs;
@@ -30,7 +31,6 @@ use language::LanguageRegistry;
 use language_model::{
     LanguageModelProviderTosView, LanguageModelRegistry, RequestUsage, ZED_CLOUD_PROVIDER_ID,
 };
-use language_model_selector::ToggleModelSelector;
 use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
 use proto::Plan;
@@ -157,7 +157,7 @@ pub fn init(cx: &mut App) {
                     window.refresh();
                 })
                 .register_action(|_workspace, _: &ResetTrialUpsell, _window, cx| {
-                    TrialUpsell::set_dismissed(false, cx);
+                    Upsell::set_dismissed(false, cx);
                 })
                 .register_action(|_workspace, _: &ResetTrialEndUpsell, _window, cx| {
                     TrialEndUpsell::set_dismissed(false, cx);
@@ -370,8 +370,7 @@ pub struct AgentPanel {
     height: Option<Pixels>,
     zoomed: bool,
     pending_serialization: Option<Task<Result<()>>>,
-    hide_trial_upsell: bool,
-    _trial_markdown: Entity<Markdown>,
+    hide_upsell: bool,
 }
 
 impl AgentPanel {
@@ -524,7 +523,30 @@ impl AgentPanel {
 
         cx.observe(&history_store, |_, _, cx| cx.notify()).detach();
 
-        let active_view = ActiveView::thread(thread.clone(), window, cx);
+        let panel_type = AssistantSettings::get_global(cx).default_view;
+        let active_view = match panel_type {
+            DefaultView::Thread => ActiveView::thread(thread.clone(), window, cx),
+            DefaultView::TextThread => {
+                let context =
+                    context_store.update(cx, |context_store, cx| context_store.create(cx));
+                let lsp_adapter_delegate = make_lsp_adapter_delegate(&project.clone(), cx).unwrap();
+                let context_editor = cx.new(|cx| {
+                    let mut editor = ContextEditor::for_context(
+                        context,
+                        fs.clone(),
+                        workspace.clone(),
+                        project.clone(),
+                        lsp_adapter_delegate,
+                        window,
+                        cx,
+                    );
+                    editor.insert_default_prompt(window, cx);
+                    editor
+                });
+                ActiveView::prompt_editor(context_editor, language_registry.clone(), window, cx)
+            }
+        };
+
         let thread_subscription = cx.subscribe(&thread, |_, _, event, cx| {
             if let ThreadEvent::MessageAdded(_) = &event {
                 // needed to leave empty state
@@ -676,15 +698,6 @@ impl AgentPanel {
             },
         );
 
-        let trial_markdown = cx.new(|cx| {
-            Markdown::new(
-                include_str!("trial_markdown.md").into(),
-                Some(language_registry.clone()),
-                None,
-                cx,
-            )
-        });
-
         Self {
             active_view,
             workspace,
@@ -721,8 +734,7 @@ impl AgentPanel {
             height: None,
             zoomed: false,
             pending_serialization: None,
-            hide_trial_upsell: false,
-            _trial_markdown: trial_markdown,
+            hide_upsell: false,
         }
     }
 
@@ -904,8 +916,8 @@ impl AgentPanel {
         open_rules_library(
             self.language_registry.clone(),
             Box::new(PromptLibraryInlineAssist::new(self.workspace.clone())),
-            Arc::new(|| {
-                Box::new(SlashCommandCompletionProvider::new(
+            Rc::new(|| {
+                Rc::new(SlashCommandCompletionProvider::new(
                     Arc::new(SlashCommandWorkingSet::default()),
                     None,
                     None,
@@ -1946,7 +1958,7 @@ impl AgentPanel {
             return false;
         }
 
-        if self.hide_trial_upsell || TrialUpsell::dismissed() {
+        if self.hide_upsell || Upsell::dismissed() {
             return false;
         }
 
@@ -1976,7 +1988,7 @@ impl AgentPanel {
         true
     }
 
-    fn render_trial_upsell(
+    fn render_upsell(
         &self,
         _window: &mut Window,
         cx: &mut Context<Self>,
@@ -1985,6 +1997,14 @@ impl AgentPanel {
             return None;
         }
 
+        if self.user_store.read(cx).account_too_young() {
+            Some(self.render_young_account_upsell(cx).into_any_element())
+        } else {
+            Some(self.render_trial_upsell(cx).into_any_element())
+        }
+    }
+
+    fn render_young_account_upsell(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let checkbox = CheckboxWithLabel::new(
             "dont-show-again",
             Label::new("Don't show again").color(Color::Muted),
@@ -1992,7 +2012,70 @@ impl AgentPanel {
             move |toggle_state, _window, cx| {
                 let toggle_state_bool = toggle_state.selected();
 
-                TrialUpsell::set_dismissed(toggle_state_bool, cx);
+                Upsell::set_dismissed(toggle_state_bool, cx);
+            },
+        );
+
+        let contents = div()
+            .size_full()
+            .gap_2()
+            .flex()
+            .flex_col()
+            .child(Headline::new("Build better with Zed Pro").size(HeadlineSize::Small))
+            .child(
+                Label::new("Your GitHub account was created less than 30 days ago, so we can't offer you a free trial.")
+                    .size(LabelSize::Small),
+            )
+            .child(
+                Label::new(
+                    "Use your own API keys, upgrade to Zed Pro or send an email to billing-support@zed.dev.",
+                )
+                .color(Color::Muted),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .px_neg_1()
+                    .justify_between()
+                    .items_center()
+                    .child(h_flex().items_center().gap_1().child(checkbox))
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                Button::new("dismiss-button", "Not Now")
+                                    .style(ButtonStyle::Transparent)
+                                    .color(Color::Muted)
+                                    .on_click({
+                                        let agent_panel = cx.entity();
+                                        move |_, _, cx| {
+                                            agent_panel.update(cx, |this, cx| {
+                                                this.hide_upsell = true;
+                                                cx.notify();
+                                            });
+                                        }
+                                    }),
+                            )
+                            .child(
+                                Button::new("cta-button", "Upgrade to Zed Pro")
+                                    .style(ButtonStyle::Transparent)
+                                    .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx))),
+                            ),
+                    ),
+            );
+
+        self.render_upsell_container(cx, contents)
+    }
+
+    fn render_trial_upsell(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let checkbox = CheckboxWithLabel::new(
+            "dont-show-again",
+            Label::new("Don't show again").color(Color::Muted),
+            ToggleState::Unselected,
+            move |toggle_state, _window, cx| {
+                let toggle_state_bool = toggle_state.selected();
+
+                Upsell::set_dismissed(toggle_state_bool, cx);
             },
         );
 
@@ -2030,7 +2113,7 @@ impl AgentPanel {
                                         let agent_panel = cx.entity();
                                         move |_, _, cx| {
                                             agent_panel.update(cx, |this, cx| {
-                                                this.hide_trial_upsell = true;
+                                                this.hide_upsell = true;
                                                 cx.notify();
                                             });
                                         }
@@ -2044,7 +2127,7 @@ impl AgentPanel {
                     ),
             );
 
-        Some(self.render_upsell_container(cx, contents))
+        self.render_upsell_container(cx, contents)
     }
 
     fn render_trial_end_upsell(
@@ -2910,7 +2993,7 @@ impl Render for AgentPanel {
             .on_action(cx.listener(Self::reset_font_size))
             .on_action(cx.listener(Self::toggle_zoom))
             .child(self.render_toolbar(window, cx))
-            .children(self.render_trial_upsell(window, cx))
+            .children(self.render_upsell(window, cx))
             .children(self.render_trial_end_upsell(window, cx))
             .map(|parent| match &self.active_view {
                 ActiveView::Thread { .. } => parent
@@ -3099,9 +3182,9 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
     }
 }
 
-struct TrialUpsell;
+struct Upsell;
 
-impl Dismissable for TrialUpsell {
+impl Dismissable for Upsell {
     const KEY: &'static str = "dismissed-trial-upsell";
 }
 

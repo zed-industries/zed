@@ -1,9 +1,9 @@
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AnyElement, BackgroundExecutor, Entity, Focusable, FontWeight, ListSizingBehavior,
-    ScrollStrategy, SharedString, Size, StrikethroughStyle, StyledText, UniformListScrollHandle,
-    div, px, uniform_list,
+    AnyElement, Entity, Focusable, FontWeight, ListSizingBehavior, ScrollStrategy, SharedString,
+    Size, StrikethroughStyle, StyledText, UniformListScrollHandle, div, px, uniform_list,
 };
+use gpui::{AsyncWindowContext, WeakEntity};
 use language::Buffer;
 use language::CodeLabel;
 use markdown::{Markdown, MarkdownElement};
@@ -26,6 +26,7 @@ use task::ResolvedTask;
 use ui::{Color, IntoElement, ListItem, Pixels, Popover, Styled, prelude::*};
 use util::ResultExt;
 
+use crate::CodeActionSource;
 use crate::editor_settings::SnippetSortOrder;
 use crate::hover_popover::{hover_markdown_style, open_markdown_url};
 use crate::{
@@ -49,11 +50,12 @@ impl CodeContextMenu {
     pub fn select_first(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> bool {
         if self.visible() {
             match self {
-                CodeContextMenu::Completions(menu) => menu.select_first(provider, cx),
+                CodeContextMenu::Completions(menu) => menu.select_first(provider, window, cx),
                 CodeContextMenu::CodeActions(menu) => menu.select_first(cx),
             }
             true
@@ -65,11 +67,12 @@ impl CodeContextMenu {
     pub fn select_prev(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> bool {
         if self.visible() {
             match self {
-                CodeContextMenu::Completions(menu) => menu.select_prev(provider, cx),
+                CodeContextMenu::Completions(menu) => menu.select_prev(provider, window, cx),
                 CodeContextMenu::CodeActions(menu) => menu.select_prev(cx),
             }
             true
@@ -81,11 +84,12 @@ impl CodeContextMenu {
     pub fn select_next(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> bool {
         if self.visible() {
             match self {
-                CodeContextMenu::Completions(menu) => menu.select_next(provider, cx),
+                CodeContextMenu::Completions(menu) => menu.select_next(provider, window, cx),
                 CodeContextMenu::CodeActions(menu) => menu.select_next(cx),
             }
             true
@@ -97,11 +101,12 @@ impl CodeContextMenu {
     pub fn select_last(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> bool {
         if self.visible() {
             match self {
-                CodeContextMenu::Completions(menu) => menu.select_last(provider, cx),
+                CodeContextMenu::Completions(menu) => menu.select_last(provider, window, cx),
                 CodeContextMenu::CodeActions(menu) => menu.select_last(cx),
             }
             true
@@ -168,6 +173,7 @@ impl CodeContextMenu {
 pub enum ContextMenuOrigin {
     Cursor,
     GutterIndicator(DisplayRow),
+    QuickActionBar,
 }
 
 #[derive(Clone, Debug)]
@@ -288,6 +294,7 @@ impl CompletionsMenu {
     fn select_first(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
         let index = if self.scroll_handle.y_flipped() {
@@ -295,40 +302,56 @@ impl CompletionsMenu {
         } else {
             0
         };
-        self.update_selection_index(index, provider, cx);
+        self.update_selection_index(index, provider, window, cx);
     }
 
-    fn select_last(&mut self, provider: Option<&dyn CompletionProvider>, cx: &mut Context<Editor>) {
+    fn select_last(
+        &mut self,
+        provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
         let index = if self.scroll_handle.y_flipped() {
             0
         } else {
             self.entries.borrow().len() - 1
         };
-        self.update_selection_index(index, provider, cx);
+        self.update_selection_index(index, provider, window, cx);
     }
 
-    fn select_prev(&mut self, provider: Option<&dyn CompletionProvider>, cx: &mut Context<Editor>) {
+    fn select_prev(
+        &mut self,
+        provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
         let index = if self.scroll_handle.y_flipped() {
             self.next_match_index()
         } else {
             self.prev_match_index()
         };
-        self.update_selection_index(index, provider, cx);
+        self.update_selection_index(index, provider, window, cx);
     }
 
-    fn select_next(&mut self, provider: Option<&dyn CompletionProvider>, cx: &mut Context<Editor>) {
+    fn select_next(
+        &mut self,
+        provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
         let index = if self.scroll_handle.y_flipped() {
             self.prev_match_index()
         } else {
             self.next_match_index()
         };
-        self.update_selection_index(index, provider, cx);
+        self.update_selection_index(index, provider, window, cx);
     }
 
     fn update_selection_index(
         &mut self,
         match_index: usize,
         provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
         if self.selected_item != match_index {
@@ -336,6 +359,9 @@ impl CompletionsMenu {
             self.scroll_handle
                 .scroll_to_item(self.selected_item, ScrollStrategy::Top);
             self.resolve_visible_completions(provider, cx);
+            if let Some(provider) = provider {
+                self.handle_selection_changed(provider, window, cx);
+            }
             cx.notify();
         }
     }
@@ -354,6 +380,21 @@ impl CompletionsMenu {
         } else {
             0
         }
+    }
+
+    fn handle_selection_changed(
+        &self,
+        provider: &dyn CompletionProvider,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let entries = self.entries.borrow();
+        let entry = if self.selected_item < entries.len() {
+            Some(&entries[self.selected_item])
+        } else {
+            None
+        };
+        provider.selection_changed(entry, window, cx);
     }
 
     pub fn resolve_visible_completions(
@@ -751,7 +792,13 @@ impl CompletionsMenu {
         });
     }
 
-    pub async fn filter(&mut self, query: Option<&str>, executor: BackgroundExecutor) {
+    pub async fn filter(
+        &mut self,
+        query: Option<&str>,
+        provider: Option<Rc<dyn CompletionProvider>>,
+        editor: WeakEntity<Editor>,
+        cx: &mut AsyncWindowContext,
+    ) {
         let mut matches = if let Some(query) = query {
             fuzzy::match_strings(
                 &self.match_candidates,
@@ -759,7 +806,7 @@ impl CompletionsMenu {
                 query.chars().any(|c| c.is_uppercase()),
                 100,
                 &Default::default(),
-                executor,
+                cx.background_executor().clone(),
             )
             .await
         } else {
@@ -820,6 +867,28 @@ impl CompletionsMenu {
         self.selected_item = 0;
         // This keeps the display consistent when y_flipped.
         self.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
+
+        if let Some(provider) = provider {
+            cx.update(|window, cx| {
+                // Since this is async, it's possible the menu has been closed and possibly even
+                // another opened. `provider.selection_changed` should not be called in this case.
+                let this_menu_still_active = editor
+                    .read_with(cx, |editor, _cx| {
+                        if let Some(CodeContextMenu::Completions(completions_menu)) =
+                            editor.context_menu.borrow().as_ref()
+                        {
+                            completions_menu.id == self.id
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap_or(false);
+                if this_menu_still_active {
+                    self.handle_selection_changed(&*provider, window, cx);
+                }
+            })
+            .ok();
+        }
     }
 }
 
@@ -840,7 +909,7 @@ pub struct AvailableCodeAction {
 }
 
 #[derive(Clone)]
-pub(crate) struct CodeActionContents {
+pub struct CodeActionContents {
     tasks: Option<Rc<ResolvedTasks>>,
     actions: Option<Rc<[AvailableCodeAction]>>,
     debug_scenarios: Vec<DebugScenario>,
@@ -968,12 +1037,12 @@ impl CodeActionsItem {
     }
 }
 
-pub(crate) struct CodeActionsMenu {
+pub struct CodeActionsMenu {
     pub actions: CodeActionContents,
     pub buffer: Entity<Buffer>,
     pub selected_item: usize,
     pub scroll_handle: UniformListScrollHandle,
-    pub deployed_from_indicator: Option<DisplayRow>,
+    pub deployed_from: Option<CodeActionSource>,
 }
 
 impl CodeActionsMenu {
@@ -1042,10 +1111,10 @@ impl CodeActionsMenu {
     }
 
     fn origin(&self) -> ContextMenuOrigin {
-        if let Some(row) = self.deployed_from_indicator {
-            ContextMenuOrigin::GutterIndicator(row)
-        } else {
-            ContextMenuOrigin::Cursor
+        match &self.deployed_from {
+            Some(CodeActionSource::Indicator(row)) => ContextMenuOrigin::GutterIndicator(*row),
+            Some(CodeActionSource::QuickActionBar) => ContextMenuOrigin::QuickActionBar,
+            None => ContextMenuOrigin::Cursor,
         }
     }
 

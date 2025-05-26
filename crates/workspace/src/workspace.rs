@@ -1369,7 +1369,13 @@ impl Workspace {
             };
 
             let toolchains = DB.toolchains(workspace_id).await?;
+
             for (toolchain, worktree_id, path) in toolchains {
+                let toolchain_path = PathBuf::from(toolchain.path.clone().to_string());
+                if !app_state.fs.is_file(toolchain_path.as_path()).await {
+                    continue;
+                }
+
                 project_handle
                     .update(cx, |this, cx| {
                         this.activate_toolchain(ProjectPath { worktree_id, path }, toolchain, cx)
@@ -7271,7 +7277,7 @@ pub fn client_side_decorations(
                         .when(!tiling.left, |div| div.border_l(BORDER_SIZE))
                         .when(!tiling.right, |div| div.border_r(BORDER_SIZE))
                         .when(!tiling.is_tiled(), |div| {
-                            div.shadow(smallvec::smallvec![gpui::BoxShadow {
+                            div.shadow(vec![gpui::BoxShadow {
                                 color: Hsla {
                                     h: 0.,
                                     s: 0.,

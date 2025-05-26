@@ -1236,12 +1236,12 @@ mod tests {
                 "def a():\n  \n  if a:\n    b()\n  else:\n    "
             );
 
-            // indent after an open paren. the closing  paren is not indented
+            // indent after an open paren. the closing paren is not indented
             // because there is another token before it on the same line.
             append(&mut buffer, "foo(\n1)", cx);
             assert_eq!(
                 buffer.text(),
-                "def a():\n  \n  if a:\n    b()\n  else:\n    foo(\n    1)"
+                "def a():\n  \n  if a:\n    b()\n  else:\n    foo(\n      1)"
             );
 
             // dedent the closing paren if it is shifted to the beginning of the line

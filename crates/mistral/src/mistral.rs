@@ -58,6 +58,8 @@ pub enum Model {
     OpenMistralNemo,
     #[serde(rename = "open-codestral-mamba", alias = "open-codestral-mamba")]
     OpenCodestralMamba,
+    #[serde(rename = "devstral-small-latest", alias = "devstral-small-latest")]
+    DevstralSmallLatest,
 
     #[serde(rename = "custom")]
     Custom {
@@ -96,6 +98,7 @@ impl Model {
             Self::MistralSmallLatest => "mistral-small-latest",
             Self::OpenMistralNemo => "open-mistral-nemo",
             Self::OpenCodestralMamba => "open-codestral-mamba",
+            Self::DevstralSmallLatest => "devstral-small-latest",
             Self::Custom { name, .. } => name,
         }
     }
@@ -108,6 +111,7 @@ impl Model {
             Self::MistralSmallLatest => "mistral-small-latest",
             Self::OpenMistralNemo => "open-mistral-nemo",
             Self::OpenCodestralMamba => "open-codestral-mamba",
+            Self::DevstralSmallLatest => "devstral-small-latest",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -122,6 +126,7 @@ impl Model {
             Self::MistralSmallLatest => 32000,
             Self::OpenMistralNemo => 131000,
             Self::OpenCodestralMamba => 256000,
+            Self::DevstralSmallLatest => 262144,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -142,7 +147,8 @@ impl Model {
             | Self::MistralMediumLatest
             | Self::MistralSmallLatest
             | Self::OpenMistralNemo
-            | Self::OpenCodestralMamba => true,
+            | Self::OpenCodestralMamba
+            | Self::DevstralSmallLatest => true,
             Self::Custom { supports_tools, .. } => supports_tools.unwrap_or(false),
         }
     }

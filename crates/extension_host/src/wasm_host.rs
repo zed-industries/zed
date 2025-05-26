@@ -22,15 +22,18 @@ use gpui::{App, AsyncApp, BackgroundExecutor, Task};
 use http_client::HttpClient;
 use language::LanguageName;
 use lsp::LanguageServerName;
+use moka::sync::Cache;
 use node_runtime::NodeRuntime;
 use release_channel::ReleaseChannel;
 use semantic_version::SemanticVersion;
+use std::borrow::Cow;
+use std::sync::LazyLock;
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, OnceLock},
+    sync::Arc,
 };
 use wasmtime::{
-    Engine, Store,
+    CacheStore, Engine, Store,
     component::{Component, ResourceTable},
 };
 use wasmtime_wasi::{self as wasi, WasiView};
@@ -395,6 +398,20 @@ impl extension::Extension for WasmExtension {
         })
         .await
     }
+
+    async fn get_dap_schema(&self) -> Result<serde_json::Value> {
+        self.call(|extension, store| {
+            async move {
+                extension
+                    .call_dap_schema(store)
+                    .await
+                    .and_then(|schema| serde_json::to_value(schema).map_err(|err| err.to_string()))
+                    .map_err(|err| anyhow!(err.to_string()))
+            }
+            .boxed()
+        })
+        .await
+    }
 }
 
 pub struct WasmState {
@@ -411,16 +428,23 @@ type ExtensionCall = Box<
 >;
 
 fn wasm_engine() -> wasmtime::Engine {
-    static WASM_ENGINE: OnceLock<wasmtime::Engine> = OnceLock::new();
+    static WASM_ENGINE: LazyLock<wasmtime::Engine> = LazyLock::new(|| {
+        let mut config = wasmtime::Config::new();
+        config.wasm_component_model(true);
+        config.async_support(true);
+        config
+            .enable_incremental_compilation(cache_store())
+            .unwrap();
+        wasmtime::Engine::new(&config).unwrap()
+    });
 
-    WASM_ENGINE
-        .get_or_init(|| {
-            let mut config = wasmtime::Config::new();
-            config.wasm_component_model(true);
-            config.async_support(true);
-            wasmtime::Engine::new(&config).unwrap()
-        })
-        .clone()
+    WASM_ENGINE.clone()
+}
+
+fn cache_store() -> Arc<IncrementalCompilationCache> {
+    static CACHE_STORE: LazyLock<Arc<IncrementalCompilationCache>> =
+        LazyLock::new(|| Arc::new(IncrementalCompilationCache::new()));
+    CACHE_STORE.clone()
 }
 
 impl WasmHost {
@@ -665,5 +689,38 @@ impl wasi::WasiView for WasmState {
 
     fn ctx(&mut self) -> &mut wasi::WasiCtx {
         &mut self.ctx
+    }
+}
+
+/// Wrapper around a mini-moka bounded cache for storing incremental compilation artifacts.
+/// Since wasm modules have many similar elements, this can save us a lot of work at the
+/// cost of a small memory footprint. However, we don't want this to be unbounded, so we use
+/// a LFU/LRU cache to evict less used cache entries.
+#[derive(Debug)]
+struct IncrementalCompilationCache {
+    cache: Cache<Vec<u8>, Vec<u8>>,
+}
+
+impl IncrementalCompilationCache {
+    fn new() -> Self {
+        let cache = Cache::builder()
+            // Cap this at 32 MB for now. Our extensions turn into roughly 512kb in the cache,
+            // which means we could store 64 completely novel extensions in the cache, but in
+            // practice we will more than that, which is more than enough for our use case.
+            .max_capacity(32 * 1024 * 1024)
+            .weigher(|k: &Vec<u8>, v: &Vec<u8>| (k.len() + v.len()).try_into().unwrap_or(u32::MAX))
+            .build();
+        Self { cache }
+    }
+}
+
+impl CacheStore for IncrementalCompilationCache {
+    fn get(&self, key: &[u8]) -> Option<Cow<[u8]>> {
+        self.cache.get(key).map(|v| v.into())
+    }
+
+    fn insert(&self, key: &[u8], value: Vec<u8>) -> bool {
+        self.cache.insert(key.to_vec(), value);
+        true
     }
 }

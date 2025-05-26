@@ -306,9 +306,9 @@ impl Inventory {
             .unwrap_or((None, None, None));
 
         self.list_tasks(file, language, worktree_id.or(buffer_worktree_id), cx)
-            .iter()
+            .into_iter()
             .find(|(_, template)| template.label == label)
-            .map(|val| val.1.clone())
+            .map(|val| val.1)
     }
 
     /// Pulls its task sources relevant to the worktree and the language given,
@@ -1191,9 +1191,7 @@ mod tests {
     }
 
     fn init_test(_cx: &mut TestAppContext) {
-        if std::env::var("RUST_LOG").is_ok() {
-            env_logger::try_init().ok();
-        }
+        zlog::init_test();
         TaskStore::init(None);
     }
 

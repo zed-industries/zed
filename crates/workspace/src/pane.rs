@@ -156,6 +156,8 @@ pub struct DeploySearch {
     pub replace_enabled: bool,
     #[serde(default)]
     pub included_files: Option<String>,
+    #[serde(default)]
+    pub excluded_files: Option<String>,
 }
 
 impl_actions!(
@@ -203,6 +205,7 @@ impl DeploySearch {
         Self {
             replace_enabled: false,
             included_files: None,
+            excluded_files: None,
         }
     }
 }
@@ -2830,6 +2833,9 @@ impl Pane {
             }
         }
 
+        let is_clone = cfg!(target_os = "macos") && window.modifiers().alt
+            || cfg!(not(target_os = "macos")) && window.modifiers().control;
+
         let from_pane = dragged_tab.pane.clone();
         self.workspace
             .update(cx, |_, cx| {
@@ -2837,9 +2843,26 @@ impl Pane {
                     if let Some(split_direction) = split_direction {
                         to_pane = workspace.split_pane(to_pane, split_direction, window, cx);
                     }
+                    let database_id = workspace.database_id();
                     let old_ix = from_pane.read(cx).index_for_item_id(item_id);
                     let old_len = to_pane.read(cx).items.len();
-                    move_item(&from_pane, &to_pane, item_id, ix, window, cx);
+                    if is_clone {
+                        let Some(item) = from_pane
+                            .read(cx)
+                            .items()
+                            .find(|item| item.item_id() == item_id)
+                            .map(|item| item.clone())
+                        else {
+                            return;
+                        };
+                        if let Some(item) = item.clone_on_split(database_id, window, cx) {
+                            to_pane.update(cx, |pane, cx| {
+                                pane.add_item(item, true, true, None, window, cx);
+                            })
+                        }
+                    } else {
+                        move_item(&from_pane, &to_pane, item_id, ix, window, cx);
+                    }
                     if to_pane == from_pane {
                         if let Some(old_index) = old_ix {
                             to_pane.update(cx, |this, _| {
@@ -3114,6 +3137,7 @@ fn default_render_tab_bar_buttons(
                                 DeploySearch {
                                     replace_enabled: false,
                                     included_files: None,
+                                    excluded_files: None,
                                 }
                                 .boxed_clone(),
                             )
