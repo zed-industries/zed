@@ -2,6 +2,7 @@ use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{AnyWindowHandle, App, Entity, Task};
+use indoc::indoc;
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
@@ -146,24 +147,263 @@ impl Tool for ListDirectoryTool {
             return Task::ready(Ok(format!("{} is empty.", input.path).into())).into();
         }
 
-        // Sort paths for consistent output
-        folder_paths.sort();
-        file_paths.sort();
-
         let mut output = String::new();
-        writeln!(output, "# Folders:").unwrap();
         if !folder_paths.is_empty() {
+            writeln!(output, "# Folders:").unwrap();
             for path_str in folder_paths {
                 writeln!(output, "{}", path_str).unwrap();
             }
         }
 
-        writeln!(output, "\n# Files:").unwrap();
         if !file_paths.is_empty() {
+            writeln!(output, "\n# Files:").unwrap();
             for path_str in file_paths {
                 writeln!(output, "{}", path_str).unwrap();
             }
         }
         Task::ready(Ok(output.into())).into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use assistant_tool::Tool;
+    use gpui::{AppContext, TestAppContext};
+    use language_model::fake_provider::FakeLanguageModel;
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_list_directory_separates_files_and_dirs(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                "src": {
+                    "main.rs": "fn main() {}",
+                    "lib.rs": "pub fn hello() {}",
+                    "models": {
+                        "user.rs": "struct User {}",
+                        "post.rs": "struct Post {}"
+                    },
+                    "utils": {
+                        "helper.rs": "pub fn help() {}"
+                    }
+                },
+                "tests": {
+                    "integration_test.rs": "#[test] fn test() {}"
+                },
+                "README.md": "# Project",
+                "Cargo.toml": "[package]"
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
+        let tool = Arc::new(ListDirectoryTool);
+
+        // Test listing root directory
+        let input = json!({
+            "path": "project"
+        });
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    input,
+                    Arc::default(),
+                    project.clone(),
+                    action_log.clone(),
+                    model.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .output
+            .await
+            .unwrap();
+
+        let content = result.content.as_str().unwrap();
+        assert_eq!(
+            content,
+            indoc! {"
+                # Folders:
+                project/src
+                project/tests
+
+                # Files:
+                project/Cargo.toml
+                project/README.md
+            "}
+        );
+
+        // Test listing src directory
+        let input = json!({
+            "path": "project/src"
+        });
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    input,
+                    Arc::default(),
+                    project.clone(),
+                    action_log.clone(),
+                    model.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .output
+            .await
+            .unwrap();
+
+        let content = result.content.as_str().unwrap();
+        assert_eq!(
+            content,
+            indoc! {"
+                # Folders:
+                project/src/models
+                project/src/utils
+
+                # Files:
+                project/src/lib.rs
+                project/src/main.rs
+            "}
+        );
+
+        // Test listing directory with only files
+        let input = json!({
+            "path": "project/tests"
+        });
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    input,
+                    Arc::default(),
+                    project.clone(),
+                    action_log.clone(),
+                    model.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .output
+            .await
+            .unwrap();
+
+        let content = result.content.as_str().unwrap();
+        assert!(!content.contains("# Folders:"));
+        assert!(content.contains("# Files:"));
+        assert!(content.contains("project/tests/integration_test.rs"));
+    }
+
+    #[gpui::test]
+    async fn test_list_directory_empty_directory(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                "empty_dir": {}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
+        let tool = Arc::new(ListDirectoryTool);
+
+        let input = json!({
+            "path": "project/empty_dir"
+        });
+
+        let result = cx
+            .update(|cx| tool.run(input, Arc::default(), project, action_log, model, None, cx))
+            .output
+            .await
+            .unwrap();
+
+        let content = result.content.as_str().unwrap();
+        assert_eq!(content, "project/empty_dir is empty.");
+    }
+
+    #[gpui::test]
+    async fn test_list_directory_error_cases(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                "file.txt": "content"
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
+        let tool = Arc::new(ListDirectoryTool);
+
+        // Test non-existent path
+        let input = json!({
+            "path": "project/nonexistent"
+        });
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    input,
+                    Arc::default(),
+                    project.clone(),
+                    action_log.clone(),
+                    model.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .output
+            .await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Path not found"));
+
+        // Test trying to list a file instead of directory
+        let input = json!({
+            "path": "project/file.txt"
+        });
+
+        let result = cx
+            .update(|cx| tool.run(input, Arc::default(), project, action_log, model, None, cx))
+            .output
+            .await;
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("is not a directory")
+        );
     }
 }
