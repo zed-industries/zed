@@ -1,5 +1,5 @@
 mod actions;
-pub(crate) mod scroll_animation_manager;
+mod scroll_animation_manager;
 pub(crate) mod autoscroll;
 pub(crate) mod scroll_amount;
 

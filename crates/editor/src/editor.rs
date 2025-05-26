@@ -20789,8 +20789,12 @@ impl Render for Editor {
         };
 
         if self.scroll_manager.requires_animation_update() {
-            if let UpdateResponse::RequiresAnimationFrame{..} = self.scroll_manager.update_animation(window, cx) {
-                window.request_animation_frame();
+            let update_response = self.scroll_manager.update_animation(window,cx);
+            match update_response {
+                UpdateResponse::RequiresAnimationFrame {..} => { 
+                    window.request_animation_frame();
+                }
+                _ => ()
             }
         }
 
