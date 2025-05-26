@@ -537,13 +537,13 @@ impl LineBreakpoint {
                     cx,
                 )
             })
-            .icon_size(ui::IconSize::XSmall),
+            .icon_size(ui::IconSize::Indicator),
         )
         .child(
             v_flex()
                 .py_1()
                 .gap_1()
-                .h_6()
+                .min_h(px(22.))
                 .justify_center()
                 .id(SharedString::from(format!(
                     "breakpoint-ui-on-click-go-to-line-{:?}/{}:{}",
@@ -650,7 +650,7 @@ impl ExceptionBreakpoint {
             v_flex()
                 .py_1()
                 .gap_1()
-                .h_6()
+                .min_h(px(22.))
                 .justify_center()
                 .id(("exception-breakpoint-label", ix))
                 .child(
