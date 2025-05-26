@@ -1,4 +1,5 @@
 pub mod arc_cow;
+pub mod archive;
 pub mod command;
 pub mod fs;
 pub mod markdown;
@@ -28,7 +29,7 @@ use std::{
 use unicase::UniCase;
 
 #[cfg(unix)]
-use anyhow::{Context as _, anyhow};
+use anyhow::Context as _;
 
 pub use take_until::*;
 #[cfg(any(test, feature = "test-support"))]
@@ -515,9 +516,7 @@ pub fn load_login_shell_environment() -> Result<()> {
     )
     .output()
     .context("failed to spawn login shell to source login environment variables")?;
-    if !output.status.success() {
-        Err(anyhow!("login shell exited with error"))?;
-    }
+    anyhow::ensure!(output.status.success(), "login shell exited with error");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -579,6 +578,31 @@ pub fn parse_env_output(env: &str, mut f: impl FnMut(String, String)) {
     }
     if let Some((key, value)) = Option::zip(current_key.take(), current_value.take()) {
         f(key, value)
+    }
+}
+
+pub fn merge_json_lenient_value_into(
+    source: serde_json_lenient::Value,
+    target: &mut serde_json_lenient::Value,
+) {
+    match (source, target) {
+        (serde_json_lenient::Value::Object(source), serde_json_lenient::Value::Object(target)) => {
+            for (key, value) in source {
+                if let Some(target) = target.get_mut(&key) {
+                    merge_json_lenient_value_into(value, target);
+                } else {
+                    target.insert(key, value);
+                }
+            }
+        }
+
+        (serde_json_lenient::Value::Array(source), serde_json_lenient::Value::Array(target)) => {
+            for value in source {
+                target.push(value);
+            }
+        }
+
+        (source, target) => *target = source,
     }
 }
 

@@ -1,4 +1,4 @@
-use anyhow::{Context as _, anyhow};
+use anyhow::Context as _;
 use fuzzy::StringMatchCandidate;
 
 use collections::HashSet;
@@ -381,7 +381,7 @@ impl PickerDelegate for BranchListDelegate {
                         .delegate
                         .repo
                         .as_ref()
-                        .ok_or_else(|| anyhow!("No active repository"))?
+                        .context("No active repository")?
                         .clone();
 
                     let mut cx = cx.to_async();

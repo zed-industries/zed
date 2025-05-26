@@ -421,7 +421,7 @@ fn initialize_panels(
                         workspace.update_in(cx, |workspace, window, cx| {
                             workspace.add_panel(debug_panel, window, cx);
                         })?;
-                        Result::<_, anyhow::Error>::Ok(())
+                        anyhow::Ok(())
                     },
                 )
                 .detach()
@@ -940,7 +940,7 @@ fn about(
         ""
     };
     let message = format!("{release_channel} {version} {debug}");
-    let detail = AppCommitSha::try_global(cx).map(|sha| sha.0.clone());
+    let detail = AppCommitSha::try_global(cx).map(|sha| sha.full());
 
     let prompt = window.prompt(PromptLevel::Info, &message, detail.as_deref(), &["OK"], cx);
     cx.foreground_executor()
@@ -4295,6 +4295,7 @@ mod tests {
                 app_state.client.clone(),
                 prompt_builder.clone(),
                 app_state.languages.clone(),
+                false,
                 cx,
             );
             repl::init(app_state.fs.clone(), cx);

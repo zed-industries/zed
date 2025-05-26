@@ -2,7 +2,7 @@ use crate::{
     Project, ProjectEntryId, ProjectItem, ProjectPath,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet, hash_map};
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
@@ -128,7 +128,7 @@ impl ImageItem {
         let file_metadata = fs
             .metadata(image_path.as_path())
             .await?
-            .ok_or_else(|| anyhow!("failed to load image metadata"))?;
+            .context("failed to load image metadata")?;
 
         Ok(ImageMetadata {
             width,
@@ -223,7 +223,7 @@ impl ProjectItem for ImageItem {
         project: &Entity<Project>,
         path: &ProjectPath,
         cx: &mut App,
-    ) -> Option<Task<gpui::Result<Entity<Self>>>> {
+    ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
         if is_image_file(&project, &path, cx) {
             Some(cx.spawn({
                 let path = path.clone();
@@ -376,12 +376,6 @@ impl ImageStore {
                 entry.insert(rx.clone());
 
                 let project_path = project_path.clone();
-                // TODO kb this is causing another error, and we also pass a worktree nearby — seems ok to pass "" here?
-                // let image_path = worktree
-                //     .read(cx)
-                //     .absolutize(&project_path.path)
-                //     .map(Arc::from)
-                //     .unwrap_or_else(|_| project_path.path.clone());
                 let load_image = self
                     .state
                     .open_image(project_path.path.clone(), worktree, cx);
@@ -702,7 +696,7 @@ fn create_gpui_image(content: Vec<u8>) -> anyhow::Result<Arc<gpui::Image>> {
             image::ImageFormat::Gif => gpui::ImageFormat::Gif,
             image::ImageFormat::Bmp => gpui::ImageFormat::Bmp,
             image::ImageFormat::Tiff => gpui::ImageFormat::Tiff,
-            _ => Err(anyhow::anyhow!("Image format not supported"))?,
+            format => anyhow::bail!("Image format {format:?} not supported"),
         },
         content,
     )))
