@@ -4,7 +4,7 @@ use futures::StreamExt;
 use gpui::{App, AsyncApp};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
-use lsp::{DiagnosticTag, InitializeParams, LanguageServerBinary, LanguageServerName};
+use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
 use project::lsp_store::clangd_ext;
 use serde_json::json;
 use smol::fs;
@@ -282,38 +282,8 @@ impl super::LspAdapter for CLspAdapter {
         Ok(original)
     }
 
-    fn process_diagnostics(
-        &self,
-        params: &mut lsp::PublishDiagnosticsParams,
-        server_id: LanguageServerId,
-        buffer: Option<&'_ Buffer>,
-    ) {
-        if let Some(buffer) = buffer {
-            let snapshot = buffer.snapshot();
-            let inactive_regions = buffer
-                .get_diagnostics(server_id)
-                .into_iter()
-                .flat_map(|v| v.iter())
-                .filter(|diag| clangd_ext::is_inactive_region(&diag.diagnostic))
-                .map(move |diag| {
-                    let range =
-                        language::range_to_lsp(diag.range.to_point_utf16(&snapshot)).unwrap();
-                    let mut tags = Vec::with_capacity(1);
-                    if diag.diagnostic.is_unnecessary {
-                        tags.push(DiagnosticTag::UNNECESSARY);
-                    }
-                    lsp::Diagnostic {
-                        range,
-                        severity: Some(diag.diagnostic.severity),
-                        source: diag.diagnostic.source.clone(),
-                        tags: Some(tags),
-                        message: diag.diagnostic.message.clone(),
-                        code: diag.diagnostic.code.clone(),
-                        ..Default::default()
-                    }
-                });
-            params.diagnostics.extend(inactive_regions);
-        }
+    fn retain_old_diagnostic(&self, previous_diagnostic: &Diagnostic, _: &App) -> bool {
+        clangd_ext::is_inactive_region(previous_diagnostic)
     }
 }
 

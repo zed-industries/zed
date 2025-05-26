@@ -49,8 +49,9 @@ use crate::profile_selector::ProfileSelector;
 use crate::thread::{MessageCrease, Thread, TokenUsageRatio};
 use crate::thread_store::{TextThreadStore, ThreadStore};
 use crate::{
-    ActiveThread, AgentDiffPane, Chat, ExpandMessageEditor, Follow, NewThread, OpenAgentDiff,
-    RemoveAllContext, ToggleContextPicker, ToggleProfileSelector, register_agent_preview,
+    ActiveThread, AgentDiffPane, Chat, ChatWithFollow, ExpandMessageEditor, Follow, NewThread,
+    OpenAgentDiff, RemoveAllContext, ToggleContextPicker, ToggleProfileSelector,
+    register_agent_preview,
 };
 
 #[derive(RegisterComponent)]
@@ -300,6 +301,21 @@ impl MessageEditor {
         self.send_to_model(window, cx);
 
         cx.notify();
+    }
+
+    fn chat_with_follow(
+        &mut self,
+        _: &ChatWithFollow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.workspace
+            .update(cx, |this, cx| {
+                this.follow(CollaboratorId::Agent, window, cx)
+            })
+            .log_err();
+
+        self.chat(&Chat, window, cx);
     }
 
     fn is_editor_empty(&self, cx: &App) -> bool {
@@ -562,6 +578,7 @@ impl MessageEditor {
         v_flex()
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
+            .on_action(cx.listener(Self::chat_with_follow))
             .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
                 this.profile_selector
                     .read(cx)

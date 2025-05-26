@@ -69,6 +69,7 @@ actions!(
         AddContextServer,
         RemoveSelectedThread,
         Chat,
+        ChatWithFollow,
         CycleNextInlineAssist,
         CyclePreviousInlineAssist,
         FocusUp,
