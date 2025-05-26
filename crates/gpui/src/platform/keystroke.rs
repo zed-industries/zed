@@ -331,18 +331,18 @@ fn is_printable_key(key: &str) -> bool {
 impl std::fmt::Display for Keystroke {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.modifiers.control {
-            if cfg!(target_os = "macos") {
-                f.write_char('^')?;
-            } else {
-                write!(f, "ctrl-")?;
-            }
+            #[cfg(target_os = "macos")]
+            f.write_char('^')?;
+
+            #[cfg(not(target_os = "macos"))]
+            write!(f, "ctrl-")?;
         }
         if self.modifiers.alt {
-            if cfg!(target_os = "macos") {
-                f.write_char('⌥')?;
-            } else {
-                write!(f, "alt-")?;
-            }
+            #[cfg(target_os = "macos")]
+            f.write_char('⌥')?;
+
+            #[cfg(not(target_os = "macos"))]
+            write!(f, "alt-")?;
         }
         if self.modifiers.platform {
             #[cfg(target_os = "macos")]
@@ -355,11 +355,11 @@ impl std::fmt::Display for Keystroke {
             f.write_char('⊞')?;
         }
         if self.modifiers.shift {
-            if cfg!(target_os = "macos") {
-                f.write_char('⇧')?;
-            } else {
-                write!(f, "shift-")?;
-            }
+            #[cfg(target_os = "macos")]
+            f.write_char('⇧')?;
+
+            #[cfg(not(target_os = "macos"))]
+            write!(f, "shift-")?;
         }
         let key = match self.key.as_str() {
             "backspace" if cfg!(target_os = "macos") => '⌫',
@@ -373,13 +373,8 @@ impl std::fmt::Display for Keystroke {
             "control" if cfg!(target_os = "macos") => '⌃',
             "alt" if cfg!(target_os = "macos") => '⌥',
             "platform" if cfg!(target_os = "macos") => '⌘',
-            key => {
-                if key.len() == 1 {
-                    key.chars().next().unwrap().to_ascii_uppercase()
-                } else {
-                    return f.write_str(key);
-                }
-            }
+            key if key.len() == 1 => key.chars().next().unwrap().to_ascii_uppercase(),
+            key => return f.write_str(key),
         };
         f.write_char(key)
     }
