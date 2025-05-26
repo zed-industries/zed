@@ -1,7 +1,7 @@
 use crate::{
     ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, parse_wasm_extension_version,
 };
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Context as _, Result, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use futures::io::BufReader;
@@ -134,7 +134,7 @@ impl ExtensionBuilder {
         extension_dir: &Path,
         manifest: &mut ExtensionManifest,
         options: CompileExtensionOptions,
-    ) -> Result<(), anyhow::Error> {
+    ) -> anyhow::Result<()> {
         self.install_rust_wasm_target_if_needed()?;
 
         let cargo_toml_content = fs::read_to_string(extension_dir.join("Cargo.toml"))?;
@@ -398,7 +398,7 @@ impl ExtensionBuilder {
 
     async fn install_wasi_sdk_if_needed(&self) -> Result<PathBuf> {
         let url = if let Some(asset_name) = WASI_SDK_ASSET_NAME {
-            format!("{WASI_SDK_URL}/{asset_name}")
+            format!("{WASI_SDK_URL}{asset_name}")
         } else {
             bail!("wasi-sdk is not available for platform {}", env::consts::OS);
         };
@@ -429,7 +429,7 @@ impl ExtensionBuilder {
 
         let inner_dir = fs::read_dir(&tar_out_dir)?
             .next()
-            .ok_or_else(|| anyhow!("no content"))?
+            .context("no content")?
             .context("failed to read contents of extracted wasi archive directory")?
             .path();
         fs::rename(&inner_dir, &wasi_sdk_dir).context("failed to move extracted wasi dir")?;
@@ -588,7 +588,7 @@ fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) ->
                     let grammar_name = grammar_path
                         .file_stem()
                         .and_then(|stem| stem.to_str())
-                        .ok_or_else(|| anyhow!("no grammar name"))?;
+                        .context("no grammar name")?;
                     if !manifest.grammars.contains_key(grammar_name) {
                         manifest.grammars.insert(
                             grammar_name.into(),

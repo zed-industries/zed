@@ -350,7 +350,11 @@ impl RemoteServerProjects {
         _window: Option<&mut Window>,
         _: &mut Context<Workspace>,
     ) {
-        workspace.register_action(|workspace, _: &OpenRemote, window, cx| {
+        workspace.register_action(|workspace, action: &OpenRemote, window, cx| {
+            if action.from_existing_connection {
+                cx.propagate();
+                return;
+            }
             let handle = cx.entity().downgrade();
             let fs = workspace.project().read(cx).fs().clone();
             workspace.toggle_modal(window, cx, |window, cx| Self::new(fs, window, cx, handle))

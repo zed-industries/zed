@@ -73,6 +73,7 @@ members = [
     "crates/indexed_docs",
     "crates/inline_completion",
     "crates/inline_completion_button",
+    "crates/inspector_ui",
     "crates/install_cli",
     "crates/jj",
     "crates/jj_ui",
@@ -80,7 +81,6 @@ members = [
     "crates/language",
     "crates/language_extension",
     "crates/language_model",
-    "crates/language_model_selector",
     "crates/language_models",
     "crates/language_selector",
     "crates/language_tools",
@@ -280,6 +280,7 @@ image_viewer = { path = "crates/image_viewer" }
 indexed_docs = { path = "crates/indexed_docs" }
 inline_completion = { path = "crates/inline_completion" }
 inline_completion_button = { path = "crates/inline_completion_button" }
+inspector_ui = { path = "crates/inspector_ui" }
 install_cli = { path = "crates/install_cli" }
 jj = { path = "crates/jj" }
 jj_ui = { path = "crates/jj_ui" }
@@ -287,7 +288,6 @@ journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_extension = { path = "crates/language_extension" }
 language_model = { path = "crates/language_model" }
-language_model_selector = { path = "crates/language_model_selector" }
 language_models = { path = "crates/language_models" }
 language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
@@ -430,8 +430,9 @@ convert_case = "0.8.0"
 core-foundation = "0.10.0"
 core-foundation-sys = "0.8.6"
 core-video = { version = "0.4.3", features = ["metal"] }
+criterion = { version = "0.5", features = ["html_reports"] }
 ctor = "0.4.0"
-dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "be69a016ba710191b9fdded28c8b042af4b617f7" }
+dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "68516de327fa1be15214133a0a2e52a12982ce75" }
 dashmap = "6.0"
 derive_more = "0.99.17"
 dirs = "4.0"
@@ -448,6 +449,7 @@ futures-batch = "0.6.1"
 futures-lite = "1.13"
 git2 = { version = "0.20.1", default-features = false }
 globset = "0.4"
+hashbrown = "0.15.3"
 handlebars = "4.3"
 heck = "0.5"
 heed = { version = "0.21.0", features = ["read-txn-no-tls"] }
@@ -463,6 +465,7 @@ indoc = "2"
 inventory = "0.3.19"
 itertools = "0.14.0"
 jj-lib = { git = "https://github.com/jj-vcs/jj", rev = "e18eb8e05efaa153fad5ef46576af145bba1807f" }
+json_dotpath = "1.1"
 jsonschema = "0.30.0"
 jsonwebtoken = "9.3"
 jupyter-protocol = { git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
@@ -475,6 +478,7 @@ lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "c9c189
 markup5ever_rcdom = "0.3.0"
 metal = "0.29"
 mlua = { version = "0.10", features = ["lua54", "vendored", "async", "send"] }
+moka = { version = "0.12.10", features = ["sync"] }
 naga = { version = "25.0", features = ["wgsl-in"] }
 nanoid = "0.4"
 nbformat = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734" }
@@ -549,13 +553,13 @@ streaming-iterator = "0.1"
 strsim = "0.11"
 strum = { version = "0.27.0", features = ["derive"] }
 subtle = "2.5.0"
-syn = { version = "1.0.72", features = ["full", "extra-traits"] }
+syn = { version = "2.0.101", features = ["full", "extra-traits"] }
 sys-locale = "0.3.1"
 sysinfo = "0.31.0"
 take-until = "0.2.0"
 tempfile = "3.20.0"
 thiserror = "2.0.12"
-tiktoken-rs = "0.6.0"
+tiktoken-rs = "0.7.0"
 time = { version = "0.3", features = [
     "macros",
     "parsing",
@@ -598,7 +602,7 @@ unindent = "0.2.0"
 url = "2.2"
 urlencoding = "2.1.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
-walkdir = "2.3"
+walkdir = "2.5"
 wasi-preview1-component-adapter-provider = "29"
 wasm-encoder = "0.221"
 wasmparser = "0.221"
@@ -608,12 +612,14 @@ wasmtime = { version = "29", default-features = false, features = [
     "runtime",
     "cranelift",
     "component-model",
+    "incremental-cache",
+    "parallel-compilation",
 ] }
 wasmtime-wasi = "29"
 which = "6.0.0"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
-zed_llm_client = "0.8.1"
+zed_llm_client = "0.8.3"
 zstd = "0.11"
 
 [workspace.dependencies.async-stripe]

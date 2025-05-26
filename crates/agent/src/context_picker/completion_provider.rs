@@ -1213,7 +1213,7 @@ mod tests {
             assert_eq!(worktrees.len(), 1);
             worktrees.pop().unwrap()
         });
-        let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+        let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
 
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
 

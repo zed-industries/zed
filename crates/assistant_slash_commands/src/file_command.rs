@@ -230,7 +230,10 @@ fn collect_files(
         })
         .collect::<anyhow::Result<Vec<custom_path_matcher::PathMatcher>>>()
     else {
-        return futures::stream::once(async { Err(anyhow!("invalid path")) }).boxed();
+        return futures::stream::once(async {
+            anyhow::bail!("invalid path");
+        })
+        .boxed();
     };
 
     let project_handle = project.downgrade();
