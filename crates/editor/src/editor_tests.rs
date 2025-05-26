@@ -21225,8 +21225,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
             }
         });
 
-    cx.executor()
-        .advance_clock(DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT + Duration::from_millis(10));
+    cx.executor().advance_clock(Duration::from_millis(60));
     cx.executor().run_until_parked();
     assert_eq!(
         diagnostic_requests.load(atomic::Ordering::Acquire),
@@ -21242,8 +21241,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
     editor.update_in(cx, |editor, window, cx| {
         editor.handle_input("2", window, cx)
     });
-    cx.executor()
-        .advance_clock(DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT + Duration::from_millis(10));
+    cx.executor().advance_clock(Duration::from_millis(60));
     cx.executor().run_until_parked();
     assert_eq!(
         diagnostic_requests.load(atomic::Ordering::Acquire),
@@ -21257,8 +21255,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
             s.select_ranges([Point::new(0, 0)..Point::new(0, 0)])
         });
     });
-    cx.executor()
-        .advance_clock(DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT + Duration::from_millis(10));
+    cx.executor().advance_clock(Duration::from_millis(60));
     cx.executor().run_until_parked();
     assert_eq!(
         diagnostic_requests.load(atomic::Ordering::Acquire),
@@ -21272,8 +21269,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
             editor.handle_input("x", window, cx)
         });
     }
-    cx.executor()
-        .advance_clock(DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT + Duration::from_millis(10));
+    cx.executor().advance_clock(Duration::from_millis(60));
     cx.executor().run_until_parked();
 
     let final_requests = diagnostic_requests.load(atomic::Ordering::Acquire);
