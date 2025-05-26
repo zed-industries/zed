@@ -207,8 +207,8 @@ mod tests {
         term::{Config, cell::Flags, test::TermSize},
         vte::ansi::Handler,
     };
-    use itertools::Itertools;
     use std::{cell::RefCell, ops::RangeInclusive, path::PathBuf};
+    use url::Url;
     use util::paths::PathWithPosition;
 
     fn re_test(re: &str, hay: &str, expected: Vec<&str>) {
@@ -293,8 +293,16 @@ mod tests {
         assert_eq!(actual, expected);
     }
 
+    // We use custom columns in many tests to workaround this issue by ensuring a wrapped
+    // line never ends on a wide char:
+    //
+    // <https://github.com/alacritty/alacritty/issues/8586>
+    //
+    // This issue was recently fixed, as soon as update to a version containing the fix we
+    // can remove all the custom columns.
+    //
     macro_rules! test_hyperlink {
-        ($($lines:expr),+; $is_iri:ident) => { {
+        ($($lines:expr),+; $hyperlink_kind:ident) => { {
             use crate::terminal_hyperlinks::tests::line_cells_count;
             use std::cmp;
 
@@ -308,101 +316,24 @@ mod tests {
                 [3, longest_line_cells / 2, longest_line_cells + 1];
                 total_cells;
                 test_lines.iter().copied();
-                $is_iri
+                $hyperlink_kind
             )
         } };
 
-        ($($columns:literal),+; $($lines:expr),+; $is_iri:ident) => { {
+        ($($columns:literal),+; $($lines:expr),+; $hyperlink_kind:ident) => { {
             use crate::terminal_hyperlinks::tests::line_cells_count;
             let test_lines = vec![$($lines),+];
             let total_cells = test_lines.iter().copied().map(line_cells_count).sum();
-            test_hyperlink!([ $($columns),+ ]; total_cells; test_lines.iter().copied(); $is_iri)
+            test_hyperlink!([ $($columns),+ ]; total_cells; test_lines.iter().copied(); $hyperlink_kind)
         } };
 
-        ([ $($columns:expr),+ ]; $total_cells:expr; $lines:expr; $is_iri:ident) => { {
+        ([ $($columns:expr),+ ]; $total_cells:expr; $lines:expr; $hyperlink_kind:ident) => { {
             for columns in vec![ $($columns),+] {
-                use crate::terminal_hyperlinks::tests::test_hyperlink;
-                test_hyperlink(columns, $total_cells, $lines, $is_iri,
+                use crate::terminal_hyperlinks::tests::{ test_hyperlink, HyperlinkKind };
+                test_hyperlink(columns, $total_cells, $lines, HyperlinkKind::$hyperlink_kind,
                     format!("{}:{}", std::file!(), std::line!()));
             }
         } };
-    }
-
-    mod iri {
-        /// [**`c₀, c₁, …, cₙ;`**]ₒₚₜ := use specified terminal widths of `c₀, c₁, …, cₙ` **columns**
-        /// (defaults to `3, longest_line_cells / 2, longest_line_cells + 1;`)
-        ///
-        macro_rules! test_iri {
-            ($iri:literal) => { { test_hyperlink!(concat!("‹«👉", $iri, "»›"); true) } };
-            ($($columns:literal),+; $iri:literal) => { {
-                test_hyperlink!($($columns),+; concat!("‹«👉", $iri, "»›"); true)
-            } };
-        }
-
-        #[test]
-        fn simple() {
-            // In the order they appear in URL_REGEX, except 'file://' which is treated as a path
-            test_iri!("ipfs://test/cool.ipfs");
-            test_iri!("ipns://test/cool.ipns");
-            test_iri!("magnet://test/cool.git");
-            test_iri!("mailto:someone@somewhere.here");
-            test_iri!("gemini://somewhere.here");
-            test_iri!("gopher://somewhere.here");
-            test_iri!("http://test/cool/index.html");
-            test_iri!("http://10.10.10.10:1111/cool.html");
-            test_iri!("http://test/cool/index.html?amazing=1");
-            test_iri!("http://test/cool/index.html#right%20here");
-            test_iri!("http://test/cool/index.html?amazing=1#right%20here");
-            test_iri!("https://test/cool/index.html");
-            test_iri!("https://10.10.10.10:1111/cool.html");
-            test_iri!("https://test/cool/index.html?amazing=1");
-            test_iri!("https://test/cool/index.html#right%20here");
-            test_iri!("https://test/cool/index.html?amazing=1#right%20here");
-            test_iri!("news://test/cool.news");
-            test_iri!("git://test/cool.git");
-            test_iri!("ssh://user@somewhere.over.here:12345/test/cool.git");
-            test_iri!("ftp://test/cool.ftp");
-        }
-
-        #[test]
-        fn wide_chars() {
-            // In the order they appear in URL_REGEX, except 'file://' which is treated as a path
-            test_iri!(4, 20; "ipfs://例🏃🦀/cool.ipfs");
-            test_iri!(4, 20; "ipns://例🏃🦀/cool.ipns");
-            test_iri!(6, 20; "magnet://例🏃🦀/cool.git");
-            test_iri!(4, 20; "mailto:someone@somewhere.here");
-            test_iri!(4, 20; "gemini://somewhere.here");
-            test_iri!(4, 20; "gopher://somewhere.here");
-            test_iri!(4, 20; "http://例🏃🦀/cool/index.html");
-            test_iri!(4, 20; "http://10.10.10.10:1111/cool.html");
-            test_iri!(4, 20; "http://例🏃🦀/cool/index.html?amazing=1");
-            test_iri!(4, 20; "http://例🏃🦀/cool/index.html#right%20here");
-            test_iri!(4, 20; "http://例🏃🦀/cool/index.html?amazing=1#right%20here");
-            test_iri!(4, 20; "https://例🏃🦀/cool/index.html");
-            test_iri!(4, 20; "https://10.10.10.10:1111/cool.html");
-            test_iri!(4, 20; "https://例🏃🦀/cool/index.html?amazing=1");
-            test_iri!(4, 20; "https://例🏃🦀/cool/index.html#right%20here");
-            test_iri!(4, 20; "https://例🏃🦀/cool/index.html?amazing=1#right%20here");
-            test_iri!(4, 20; "news://例🏃🦀/cool.news");
-            test_iri!(5, 20; "git://例/cool.git");
-            test_iri!(5, 20; "ssh://user@somewhere.over.here:12345/例🏃🦀/cool.git");
-            test_iri!(7, 20; "ftp://例🏃🦀/cool.ftp");
-        }
-
-        // There are likely more tests needed for IRI vs URI
-        #[test]
-        fn iris() {
-            // These refer to the same location, see example here:
-            // <https://en.wikipedia.org/wiki/Internationalized_Resource_Identifier#Compatibility>
-            test_iri!("https://en.wiktionary.org/wiki/Ῥόδος"); // IRI
-            test_iri!("https://en.wiktionary.org/wiki/%E1%BF%AC%CF%8C%CE%B4%CE%BF%CF%82"); // URI
-        }
-
-        #[test]
-        #[should_panic(expected = "Expected a iri, but was a path")]
-        fn file_is_a_path() {
-            test_iri!("file://test/cool/index.rs");
-        }
     }
 
     mod path {
@@ -418,8 +349,8 @@ mod tests {
         /// (defaults to `3, longest_line_cells / 2, longest_line_cells + 1;`)
         ///
         macro_rules! test_path {
-            ($($lines:literal),+) => { test_hyperlink!($($lines),+; false) };
-            ($($columns:literal),+; $($lines:literal),+) => { test_hyperlink!($($columns),+; $($lines),+; false) };
+            ($($lines:literal),+) => { test_hyperlink!($($lines),+; Path) };
+            ($($columns:literal),+; $($lines:literal),+) => { test_hyperlink!($($columns),+; $($lines),+; Path) };
         }
 
         #[test]
@@ -469,47 +400,6 @@ mod tests {
             test_path!("    ‹File \"«/awesome.py»\", line «4👉2»›: Wat?");
         }
 
-        #[cfg(target_os = "windows")]
-        mod windows {
-            // Lots of fun to be had with long file paths and UNC paths
-            // See <https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation>
-            // See <https://users.rust-lang.org/t/understanding-windows-paths/58583>
-            // See <https://github.com/rust-lang/cargo/issues/13919>
-
-            #[test]
-            fn unc() {
-                test_path!(r#"‹«\\server\share\👉test\cool.rs»›"#);
-                test_path!(r#"‹«\\server\share\test\cool👉.rs»›"#);
-            }
-
-            mod issues {
-                #[test]
-                #[should_panic(
-                    expected = r#"Path = «\\C:\\test\\cool.rs», at grid cells (1, 0)..=(6, 0)"#
-                )]
-                fn verbatim() {
-                    test_path!(r#"‹\\?\«C:\👉test\cool.rs»›"#);
-                    test_path!(r#"‹\\?\«C:\test\cool👉.rs»›"#);
-                }
-
-                #[test]
-                #[should_panic(
-                    expected = r#"Path = «\\UNC\\server\\share\\test\\cool.rs», at grid cells (1, 0)..=(10, 2)"#
-                )]
-                fn verbatim_unc() {
-                    // This isn't quite right, we want to say the path should be "\\server\share\test\cool.rs"
-                    test_path!(r#"‹«\\?\UNC\server\share\👉test\cool.rs»›"#);
-                    test_path!(r#"‹«\\?\UNC\server\share\test\cool👉.rs»›"#);
-                }
-            }
-        }
-
-        #[test]
-        fn file_iri() {
-            test_path!("‹file://«/👉test/cool/index.rs»›");
-            test_path!("‹file://«/👉test/cool/»›");
-        }
-
         #[test]
         fn colons_galore() {
             test_path!("‹«/test/co👉ol.rs»:«4»›");
@@ -557,20 +447,10 @@ mod tests {
         /// These likely rise to the level of being worth fixing.
         mod issues {
             #[test]
-            // We use custom columns in many tests to workaround this issue by ensuring a wrapped
-            // line never ends on a wide char:
-            //
-            // <https://github.com/alacritty/alacritty/issues/8586>
-            //
-            // Even if Alacritty chooses not to fix that bug, this seems worth implementing a
-            // workaround for in Zed, even if no one has reported it. It is most likely in the
-            // category of people experiencing failures, but somewhat randomly and not really
-            // understanding what situation is causing it to work or not work, which isn't a great
-            // experience, even though it might not have been reported as an actual issue with a
-            // clear repro case.
             #[cfg_attr(not(target_os = "windows"), should_panic(expected = "Path = «例»"))]
             #[cfg_attr(target_os = "windows", should_panic(expected = r#"Path = «C:\\例»"#))]
-            fn issue_alacritty_bugs_with_wide_char_at_line_wrap() {
+            // <https://github.com/alacritty/alacritty/issues/8586>
+            fn issue_alacritty_8586() {
                 // Rust paths
                 test_path!("‹«/👉例/cool.rs»›");
                 test_path!("‹«/例👈/cool.rs»›");
@@ -646,27 +526,6 @@ mod tests {
                     "‹«test/controllers/template_items_controller_test.rb»:«19»›:i👉n 'block in <class:TemplateItemsControllerTest>'"
                 );
             }
-
-            #[test]
-            #[cfg_attr(
-                not(target_os = "windows"),
-                should_panic(expected = "Path = «/test/Ῥόδος/», at grid cells (0, 0)..=(15, 1)")
-            )]
-            #[cfg_attr(
-                target_os = "windows",
-                should_panic(
-                    expected = r#"Path = «C:\\test\\Ῥόδος\\», at grid cells (0, 0)..=(16, 0)"#
-                )
-            )]
-            fn issue_file_iri_with_percent_encoded_characters() {
-                // Non-space characters
-                // file:///test/Ῥόδος/
-                test_path!("‹file://«/👉test/%E1%BF%AC%CF%8C%CE%B4%CE%BF%CF%82/»›"); // URI
-
-                // Spaces
-                test_path!("‹file://«/👉te%20st/co%20ol/index.rs»›");
-                test_path!("‹file://«/👉te%20st/co%20ol/»›");
-            }
         }
 
         /// Minor issues arguably not important enough to fix/workaround...
@@ -728,12 +587,206 @@ mod tests {
                 test_path!("‹«/te:st/👉co:ol.r:s:4:2::::::»›");
             }
         }
+
+        #[cfg(target_os = "windows")]
+        mod windows {
+            // Lots of fun to be had with long file paths (verbatim) and UNC paths on Windows.
+            // See <https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation>
+            // See <https://users.rust-lang.org/t/understanding-windows-paths/58583>
+            // See <https://github.com/rust-lang/cargo/issues/13919>
+
+            #[test]
+            fn unc() {
+                test_path!(r#"‹«\\server\share\👉test\cool.rs»›"#);
+                test_path!(r#"‹«\\server\share\test\cool👉.rs»›"#);
+            }
+
+            mod issues {
+                #[test]
+                #[should_panic(
+                    expected = r#"Path = «C:\\test\\cool.rs», at grid cells (0, 0)..=(6, 0)"#
+                )]
+                fn issue_verbatim() {
+                    test_path!(r#"‹«\\?\C:\👉test\cool.rs»›"#);
+                    test_path!(r#"‹«\\?\C:\test\cool👉.rs»›"#);
+                }
+
+                #[test]
+                #[should_panic(
+                    expected = r#"Path = «\\\\server\\share\\test\\cool.rs», at grid cells (0, 0)..=(10, 2)"#
+                )]
+                fn issue_verbatim_unc() {
+                    test_path!(r#"‹«\\?\UNC\server\share\👉test\cool.rs»›"#);
+                    test_path!(r#"‹«\\?\UNC\server\share\test\cool👉.rs»›"#);
+                }
+            }
+        }
+    }
+
+    mod file_iri {
+        // File IRIs have a ton of use cases, most of which we currently do not support. A few of
+        // those cases are documented here as tests which are expected to fail.
+        // See https://en.wikipedia.org/wiki/File_URI_scheme
+
+        /// [**`c₀, c₁, …, cₙ;`**]ₒₚₜ := use specified terminal widths of `c₀, c₁, …, cₙ` **columns**
+        /// (defaults to `3, longest_line_cells / 2, longest_line_cells + 1;`)
+        ///
+        macro_rules! test_file_iri {
+            ($file_iri:literal) => { { test_hyperlink!(concat!("‹«👉", $file_iri, "»›"); FileIri) } };
+            ($($columns:literal),+; $file_iri:literal) => { {
+                test_hyperlink!($($columns),+; concat!("‹«👉", $file_iri, "»›"); FileIri)
+            } };
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        #[test]
+        fn absolute_file_iri() {
+            test_file_iri!("file:///test/cool/index.rs");
+            test_file_iri!("file:///test/cool/");
+        }
+
+        mod issues {
+            #[cfg(not(target_os = "windows"))]
+            #[test]
+            #[should_panic(expected = "Path = «/test/Ῥόδος/», at grid cells (0, 0)..=(15, 1)")]
+            fn issue_file_iri_with_percent_encoded_characters() {
+                // Non-space characters
+                // file:///test/Ῥόδος/
+                test_file_iri!("file:///test/%E1%BF%AC%CF%8C%CE%B4%CE%BF%CF%82/"); // URI
+
+                // Spaces
+                test_file_iri!("file:///te%20st/co%20ol/index.rs");
+                test_file_iri!("file:///te%20st/co%20ol/");
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        mod windows {
+            mod issues {
+                // The test uses Url::to_file_path(), but it seems that the Url crate doesn't
+                // support relative file IRIs.
+                #[test]
+                #[should_panic(expected = r#"Failed to interpret file IRI as a path"#)]
+                fn issue_relative_file_iri() {
+                    test_file_iri!("file:/test/cool/index.rs");
+                    test_file_iri!("file:/test/cool/");
+                }
+
+                // See https://en.wikipedia.org/wiki/File_URI_scheme
+                #[test]
+                #[should_panic(
+                    expected = r#"Path = «C:\\test\\cool\\index.rs», at grid cells (0, 0)..=(9, 1)"#
+                )]
+                fn issue_absolute_file_iri() {
+                    test_file_iri!("file:///C:/test/cool/index.rs");
+                    test_file_iri!("file:///C:/test/cool/");
+                }
+
+                #[test]
+                #[should_panic(
+                    expected = r#"Path = «C:\\test\\Ῥόδος\\», at grid cells (0, 0)..=(16, 1)"#
+                )]
+                fn issue_file_iri_with_percent_encoded_characters() {
+                    // Non-space characters
+                    // file:///test/Ῥόδος/
+                    test_file_iri!("file:///C:/test/%E1%BF%AC%CF%8C%CE%B4%CE%BF%CF%82/"); // URI
+
+                    // Spaces
+                    test_file_iri!("file:///C:/te%20st/co%20ol/index.rs");
+                    test_file_iri!("file:///C:/te%20st/co%20ol/");
+                }
+            }
+        }
+    }
+
+    mod iri {
+        /// [**`c₀, c₁, …, cₙ;`**]ₒₚₜ := use specified terminal widths of `c₀, c₁, …, cₙ` **columns**
+        /// (defaults to `3, longest_line_cells / 2, longest_line_cells + 1;`)
+        ///
+        macro_rules! test_iri {
+            ($iri:literal) => { { test_hyperlink!(concat!("‹«👉", $iri, "»›"); Iri) } };
+            ($($columns:literal),+; $iri:literal) => { {
+                test_hyperlink!($($columns),+; concat!("‹«👉", $iri, "»›"); Iri)
+            } };
+        }
+
+        #[test]
+        fn simple() {
+            // In the order they appear in URL_REGEX, except 'file://' which is treated as a path
+            test_iri!("ipfs://test/cool.ipfs");
+            test_iri!("ipns://test/cool.ipns");
+            test_iri!("magnet://test/cool.git");
+            test_iri!("mailto:someone@somewhere.here");
+            test_iri!("gemini://somewhere.here");
+            test_iri!("gopher://somewhere.here");
+            test_iri!("http://test/cool/index.html");
+            test_iri!("http://10.10.10.10:1111/cool.html");
+            test_iri!("http://test/cool/index.html?amazing=1");
+            test_iri!("http://test/cool/index.html#right%20here");
+            test_iri!("http://test/cool/index.html?amazing=1#right%20here");
+            test_iri!("https://test/cool/index.html");
+            test_iri!("https://10.10.10.10:1111/cool.html");
+            test_iri!("https://test/cool/index.html?amazing=1");
+            test_iri!("https://test/cool/index.html#right%20here");
+            test_iri!("https://test/cool/index.html?amazing=1#right%20here");
+            test_iri!("news://test/cool.news");
+            test_iri!("git://test/cool.git");
+            test_iri!("ssh://user@somewhere.over.here:12345/test/cool.git");
+            test_iri!("ftp://test/cool.ftp");
+        }
+
+        #[test]
+        fn wide_chars() {
+            // In the order they appear in URL_REGEX, except 'file://' which is treated as a path
+            test_iri!(4, 20; "ipfs://例🏃🦀/cool.ipfs");
+            test_iri!(4, 20; "ipns://例🏃🦀/cool.ipns");
+            test_iri!(6, 20; "magnet://例🏃🦀/cool.git");
+            test_iri!(4, 20; "mailto:someone@somewhere.here");
+            test_iri!(4, 20; "gemini://somewhere.here");
+            test_iri!(4, 20; "gopher://somewhere.here");
+            test_iri!(4, 20; "http://例🏃🦀/cool/index.html");
+            test_iri!(4, 20; "http://10.10.10.10:1111/cool.html");
+            test_iri!(4, 20; "http://例🏃🦀/cool/index.html?amazing=1");
+            test_iri!(4, 20; "http://例🏃🦀/cool/index.html#right%20here");
+            test_iri!(4, 20; "http://例🏃🦀/cool/index.html?amazing=1#right%20here");
+            test_iri!(4, 20; "https://例🏃🦀/cool/index.html");
+            test_iri!(4, 20; "https://10.10.10.10:1111/cool.html");
+            test_iri!(4, 20; "https://例🏃🦀/cool/index.html?amazing=1");
+            test_iri!(4, 20; "https://例🏃🦀/cool/index.html#right%20here");
+            test_iri!(4, 20; "https://例🏃🦀/cool/index.html?amazing=1#right%20here");
+            test_iri!(4, 20; "news://例🏃🦀/cool.news");
+            test_iri!(5, 20; "git://例/cool.git");
+            test_iri!(5, 20; "ssh://user@somewhere.over.here:12345/例🏃🦀/cool.git");
+            test_iri!(7, 20; "ftp://例🏃🦀/cool.ftp");
+        }
+
+        // There are likely more tests needed for IRI vs URI
+        #[test]
+        fn iris() {
+            // These refer to the same location, see example here:
+            // <https://en.wikipedia.org/wiki/Internationalized_Resource_Identifier#Compatibility>
+            test_iri!("https://en.wiktionary.org/wiki/Ῥόδος"); // IRI
+            test_iri!("https://en.wiktionary.org/wiki/%E1%BF%AC%CF%8C%CE%B4%CE%BF%CF%82"); // URI
+        }
+
+        #[test]
+        #[should_panic(expected = "Expected a path, but was a iri")]
+        fn file_is_a_path() {
+            test_iri!("file://test/cool/index.rs");
+        }
+    }
+
+    #[derive(Debug, PartialEq)]
+    enum HyperlinkKind {
+        FileIri,
+        Iri,
+        Path,
     }
 
     struct ExpectedHyperlink {
         hovered_grid_point: AlacPoint,
         hovered_char: char,
-        is_iri: bool,
+        hyperlink_kind: HyperlinkKind,
         iri_or_path: String,
         row: Option<u32>,
         column: Option<u32>,
@@ -741,7 +794,7 @@ mod tests {
     }
 
     fn build_term_from_test_lines<'a>(
-        is_iri: bool,
+        hyperlink_kind: HyperlinkKind,
         term_size: TermSize,
         test_lines: impl Iterator<Item = &'a str>,
     ) -> (Term<VoidListener>, ExpectedHyperlink) {
@@ -791,11 +844,8 @@ mod tests {
             point
         }
 
-        const FILE_SCHEME: &str = "file://";
-
         let mut hovered_grid_point: Option<AlacPoint> = None;
         let mut hyperlink_match = AlacPoint::default()..=AlacPoint::default();
-        let mut iri_or_path_is_file_iri = false;
         let mut iri_or_path = String::default();
         let mut row = None;
         let mut column = None;
@@ -806,35 +856,14 @@ mod tests {
         let mut term = Term::new(Config::default(), &term_size, VoidListener);
 
         for text in test_lines {
-            let mut text = text.chars().collect_vec();
-
-            // Convert path to Windows style if on Windows
-            if cfg!(windows) && !is_iri {
-                let mut text_iter = text.iter();
-                if let Some(mut path_start) = text_iter.position(|c| *c == '«') {
-                    path_start += 1;
-                    text_iter.next();
-                    let mut path_end = path_start
-                        + text_iter
-                            .position(|c| *c == '»')
-                            .expect("Missing path end marker ('»')");
-
-                    if text[path_start] == '/' {
-                        text.insert(path_start, ':');
-                        text.insert(path_start, 'C');
-                        path_start += 2;
-                        path_end += 2;
-                    }
-
-                    for index in path_start..=path_end {
-                        if text[index] == '/' {
-                            text[index] = '\\';
-                        }
-                    }
-                }
-            }
-
-            for c in text {
+            let chars: Box<dyn Iterator<Item = char>> =
+                if cfg!(windows) && hyperlink_kind == HyperlinkKind::Path {
+                    Box::new(text.chars().map(|c| if c == '/' { '\\' } else { c })) as _
+                } else {
+                    Box::new(text.chars()) as _
+                };
+            let mut chars = chars.peekable();
+            while let Some(c) = chars.next() {
                 match c {
                     '👉' => {
                         hovered_state = HoveredState::HoveredNextChar;
@@ -889,23 +918,30 @@ mod tests {
                             number.push(c)
                         }
 
-                        term.input(c);
-                        prev_input_point = prev_input_point_from_term(&term);
+                        let is_windows_abs_path_start = captures_state
+                            == CapturesState::PathNextChar
+                            && cfg!(windows)
+                            && hyperlink_kind == HyperlinkKind::Path
+                            && c == '\\'
+                            && chars.peek().is_some_and(|c| *c != '\\');
+
+                        if is_windows_abs_path_start {
+                            // Convert linux abs_path_start into Windows abs path start so that the
+                            // same test can be used for both OSes.
+                            term.input('C');
+                            prev_input_point = prev_input_point_from_term(&term);
+                            term.input(':');
+                            term.input(c);
+                        } else {
+                            term.input(c);
+                            prev_input_point = prev_input_point_from_term(&term);
+                        }
 
                         if hovered_state == HoveredState::HoveredNextChar {
                             hovered_grid_point = Some(prev_input_point);
                             hovered_state = HoveredState::Done;
                         }
                         if captures_state == CapturesState::PathNextChar {
-                            if !is_iri {
-                                let iri_scheme = term.bounds_to_string(
-                                    prev_input_point.sub(&term, Boundary::Grid, FILE_SCHEME.len()),
-                                    prev_input_point.sub(&term, Boundary::Grid, 1),
-                                );
-                                if iri_scheme == FILE_SCHEME {
-                                    iri_or_path_is_file_iri = true
-                                }
-                            }
                             captures_state = CapturesState::Path(prev_input_point);
                         }
                         if match_state == MatchState::MatchNextChar {
@@ -917,11 +953,22 @@ mod tests {
             term.move_down_and_cr(1);
         }
 
-        if iri_or_path_is_file_iri {
-            use url::Url;
-            let file_iri = format!("{FILE_SCHEME}{iri_or_path}");
-            let iri = Url::parse(&file_iri).unwrap();
-            iri_or_path = iri.to_file_path().unwrap().to_string_lossy().to_string();
+        if hyperlink_kind == HyperlinkKind::FileIri {
+            iri_or_path = Url::parse(&iri_or_path)
+                .expect("Failed to parse file IRI: {iri_or_path}")
+                .to_file_path()
+                .expect("Failed to interpret file IRI as a path")
+                .to_string_lossy()
+                .to_string();
+        }
+
+        if cfg!(windows) {
+            // Handle verbatim and UNC paths for Windows
+            if let Some(stripped) = iri_or_path.strip_prefix(r#"\\?\UNC\"#) {
+                iri_or_path = format!(r#"\\{stripped}"#);
+            } else if let Some(stripped) = iri_or_path.strip_prefix(r#"\\?\"#) {
+                iri_or_path = stripped.to_string();
+            }
         }
 
         let hovered_grid_point = hovered_grid_point.expect("Missing hovered point (👉 or 👈)");
@@ -931,7 +978,7 @@ mod tests {
             ExpectedHyperlink {
                 hovered_grid_point,
                 hovered_char,
-                is_iri,
+                hyperlink_kind,
                 iri_or_path,
                 row,
                 column,
@@ -1003,10 +1050,10 @@ mod tests {
                     result
                 };
 
-            assert_eq!(
-                self.expected_hyperlink.is_iri,
-                false,
-                "\n    at {}\nExpected a iri, but was a path:\n{}",
+            assert_ne!(
+                self.expected_hyperlink.hyperlink_kind,
+                HyperlinkKind::Iri,
+                "\n    at {}\nExpected a path, but was a iri:\n{}",
                 self.source_location,
                 self.format_renderable_content()
             );
@@ -1036,9 +1083,9 @@ mod tests {
             };
 
             assert_eq!(
-                self.expected_hyperlink.is_iri,
-                true,
-                "\n    at {}\nExpected a path, but was a iri:\n{}",
+                self.expected_hyperlink.hyperlink_kind,
+                HyperlinkKind::Iri,
+                "\n    at {}\nExpected a iri, but was a path:\n{}",
                 self.source_location,
                 self.format_renderable_content()
             );
@@ -1105,12 +1152,10 @@ mod tests {
     }
 
     fn test_hyperlink<'a>(
-        // Note: No need to support column overrides if
-        // https://github.com/alacritty/alacritty/issues/8586 gets fixed.
         columns: usize,
         total_cells: usize,
         test_lines: impl Iterator<Item = &'a str>,
-        is_iri: bool,
+        hyperlink_kind: HyperlinkKind,
         source_location: String,
     ) {
         thread_local! {
@@ -1119,7 +1164,7 @@ mod tests {
 
         let term_size = TermSize::new(columns, total_cells / columns + 2);
         let (mut term, expected_hyperlink) =
-            build_term_from_test_lines(is_iri, term_size, test_lines);
+            build_term_from_test_lines(hyperlink_kind, term_size, test_lines);
         let hyperlink_found = HYPERLINK_FINDER.with(|hyperlink_finder| {
             hyperlink_finder
                 .borrow_mut()
