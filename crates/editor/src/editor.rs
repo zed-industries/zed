@@ -6518,7 +6518,35 @@ impl Editor {
     }
 
     pub fn blame_hover(&mut self, _: &BlameHover, window: &mut Window, cx: &mut Context<Self>) {
-        println!("blame_hover todo!()");
+        let snapshot = self.snapshot(window, cx);
+        let cursor = self.selections.newest::<Point>(cx).head();
+        let Some((buffer, point, _)) = snapshot.buffer_snapshot.point_to_buffer_point(cursor)
+        else {
+            return;
+        };
+
+        let Some(blame) = self.blame.as_ref() else {
+            return;
+        };
+
+        let row_info = RowInfo {
+            buffer_id: Some(buffer.remote_id()),
+            buffer_row: Some(point.row),
+            ..Default::default()
+        };
+        let Some(blame_entry) = blame
+            .update(cx, |blame, cx| blame.blame_for_rows(&[row_info], cx).next())
+            .flatten()
+        else {
+            return;
+        };
+
+        // TODO: Render at the cursor position
+        let position = window.mouse_position();
+
+        // TODO: Ignore delay
+        // TODO: Don't hide when mouse is not over popover
+        self.show_blame_popover(&blame_entry, position, cx);
     }
 
     fn show_blame_popover(
