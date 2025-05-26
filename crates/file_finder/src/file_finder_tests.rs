@@ -632,8 +632,8 @@ async fn test_ignored_root(cx: &mut TestAppContext) {
     let project = Project::test(
         app_state.fs.clone(),
         [
-            "/ancestor/tracked-root".as_ref(),
-            "/ancestor/ignored-root".as_ref(),
+            Path::new(path!("/ancestor/tracked-root")),
+            Path::new(path!("/ancestor/ignored-root")),
         ],
         cx,
     )
