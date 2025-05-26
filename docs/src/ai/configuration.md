@@ -353,15 +353,17 @@ Depending on your hardware or use-case you may wish to limit or increase the con
 }
 ```
 
-If you specify a context length that is too large for your hardware, Ollama will log an error. You can watch these logs by running: `tail -f ~/.ollama/logs/ollama.log` (MacOS) or `journalctl -u ollama -f` (Linux). Depending on the memory available on your machine, you may need to adjust the context length to a smaller value.
+If you specify a context length that is too large for your hardware, Ollama will log an error.
+You can watch these logs by running: `tail -f ~/.ollama/logs/ollama.log` (macOS) or `journalctl -u ollama -f` (Linux).
+Depending on the memory available on your machine, you may need to adjust the context length to a smaller value.
 
-You may also optionally specify a value for `keep_alive` for each available model. This can be an integer (seconds) or alternatively a string duration like "5m", "10m", "1h", "1d", etc. For example, `"keep_alive": "120s"` will allow the remote server to unload the model (freeing up GPU VRAM) after 120 seconds.
+You may also optionally specify a value for `keep_alive` for each available model.
+This can be an integer (seconds) or alternatively a string duration like "5m", "10m", "1h", "1d", etc.
+For example, `"keep_alive": "120s"` will allow the remote server to unload the model (freeing up GPU VRAM) after 120 seconds.
 
 The `supports_tools` option controls whether or not the model will use additional tools.
 If the model is tagged with `tools` in the Ollama catalog this option should be supplied, and built in profiles `Ask` and `Write` can be used.
-If the model is not tagged with `tools` in the Ollama catalog, this
-option can still be supplied with value `true`; however be aware that only the
-`Minimal` built in profile will work.
+If the model is not tagged with `tools` in the Ollama catalog, this option can still be supplied with value `true`; however be aware that only the `Minimal` built in profile will work.
 
 ### OpenAI {#openai}
 
@@ -378,7 +380,8 @@ Zed will also use the `OPENAI_API_KEY` environment variable if it's defined.
 
 #### Custom Models {#openai-custom-models}
 
-The Zed Assistant comes pre-configured to use the latest version for common models (GPT-3.5 Turbo, GPT-4, GPT-4 Turbo, GPT-4o, GPT-4o mini). If you wish to use alternate models, perhaps a preview release or a dated model release, or you wish to control the request parameters, you can do so by adding the following to your Zed `settings.json`:
+The Zed Assistant comes pre-configured to use the latest version for common models (GPT-3.5 Turbo, GPT-4, GPT-4 Turbo, GPT-4o, GPT-4o mini).
+To use alternate models, perhaps a preview release or a dated model release, or if you wish to control the request parameters, you can do so by adding the following to your Zed `settings.json`:
 
 ```json
 {
@@ -403,7 +406,9 @@ The Zed Assistant comes pre-configured to use the latest version for common mode
 }
 ```
 
-You must provide the model's Context Window in the `max_tokens` parameter; this can be found in the [OpenAI Model Docs](https://platform.openai.com/docs/models). OpenAI `o1` models should set `max_completion_tokens` as well to avoid incurring high reasoning token costs. Custom models will be listed in the model dropdown in the Agent Panel.
+You must provide the model's Context Window in the `max_tokens` parameter; this can be found in the [OpenAI model documentation](https://platform.openai.com/docs/models).
+OpenAI `o1` models should set `max_completion_tokens` as well to avoid incurring high reasoning token costs.
+Custom models will be listed in the model dropdown in the Agent Panel.
 
 ### OpenAI API Compatible {#openai-api-compatible}
 
