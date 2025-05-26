@@ -9,26 +9,35 @@ use language::{LanguageMatcher, LanguageName, LanguageRegistry};
 use paths::snippets_dir;
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
-use std::{borrow::Borrow, collections::HashSet, fs, path::Path, sync::Arc};
+use std::{
+    borrow::{Borrow, Cow},
+    collections::HashSet,
+    fs,
+    path::Path,
+    sync::Arc,
+};
 use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, OpenOptions, OpenVisible, Workspace, notifications::NotifyResultExt};
 
 #[derive(Eq, Hash, PartialEq)]
-struct ScopeName(String);
+struct ScopeName(Cow<'static, str>);
 
-struct ScopeFileName(String);
+struct ScopeFileName(Cow<'static, str>);
 
 impl ScopeFileName {
     fn with_extension(self) -> String {
-        self.0 + ".json"
+        format!("{}.json", self.0)
     }
 }
 
+const GLOBAL_SCOPE_NAME: &str = "global";
+const GLOBAL_SCOPE_FILE_NAME: &str = "snippets";
+
 impl From<ScopeName> for ScopeFileName {
     fn from(value: ScopeName) -> Self {
-        if value.0 == "global" {
-            ScopeFileName("snippets".to_string())
+        if value.0 == GLOBAL_SCOPE_NAME {
+            ScopeFileName(Cow::Borrowed(GLOBAL_SCOPE_FILE_NAME))
         } else {
             ScopeFileName(value.0)
         }
@@ -37,8 +46,8 @@ impl From<ScopeName> for ScopeFileName {
 
 impl From<ScopeFileName> for ScopeName {
     fn from(value: ScopeFileName) -> Self {
-        if value.0 == "snippets" {
-            ScopeName("global".to_string())
+        if value.0 == GLOBAL_SCOPE_FILE_NAME {
+            ScopeName(Cow::Borrowed(GLOBAL_SCOPE_NAME))
         } else {
             ScopeName(value.0)
         }
@@ -132,7 +141,7 @@ impl ScopeSelectorDelegate {
         scope_selector: WeakEntity<ScopeSelector>,
         language_registry: Arc<LanguageRegistry>,
     ) -> Self {
-        let candidates = Vec::from(["Global".to_string()]).into_iter();
+        let candidates = Vec::from([GLOBAL_SCOPE_NAME.to_string()]).into_iter();
         let languages = language_registry.language_names().into_iter();
 
         let candidates = candidates
@@ -148,11 +157,11 @@ impl ScopeSelectorDelegate {
                 if let Some(entry) = entry.log_err() {
                     let path = entry.path();
                     if let (Some(stem), Some(extension)) = (path.file_stem(), path.extension()) {
-                        if extension.to_os_string().into_string().unwrap() != "json" {
-                            continue;
-                        }
-                        if let Ok(file_name) = stem.to_os_string().into_string() {
-                            existing_scopes.insert(ScopeFileName(file_name).into());
+                        if extension.to_os_string().to_str() == Some("json") {
+                            if let Ok(file_name) = stem.to_os_string().into_string() {
+                                existing_scopes
+                                    .insert(ScopeName::from(ScopeFileName(Cow::Owned(file_name))));
+                            }
                         }
                     }
                 }
@@ -164,39 +173,10 @@ impl ScopeSelectorDelegate {
             scope_selector,
             language_registry,
             candidates,
-            matches: vec![],
+            matches: Vec::new(),
             selected_index: 0,
             existing_scopes,
         }
-    }
-
-    fn scope_data_for_match(&self, mat: &StringMatch, cx: &App) -> (Option<String>, Option<Icon>) {
-        let need_icon = FileFinderSettings::get_global(cx).file_icons;
-        let scope_name =
-            ScopeName(LanguageName::new(&self.candidates[mat.candidate_id].string).lsp_id());
-
-        let file_label = if self.existing_scopes.contains(&scope_name) {
-            Some(ScopeFileName::from(scope_name).with_extension())
-        } else {
-            None
-        };
-
-        let icon = need_icon
-            .then(|| {
-                let language_name = LanguageName::new(mat.string.as_str());
-                self.language_registry
-                    .available_language_for_name(language_name.as_ref())
-                    .and_then(|available_language| {
-                        self.scope_icon(available_language.matcher(), cx)
-                    })
-                    .or(Some(
-                        Icon::from_path(IconName::Globe.path())
-                            .map(|icon| icon.color(Color::Muted)),
-                    ))
-            })
-            .flatten();
-
-        (file_label, icon)
     }
 
     fn scope_icon(&self, matcher: &LanguageMatcher, cx: &App) -> Option<Icon> {
@@ -229,8 +209,8 @@ impl PickerDelegate for ScopeSelectorDelegate {
             if let Some(workspace) = self.workspace.upgrade() {
                 cx.spawn_in(window, async move |_, cx| {
                     let scope_file_name = ScopeFileName(match scope_name.to_lowercase().as_str() {
-                        "global" => "snippets".to_string(),
-                        _ => language.await?.lsp_id(),
+                        GLOBAL_SCOPE_NAME => Cow::Borrowed(GLOBAL_SCOPE_FILE_NAME),
+                        _ => Cow::Owned(language.await?.lsp_id()),
                     });
 
                     workspace.update_in(cx, |workspace, window, cx| {
@@ -325,19 +305,30 @@ impl PickerDelegate for ScopeSelectorDelegate {
     ) -> Option<Self::ListItem> {
         let mat = &self.matches[ix];
         let name_label = mat.string.clone();
-        let (file_label, language_icon) = self.scope_data_for_match(mat, cx);
 
-        let mut item = h_flex()
-            .gap_x_2()
-            .child(HighlightedLabel::new(name_label, mat.positions.clone()));
+        let scope_name = ScopeName(Cow::Owned(
+            LanguageName::new(&self.candidates[mat.candidate_id].string).lsp_id(),
+        ));
+        let file_label = if self.existing_scopes.contains(&scope_name) {
+            Some(ScopeFileName::from(scope_name).with_extension())
+        } else {
+            None
+        };
 
-        if let Some(path_label) = file_label {
-            item = item.child(
-                Label::new(path_label)
-                    .color(Color::Muted)
-                    .size(LabelSize::Small),
-            );
-        }
+        let language_icon = if FileFinderSettings::get_global(cx).file_icons {
+            let language_name = LanguageName::new(mat.string.as_str());
+            self.language_registry
+                .available_language_for_name(language_name.as_ref())
+                .and_then(|available_language| self.scope_icon(available_language.matcher(), cx))
+                .or_else(|| {
+                    Some(
+                        Icon::from_path(IconName::Globe.path())
+                            .map(|icon| icon.color(Color::Muted)),
+                    )
+                })
+        } else {
+            None
+        };
 
         Some(
             ListItem::new(ix)
@@ -345,7 +336,18 @@ impl PickerDelegate for ScopeSelectorDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .start_slot::<Icon>(language_icon)
-                .child(item),
+                .child(
+                    h_flex()
+                        .gap_x_2()
+                        .child(HighlightedLabel::new(name_label, mat.positions.clone()))
+                        .when_some(file_label, |item, path_label| {
+                            item.child(
+                                Label::new(path_label)
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            )
+                        }),
+                ),
         )
     }
 }
