@@ -6517,6 +6517,10 @@ impl Editor {
         }
     }
 
+    pub fn blame_hover(&mut self, _: &BlameHover, window: &mut Window, cx: &mut Context<Self>) {
+        println!("blame_hover todo!()");
+    }
+
     fn show_blame_popover(
         &mut self,
         blame_entry: &BlameEntry,

@@ -216,6 +216,7 @@ impl EditorElement {
         register_action(editor, window, Editor::newline_above);
         register_action(editor, window, Editor::newline_below);
         register_action(editor, window, Editor::backspace);
+        register_action(editor, window, Editor::blame_hover);
         register_action(editor, window, Editor::delete);
         register_action(editor, window, Editor::tab);
         register_action(editor, window, Editor::backtab);
