@@ -923,6 +923,7 @@ pub struct Editor {
     show_gutter: bool,
     show_scrollbars: bool,
     minimap_visibility: MinimapVisibility,
+    offset_content: bool,
     disable_expand_excerpt_buttons: bool,
     show_line_numbers: Option<bool>,
     use_relative_line_numbers: Option<bool>,
@@ -1761,6 +1762,7 @@ impl Editor {
             show_local_selections: true,
             show_scrollbars: full_mode,
             minimap_visibility: MinimapVisibility::for_mode(&mode, cx),
+            offset_content: !matches!(mode, EditorMode::SingleLine { .. }),
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
             show_gutter: mode.is_full(),
             show_line_numbers: None,
@@ -16919,6 +16921,17 @@ impl Editor {
     pub fn disable_scrollbars_and_minimap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.set_show_scrollbars(false, cx);
         self.set_minimap_visibility(MinimapVisibility::Disabled, window, cx);
+    }
+
+    /// Normally the text in full mode and auto height editors is padded on the
+    /// left side by roughly half a character width for improved hit testing.
+    ///
+    /// Use this method to disable this for cases where this is not wanted (e.g.
+    /// if you want to align the editor text with some other text above or below)
+    /// or if you want to add this padding to single-line editors.
+    pub fn set_offset_content(&mut self, offset_content: bool, cx: &mut Context<Self>) {
+        self.offset_content = offset_content;
+        cx.notify();
     }
 
     pub fn set_show_line_numbers(&mut self, show_line_numbers: bool, cx: &mut Context<Self>) {
