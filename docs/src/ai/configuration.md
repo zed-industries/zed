@@ -11,16 +11,16 @@ Here's an overview of the supported providers and tool call support:
 
 | Provider                                        | Tool Use Supported                                                                                                                                                          |
 | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Anthropic](#anthropic)                         | ✅                                                                                                                                                                          |
-| [GitHub Copilot Chat](#github-copilot-chat)     | For Some Models ([link](https://github.com/zed-industries/zed/blob/9e0330ba7d848755c9734bf456c716bddf0973f3/crates/language_models/src/provider/copilot_chat.rs#L189-L198)) |
 | [Amazon Bedrock](#amazon-bedrock)               | Depends on the model |
+| [Anthropic](#anthropic)                         | ✅                                                                                                                                                                          |
+| [DeepSeek](#deepseek)                           | 🚫                                                                                                                                                                          |
+| [GitHub Copilot Chat](#github-copilot-chat)     | For Some Models ([link](https://github.com/zed-industries/zed/blob/9e0330ba7d848755c9734bf456c716bddf0973f3/crates/language_models/src/provider/copilot_chat.rs#L189-L198)) |
 | [Google AI](#google-ai)                         | ✅                                                                                                                                                                          |
+| [LM Studio](#lmstudio)                          | 🚫                                                                                                                                                                          |
 | [Mistral](#mistral)                             | ✅                                                                                                                                                                          |
 | [Ollama](#ollama)                               | ✅                                                                                                                                                                          |
 | [OpenAI](#openai)                               | ✅                                                                                                                                                                          |
-| [DeepSeek](#deepseek)                           | 🚫                                                                                                                                                                          |
 | [OpenAI API Compatible](#openai-api-compatible) | 🚫                                                                                                                                                                          |
-| [LM Studio](#lmstudio)                          | 🚫                                                                                                                                                                          |
 
 ## Use Your Own Keys {#use-your-own-keys}
 
@@ -28,65 +28,6 @@ While Zed offers hosted versions of models through [our various plans](/ai/plans
 Below, you can learn how to do that for each provider.
 
 > Using your own API keys is _free_—you do not need to subscribe to a Zed plan to use our AI features with your own keys.
-
-### Anthropic {#anthropic}
-
-> ✅ Supports tool use
-
-You can use Anthropic models by choosing it via the model dropdown in the Agent Panel.
-
-1. Sign up for Anthropic and [create an API key](https://console.anthropic.com/settings/keys)
-2. Make sure that your Anthropic account has credits
-3. Open the settings view (`agent: open configuration`) and go to the Anthropic section
-4. Enter your Anthropic API key
-
-Even if you pay for Claude Pro, you will still have to [pay for additional credits](https://console.anthropic.com/settings/plans) to use it via the API.
-
-Zed will also use the `ANTHROPIC_API_KEY` environment variable if it's defined.
-
-#### Anthropic Custom Models {#anthropic-custom-models}
-
-You can add custom models to the Anthropic provider by adding the following to your Zed `settings.json`:
-
-```json
-{
-  "language_models": {
-    "anthropic": {
-      "available_models": [
-        {
-          "name": "claude-3-5-sonnet-20240620",
-          "display_name": "Sonnet 2024-June",
-          "max_tokens": 128000,
-          "max_output_tokens": 2560,
-          "cache_configuration": {
-            "max_cache_anchors": 10,
-            "min_total_token": 10000,
-            "should_speculate": false
-          },
-          "tool_override": "some-model-that-supports-toolcalling"
-        }
-      ]
-    }
-  }
-}
-```
-
-Custom models will be listed in the model dropdown in the Agent Panel.
-
-You can configure a model to use [extended thinking](https://docs.anthropic.com/en/docs/about-claude/models/extended-thinking-models) (if it supports it),
-by changing the mode in of your models configuration to `thinking`, for example:
-
-```json
-{
-  "name": "claude-3-7-sonnet-latest",
-  "display_name": "claude-3-7-sonnet-thinking",
-  "max_tokens": 200000,
-  "mode": {
-    "type": "thinking",
-    "budget_tokens": 4_096
-  }
-}
-```
 
 ### Amazon Bedrock {#amazon-bedrock}
 
@@ -157,11 +98,111 @@ Cross-Region inference requests are kept within the AWS Regions that are part of
 For example, a request made within the US is kept within the AWS Regions in the US.
 
 Although the data remains stored only in the source Region, your input prompts and output results might move outside of your source Region during cross-Region inference.
-All data will be transmitted encrypted across Amazon’s secure network.
+All data will be transmitted encrypted across Amazon's secure network.
 
 We will support Cross-Region inference for each of the models on a best-effort basis, please refer to the [Cross-Region Inference method Code](https://github.com/zed-industries/zed/blob/main/crates/bedrock/src/models.rs#L297).
 
 For the most up to date supported regions and models supported, refer to the [Supported Models and Regions for Cross Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html).
+
+### Anthropic {#anthropic}
+
+> ✅ Supports tool use
+
+You can use Anthropic models by choosing it via the model dropdown in the Agent Panel.
+
+1. Sign up for Anthropic and [create an API key](https://console.anthropic.com/settings/keys)
+2. Make sure that your Anthropic account has credits
+3. Open the settings view (`agent: open configuration`) and go to the Anthropic section
+4. Enter your Anthropic API key
+
+Even if you pay for Claude Pro, you will still have to [pay for additional credits](https://console.anthropic.com/settings/plans) to use it via the API.
+
+Zed will also use the `ANTHROPIC_API_KEY` environment variable if it's defined.
+
+#### Anthropic Custom Models {#anthropic-custom-models}
+
+You can add custom models to the Anthropic provider by adding the following to your Zed `settings.json`:
+
+```json
+{
+  "language_models": {
+    "anthropic": {
+      "available_models": [
+        {
+          "name": "claude-3-5-sonnet-20240620",
+          "display_name": "Sonnet 2024-June",
+          "max_tokens": 128000,
+          "max_output_tokens": 2560,
+          "cache_configuration": {
+            "max_cache_anchors": 10,
+            "min_total_token": 10000,
+            "should_speculate": false
+          },
+          "tool_override": "some-model-that-supports-toolcalling"
+        }
+      ]
+    }
+  }
+}
+```
+
+Custom models will be listed in the model dropdown in the Agent Panel.
+
+You can configure a model to use [extended thinking](https://docs.anthropic.com/en/docs/about-claude/models/extended-thinking-models) (if it supports it),
+by changing the mode in of your models configuration to `thinking`, for example:
+
+```json
+{
+  "name": "claude-3-7-sonnet-latest",
+  "display_name": "claude-3-7-sonnet-thinking",
+  "max_tokens": 200000,
+  "mode": {
+    "type": "thinking",
+    "budget_tokens": 4_096
+  }
+}
+```
+
+### DeepSeek {#deepseek}
+
+> 🚫 Does not support tool use
+
+1. Visit the DeepSeek platform and [create an API key](https://platform.deepseek.com/api_keys)
+2. Open the settings view (`agent: open configuration`) and go to the DeepSeek section
+3. Enter your DeepSeek API key
+
+The DeepSeek API key will be saved in your keychain.
+
+Zed will also use the `DEEPSEEK_API_KEY` environment variable if it's defined.
+
+#### DeepSeek Custom Models {#deepseek-custom-models}
+
+The Zed Assistant comes pre-configured to use the latest version for common models (DeepSeek Chat, DeepSeek Reasoner). If you wish to use alternate models or customize the API endpoint, you can do so by adding the following to your Zed `settings.json`:
+
+```json
+{
+  "language_models": {
+    "deepseek": {
+      "api_url": "https://api.deepseek.com",
+      "available_models": [
+        {
+          "name": "deepseek-chat",
+          "display_name": "DeepSeek Chat",
+          "max_tokens": 64000
+        },
+        {
+          "name": "deepseek-reasoner",
+          "display_name": "DeepSeek Reasoner",
+          "max_tokens": 64000,
+          "max_output_tokens": 4096
+        }
+      ]
+    }
+  }
+}
+```
+
+Custom models will be listed in the model dropdown in the Agent Panel. You can also modify the `api_url` to use a custom endpoint if needed.
 
 ### GitHub Copilot Chat {#github-copilot-chat}
 
@@ -205,6 +246,27 @@ By default Zed will use `stable` versions of models, but you can use specific ve
 ```
 
 Custom models will be listed in the model dropdown in the Agent Panel.
+
+### LM Studio {#lmstudio}
+
+> 🚫 Does not support tool use
+
+1. Download and install the latest version of LM Studio from https://lmstudio.ai/download
+2. In the app press ⌘/Ctrl + Shift + M and download at least one model, e.g. qwen2.5-coder-7b
+
+   You can also get models via the LM Studio CLI:
+
+   ```sh
+   lms get qwen2.5-coder-7b
+   ```
+
+3. Make sure the LM Studio API server is running by executing:
+
+   ```sh
+   lms server start
+   ```
+
+Tip: Set [LM Studio as a login item](https://lmstudio.ai/docs/advanced/headless#run-the-llm-service-on-machine-login) to automate running the LM Studio server.
 
 ### Mistral {#mistral}
 
@@ -344,47 +406,6 @@ The Zed Assistant comes pre-configured to use the latest version for common mode
 
 You must provide the model's Context Window in the `max_tokens` parameter, this can be found [OpenAI Model Docs](https://platform.openai.com/docs/models). OpenAI `o1` models should set `max_completion_tokens` as well to avoid incurring high reasoning token costs. Custom models will be listed in the model dropdown in the Agent Panel.
 
-### DeepSeek {#deepseek}
-
-> 🚫 Does not support tool use
-
-1. Visit the DeepSeek platform and [create an API key](https://platform.deepseek.com/api_keys)
-2. Open the settings view (`agent: open configuration`) and go to the DeepSeek section
-3. Enter your DeepSeek API key
-
-The DeepSeek API key will be saved in your keychain.
-
-Zed will also use the `DEEPSEEK_API_KEY` environment variable if it's defined.
-
-#### DeepSeek Custom Models {#deepseek-custom-models}
-
-The Zed Assistant comes pre-configured to use the latest version for common models (DeepSeek Chat, DeepSeek Reasoner). If you wish to use alternate models or customize the API endpoint, you can do so by adding the following to your Zed `settings.json`:
-
-```json
-{
-  "language_models": {
-    "deepseek": {
-      "api_url": "https://api.deepseek.com",
-      "available_models": [
-        {
-          "name": "deepseek-chat",
-          "display_name": "DeepSeek Chat",
-          "max_tokens": 64000
-        },
-        {
-          "name": "deepseek-reasoner",
-          "display_name": "DeepSeek Reasoner",
-          "max_tokens": 64000,
-          "max_output_tokens": 4096
-        }
-      ]
-    }
-  }
-}
-```
-
-Custom models will be listed in the model dropdown in the Agent Panel. You can also modify the `api_url` to use a custom endpoint if needed.
-
 ### OpenAI API Compatible{#openai-api-compatible}
 
 Zed supports using OpenAI compatible APIs by specifying a custom `endpoint` and `available_models` for the OpenAI provider.
@@ -408,27 +429,6 @@ Example configuration for using X.ai Grok with Zed:
     },
   }
 ```
-
-### LM Studio {#lmstudio}
-
-> 🚫 Does not support tool use
-
-1. Download and install the latest version of LM Studio from https://lmstudio.ai/download
-2. In the app press ⌘/Ctrl + Shift + M and download at least one model, e.g. qwen2.5-coder-7b
-
-   You can also get models via the LM Studio CLI:
-
-   ```sh
-   lms get qwen2.5-coder-7b
-   ```
-
-3. Make sure the LM Studio API server is running by executing:
-
-   ```sh
-   lms server start
-   ```
-
-Tip: Set [LM Studio as a login item](https://lmstudio.ai/docs/advanced/headless#run-the-llm-service-on-machine-login) to automate running the LM Studio server.
 
 ## Advanced Configuration {#advanced-configuration}
 
