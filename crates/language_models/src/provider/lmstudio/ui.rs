@@ -1,28 +1,23 @@
-use std::collections::{BTreeMap, HashSet};
-use gpui::{
-    AnyView, App, Context, ElementId, Entity, Subscription, Task, Window,
-    actions::UpdateGlobal,
-    prelude::*,
-    AnyElement,
-};
-use ui::{
-    ButtonLike, Indicator, List, ListItem, h_flex, v_flex, div, Label, Button,
-    IconButton, LabelSize, Tooltip, Switch, SwitchColor, ToggleState,
-    ButtonStyle, IconPosition, IconSize, Color, IconName, ListDirection,
-    LabelCommon, Clickable, ButtonCommon,
-};
-use ui_input::SingleLineInput;
-use language_model::{
-    language_model::{LanguageModel, LanguageModelProvider},
-    settings::{AllLanguageModelSettings, Settings},
-};
-use util::ResultExt;
-
-use crate::AllLanguageModelSettings;
+use crate::{AllLanguageModelSettings, settings::LmStudioSettingsContent};
 use super::{
-    LMSTUDIO_DOWNLOAD_URL, LMSTUDIO_CATALOG_URL, LMSTUDIO_SITE,
     types::{LmStudioServer, AvailableModel},
 };
+
+use collections::{BTreeMap, HashSet};
+use gpui::{
+    div, Context, Entity, IntoElement, Render, Task, Window
+};
+use lmstudio;
+use settings::{Settings, update_settings_file};
+use ui::{
+    prelude::*, Button, ButtonStyle, IconButton,
+    IconName, Label, LabelCommon,
+    LabelSize, List, Switch, ToggleState, SwitchColor, Indicator
+};
+use ui_input::SingleLineInput;
+use util::ResultExt;
+use uuid;
+use workspace::AppState;
 
 pub struct ConfigurationView {
     state: Entity<super::provider::State>,
@@ -58,7 +53,7 @@ impl ConfigurationView {
     pub fn new(state: Entity<super::provider::State>, cx: &mut Context<Self>) -> Self {
         let loading_models_task = Some(cx.spawn({
             let state = state.clone();
-            async move |this, cx| {
+            async move |this: gpui::WeakEntity<Self>, cx| {
                 if let Some(task) = state
                     .update(cx, |state, cx| state.authenticate(cx))
                     .log_err()
@@ -121,7 +116,7 @@ impl ConfigurationView {
             edit_max_tokens_input: None,
             server_connection_status,
             connection_check_tasks: BTreeMap::new(),
-            expanded_server_models: HashSet::new(),
+            expanded_server_models: HashSet::default(),
         }
     }
 
@@ -290,17 +285,16 @@ impl ConfigurationView {
         }
 
         let http_client = self.state.read(cx).http_client.clone();
-        let task = cx.spawn({
-            let server_id = server_id.clone();
-            async move |this, cx| {
-                let result = lmstudio::healthcheck(&*http_client, &server_url).await;
-                this.update(cx, |this, cx| {
-                    this.server_connection_status.insert(server_id.clone(), result.unwrap_or(false));
-                    this.connection_check_tasks.remove(&server_id);
-                    cx.notify();
-                })?;
-                Ok(result.unwrap_or(false))
-            }
+        let server_id_clone = server_id.clone();
+        let task = cx.spawn(async move |this: gpui::WeakEntity<Self>, cx| {
+            let result = lmstudio::healthcheck(&*http_client, &server_url).await;
+            let is_healthy = result.unwrap_or(false);
+            this.update(cx, |this, cx| {
+                this.server_connection_status.insert(server_id_clone.clone(), is_healthy);
+                this.connection_check_tasks.remove(&server_id_clone);
+                cx.notify();
+            })?;
+            Ok(is_healthy)
         });
 
         self.connection_check_tasks.insert(server_id, task);
@@ -308,10 +302,13 @@ impl ConfigurationView {
 
     fn check_all_server_connections(&mut self, cx: &mut Context<Self>) {
         let settings = AllLanguageModelSettings::get_global(cx);
-        for server in &settings.lmstudio.servers {
-            if server.enabled {
-                self.check_server_connection(server.id.clone(), server.api_url.clone(), cx);
-            }
+        let servers_to_check: Vec<(String, String)> = settings.lmstudio.servers.iter()
+            .filter(|server| server.enabled)
+            .map(|server| (server.id.clone(), server.api_url.clone()))
+            .collect();
+        
+        for (server_id, server_url) in servers_to_check {
+            self.check_server_connection(server_id, server_url, cx);
         }
     }
 
@@ -335,10 +332,25 @@ impl ConfigurationView {
             available_models: None,
         };
 
+        // Clone values before moving into closure
+        let new_server_clone = new_server.clone();
+        let server_id = new_server.id.clone();
+        let server_url = new_server.api_url.clone();
+
         // Update settings
-        cx.update_global::<AllLanguageModelSettings, _>(|settings, cx| {
-            settings.lmstudio.servers.push(new_server.clone());
-            cx.notify();
+        let fs = AppState::global(cx).upgrade().unwrap().fs.clone();
+        update_settings_file::<AllLanguageModelSettings>(fs, cx, move |settings, _| {
+            if settings.lmstudio.is_none() {
+                settings.lmstudio = Some(LmStudioSettingsContent::default());
+            }
+            if let Some(lmstudio) = &mut settings.lmstudio {
+                if lmstudio.servers.is_none() {
+                    lmstudio.servers = Some(Vec::new());
+                }
+                if let Some(servers) = &mut lmstudio.servers {
+                    servers.push(new_server_clone);
+                }
+            }
         });
 
         // Clear inputs
@@ -349,7 +361,7 @@ impl ConfigurationView {
         self.is_adding_server = false;
 
         // Start connection check for new server
-        self.check_server_connection(new_server.id, new_server.api_url, cx);
+        self.check_server_connection(server_id, server_url, cx);
 
         // Refresh models
         self.state.update(cx, |state, cx| state.public_restart_fetch_models_task(cx));
@@ -368,25 +380,36 @@ impl ConfigurationView {
             anyhow::bail!("Server URL cannot be empty");
         }
 
+        // Clone values before moving into closure
+        let edit_name = self.server_edit_name.clone();
+        let edit_url = self.server_edit_url.clone();
+
         // Update settings
-        cx.update_global::<AllLanguageModelSettings, _>(|settings, cx| {
-            if let Some(server) = settings.lmstudio.servers.get_mut(server_index) {
-                server.name = self.server_edit_name.clone();
-                server.api_url = self.server_edit_url.clone();
-                
-                // Start connection check for updated server
-                let server_id = server.id.clone();
-                let server_url = server.api_url.clone();
-                cx.spawn(|this, cx| async move {
-                    this.update(cx, |this, cx| {
-                        this.check_server_connection(server_id, server_url, cx);
-                    })?;
-                    Ok(())
-                })
-                .detach();
+        let fs = AppState::global(cx).upgrade().unwrap().fs.clone();
+        update_settings_file::<AllLanguageModelSettings>(fs, cx, move |settings, _| {
+            if let Some(lmstudio) = &mut settings.lmstudio {
+                if let Some(servers) = &mut lmstudio.servers {
+                    if let Some(server) = servers.get_mut(server_index) {
+                        server.name = edit_name;
+                        server.api_url = edit_url;
+                    }
+                }
             }
-            cx.notify();
         });
+
+        // Start connection check for updated server
+        let settings = AllLanguageModelSettings::get_global(cx);
+        if let Some(server) = settings.lmstudio.servers.get(server_index) {
+            let server_id = server.id.clone();
+            let server_url = server.api_url.clone();
+            cx.spawn(async move |this: gpui::WeakEntity<Self>, cx| {
+                this.update(cx, |this, cx| {
+                    this.check_server_connection(server_id, server_url, cx);
+                })?;
+                Ok::<(), anyhow::Error>(())
+            })
+            .detach();
+        }
 
         // Clear edit state
         self.server_edit_name.clear();
@@ -402,16 +425,15 @@ impl ConfigurationView {
     }
 
     fn remove_server(&mut self, server_index: usize, cx: &mut Context<Self>) {
-        cx.update_global::<AllLanguageModelSettings, _>(|settings, cx| {
-            if server_index < settings.lmstudio.servers.len() {
-                let server = settings.lmstudio.servers.remove(server_index);
-                // Remove connection status and any pending tasks
-                self.server_connection_status.remove(&server.id);
-                if let Some(task) = self.connection_check_tasks.remove(&server.id) {
-                    task.cancel();
+        let fs = AppState::global(cx).upgrade().unwrap().fs.clone();
+        update_settings_file::<AllLanguageModelSettings>(fs, cx, move |settings, _| {
+            if let Some(lmstudio) = &mut settings.lmstudio {
+                if let Some(servers) = &mut lmstudio.servers {
+                    if server_index < servers.len() {
+                        servers.remove(server_index);
+                    }
                 }
             }
-            cx.notify();
         });
 
         // Refresh models
@@ -419,31 +441,38 @@ impl ConfigurationView {
     }
 
     fn toggle_server(&mut self, server_index: usize, cx: &mut Context<Self>) {
-        cx.update_global::<AllLanguageModelSettings, _>(|settings, cx| {
-            if let Some(server) = settings.lmstudio.servers.get_mut(server_index) {
-                server.enabled = !server.enabled;
-                
-                // If enabled, start connection check
-                if server.enabled {
-                    let server_id = server.id.clone();
-                    let server_url = server.api_url.clone();
-                    cx.spawn(|this, cx| async move {
-                        this.update(cx, |this, cx| {
-                            this.check_server_connection(server_id, server_url, cx);
-                        })?;
-                        Ok(())
-                    })
-                    .detach();
-                } else {
-                    // If disabled, remove connection status and cancel any pending tasks
-                    self.server_connection_status.remove(&server.id);
-                    if let Some(task) = self.connection_check_tasks.remove(&server.id) {
-                        task.cancel();
+        let fs = AppState::global(cx).upgrade().unwrap().fs.clone();
+        update_settings_file::<AllLanguageModelSettings>(fs, cx, move |settings, _| {
+            if let Some(lmstudio) = &mut settings.lmstudio {
+                if let Some(servers) = &mut lmstudio.servers {
+                    if let Some(server) = servers.get_mut(server_index) {
+                        server.enabled = !server.enabled;
                     }
                 }
             }
-            cx.notify();
         });
+
+        // Get the updated server info for connection check
+        let settings = AllLanguageModelSettings::get_global(cx);
+        if let Some(server) = settings.lmstudio.servers.get(server_index) {
+            if server.enabled {
+                let server_id = server.id.clone();
+                let server_url = server.api_url.clone();
+                cx.spawn(async move |this: gpui::WeakEntity<Self>, cx| {
+                    this.update(cx, |this, cx| {
+                        this.check_server_connection(server_id, server_url, cx);
+                    })?;
+                    Ok::<(), anyhow::Error>(())
+                })
+                .detach();
+            } else {
+                // If disabled, remove connection status and cancel any pending tasks
+                self.server_connection_status.remove(&server.id);
+                if let Some(task) = self.connection_check_tasks.remove(&server.id) {
+                    drop(task);
+                }
+            }
+        }
 
         // Refresh models
         self.state.update(cx, |state, cx| state.public_restart_fetch_models_task(cx));
@@ -477,33 +506,38 @@ impl ConfigurationView {
         };
 
         // Create new model
-        let new_model = AvailableModel {
-            name: self.new_model_name.clone(),
-            display_name: if self.new_model_display_name.is_empty() {
+        let new_model = AvailableModel::new(
+            self.new_model_name.clone(),
+            if self.new_model_display_name.is_empty() {
                 None
             } else {
                 Some(self.new_model_display_name.clone())
             },
-            server_max_tokens: max_tokens.unwrap_or(8192),
-            custom_max_tokens: max_tokens,
-            server_id: Some(server_id.to_string()),
-            enabled: true,
-        };
+            max_tokens.unwrap_or(8192),
+            None,
+            Some(server_id.to_string()),
+            true,
+        );
+
+        // Clone server_id for the closure
+        let server_id_owned = server_id.to_string();
 
         // Update settings
-        cx.update_global::<AllLanguageModelSettings, _>(|settings, cx| {
-            if let Some(server) = settings.lmstudio.servers.iter_mut()
-                .find(|s| s.id == server_id)
-            {
-                if server.available_models.is_none() {
-                    server.available_models = Some(Vec::new());
-                }
-                
-                if let Some(models) = &mut server.available_models {
-                    models.push(new_model);
+        let fs = AppState::global(cx).upgrade().unwrap().fs.clone();
+        update_settings_file::<AllLanguageModelSettings>(fs, cx, move |settings, _| {
+            if let Some(lmstudio) = &mut settings.lmstudio {
+                if let Some(servers) = &mut lmstudio.servers {
+                    if let Some(server) = servers.iter_mut().find(|s| s.id == server_id_owned) {
+                        if server.available_models.is_none() {
+                            server.available_models = Some(Vec::new());
+                        }
+                        
+                        if let Some(models) = &mut server.available_models {
+                            models.push(new_model);
+                        }
+                    }
                 }
             }
-            cx.notify();
         });
 
         // Clear inputs
@@ -522,15 +556,20 @@ impl ConfigurationView {
     }
 
     fn remove_model(&mut self, server_id: &str, model_name: &str, cx: &mut Context<Self>) {
-        cx.update_global::<AllLanguageModelSettings, _>(|settings, cx| {
-            if let Some(server) = settings.lmstudio.servers.iter_mut()
-                .find(|s| s.id == server_id)
-            {
-                if let Some(models) = &mut server.available_models {
-                    models.retain(|m| m.name != model_name);
+        let server_id_owned = server_id.to_string();
+        let model_name_owned = model_name.to_string();
+        
+        let fs = AppState::global(cx).upgrade().unwrap().fs.clone();
+        update_settings_file::<AllLanguageModelSettings>(fs, cx, move |settings, _| {
+            if let Some(lmstudio) = &mut settings.lmstudio {
+                if let Some(servers) = &mut lmstudio.servers {
+                    if let Some(server) = servers.iter_mut().find(|s| s.id == server_id_owned) {
+                        if let Some(models) = &mut server.available_models {
+                            models.retain(|m| m.name != model_name_owned);
+                        }
+                    }
                 }
             }
-            cx.notify();
         });
 
         // Refresh models
@@ -538,19 +577,22 @@ impl ConfigurationView {
     }
 
     fn toggle_model(&mut self, server_id: &str, model_name: &str, cx: &mut Context<Self>) {
-        cx.update_global::<AllLanguageModelSettings, _>(|settings, cx| {
-            if let Some(server) = settings.lmstudio.servers.iter_mut()
-                .find(|s| s.id == server_id)
-            {
-                if let Some(models) = &mut server.available_models {
-                    if let Some(model) = models.iter_mut()
-                        .find(|m| m.name == model_name)
-                    {
-                        model.enabled = !model.enabled;
+        let server_id_owned = server_id.to_string();
+        let model_name_owned = model_name.to_string();
+        
+        let fs = AppState::global(cx).upgrade().unwrap().fs.clone();
+        update_settings_file::<AllLanguageModelSettings>(fs, cx, move |settings, _| {
+            if let Some(lmstudio) = &mut settings.lmstudio {
+                if let Some(servers) = &mut lmstudio.servers {
+                    if let Some(server) = servers.iter_mut().find(|s| s.id == server_id_owned) {
+                        if let Some(models) = &mut server.available_models {
+                            if let Some(model) = models.iter_mut().find(|m| m.name == model_name_owned) {
+                                model.enabled = !model.enabled;
+                            }
+                        }
                     }
                 }
             }
-            cx.notify();
         });
 
         // Refresh models
@@ -570,20 +612,23 @@ impl ConfigurationView {
             None
         };
 
+        let server_id_owned = server_id.to_string();
+        let model_name_owned = model_name.to_string();
+
         // Update settings
-        cx.update_global::<AllLanguageModelSettings, _>(|settings, cx| {
-            if let Some(server) = settings.lmstudio.servers.iter_mut()
-                .find(|s| s.id == server_id)
-            {
-                if let Some(models) = &mut server.available_models {
-                    if let Some(model) = models.iter_mut()
-                        .find(|m| m.name == model_name)
-                    {
-                        model.custom_max_tokens = max_tokens;
+        let fs = AppState::global(cx).upgrade().unwrap().fs.clone();
+        update_settings_file::<AllLanguageModelSettings>(fs, cx, move |settings, _| {
+            if let Some(lmstudio) = &mut settings.lmstudio {
+                if let Some(servers) = &mut lmstudio.servers {
+                    if let Some(server) = servers.iter_mut().find(|s| s.id == server_id_owned) {
+                        if let Some(models) = &mut server.available_models {
+                            if let Some(model) = models.iter_mut().find(|m| m.name == model_name_owned) {
+                                model.custom_max_tokens = max_tokens;
+                            }
+                        }
                     }
                 }
             }
-            cx.notify();
         });
 
         // Clear edit state
@@ -599,14 +644,15 @@ impl ConfigurationView {
         Ok(())
     }
 
-    fn start_edit_model_max_tokens(&mut self, server_id: &str, model_name: &str, current_value: Option<usize>, cx: &mut Context<Self>) {
+    fn start_edit_model_max_tokens(&mut self, server_id: &str, model_name: &str, current_value: Option<usize>, _cx: &mut Context<Self>) {
         self.is_editing_max_tokens = true;
         self.editing_model_server_id = Some(server_id.to_string());
         self.editing_model_name = Some(model_name.to_string());
         self.edit_max_tokens_value = current_value.map_or_else(String::new, |v| v.to_string());
     }
 
-    fn start_add_model(&mut self, cx: &mut Context<Self>) {
+    #[allow(dead_code)]
+    fn start_add_model(&mut self, _cx: &mut Context<Self>) {
         self.is_adding_model = true;
         self.new_model_name.clear();
         self.new_model_display_name.clear();
@@ -627,7 +673,8 @@ impl ConfigurationView {
         }
     }
 
-    fn start_add_server(&mut self, cx: &mut Context<Self>) {
+    #[allow(dead_code)]
+    fn start_add_server(&mut self, _cx: &mut Context<Self>) {
         self.is_adding_server = true;
         self.new_server_name.clear();
         self.new_server_url.clear();
@@ -635,7 +682,7 @@ impl ConfigurationView {
         self.new_server_url_input = None;
     }
 
-    fn cancel_edit_server(&mut self, cx: &mut Context<Self>) {
+    fn cancel_edit_server(&mut self, _cx: &mut Context<Self>) {
         self.editing_server_index = None;
         self.server_edit_name.clear();
         self.server_edit_url.clear();
@@ -643,7 +690,7 @@ impl ConfigurationView {
         self.server_edit_url_input = None;
     }
 
-    fn cancel_add_server(&mut self, cx: &mut Context<Self>) {
+    fn cancel_add_server(&mut self, _cx: &mut Context<Self>) {
         self.is_adding_server = false;
         self.new_server_name.clear();
         self.new_server_url.clear();
@@ -651,7 +698,7 @@ impl ConfigurationView {
         self.new_server_url_input = None;
     }
 
-    fn cancel_add_model(&mut self, cx: &mut Context<Self>) {
+    fn cancel_add_model(&mut self, _cx: &mut Context<Self>) {
         self.is_adding_model = false;
         self.new_model_name.clear();
         self.new_model_display_name.clear();
@@ -661,7 +708,7 @@ impl ConfigurationView {
         self.new_model_max_tokens_input = None;
     }
 
-    fn cancel_edit_max_tokens(&mut self, cx: &mut Context<Self>) {
+    fn cancel_edit_max_tokens(&mut self, _cx: &mut Context<Self>) {
         self.is_editing_max_tokens = false;
         self.editing_model_server_id = None;
         self.editing_model_name = None;
@@ -669,42 +716,48 @@ impl ConfigurationView {
         self.edit_max_tokens_input = None;
     }
 
-    fn render_server_list(&mut self, window: &mut Window, cx: &mut Context<Self>) -> View<Self> {
+    fn render_server_list(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = AllLanguageModelSettings::get_global(cx);
         let servers = &settings.lmstudio.servers;
 
+        // Clone server data to avoid borrowing issues
+        let server_data: Vec<(usize, LmStudioServer, bool, bool, String)> = servers.iter().enumerate()
+            .map(|(index, server)| {
+                let is_editing = self.editing_server_index == Some(index);
+                let is_connected = self.server_connection_status.get(&server.id).copied().unwrap_or(false);
+                let server_id = server.id.clone();
+                (index, server.clone(), is_editing, is_connected, server_id)
+            })
+            .collect();
+
         List::new()
             .children(
-                servers.iter().enumerate(),
-                |(index, server)| {
-                    let is_editing = self.editing_server_index == Some(index);
-                    let is_connected = self.server_connection_status.get(&server.id).copied().unwrap_or(false);
-
+                server_data.into_iter().map(|(index, server, is_editing, is_connected, server_id)| {
                     if is_editing {
                         self.create_server_edit_inputs(window, cx);
                         
-                        v_flex()
+                        div()
+                            .flex()
+                            .flex_row()
                             .gap_1()
+                            .child(Label::new("Edit Server").size(LabelSize::Default))
+                            .child(div().flex_1())
                             .child(
-                                h_flex()
-                                    .gap_1()
-                                    .child(Label::new("Edit Server").size(LabelSize::Default))
-                                    .child(div().flex_1())
-                                    .child(
-                                        IconButton::new("close", IconName::Close)
-                                            .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                this.cancel_edit_server(cx);
-                                            }))
-                                    )
+                                IconButton::new("close", IconName::Close)
+                                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                                        this.cancel_edit_server(cx);
+                                    }))
                             )
                             .child(
-                                h_flex()
+                                div()
+                                    .flex()
+                                    .flex_row()
                                     .gap_1()
-                                    .child(self.server_edit_name_input.unwrap().clone())
-                                    .child(self.server_edit_url_input.unwrap().clone())
+                                    .child(self.server_edit_name_input.as_ref().unwrap().clone())
+                                    .child(self.server_edit_url_input.as_ref().unwrap().clone())
                                     .child(
                                         Button::new("save", "Save")
-                                            .style(ButtonStyle::Primary)
+                                            .style(ButtonStyle::Filled)
                                             .on_click(cx.listener(move |this, _event, _window, cx| {
                                                 if let Err(e) = this.edit_server(index, cx) {
                                                     log::error!("Failed to edit server: {}", e);
@@ -712,12 +765,13 @@ impl ConfigurationView {
                                             }))
                                     )
                             )
-                            .into()
                     } else {
-                        h_flex()
+                        div()
+                            .flex()
+                            .flex_row()
                             .gap_1()
                             .child(
-                                Switch::new(server.id.clone(), ToggleState::On)
+                                Switch::new(gpui::SharedString::from(server_id.clone()), ToggleState::Selected)
                                     .color(SwitchColor::Default)
                                     .on_click(cx.listener(move |this, _event, _window, cx| {
                                         this.toggle_server(index, cx);
@@ -734,58 +788,67 @@ impl ConfigurationView {
                                         Indicator::bar()
                                     }
                                 } else {
-                                    div().into()
+                                    Indicator::dot()
                                 }
                             )
                             .child(
                                 IconButton::new("expand", IconName::ChevronDown)
                                     .on_click(cx.listener(move |this, _event, _window, cx| {
-                                        this.toggle_server_models(&server.id, cx);
+                                        this.toggle_server_models(&server_id, cx);
                                     }))
                             )
                             .child(
-                                IconButton::new("edit", IconName::Edit)
+                                IconButton::new("edit", IconName::Pencil)
                                     .on_click(cx.listener(move |this, _event, _window, cx| {
                                         this.start_edit_server(index, cx);
                                     }))
                             )
                             .child(
-                                IconButton::new("remove", IconName::Remove)
+                                IconButton::new("remove", IconName::Trash)
                                     .on_click(cx.listener(move |this, _event, _window, cx| {
                                         this.remove_server(index, cx);
                                     }))
                             )
-                            .into()
                     }
-                },
+                })
             )
-            .into()
     }
 
-    fn render_model_list(&mut self, server: &LmStudioServer, window: &mut Window, cx: &mut Context<Self>) -> View<Self> {
-        let models = server.available_models.as_ref().unwrap_or(&Vec::new());
+    fn render_model_list(&mut self, server: &LmStudioServer, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let models = server.available_models.as_ref().unwrap_or(&Vec::new()).clone();
+        let server_id = server.id.clone();
+
+        // Collect model data to avoid borrowing issues
+        let model_data: Vec<(AvailableModel, String, bool)> = models.into_iter()
+            .map(|model| {
+                let is_editing_max_tokens = self.is_editing_max_tokens &&
+                    self.editing_model_server_id.as_deref() == Some(&server_id) &&
+                    self.editing_model_name.as_deref() == Some(&model.name);
+                let model_switch_id = format!("{}_{}", server_id, model.name);
+                (model, model_switch_id, is_editing_max_tokens)
+            })
+            .collect();
 
         List::new()
             .children(
-                models.iter(),
-                |model| {
-                    let is_editing_max_tokens = self.is_editing_max_tokens &&
-                        self.editing_model_server_id.as_deref() == Some(&server.id) &&
-                        self.editing_model_name.as_deref() == Some(&model.name);
-
+                model_data.into_iter().map(|(model, model_switch_id, is_editing_max_tokens)| {
                     if is_editing_max_tokens {
                         self.create_max_tokens_input(window, cx);
                         
                         h_flex()
                             .gap_1()
                             .child(Label::new(&model.name).size(LabelSize::Default))
-                            .child(self.edit_max_tokens_input.unwrap().clone())
+                            .child(self.edit_max_tokens_input.as_ref().unwrap().clone())
                             .child(
                                 Button::new("save", "Save")
-                                    .style(ButtonStyle::Primary)
-                                    .on_click(cx.listener(move |this, _event, _window, cx| {
-                                        if let Err(e) = this.edit_model_max_tokens(&server.id, &model.name, cx) {
-                                            log::error!("Failed to edit max tokens: {}", e);
+                                    .style(ButtonStyle::Filled)
+                                    .on_click(cx.listener({
+                                        let server_id = server_id.clone();
+                                        let model_name = model.name.clone();
+                                        move |this, _event, _window, cx| {
+                                            if let Err(e) = this.edit_model_max_tokens(&server_id, &model_name, cx) {
+                                                log::error!("Failed to edit max tokens: {}", e);
+                                            }
                                         }
                                     }))
                             )
@@ -795,15 +858,21 @@ impl ConfigurationView {
                                         this.cancel_edit_max_tokens(cx);
                                     }))
                             )
-                            .into()
                     } else {
+                        let model_name_clone = model.name.clone();
+                        let server_id_clone = server_id.clone();
+                        
                         h_flex()
                             .gap_1()
                             .child(
-                                Switch::new(model.id.clone(), ToggleState::On)
+                                Switch::new(gpui::SharedString::from(model_switch_id.clone()), ToggleState::Selected)
                                     .color(SwitchColor::Default)
-                                    .on_click(cx.listener(move |this, _event, _window, cx| {
-                                        this.toggle_model(&server.id, &model.name, cx);
+                                    .on_click(cx.listener({
+                                        let server_id_clone = server_id_clone.clone();
+                                        let model_name_clone = model_name_clone.clone();
+                                        move |this, _event, _window, cx| {
+                                            this.toggle_model(&server_id_clone, &model_name_clone, cx);
+                                        }
                                     }))
                             )
                             .child(Label::new(&model.name).size(LabelSize::Default))
@@ -820,30 +889,37 @@ impl ConfigurationView {
                                     .size(LabelSize::Small)
                             )
                             .child(
-                                IconButton::new("edit-tokens", IconName::Edit)
-                                    .on_click(cx.listener(move |this, _event, _window, cx| {
-                                        this.start_edit_model_max_tokens(
-                                            &server.id,
-                                            &model.name,
-                                            model.custom_max_tokens,
-                                            cx,
-                                        );
+                                IconButton::new("edit-tokens", IconName::Pencil)
+                                    .on_click(cx.listener({
+                                        let server_id_clone = server_id_clone.clone();
+                                        let model_name_clone = model_name_clone.clone();
+                                        let custom_max_tokens = model.custom_max_tokens;
+                                        move |this, _event, _window, cx| {
+                                            this.start_edit_model_max_tokens(
+                                                &server_id_clone,
+                                                &model_name_clone,
+                                                custom_max_tokens,
+                                                cx,
+                                            );
+                                        }
                                     }))
                             )
                             .child(
-                                IconButton::new("remove", IconName::Remove)
-                                    .on_click(cx.listener(move |this, _event, _window, cx| {
-                                        this.remove_model(&server.id, &model.name, cx);
+                                IconButton::new("remove", IconName::Trash)
+                                    .on_click(cx.listener({
+                                        let server_id_clone = server_id_clone.clone();
+                                        let model_name_clone = model_name_clone.clone();
+                                        move |this, _event, _window, cx| {
+                                            this.remove_model(&server_id_clone, &model_name_clone, cx);
+                                        }
                                     }))
                             )
-                            .into()
                     }
-                },
+                })
             )
-            .into()
     }
 
-    fn render_add_server(&mut self, window: &mut Window, cx: &mut Context<Self>) -> View<Self> {
+    fn render_add_server(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.create_new_server_inputs(window, cx);
 
         v_flex()
@@ -863,11 +939,11 @@ impl ConfigurationView {
             .child(
                 h_flex()
                     .gap_1()
-                    .child(self.new_server_name_input.unwrap().clone())
-                    .child(self.new_server_url_input.unwrap().clone())
+                    .child(self.new_server_name_input.as_ref().unwrap().clone())
+                    .child(self.new_server_url_input.as_ref().unwrap().clone())
                     .child(
                         Button::new("add", "Add")
-                            .style(ButtonStyle::Primary)
+                            .style(ButtonStyle::Filled)
                             .on_click(cx.listener(move |this, _event, _window, cx| {
                                 if let Err(e) = this.add_server(cx) {
                                     log::error!("Failed to add server: {}", e);
@@ -875,11 +951,11 @@ impl ConfigurationView {
                             }))
                     )
             )
-            .into()
     }
 
-    fn render_add_model(&mut self, server_id: &str, window: &mut Window, cx: &mut Context<Self>) -> View<Self> {
+    fn render_add_model(&mut self, server_id: &str, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.create_model_inputs(window, cx);
+        let server_id = server_id.to_string();
 
         v_flex()
             .gap_1()
@@ -898,137 +974,102 @@ impl ConfigurationView {
             .child(
                 h_flex()
                     .gap_1()
-                    .child(self.new_model_name_input.unwrap().clone())
-                    .child(self.new_model_display_name_input.unwrap().clone())
-                    .child(self.new_model_max_tokens_input.unwrap().clone())
+                    .child(self.new_model_name_input.as_ref().unwrap().clone())
+                    .child(self.new_model_display_name_input.as_ref().unwrap().clone())
+                    .child(self.new_model_max_tokens_input.as_ref().unwrap().clone())
                     .child(
                         Button::new("add", "Add")
-                            .style(ButtonStyle::Primary)
+                            .style(ButtonStyle::Filled)
                             .on_click(cx.listener(move |this, _event, _window, cx| {
-                                if let Err(e) = this.add_model(server_id, cx) {
+                                if let Err(e) = this.add_model(&server_id, cx) {
                                     log::error!("Failed to add model: {}", e);
                                 }
                             }))
                     )
             )
-            .into()
     }
 }
 
 impl Render for ConfigurationView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = AllLanguageModelSettings::get_global(cx);
-        let is_loading = self.loading_models_task.is_some();
+        
+        // Collect all needed data to avoid borrowing issues
+        let expanded_server_ids: Vec<String> = settings.lmstudio.servers.iter()
+            .filter(|server| self.expanded_server_models.contains(&server.id))
+            .map(|server| server.id.clone())
+            .collect();
+        
+        let servers_data: Vec<(String, String)> = settings.lmstudio.servers.iter()
+            .filter(|server| expanded_server_ids.contains(&server.id))
+            .map(|server| (server.id.clone(), server.name.clone()))
+            .collect();
 
-        v_flex()
-            .gap_2()
+        div()
+            .p_4()
+            .size_full()
             .child(
-                h_flex()
-                    .gap_1()
-                    .child(Label::new("LM Studio Configuration").size(LabelSize::Large))
-                    .child(div().flex_1())
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
                     .child(
-                        if is_loading {
-                            Indicator::dot()
-                        } else {
-                            Indicator::dot()
-                        }
-                    )
-            )
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(
-                        Button::new("download", "Download LM Studio")
-                            .icon(IconName::Download)
-                            .icon_position(IconPosition::Start)
-                            .icon_size(IconSize::Small)
-                            .on_click(cx.listener(move |_this, _event, _window, cx| {
-                                cx.open_url(LMSTUDIO_DOWNLOAD_URL);
-                            }))
-                    )
-                    .child(
-                        Button::new("catalog", "Model Catalog")
-                            .icon(IconName::Book)
-                            .icon_position(IconPosition::Start)
-                            .icon_size(IconSize::Small)
-                            .on_click(cx.listener(move |_this, _event, _window, cx| {
-                                cx.open_url(LMSTUDIO_CATALOG_URL);
-                            }))
-                    )
-                    .child(
-                        Button::new("site", "Visit Website")
-                            .icon(IconName::Globe)
-                            .icon_position(IconPosition::Start)
-                            .icon_size(IconSize::Small)
-                            .on_click(cx.listener(move |_this, _event, _window, cx| {
-                                cx.open_url(LMSTUDIO_SITE);
-                            }))
-                    )
-            )
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .child(Label::new("Servers").size(LabelSize::Default))
-                            .child(div().flex_1())
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
                             .child(
-                                Button::new("add-server", "Add Server")
-                                    .icon(IconName::Plus)
-                                    .icon_position(IconPosition::Start)
-                                    .icon_size(IconSize::Small)
-                                    .on_click(cx.listener(move |this, _event, _window, cx| {
-                                        this.start_add_server(cx);
-                                    }))
+                                Label::new("LM Studio Configuration")
+                                    .size(LabelSize::Large)
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().colors().text_muted)
+                                    .child("Configure LM Studio servers and models")
                             )
                     )
                     .child(self.render_server_list(window, cx))
                     .child(
                         if self.is_adding_server {
-                            self.render_add_server(window, cx)
+                            self.render_add_server(window, cx).into_any_element()
                         } else {
-                            div().into()
+                            div().into_any_element()
                         }
                     )
-            )
-            .child(
-                v_flex()
-                    .gap_1()
-                    .children(
-                        settings.lmstudio.servers.iter().filter(|server| {
-                            self.expanded_server_models.contains(&server.id)
-                        }).map(|server| {
-                            v_flex()
-                                .gap_1()
-                                .child(
-                                    h_flex()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(Label::new("Expanded Models").size(LabelSize::Default))
+                            .children(
+                                servers_data.into_iter().map(|(server_id, server_name)| {
+                                    // Get server data without borrowing cx
+                                    let settings = AllLanguageModelSettings::get_global(cx);
+                                    let server = settings.lmstudio.servers.iter()
+                                        .find(|s| s.id == server_id)
+                                        .cloned()
+                                        .unwrap();
+                                    
+                                    let server_id_clone = server.id.clone();
+                                    
+                                    div()
+                                        .flex()
+                                        .flex_col()
                                         .gap_1()
-                                        .child(Label::new(format!("Models - {}", server.name)).size(LabelSize::Default))
-                                        .child(div().flex_1())
+                                        .child(Label::new(&server_name).size(LabelSize::Small))
+                                        .child(self.render_model_list(&server, window, cx))
                                         .child(
-                                            Button::new("add-model", "Add Model")
-                                                .icon(IconName::Plus)
-                                                .icon_position(IconPosition::Start)
-                                                .icon_size(IconSize::Small)
-                                                .on_click(cx.listener(move |this, _event, _window, cx| {
-                                                    this.start_add_model(cx);
-                                                }))
+                                            if self.is_adding_model {
+                                                self.render_add_model(&server_id_clone, window, cx).into_any_element()
+                                            } else {
+                                                div().into_any_element()
+                                            }
                                         )
-                                )
-                                .child(self.render_model_list(server, window, cx))
-                                .child(
-                                    if self.is_adding_model {
-                                        self.render_add_model(&server.id, window, cx)
-                                    } else {
-                                        div().into()
-                                    }
-                                )
-                                .into()
-                        })
+                                })
+                            )
                     )
             )
-            .into()
     }
 } 

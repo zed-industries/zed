@@ -1,5 +1,3 @@
-use crate::mcp_tools::*;
-use gpui::AppContext;
 use std::path::PathBuf;
 
 /// Initialize the vector store

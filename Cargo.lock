@@ -171,6 +171,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "ai_studio"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.31",
+ "gpui",
+ "http_client",
+ "language_model",
+ "language_model_repository",
+ "language_models",
+ "log",
+ "reqwest_client",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
+ "ui",
+ "ui_input",
+ "uuid",
+ "workspace",
+]
+
+[[package]]
 name = "alacritty_terminal"
 version = "0.25.1-dev"
 source = "git+https://github.com/zed-industries/alacritty.git?branch=add-hush-login-flag#828457c9ff1f7ea0a0469337cc8a37ee3a1b0590"
@@ -5361,6 +5384,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "find_cuda_helper"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9f9e65c593dd01ac77daad909ea4ad17f0d6d1776193fc8ea766356177abdad"
+dependencies = [
+ "glob",
+]
+
+[[package]]
 name = "fixedbitset"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7835,6 +7867,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "language_model_repository"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.31",
+ "gpui",
+ "http_client",
+ "log",
+ "schemars",
+ "serde",
+ "serde_json",
+ "ui",
+ "ui_input",
+ "urlencoding",
+ "uuid",
+]
+
+[[package]]
 name = "language_model_selector"
 version = "0.1.0"
 dependencies = [
@@ -7877,6 +7927,8 @@ dependencies = [
  "gpui_tokio",
  "http_client",
  "language_model",
+ "language_model_repository",
+ "llama-cpp-2",
  "lmstudio",
  "log",
  "menu",
@@ -7889,6 +7941,7 @@ dependencies = [
  "partial-json-fixer",
  "project",
  "proto",
+ "rand 0.8.5",
  "release_channel",
  "schemars",
  "serde",
@@ -7902,8 +7955,11 @@ dependencies = [
  "tokio",
  "ui",
  "ui_input",
+ "urlencoding",
  "util",
  "uuid",
+ "walkdir",
+ "workspace",
  "workspace-hack",
  "zed_llm_client",
 ]
@@ -8365,6 +8421,33 @@ dependencies = [
  "tokio-tungstenite 0.26.2",
  "util",
  "workspace-hack",
+]
+
+[[package]]
+name = "llama-cpp-2"
+version = "0.1.103"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "401c708926326b1ee410735dc348882c73deeab78f1f89ff2c9caf148356feb4"
+dependencies = [
+ "enumflags2",
+ "llama-cpp-sys-2",
+ "thiserror 1.0.69",
+ "tracing",
+ "tracing-core",
+]
+
+[[package]]
+name = "llama-cpp-sys-2"
+version = "0.1.103"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b4ae3037b7d9b9fab9fd7905aeb04e214acb300599fa1ee698d6f759ee530f9"
+dependencies = [
+ "bindgen 0.69.5",
+ "cc",
+ "cmake",
+ "find_cuda_helper",
+ "glob",
+ "walkdir",
 ]
 
 [[package]]
@@ -16141,23 +16224,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "vector_store_context_server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "context_server",
- "dirs 4.0.0",
- "env_logger 0.11.8",
- "extension",
- "gpui",
- "log",
- "serde",
- "serde_json",
- "vector_store",
-]
-
-[[package]]
 name = "version-compare"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -18656,6 +18722,7 @@ version = "0.187.0"
 dependencies = [
  "activity_indicator",
  "agent",
+ "ai_studio",
  "anyhow",
  "ashpd",
  "askpass",

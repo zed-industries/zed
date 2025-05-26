@@ -1,27 +1,20 @@
-use std::sync::Arc;
 use anyhow::Result;
-use gpui::{
-    prelude::*,
-    App, AsyncApp, Context, Entity, Task, Window,
-};
+use gpui::{AnyView, App, Context, Entity, Task, Window};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelId, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    language_model::{LanguageModel, LanguageModelProvider},
-    settings::{AllLanguageModelSettings, Settings},
 };
-use ui::{
-    Button, ButtonCommon, ButtonStyle, Clickable, IconButton, IconName, Indicator, Label,
-    LabelCommon, LabelSize, List, ListDirection, Switch, ToggleState,
-};
-use util::ResultExt;
+use settings::Settings;
+use std::sync::Arc;
+use ui::{prelude::*, IconName};
 
 use crate::AllLanguageModelSettings;
+
 use super::{
-    PROVIDER_ID, PROVIDER_NAME,
     model::LmStudioLanguageModel,
     ui::ConfigurationView,
+    PROVIDER_ID, PROVIDER_NAME,
 };
 
 pub struct LmStudioLanguageModelProvider {
@@ -30,8 +23,8 @@ pub struct LmStudioLanguageModelProvider {
 }
 
 pub struct State {
-    http_client: Arc<dyn HttpClient>,
-    available_models: Vec<lmstudio::Model>,
+    pub http_client: Arc<dyn HttpClient>,
+    pub available_models: Vec<lmstudio::Model>,
     fetch_model_task: Option<Task<Result<()>>>,
     _subscription: gpui::Subscription,
 }
@@ -147,17 +140,17 @@ impl State {
         self.fetch_model_task.replace(task);
     }
 
-    fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+    pub fn public_restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
+        self.restart_fetch_models_task(cx);
+    }
+
+    pub fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         if self.is_authenticated() {
             return Task::ready(Ok(()));
         }
 
         let fetch_models_task = self.fetch_models(cx);
         cx.spawn(async move |_this, _cx| Ok(fetch_models_task.await?))
-    }
-
-    pub fn public_restart_fetch_models_task(&mut self, cx: &mut gpui::Context<Self>) {
-        self.restart_fetch_models_task(cx);
     }
 }
 
@@ -305,9 +298,8 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
-        let state = self.state.clone();
-        cx.new(|cx| ConfigurationView::new(state, cx)).into()
+    fn configuration_view(&self, _window: &mut Window, cx: &mut App) -> AnyView {
+        cx.new(|cx| ConfigurationView::new(self.state.clone(), cx)).into()
     }
 
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {

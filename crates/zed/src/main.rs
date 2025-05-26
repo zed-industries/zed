@@ -570,6 +570,7 @@ fn main() {
         welcome::init(cx);
         settings_ui::init(cx);
         extensions_ui::init(cx);
+        ai_studio::init(cx);
         zeta::init(cx);
 
         cx.observe_global::<SettingsStore>({

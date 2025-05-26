@@ -1,9 +1,7 @@
 use crate::error::VectorStoreError;
 use crate::types::{Embedding, Metadata, SearchResult, VectorEntry};
-use crate::utils;
 use async_trait::async_trait;
-use futures::future::BoxFuture;
-use heed::types::{SerdeBincode, Str};
+use heed::types::SerdeBincode;
 use heed::{Database, Env, EnvOpenOptions};
 use std::collections::BinaryHeap;
 use std::cmp::Ordering;
@@ -190,8 +188,8 @@ impl VectorStore {
         let mut results = BinaryHeap::with_capacity(limit);
 
         // Iterate through all entries
-        let mut iter = self.entries_db.iter(&txn)?;
-        while let Some(item) = iter.next() {
+        let iter = self.entries_db.iter(&txn)?;
+        for item in iter {
             let (_, entry) = item?;
             let similarity = query.similarity(&entry.embedding);
 
@@ -230,8 +228,8 @@ impl VectorStore {
     pub fn get_all(&self) -> Result<Vec<VectorEntry>, VectorStoreError> {
         let txn = self.env.read_txn()?;
         let mut entries = Vec::new();
-        let mut iter = self.entries_db.iter(&txn)?;
-        while let Some(item) = iter.next() {
+        let iter = self.entries_db.iter(&txn)?;
+        for item in iter {
             let (_, entry) = item?;
             entries.push(entry);
         }
@@ -259,7 +257,7 @@ impl VectorStore {
 
     /// Set the similarity threshold
     pub fn set_similarity_threshold(&self, threshold: f32) -> Result<(), VectorStoreError> {
-        if threshold < 0.0 || threshold > 1.0 {
+        if !(0.0..=1.0).contains(&threshold) {
             return Err(VectorStoreError::InvalidInput(
                 "Similarity threshold must be between 0.0 and 1.0".to_string(),
             ));

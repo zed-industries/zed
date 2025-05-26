@@ -104,6 +104,26 @@ impl LmStudioServer {
 
 // Implementation for AvailableModel
 impl AvailableModel {
+    pub fn new(
+        name: String,
+        display_name: Option<String>,
+        server_max_tokens: usize,
+        custom_max_tokens: Option<usize>,
+        server_id: Option<String>,
+        enabled: bool,
+    ) -> Self {
+        #[allow(deprecated)]
+        Self {
+            name,
+            display_name,
+            server_max_tokens,
+            custom_max_tokens,
+            server_id,
+            enabled,
+            max_tokens: 0,
+        }
+    }
+
     pub fn effective_max_tokens(&self) -> usize {
         self.custom_max_tokens.unwrap_or(self.server_max_tokens)
     }

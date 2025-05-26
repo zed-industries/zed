@@ -199,17 +199,6 @@ impl ExtensionFilter {
             Self::NotInstalled => false,
         }
     }
-
-    /// Returns whether to show a dev extension based on the filter
-    pub fn should_show_dev_extension(&self, _extension_id: &str, _cx: &App) -> bool {
-        // For the "All" filter, always show dev extensions
-        // For "Installed", always show dev extensions (they're all installed)
-        // For "NotInstalled", never show dev extensions
-        match self {
-            Self::All | Self::Installed => true,
-            Self::NotInstalled => false,
-        }
-    }
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -415,7 +404,7 @@ impl ExtensionsPage {
             None => {
                 // First check if it's an installed extension
                 if let Some(extension) = extension_store.installed_extensions().get(extension_id) {
-                    return ExtensionStatus::Installed(extension.manifest.version.clone().into());
+                    return ExtensionStatus::Installed(extension.manifest.version.clone());
                 }
                 
                 // Then check if it's a dev extension
@@ -535,7 +524,7 @@ impl ExtensionsPage {
         let filtered_dev_extensions: Vec<_> = if self.filter.include_dev_extensions() {
             self.dev_extension_entries
                 .iter()
-                .filter(|ext| {
+                .filter(|_ext| {
                     match self.filter {
                         ExtensionFilter::All => true,
                         ExtensionFilter::Installed => true, // Dev extensions are always installed

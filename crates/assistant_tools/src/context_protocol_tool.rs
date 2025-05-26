@@ -283,7 +283,7 @@ impl ContextProtocolTool {
         }
         
         // Analyze context rules
-        analysis.push_str(&format!("\nContext Rules:\n"));
+        analysis.push_str("\nContext Rules:\n");
         analysis.push_str(&format!("  - Max Windows: {}\n", protocol.context_rules.max_windows));
         analysis.push_str(&format!("  - Prioritization: {}\n", protocol.context_rules.prioritization));
         analysis.push_str(&format!("  - Memory Strategy: {}\n", protocol.context_rules.memory_strategy));

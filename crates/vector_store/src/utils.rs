@@ -25,6 +25,7 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 }
 
 /// For pre-normalized vectors (L2 norm = 1), dot product equals cosine similarity
+#[allow(dead_code)]
 pub fn dot_product(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() {
         return 0.0;
@@ -39,6 +40,7 @@ pub fn dot_product(a: &[f32], b: &[f32]) -> f32 {
 }
 
 /// Calculate Euclidean distance between two vectors
+#[allow(dead_code)]
 pub fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() {
         return f32::MAX;

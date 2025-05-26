@@ -17,6 +17,7 @@ path = "src/main.rs"
 [dependencies]
 activity_indicator.workspace = true
 agent.workspace = true
+ai_studio.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
 assets.workspace = true

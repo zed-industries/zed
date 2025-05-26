@@ -1,22 +1,9 @@
-use std::sync::Arc;
 use anyhow::Result;
-use futures::{FutureExt, StreamExt};
-use gpui::{
-    prelude::*,
-    AppContext, AsyncApp, Context, Entity, Task, Window,
-};
-use http_client::HttpClient;
 use language_model::{
-    LanguageModel, LanguageModelProvider,
-    AllLanguageModelSettings, Settings,
-    LanguageModelCompletionEvent, LanguageModelToolUse, LanguageModelToolUseId, StopReason,
+    LanguageModelCompletionEvent,
+    LanguageModelToolUse, LanguageModelToolUseId, StopReason,
 };
-use ui::{
-    Button, ButtonCommon, ButtonStyle, Clickable, IconButton, IconName, Indicator, Label,
-    LabelCommon, LabelSize, List, ListDirection, Switch, ToggleState,
-};
-use util::ResultExt;
-use lmstudio::{LmStudioTool, LmStudioFunctionTool};
+use uuid;
 
 #[derive(Clone)]
 pub struct LmStudioStreamMapper {
@@ -74,7 +61,7 @@ impl LmStudioStreamMapper {
             // Handle tool calls
             if let Some(tool_calls) = delta.tool_calls {
                 for tool_call in tool_calls {
-                    if let Some(function) = tool_call.function {
+                    if let Some(function) = tool_call.function.clone() {
                         // Process tool call
                         if let Some(event) = self.process_tool_call(tool_call, function)? {
                             return Ok(Some(event));
@@ -101,28 +88,28 @@ impl LmStudioStreamMapper {
 
     fn process_tool_call(
         &mut self,
-        tool_call: lmstudio::ToolCall,
-        function: lmstudio::Function,
+        tool_call: lmstudio::ToolCallChunk,
+        function: lmstudio::FunctionChunk,
     ) -> Result<Option<LanguageModelCompletionEvent>> {
         // Get or update the tool call ID
-        if let Some(id) = tool_call.id {
+        if let Some(id) = &tool_call.id {
             if self.tool_call_id.is_none() {
                 log::debug!("LMStudio: Starting tool call accumulation with ID: {}", id);
-                self.tool_call_id = Some(id);
+                self.tool_call_id = Some(id.clone());
                 self.accumulating_tool_call = true;
             }
         }
         
         // Get or update the function name
-        if let Some(name) = function.name {
+        if let Some(name) = &function.name {
             if self.tool_call_name.is_none() && !name.trim().is_empty() {
                 log::debug!("LMStudio: Tool call name: {}", name);
-                self.tool_call_name = Some(name);
+                self.tool_call_name = Some(name.clone());
             }
         }
         
         // Accumulate arguments
-        if let Some(args) = function.arguments {
+        if let Some(args) = function.arguments.as_ref() {
             log::debug!("LMStudio: Received argument fragment: {}", args);
             self.tool_call_args_buffer.push_str(&args);
             
@@ -262,19 +249,5 @@ impl LmStudioStreamMapper {
         self.thinking_buffer.clear();
         self.pending_text = None;
         self.reset_tool_call_state();
-    }
-
-    fn map_tool_call(&self, function: &lmstudio::Function) -> Result<language_model::ToolCall> {
-        let args = if let Some(args) = &function.arguments {
-            serde_json::from_str(args)?
-        } else {
-            serde_json::json!({})
-        };
-
-        Ok(language_model::ToolCall {
-            id: function.name.clone(),
-            name: function.name.clone(),
-            arguments: args,
-        })
     }
 } 

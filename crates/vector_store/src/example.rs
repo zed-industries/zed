@@ -1,8 +1,6 @@
-use crate::{Embedding, Metadata, VectorStore, VectorStoreRegistry};
+use crate::{Embedding, Metadata};
 use anyhow::Result;
-use gpui::{App, AppContext};
 use std::path::PathBuf;
-use std::sync::Arc;
 
 /// Simple example demonstrating how to use the vector store
 pub fn run_example(cx: &mut gpui::App) -> Result<()> {
@@ -96,8 +94,6 @@ pub fn run_example(cx: &mut gpui::App) -> Result<()> {
 
 /// Example demonstrating how to use the MCP tools
 pub fn run_mcp_example(cx: &mut gpui::App) {
-    use crate::mcp_tools::*;
-
     // Initialize the vector store - this is just a stub for API compatibility
     let db_path = PathBuf::from("/tmp/vector_store_mcp_example");
     crate::init(db_path, cx);

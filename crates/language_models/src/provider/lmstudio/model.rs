@@ -1,29 +1,19 @@
-use std::sync::Arc;
-use anyhow::{Result, anyhow};
-use futures::{StreamExt, stream::BoxStream, future::BoxFuture};
-use gpui::{
-    prelude::*,
-    AppContext, AsyncApp, Context, Entity, Task, Window,
-};
+use anyhow::{anyhow, Result};
+use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
+use gpui::{App, AsyncApp};
 use http_client::HttpClient;
 use language_model::{
-    LanguageModel, LanguageModelProvider,
-    AllLanguageModelSettings, Settings,
-    LanguageModelId, LanguageModelName, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelRequest, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelToolChoice, Role,
+    LanguageModel, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
+    LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelRequest, LanguageModelToolChoice, Role,
 };
-use language_model::settings::Settings;
-use lmstudio::{ChatCompletionRequest, ChatMessage};
-use ui::{
-    Button, ButtonCommon, ButtonStyle, Clickable, IconButton, IconName, Indicator, Label,
-    LabelCommon, LabelSize, List, ListDirection, Switch, ToggleState,
-};
-use util::ResultExt;
-use futures::FutureExt;
+use settings::Settings;
+use std::sync::Arc;
 
 use crate::AllLanguageModelSettings;
 use super::{PROVIDER_ID, PROVIDER_NAME, utils::LmStudioStreamMapper};
+use lmstudio::{ChatCompletionRequest, ChatMessage};
 
 pub struct LmStudioLanguageModel {
     pub(crate) id: LanguageModelId,
@@ -32,14 +22,37 @@ pub struct LmStudioLanguageModel {
 }
 
 impl LmStudioLanguageModel {
-    fn get_server_url(&self, cx: &AsyncApp) -> Result<String> {
+    fn get_server_url(&self, cx: &App) -> Result<String> {
         let settings = &AllLanguageModelSettings::get_global(cx).lmstudio;
-        let server = settings
-            .servers
-            .iter()
-            .find(|server| server.id == self.model.server_id)
-            .ok_or_else(|| anyhow::anyhow!("Server not found"))?;
-        Ok(server.api_url.clone())
+        
+        // If the model has a server_id, use that server's URL
+        if let Some(server_id) = &self.model.server_id {
+            for server in &settings.servers {
+                if &server.id == server_id && server.enabled {
+                    return Ok(server.api_url.clone());
+                }
+            }
+            
+            // If server was found but is disabled
+            for server in &settings.servers {
+                if &server.id == server_id {
+                    return Err(anyhow!("The server '{}' is disabled", server.name));
+                }
+            }
+            
+            // Don't fallback to another server, require a server match
+            return Err(anyhow!("Server not found for model {}", self.model.name));
+        }
+        
+        // For backwards compatibility with models that don't have a server_id
+        // Fallback to first enabled server
+        if let Some(server) = settings.first_enabled_server() {
+            log::warn!("Model {} has no server_id, using first enabled server", self.model.name);
+            return Ok(server.api_url.clone());
+        }
+        
+        // No servers configured
+        Err(anyhow!("No enabled LM Studio servers found"))
     }
 
     fn to_lmstudio_request(&self, request: LanguageModelRequest) -> ChatCompletionRequest {
@@ -53,15 +66,12 @@ impl LmStudioLanguageModel {
         let tools = request
             .tools
             .into_iter()
-            .map(|tool| {
-                log::debug!("Converting tool to LM Studio format: {}", tool.name);
-                lmstudio::LmStudioTool::Function {
-                    function: lmstudio::LmStudioFunctionTool {
-                        name: tool.name,
-                        description: Some(tool.description),
-                        parameters: Some(tool.input_schema),
-                    },
-                }
+            .map(|tool| lmstudio::LmStudioTool::Function {
+                function: lmstudio::LmStudioFunctionTool {
+                    name: tool.name,
+                    description: Some(tool.description),
+                    parameters: Some(tool.input_schema),
+                },
             })
             .collect::<Vec<_>>();
         
@@ -73,51 +83,32 @@ impl LmStudioLanguageModel {
             }
         }
 
-        // Convert tool choice to LM Studio format with better handling
+        // Convert tool choice to LM Studio format
         let tool_choice = match request.tool_choice {
-            Some(choice) => {
-                log::debug!("LMStudio: Using explicit tool choice: {:?}", choice);
-                match choice {
-                    LanguageModelToolChoice::Auto => Some("auto"),
-                    LanguageModelToolChoice::Any => Some("any"),
-                    LanguageModelToolChoice::None => Some("none"),
-                }
+            Some(choice) => match choice {
+                LanguageModelToolChoice::Auto => Some("auto"),
+                LanguageModelToolChoice::Any => Some("any"),
+                LanguageModelToolChoice::None => Some("none"),
             },
-            None => {
-                if has_tools {
-                    log::debug!("LMStudio: No tool choice specified, defaulting to 'auto' since tools are present");
-                    Some("auto")
-                } else {
-                    log::debug!("LMStudio: No tool choice specified and no tools present, not setting tool_choice");
-                    None
-                }
-            }
+            None => if has_tools { Some("auto") } else { None },
         };
-
-        // Log the final tool choice
-        if let Some(choice) = &tool_choice {
-            log::debug!("LMStudio: Final tool choice: {}", choice);
-        }
 
         ChatCompletionRequest {
             model: self.model.name.clone(),
             messages: request
                 .messages
                 .into_iter()
-                .map(|msg| {
-                    log::debug!("LMStudio: Converting message with role: {:?}", msg.role);
-                    match msg.role {
-                        Role::User => ChatMessage::User {
-                            content: msg.string_contents(),
-                        },
-                        Role::Assistant => ChatMessage::Assistant {
-                            content: Some(msg.string_contents()),
-                            tool_calls: None,
-                        },
-                        Role::System => ChatMessage::System {
-                            content: msg.string_contents(),
-                        },
-                    }
+                .map(|msg| match msg.role {
+                    Role::User => ChatMessage::User {
+                        content: msg.string_contents(),
+                    },
+                    Role::Assistant => ChatMessage::Assistant {
+                        content: Some(msg.string_contents()),
+                        tool_calls: None,
+                    },
+                    Role::System => ChatMessage::System {
+                        content: msg.string_contents(),
+                    },
                 })
                 .collect(),
             stream: true,
@@ -173,7 +164,7 @@ impl LanguageModel for LmStudioLanguageModel {
     fn count_tokens(
         &self,
         request: LanguageModelRequest,
-        _cx: &gpui::App,
+        _cx: &App,
     ) -> BoxFuture<'static, Result<usize>> {
         // Convert LanguageModelRequest to ChatMessage for token counting
         let messages = self.to_lmstudio_request(request).messages;
@@ -191,21 +182,15 @@ impl LanguageModel for LmStudioLanguageModel {
                             .map_or(0, |c| lmstudio::Model::estimate_tokens(c));
                         let tool_call_tokens = tool_calls.as_ref().map_or(0, |calls| {
                             calls.iter().map(|call| {
-                                // Estimate tokens for function name, arguments, and any additional metadata
                                 lmstudio::Model::estimate_tokens(&call.function.name) + 
-                                lmstudio::Model::estimate_tokens(&call.function.arguments) +
-                                // Add some overhead for the tool call structure
-                                10
+                                lmstudio::Model::estimate_tokens(&call.function.arguments)
                             }).sum()
                         });
                         content_tokens + tool_call_tokens
                     },
                     lmstudio::ChatMessage::Tool { content, tool_call_id } => {
-                        // Estimate tokens for tool response content and ID
                         lmstudio::Model::estimate_tokens(content) + 
-                        lmstudio::Model::estimate_tokens(tool_call_id) +
-                        // Add some overhead for the tool response structure
-                        5
+                        lmstudio::Model::estimate_tokens(tool_call_id)
                     }
                 }
             })
@@ -285,16 +270,10 @@ impl LanguageModel for LmStudioLanguageModel {
                         match stream_mapper.process_fragment(chat_response) {
                             Ok(Some(event)) => Ok(event),
                             Ok(None) => Ok(LanguageModelCompletionEvent::Text(String::new())), // Send empty text for fragments that don't produce events
-                            Err(e) => {
-                                log::error!("Error processing LM Studio response fragment: {}", e);
-                                Err(LanguageModelCompletionError::Other(e))
-                            }
+                            Err(e) => Err(LanguageModelCompletionError::Other(e)),
                         }
                     }
-                    Err(e) => {
-                        log::error!("Error receiving LM Studio response: {}", e);
-                        Err(LanguageModelCompletionError::Other(anyhow!("{}", e)))
-                    }
+                    Err(e) => Err(LanguageModelCompletionError::Other(anyhow!("{}", e))),
                 }
             })
             .boxed();

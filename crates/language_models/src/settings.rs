@@ -203,8 +203,23 @@ pub struct MistralSettingsContent {
 pub struct LlamaCppSettingsContent {
     pub models_directory: Option<String>,
     pub available_models: Option<Vec<provider::llamacpp::AvailableModel>>,
+    pub model_configurations: Option<Vec<provider::llamacpp::ModelConfiguration>>,
     pub gpu_layers: Option<u32>,
     pub thread_count: Option<usize>,
+    /// Default temperature for text generation (0.0 to 2.0)
+    pub default_temperature: Option<f32>,
+    /// Default context size for models (in tokens)
+    pub default_context_size: Option<usize>,
+    /// Default maximum tokens to generate
+    pub default_max_tokens: Option<usize>,
+    /// Top-k sampling parameter (0 = disabled)
+    pub default_top_k: Option<i32>,
+    /// Top-p (nucleus) sampling parameter (0.0 to 1.0)
+    pub default_top_p: Option<f32>,
+    /// Repetition penalty (1.0 = no penalty, >1.0 = penalty)
+    pub default_repetition_penalty: Option<f32>,
+    /// Number of tokens to look back for repetition penalty
+    pub default_repetition_penalty_window: Option<usize>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -458,12 +473,43 @@ impl settings::Settings for AllLanguageModelSettings {
                 llamacpp.as_ref().and_then(|s| s.available_models.clone()),
             );
             merge(
+                &mut settings.llamacpp.model_configurations,
+                llamacpp.as_ref().and_then(|s| s.model_configurations.clone()),
+            );
+            merge(
                 &mut settings.llamacpp.gpu_layers,
                 llamacpp.as_ref().and_then(|s| s.gpu_layers),
             );
+            if let Some(thread_count) = llamacpp.as_ref().and_then(|s| s.thread_count) {
+                settings.llamacpp.thread_count = Some(thread_count);
+            }
             merge(
-                &mut settings.llamacpp.thread_count,
-                llamacpp.as_ref().and_then(|s| s.thread_count),
+                &mut settings.llamacpp.default_temperature,
+                llamacpp.as_ref().and_then(|s| s.default_temperature),
+            );
+            merge(
+                &mut settings.llamacpp.default_context_size,
+                llamacpp.as_ref().and_then(|s| s.default_context_size),
+            );
+            merge(
+                &mut settings.llamacpp.default_max_tokens,
+                llamacpp.as_ref().and_then(|s| s.default_max_tokens),
+            );
+            merge(
+                &mut settings.llamacpp.default_top_k,
+                llamacpp.as_ref().and_then(|s| s.default_top_k),
+            );
+            merge(
+                &mut settings.llamacpp.default_top_p,
+                llamacpp.as_ref().and_then(|s| s.default_top_p),
+            );
+            merge(
+                &mut settings.llamacpp.default_repetition_penalty,
+                llamacpp.as_ref().and_then(|s| s.default_repetition_penalty),
+            );
+            merge(
+                &mut settings.llamacpp.default_repetition_penalty_window,
+                llamacpp.as_ref().and_then(|s| s.default_repetition_penalty_window),
             );
         }
 

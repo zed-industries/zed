@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/activity_indicator",
     "crates/agent",
+    "crates/ai_studio",
     "crates/anthropic",
     "crates/askpass",
     "crates/assets",
@@ -78,6 +79,7 @@ members = [
     "crates/language",
     "crates/language_extension",
     "crates/language_model",
+    "crates/language_model_repository",
     "crates/language_model_selector",
     "crates/language_models",
     "crates/language_selector",
@@ -163,7 +165,6 @@ members = [
     "crates/vim",
     "crates/vim_mode_setting",
     "crates/vector_store",
-    "crates/vector_store_context_server",
     "crates/web_search",
     "crates/web_search_providers",
     "crates/welcome",
@@ -217,6 +218,7 @@ edition = "2024"
 activity_indicator = { path = "crates/activity_indicator" }
 agent = { path = "crates/agent" }
 ai = { path = "crates/ai" }
+ai_studio = { path = "crates/ai_studio" }
 anthropic = { path = "crates/anthropic" }
 askpass = { path = "crates/askpass" }
 assets = { path = "crates/assets" }
@@ -290,6 +292,7 @@ journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_extension = { path = "crates/language_extension" }
 language_model = { path = "crates/language_model" }
+language_model_repository = { path = "crates/language_model_repository" }
 language_model_selector = { path = "crates/language_model_selector" }
 language_models = { path = "crates/language_models" }
 language_selector = { path = "crates/language_selector" }
@@ -477,6 +480,7 @@ libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
 linkme = "0.3.31"
+llama-cpp-2 = "0.1.103"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "c9c189f1c5dd53c624a419ce35bc77ad6a908d18" }
 markup5ever_rcdom = "0.3.0"

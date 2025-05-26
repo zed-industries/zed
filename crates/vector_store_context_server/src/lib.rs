@@ -1,9 +1,11 @@
 mod extension;
 mod server;
 
+use anyhow::Result;
+use extension::{Extension, ExtensionManifest};
+use serde_json::Value;
 use std::path::Path;
 use std::sync::Arc;
-use serde_json;
 
 // Re-export the extension for Zed to use
 pub use crate::extension::VectorStoreExtension;
@@ -25,6 +27,11 @@ pub fn create_extension(
         manifest_value,
         work_dir,
     ))
+}
+
+pub struct VectorStoreContextServerExtension {
+    _manifest: Arc<dyn std::any::Any>,
+    work_dir: Arc<Path>,
 }
 
 #[no_mangle]
