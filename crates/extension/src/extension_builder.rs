@@ -1,10 +1,9 @@
 use crate::{
     ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, parse_wasm_extension_version,
 };
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Context as _, Result, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use futures::AsyncReadExt;
 use futures::io::BufReader;
 use heck::ToSnakeCase;
 use http_client::{self, AsyncBody, HttpClient};
@@ -15,6 +14,7 @@ use std::{
     process::Stdio,
     sync::Arc,
 };
+use wasi_preview1_component_adapter_provider::WASI_SNAPSHOT_PREVIEW1_REACTOR_ADAPTER;
 use wasm_encoder::{ComponentSectionId, Encode as _, RawSection, Section as _};
 use wasmparser::Parser;
 use wit_component::ComponentEncoder;
@@ -26,7 +26,6 @@ use wit_component::ComponentEncoder;
 /// Once Rust 1.78 is released, there will be a `wasm32-wasip2` target available, so we will
 /// not need the adapter anymore.
 const RUST_TARGET: &str = "wasm32-wasip1";
-const WASI_ADAPTER_URL: &str = "https://github.com/bytecodealliance/wasmtime/releases/download/v18.0.2/wasi_snapshot_preview1.reactor.wasm";
 
 /// Compiling Tree-sitter parsers from C to WASM requires Clang 17, and a WASM build of libc
 /// and clang's runtime library. The `wasi-sdk` provides these binaries.
@@ -135,9 +134,8 @@ impl ExtensionBuilder {
         extension_dir: &Path,
         manifest: &mut ExtensionManifest,
         options: CompileExtensionOptions,
-    ) -> Result<(), anyhow::Error> {
+    ) -> anyhow::Result<()> {
         self.install_rust_wasm_target_if_needed()?;
-        let adapter_bytes = self.install_wasi_preview1_adapter_if_needed().await?;
 
         let cargo_toml_content = fs::read_to_string(extension_dir.join("Cargo.toml"))?;
         let cargo_toml: CargoToml = toml::from_str(&cargo_toml_content)?;
@@ -186,7 +184,10 @@ impl ExtensionBuilder {
 
         let mut encoder = ComponentEncoder::default()
             .module(&wasm_bytes)?
-            .adapter("wasi_snapshot_preview1", &adapter_bytes)
+            .adapter(
+                "wasi_snapshot_preview1",
+                WASI_SNAPSHOT_PREVIEW1_REACTOR_ADAPTER,
+            )
             .context("failed to load adapter module")?
             .validate(true);
 
@@ -395,41 +396,9 @@ impl ExtensionBuilder {
         Ok(())
     }
 
-    async fn install_wasi_preview1_adapter_if_needed(&self) -> Result<Vec<u8>> {
-        let cache_path = self.cache_dir.join("wasi_snapshot_preview1.reactor.wasm");
-        if let Ok(content) = fs::read(&cache_path) {
-            if Parser::is_core_wasm(&content) {
-                return Ok(content);
-            }
-        }
-
-        fs::remove_file(&cache_path).ok();
-
-        log::info!(
-            "downloading wasi adapter module to {}",
-            cache_path.display()
-        );
-        let mut response = self
-            .http
-            .get(WASI_ADAPTER_URL, AsyncBody::default(), true)
-            .await?;
-
-        let mut content = Vec::new();
-        let mut body = BufReader::new(response.body_mut());
-        body.read_to_end(&mut content).await?;
-
-        fs::write(&cache_path, &content)
-            .with_context(|| format!("failed to save file {}", cache_path.display()))?;
-
-        if !Parser::is_core_wasm(&content) {
-            bail!("downloaded wasi adapter is invalid");
-        }
-        Ok(content)
-    }
-
     async fn install_wasi_sdk_if_needed(&self) -> Result<PathBuf> {
         let url = if let Some(asset_name) = WASI_SDK_ASSET_NAME {
-            format!("{WASI_SDK_URL}/{asset_name}")
+            format!("{WASI_SDK_URL}{asset_name}")
         } else {
             bail!("wasi-sdk is not available for platform {}", env::consts::OS);
         };
@@ -460,7 +429,7 @@ impl ExtensionBuilder {
 
         let inner_dir = fs::read_dir(&tar_out_dir)?
             .next()
-            .ok_or_else(|| anyhow!("no content"))?
+            .context("no content")?
             .context("failed to read contents of extracted wasi archive directory")?
             .path();
         fs::rename(&inner_dir, &wasi_sdk_dir).context("failed to move extracted wasi dir")?;
@@ -619,7 +588,7 @@ fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) ->
                     let grammar_name = grammar_path
                         .file_stem()
                         .and_then(|stem| stem.to_str())
-                        .ok_or_else(|| anyhow!("no grammar name"))?;
+                        .context("no grammar name")?;
                     if !manifest.grammars.contains_key(grammar_name) {
                         manifest.grammars.insert(
                             grammar_name.into(),

@@ -106,6 +106,8 @@ pub struct ThemeSettings {
     ///
     /// The terminal font family can be overridden using it's own setting.
     pub buffer_font: Font,
+    /// The agent font size. Determines the size of text in the agent panel.
+    agent_font_size: Pixels,
     /// The line height for buffers, and the terminal.
     ///
     /// Changing this may affect the spacing of some UI elements.
@@ -250,6 +252,11 @@ impl Global for BufferFontSize {}
 pub(crate) struct UiFontSize(Pixels);
 
 impl Global for UiFontSize {}
+
+#[derive(Default)]
+pub(crate) struct AgentFontSize(Pixels);
+
+impl Global for AgentFontSize {}
 
 /// Represents the selection of a theme, which can be either static or dynamic.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -409,6 +416,9 @@ pub struct ThemeSettingsContent {
     #[serde(default)]
     #[schemars(default = "default_font_features")]
     pub buffer_font_features: Option<FontFeatures>,
+    /// The font size for the agent panel.
+    #[serde(default)]
+    pub agent_font_size: Option<f32>,
     /// The name of the Zed theme to use.
     #[serde(default)]
     pub theme: Option<ThemeSelection>,
@@ -543,10 +553,22 @@ pub enum BufferLineHeight {
     Comfortable,
     /// The default line height.
     Standard,
-    /// A custom line height.
-    ///
-    /// A line height of 1.0 is the height of the buffer's font size.
-    Custom(f32),
+    /// A custom line height, where 1.0 is the font's height. Must be at least 1.0.
+    Custom(#[serde(deserialize_with = "deserialize_line_height")] f32),
+}
+
+fn deserialize_line_height<'de, D>(deserializer: D) -> Result<f32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = f32::deserialize(deserializer)?;
+    if value < 1.0 {
+        return Err(serde::de::Error::custom(
+            "buffer_line_height.custom must be at least 1.0",
+        ));
+    }
+
+    Ok(value)
 }
 
 impl BufferLineHeight {
@@ -576,6 +598,15 @@ impl ThemeSettings {
             .try_global::<UiFontSize>()
             .map(|size| size.0)
             .unwrap_or(self.ui_font_size);
+        clamp_font_size(font_size)
+    }
+
+    /// Returns the UI font size.
+    pub fn agent_font_size(&self, cx: &App) -> Pixels {
+        let font_size = cx
+            .try_global::<AgentFontSize>()
+            .map(|size| size.0)
+            .unwrap_or(self.agent_font_size);
         clamp_font_size(font_size)
     }
 
@@ -746,6 +777,26 @@ pub fn reset_ui_font_size(cx: &mut App) {
     }
 }
 
+/// Sets the adjusted UI font size.
+pub fn adjust_agent_font_size(cx: &mut App, mut f: impl FnMut(&mut Pixels)) {
+    let agent_font_size = ThemeSettings::get_global(cx).agent_font_size(cx);
+    let mut adjusted_size = cx
+        .try_global::<AgentFontSize>()
+        .map_or(agent_font_size, |adjusted_size| adjusted_size.0);
+
+    f(&mut adjusted_size);
+    cx.set_global(AgentFontSize(clamp_font_size(adjusted_size)));
+    cx.refresh_windows();
+}
+
+/// Resets the UI font size to the default value.
+pub fn reset_agent_font_size(cx: &mut App) {
+    if cx.has_global::<AgentFontSize>() {
+        cx.remove_global::<AgentFontSize>();
+        cx.refresh_windows();
+    }
+}
+
 /// Ensures font size is within the valid range.
 pub fn clamp_font_size(size: Pixels) -> Pixels {
     size.max(MIN_FONT_SIZE)
@@ -789,6 +840,7 @@ impl settings::Settings for ThemeSettings {
             },
             buffer_font_size: defaults.buffer_font_size.unwrap().into(),
             buffer_line_height: defaults.buffer_line_height.unwrap(),
+            agent_font_size: defaults.agent_font_size.unwrap().into(),
             theme_selection: defaults.theme.clone(),
             active_theme: themes
                 .get(defaults.theme.as_ref().unwrap().theme(*system_appearance))
@@ -891,6 +943,12 @@ impl settings::Settings for ThemeSettings {
             );
             this.buffer_font_size = this.buffer_font_size.clamp(px(6.), px(100.));
 
+            merge(
+                &mut this.agent_font_size,
+                value.agent_font_size.map(Into::into),
+            );
+            this.agent_font_size = this.agent_font_size.clamp(px(6.), px(100.));
+
             merge(&mut this.buffer_line_height, value.buffer_line_height);
 
             // Clamp the `unnecessary_code_fade` to ensure text can't disappear entirely.
@@ -962,5 +1020,56 @@ impl settings::Settings for ThemeSettings {
 fn merge<T: Copy>(target: &mut T, value: Option<T>) {
     if let Some(value) = value {
         *target = value;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_buffer_line_height_deserialize_valid() {
+        assert_eq!(
+            serde_json::from_value::<BufferLineHeight>(json!("comfortable")).unwrap(),
+            BufferLineHeight::Comfortable
+        );
+        assert_eq!(
+            serde_json::from_value::<BufferLineHeight>(json!("standard")).unwrap(),
+            BufferLineHeight::Standard
+        );
+        assert_eq!(
+            serde_json::from_value::<BufferLineHeight>(json!({"custom": 1.0})).unwrap(),
+            BufferLineHeight::Custom(1.0)
+        );
+        assert_eq!(
+            serde_json::from_value::<BufferLineHeight>(json!({"custom": 1.5})).unwrap(),
+            BufferLineHeight::Custom(1.5)
+        );
+    }
+
+    #[test]
+    fn test_buffer_line_height_deserialize_invalid() {
+        assert!(
+            serde_json::from_value::<BufferLineHeight>(json!({"custom": 0.99}))
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("buffer_line_height.custom must be at least 1.0")
+        );
+        assert!(
+            serde_json::from_value::<BufferLineHeight>(json!({"custom": 0.0}))
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("buffer_line_height.custom must be at least 1.0")
+        );
+        assert!(
+            serde_json::from_value::<BufferLineHeight>(json!({"custom": -1.0}))
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("buffer_line_height.custom must be at least 1.0")
+        );
     }
 }

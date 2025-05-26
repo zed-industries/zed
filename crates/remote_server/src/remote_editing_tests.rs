@@ -2,8 +2,11 @@
 /// The tests in this file assume that server_cx is running on Windows too.
 /// We neead to find a way to test Windows-Non-Windows interactions.
 use crate::headless_project::HeadlessProject;
+use assistant_tool::{Tool as _, ToolResultContent};
+use assistant_tools::{ReadFileTool, ReadFileToolInput};
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
+use language_model::{LanguageModelRequest, fake_provider::FakeLanguageModel};
 
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
@@ -1546,6 +1549,70 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
     });
 
     assert_eq!(server_branch.name(), "totally-new-branch");
+}
+
+#[gpui::test]
+async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "a.txt": "A",
+            "b.txt": "B",
+        }),
+    )
+    .await;
+
+    let (project, _headless_project) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/project"), true, cx)
+        })
+        .await
+        .unwrap();
+
+    let action_log = cx.new(|_| assistant_tool::ActionLog::new(project.clone()));
+    let model = Arc::new(FakeLanguageModel::default());
+    let request = Arc::new(LanguageModelRequest::default());
+
+    let input = ReadFileToolInput {
+        path: "project/b.txt".into(),
+        start_line: None,
+        end_line: None,
+    };
+    let exists_result = cx.update(|cx| {
+        ReadFileTool::run(
+            Arc::new(ReadFileTool),
+            serde_json::to_value(input).unwrap(),
+            request.clone(),
+            project.clone(),
+            action_log.clone(),
+            model.clone(),
+            None,
+            cx,
+        )
+    });
+    let output = exists_result.output.await.unwrap().content;
+    assert_eq!(output, ToolResultContent::Text("B".to_string()));
+
+    let input = ReadFileToolInput {
+        path: "project/c.txt".into(),
+        start_line: None,
+        end_line: None,
+    };
+    let does_not_exist_result = cx.update(|cx| {
+        ReadFileTool::run(
+            Arc::new(ReadFileTool),
+            serde_json::to_value(input).unwrap(),
+            request.clone(),
+            project.clone(),
+            action_log.clone(),
+            model.clone(),
+            None,
+            cx,
+        )
+    });
+    does_not_exist_result.output.await.unwrap_err();
 }
 
 pub async fn init_test(

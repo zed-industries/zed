@@ -6,6 +6,7 @@ use crate::{
     kernels::{Kernel, KernelSpecification, NativeRunningKernel},
     outputs::{ExecutionStatus, ExecutionView},
 };
+use anyhow::Context as _;
 use collections::{HashMap, HashSet};
 use editor::{
     Anchor, AnchorRangeExt as _, Editor, MultiBuffer, ToPoint,
@@ -57,13 +58,8 @@ impl EditorBlock {
         on_close: CloseBlockFn,
         cx: &mut Context<Session>,
     ) -> anyhow::Result<Self> {
-        let editor = editor
-            .upgrade()
-            .ok_or_else(|| anyhow::anyhow!("editor is not open"))?;
-        let workspace = editor
-            .read(cx)
-            .workspace()
-            .ok_or_else(|| anyhow::anyhow!("workspace dropped"))?;
+        let editor = editor.upgrade().context("editor is not open")?;
+        let workspace = editor.read(cx).workspace().context("workspace dropped")?;
 
         let execution_view = cx.new(|cx| ExecutionView::new(status, workspace.downgrade(), cx));
 
@@ -93,6 +89,7 @@ impl EditorBlock {
                 style: BlockStyle::Sticky,
                 render: Self::create_output_area_renderer(execution_view.clone(), on_close.clone()),
                 priority: 0,
+                render_in_minimap: false,
             };
 
             let block_id = editor.insert_blocks([block], None, cx)[0];
@@ -126,7 +123,8 @@ impl EditorBlock {
             let execution_view = execution_view.clone();
             let text_style = crate::outputs::plain::text_style(cx.window, cx.app);
 
-            let gutter = cx.gutter_dimensions;
+            let editor_margins = cx.margins;
+            let gutter = editor_margins.gutter;
 
             let block_id = cx.block_id;
             let on_close = on_close.clone();
@@ -184,7 +182,8 @@ impl EditorBlock {
                         .flex_1()
                         .size_full()
                         .py(text_line_height / 2.)
-                        .mr(gutter.width)
+                        .mr(editor_margins.right)
+                        .pr_2()
                         .child(execution_view),
                 )
                 .into_any_element()

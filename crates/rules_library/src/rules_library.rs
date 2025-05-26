@@ -52,8 +52,8 @@ pub trait InlineAssistDelegate {
         cx: &mut Context<RulesLibrary>,
     );
 
-    /// Returns whether the Assistant panel was focused.
-    fn focus_assistant_panel(
+    /// Returns whether the Agent panel was focused.
+    fn focus_agent_panel(
         &self,
         workspace: &mut Workspace,
         window: &mut Window,
@@ -814,7 +814,7 @@ impl RulesLibrary {
                         .update(cx, |workspace, window, cx| {
                             window.activate_window();
                             self.inline_assist_delegate
-                                .focus_assistant_panel(workspace, window, cx)
+                                .focus_agent_panel(workspace, window, cx)
                         })
                         .ok();
                     if panel == Some(true) {
@@ -929,6 +929,7 @@ impl RulesLibrary {
                                         cache: false,
                                     }],
                                     tools: Vec::new(),
+                                    tool_choice: None,
                                     stop: Vec::new(),
                                     temperature: None,
                                 },

@@ -769,6 +769,7 @@ impl BladeRenderer {
                                                     >,
                                             )
                                             .unwrap(),
+                                            gpu::TexelAspects::COLOR,
                                         ),
                                         gpu::TextureView::from_metal_texture(
                                             &objc2::rc::Retained::retain(
@@ -780,6 +781,7 @@ impl BladeRenderer {
                                                     >,
                                             )
                                             .unwrap(),
+                                            gpu::TexelAspects::COLOR,
                                         ),
                                     )
                                 };

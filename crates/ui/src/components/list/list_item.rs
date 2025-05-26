@@ -33,6 +33,7 @@ pub struct ListItem {
     toggle: Option<bool>,
     inset: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    on_hover: Option<Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
     on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
     on_secondary_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>>,
@@ -63,6 +64,7 @@ impl ListItem {
             on_click: None,
             on_secondary_mouse_down: None,
             on_toggle: None,
+            on_hover: None,
             tooltip: None,
             children: SmallVec::new(),
             selectable: true,
@@ -99,6 +101,11 @@ impl ListItem {
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_click = Some(Box::new(handler));
+        self
+    }
+
+    pub fn on_hover(mut self, handler: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
+        self.on_hover = Some(Box::new(handler));
         self
     }
 
@@ -233,6 +240,7 @@ impl RenderOnce for ListItem {
                     })
             })
             .when(self.rounded, |this| this.rounded_sm())
+            .when_some(self.on_hover, |this, on_hover| this.on_hover(on_hover))
             .child(
                 h_flex()
                     .id("inner_list_item")

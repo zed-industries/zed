@@ -482,7 +482,9 @@ CREATE TABLE IF NOT EXISTS billing_preferences (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     user_id INTEGER NOT NULL REFERENCES users (id),
-    max_monthly_llm_usage_spending_in_cents INTEGER NOT NULL
+    max_monthly_llm_usage_spending_in_cents INTEGER NOT NULL,
+    model_request_overages_enabled bool NOT NULL DEFAULT FALSE,
+    model_request_overages_spend_limit_in_cents integer NOT NULL DEFAULT 0
 );
 
 CREATE UNIQUE INDEX "uix_billing_preferences_on_user_id" ON billing_preferences (user_id);

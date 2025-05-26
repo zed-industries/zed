@@ -154,11 +154,14 @@ impl VariableList {
 
         let _subscriptions = vec![
             cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
-            cx.subscribe(&session, |this, _, event, _| match event {
+            cx.subscribe(&session, |this, _, event, cx| match event {
                 SessionEvent::Stopped(_) => {
                     this.selection.take();
                     this.edited_path.take();
                     this.selected_stack_frame_id.take();
+                }
+                SessionEvent::Variables => {
+                    this.build_entries(cx);
                 }
                 _ => {}
             }),
@@ -300,8 +303,9 @@ impl VariableList {
         match event {
             StackFrameListEvent::SelectedStackFrameChanged(stack_frame_id) => {
                 self.selected_stack_frame_id = Some(*stack_frame_id);
-                cx.notify();
+                self.build_entries(cx);
             }
+            StackFrameListEvent::BuiltEntries => {}
         }
     }
 
@@ -343,14 +347,14 @@ impl VariableList {
         };
 
         entry.is_expanded = !entry.is_expanded;
-        cx.notify();
+        self.build_entries(cx);
     }
 
     fn select_first(&mut self, _: &SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
         self.cancel_variable_edit(&Default::default(), window, cx);
         if let Some(variable) = self.entries.first() {
             self.selection = Some(variable.path.clone());
-            cx.notify();
+            self.build_entries(cx);
         }
     }
 
@@ -358,7 +362,7 @@ impl VariableList {
         self.cancel_variable_edit(&Default::default(), window, cx);
         if let Some(variable) = self.entries.last() {
             self.selection = Some(variable.path.clone());
-            cx.notify();
+            self.build_entries(cx);
         }
     }
 
@@ -377,7 +381,7 @@ impl VariableList {
                 index.and_then(|ix| self.entries.get(ix).map(|var| var.path.clone()))
             {
                 self.selection = Some(new_selection);
-                cx.notify();
+                self.build_entries(cx);
             } else {
                 self.select_last(&SelectLast, window, cx);
             }
@@ -401,7 +405,7 @@ impl VariableList {
                 index.and_then(|ix| self.entries.get(ix).map(|var| var.path.clone()))
             {
                 self.selection = Some(new_selection);
-                cx.notify();
+                self.build_entries(cx);
             } else {
                 self.select_first(&SelectFirst, window, cx);
             }
@@ -463,7 +467,7 @@ impl VariableList {
                 self.select_prev(&SelectPrevious, window, cx);
             } else {
                 entry_state.is_expanded = false;
-                cx.notify();
+                self.build_entries(cx);
             }
         }
     }
@@ -484,7 +488,7 @@ impl VariableList {
                 self.select_next(&SelectNext, window, cx);
             } else {
                 entry_state.is_expanded = true;
-                cx.notify();
+                self.build_entries(cx);
             }
         }
     }
@@ -675,6 +679,7 @@ impl VariableList {
         div()
             .id(var_ref as usize)
             .group("variable_list_entry")
+            .pl_2()
             .border_1()
             .border_r_2()
             .border_color(border_color)
@@ -692,8 +697,8 @@ impl VariableList {
                 ListItem::new(SharedString::from(format!("scope-{}", var_ref)))
                     .selectable(false)
                     .disabled(self.disabled)
-                    .indent_level(state.depth + 1)
-                    .indent_step_size(px(20.))
+                    .indent_level(state.depth)
+                    .indent_step_size(px(10.))
                     .always_show_disclosure_icon(true)
                     .toggle(state.is_expanded)
                     .on_toggle({
@@ -772,6 +777,7 @@ impl VariableList {
         div()
             .id(variable.item_id())
             .group("variable_list_entry")
+            .pl_2()
             .border_1()
             .border_r_2()
             .border_color(border_color)
@@ -791,8 +797,8 @@ impl VariableList {
                 )))
                 .disabled(self.disabled)
                 .selectable(false)
-                .indent_level(state.depth + 1_usize)
-                .indent_step_size(px(20.))
+                .indent_level(state.depth)
+                .indent_step_size(px(10.))
                 .always_show_disclosure_icon(true)
                 .when(var_ref > 0, |list_item| {
                     list_item.toggle(state.is_expanded).on_toggle(cx.listener({
@@ -926,8 +932,6 @@ impl Focusable for VariableList {
 
 impl Render for VariableList {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.build_entries(cx);
-
         v_flex()
             .track_focus(&self.focus_handle)
             .key_context("VariableList")
@@ -943,7 +947,6 @@ impl Render for VariableList {
             .on_action(cx.listener(Self::collapse_selected_entry))
             .on_action(cx.listener(Self::cancel_variable_edit))
             .on_action(cx.listener(Self::confirm_variable_edit))
-            //
             .child(
                 uniform_list(
                     cx.entity().clone(),

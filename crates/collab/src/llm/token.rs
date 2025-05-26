@@ -1,17 +1,13 @@
-use crate::Cents;
 use crate::db::billing_subscription::SubscriptionKind;
-use crate::db::{billing_subscription, user};
-use crate::llm::{
-    AGENT_EXTENDED_TRIAL_FEATURE_FLAG, DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT,
-};
+use crate::db::{billing_customer, billing_subscription, user};
+use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
 use crate::{Config, db::billing_preference};
-use anyhow::{Result, anyhow};
-use chrono::{Datelike, NaiveDate, NaiveDateTime, Utc};
+use anyhow::{Context as _, Result};
+use chrono::{NaiveDateTime, Utc};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
-use util::maybe;
 use uuid::Uuid;
 use zed_llm_client::Plan;
 
@@ -29,24 +25,15 @@ pub struct LlmTokenClaims {
     pub is_staff: bool,
     pub has_llm_closed_beta_feature_flag: bool,
     pub bypass_account_age_check: bool,
-    pub has_llm_subscription: bool,
-    #[serde(default)]
     pub use_llm_request_queue: bool,
-    pub max_monthly_spend_in_cents: u32,
-    pub custom_llm_monthly_allowance_in_cents: Option<u32>,
-    #[serde(default)]
-    pub use_new_billing: bool,
     pub plan: Plan,
-    #[serde(default)]
     pub has_extended_trial: bool,
-    #[serde(default)]
-    pub subscription_period: Option<(NaiveDateTime, NaiveDateTime)>,
-    #[serde(default)]
+    pub subscription_period: (NaiveDateTime, NaiveDateTime),
     pub enable_model_request_overages: bool,
-    #[serde(default)]
     pub model_request_overages_spend_limit_in_cents: u32,
-    #[serde(default)]
     pub can_use_web_search_tool: bool,
+    #[serde(default)]
+    pub has_overdue_invoices: bool,
 }
 
 const LLM_TOKEN_LIFETIME: Duration = Duration::from_secs(60 * 60);
@@ -55,17 +42,31 @@ impl LlmTokenClaims {
     pub fn create(
         user: &user::Model,
         is_staff: bool,
+        billing_customer: billing_customer::Model,
         billing_preferences: Option<billing_preference::Model>,
         feature_flags: &Vec<String>,
-        has_legacy_llm_subscription: bool,
-        subscription: Option<billing_subscription::Model>,
+        subscription: billing_subscription::Model,
         system_id: Option<String>,
         config: &Config,
     ) -> Result<String> {
         let secret = config
             .llm_api_secret
             .as_ref()
-            .ok_or_else(|| anyhow!("no LLM API secret"))?;
+            .context("no LLM API secret")?;
+
+        let plan = if is_staff {
+            Plan::ZedPro
+        } else {
+            subscription.kind.map_or(Plan::ZedFree, |kind| match kind {
+                SubscriptionKind::ZedFree => Plan::ZedFree,
+                SubscriptionKind::ZedPro => Plan::ZedPro,
+                SubscriptionKind::ZedProTrial => Plan::ZedProTrial,
+            })
+        };
+        let subscription_period =
+            billing_subscription::Model::current_period(Some(subscription), is_staff)
+                .map(|(start, end)| (start.naive_utc(), end.naive_utc()))
+                .context("A plan is required to use Zed's hosted models or edit predictions. Visit https://zed.dev/account to get started.")?;
 
         let now = Utc::now();
         let claims = Self {
@@ -84,61 +85,13 @@ impl LlmTokenClaims {
             bypass_account_age_check: feature_flags
                 .iter()
                 .any(|flag| flag == "bypass-account-age-check"),
-            can_use_web_search_tool: feature_flags.iter().any(|flag| flag == "assistant2"),
-            has_llm_subscription: has_legacy_llm_subscription,
-            max_monthly_spend_in_cents: billing_preferences
-                .as_ref()
-                .map_or(DEFAULT_MAX_MONTHLY_SPEND.0, |preferences| {
-                    preferences.max_monthly_llm_usage_spending_in_cents as u32
-                }),
-            custom_llm_monthly_allowance_in_cents: user
-                .custom_llm_monthly_allowance_in_cents
-                .map(|allowance| allowance as u32),
-            use_new_billing: feature_flags.iter().any(|flag| flag == "new-billing"),
+            can_use_web_search_tool: true,
             use_llm_request_queue: feature_flags.iter().any(|flag| flag == "llm-request-queue"),
-            plan: if is_staff {
-                Plan::ZedPro
-            } else {
-                subscription
-                    .as_ref()
-                    .and_then(|subscription| subscription.kind)
-                    .map_or(Plan::Free, |kind| match kind {
-                        SubscriptionKind::ZedFree => Plan::Free,
-                        SubscriptionKind::ZedPro => Plan::ZedPro,
-                        SubscriptionKind::ZedProTrial => Plan::ZedProTrial,
-                    })
-            },
+            plan,
             has_extended_trial: feature_flags
                 .iter()
                 .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG),
-            subscription_period: if is_staff {
-                maybe!({
-                    let now = Utc::now();
-                    let year = now.year();
-                    let month = now.month();
-
-                    let first_day_of_this_month =
-                        NaiveDate::from_ymd_opt(year, month, 1)?.and_hms_opt(0, 0, 0)?;
-
-                    let next_month = if month == 12 { 1 } else { month + 1 };
-                    let next_month_year = if month == 12 { year + 1 } else { year };
-                    let first_day_of_next_month =
-                        NaiveDate::from_ymd_opt(next_month_year, next_month, 1)?
-                            .and_hms_opt(23, 59, 59)?;
-
-                    let last_day_of_this_month = first_day_of_next_month - chrono::Days::new(1);
-
-                    Some((first_day_of_this_month, last_day_of_this_month))
-                })
-            } else {
-                maybe!({
-                    let subscription = subscription?;
-                    let period_start_at = subscription.current_period_start_at()?;
-                    let period_end_at = subscription.current_period_end_at()?;
-
-                    Some((period_start_at.naive_utc(), period_end_at.naive_utc()))
-                })
-            },
+            subscription_period,
             enable_model_request_overages: billing_preferences
                 .as_ref()
                 .map_or(false, |preferences| {
@@ -149,6 +102,7 @@ impl LlmTokenClaims {
                 .map_or(0, |preferences| {
                     preferences.model_request_overages_spend_limit_in_cents as u32
                 }),
+            has_overdue_invoices: billing_customer.has_overdue_invoices,
         };
 
         Ok(jsonwebtoken::encode(
@@ -162,7 +116,7 @@ impl LlmTokenClaims {
         let secret = config
             .llm_api_secret
             .as_ref()
-            .ok_or_else(|| anyhow!("no LLM API secret"))?;
+            .context("no LLM API secret")?;
 
         match jsonwebtoken::decode::<Self>(
             token,
@@ -178,12 +132,6 @@ impl LlmTokenClaims {
                 }
             }
         }
-    }
-
-    pub fn free_tier_monthly_spending_limit(&self) -> Cents {
-        self.custom_llm_monthly_allowance_in_cents
-            .map(Cents)
-            .unwrap_or(FREE_TIER_MONTHLY_SPENDING_LIMIT)
     }
 }
 

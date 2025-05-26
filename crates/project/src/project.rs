@@ -1,6 +1,7 @@
 pub mod buffer_store;
 mod color_extractor;
 pub mod connection_manager;
+pub mod context_server_store;
 pub mod debounced_delay;
 pub mod debugger;
 pub mod git_store;
@@ -23,6 +24,7 @@ mod project_tests;
 mod direnv;
 mod environment;
 use buffer_diff::BufferDiff;
+use context_server_store::ContextServerStore;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
 use git_store::{Repository, RepositoryId};
 pub mod search_history;
@@ -45,6 +47,7 @@ use dap::{DapRegistry, client::DebugAdapterClient};
 
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
+pub use debugger::breakpoint_store::BreakpointWithPosition;
 use debugger::{
     breakpoint_store::{ActiveStackFrame, BreakpointStore},
     dap_store::{DapStore, DapStoreEvent},
@@ -63,8 +66,8 @@ use image_store::{ImageItemEvent, ImageStoreEvent};
 
 use ::git::{blame::Blame, status::FileStatus};
 use gpui::{
-    AnyEntity, App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Hsla,
-    SharedString, Task, WeakEntity, Window, prelude::FluentBuilder,
+    App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Hsla, SharedString,
+    Task, WeakEntity, Window,
 };
 use itertools::Itertools;
 use language::{
@@ -182,6 +185,7 @@ pub struct Project {
     client_subscriptions: Vec<client::Subscription>,
     worktree_store: Entity<WorktreeStore>,
     buffer_store: Entity<BufferStore>,
+    context_server_store: Entity<ContextServerStore>,
     image_store: Entity<ImageStore>,
     lsp_store: Entity<LspStore>,
     _subscriptions: Vec<gpui::Subscription>,
@@ -845,6 +849,7 @@ impl Project {
         ToolchainStore::init(&client);
         DapStore::init(&client, cx);
         BreakpointStore::init(&client);
+        context_server_store::init(cx);
     }
 
     pub fn local(
@@ -864,6 +869,9 @@ impl Project {
             let worktree_store = cx.new(|_| WorktreeStore::local(false, fs.clone()));
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
+
+            let context_server_store =
+                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), cx));
 
             let environment = cx.new(|_| ProjectEnvironment::new(env));
             let toolchain_store = cx.new(|cx| {
@@ -887,7 +895,6 @@ impl Project {
                     client.http_client(),
                     node.clone(),
                     fs.clone(),
-                    languages.clone(),
                     environment.clone(),
                     toolchain_store.read(cx).as_language_toolchain_store(),
                     worktree_store.clone(),
@@ -965,6 +972,7 @@ impl Project {
                 buffer_store,
                 image_store,
                 lsp_store,
+                context_server_store,
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
                 git_store,
@@ -1024,6 +1032,9 @@ impl Project {
                 cx.new(|_| WorktreeStore::remote(false, ssh_proto.clone(), SSH_PROJECT_ID));
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
+
+            let context_server_store =
+                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), cx));
 
             let buffer_store = cx.new(|cx| {
                 BufferStore::remote(
@@ -1109,6 +1120,7 @@ impl Project {
                 buffer_store,
                 image_store,
                 lsp_store,
+                context_server_store,
                 breakpoint_store,
                 dap_store,
                 join_project_response_message_id: 0,
@@ -1119,9 +1131,10 @@ impl Project {
                     cx.on_release(Self::release),
                     cx.on_app_quit(|this, cx| {
                         let shutdown = this.ssh_client.take().and_then(|client| {
-                            client
-                                .read(cx)
-                                .shutdown_processes(Some(proto::ShutdownRemoteServer {}))
+                            client.read(cx).shutdown_processes(
+                                Some(proto::ShutdownRemoteServer {}),
+                                cx.background_executor().clone(),
+                            )
                         });
 
                         cx.background_executor().spawn(async move {
@@ -1212,7 +1225,10 @@ impl Project {
         fs: Arc<dyn Fs>,
         cx: AsyncApp,
     ) -> Result<Entity<Self>> {
-        client.authenticate_and_connect(true, &cx).await?;
+        client
+            .authenticate_and_connect(true, &cx)
+            .await
+            .into_response()?;
 
         let subscriptions = [
             EntitySubscription::Project(client.subscribe_to_entity::<Self>(remote_id)?),
@@ -1267,6 +1283,8 @@ impl Project {
         let image_store = cx.new(|cx| {
             ImageStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
         })?;
+        let context_server_store =
+            cx.new(|cx| ContextServerStore::new(worktree_store.clone(), cx))?;
 
         let environment = cx.new(|_| ProjectEnvironment::new(None))?;
 
@@ -1360,6 +1378,7 @@ impl Project {
                 image_store,
                 worktree_store: worktree_store.clone(),
                 lsp_store: lsp_store.clone(),
+                context_server_store,
                 active_entry: None,
                 collaborators: Default::default(),
                 join_project_response_message_id: response.message_id,
@@ -1458,9 +1477,10 @@ impl Project {
 
     fn release(&mut self, cx: &mut App) {
         if let Some(client) = self.ssh_client.take() {
-            let shutdown = client
-                .read(cx)
-                .shutdown_processes(Some(proto::ShutdownRemoteServer {}));
+            let shutdown = client.read(cx).shutdown_processes(
+                Some(proto::ShutdownRemoteServer {}),
+                cx.background_executor().clone(),
+            );
 
             cx.background_spawn(async move {
                 if let Some(shutdown) = shutdown {
@@ -1590,6 +1610,10 @@ impl Project {
         self.worktree_store.clone()
     }
 
+    pub fn context_server_store(&self) -> Entity<ContextServerStore> {
+        self.context_server_store.clone()
+    }
+
     pub fn buffer_for_id(&self, remote_id: BufferId, cx: &App) -> Option<Entity<Buffer>> {
         self.buffer_store.read(cx).get(remote_id)
     }
@@ -1634,6 +1658,16 @@ impl Project {
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         self.environment.update(cx, |environment, cx| {
             environment.get_buffer_environment(&buffer, &worktree_store, cx)
+        })
+    }
+
+    pub fn directory_environment(
+        &self,
+        abs_path: Arc<Path>,
+        cx: &mut App,
+    ) -> Shared<Task<Option<HashMap<String, String>>>> {
+        self.environment.update(cx, |environment, cx| {
+            environment.get_directory_environment(abs_path, cx)
         })
     }
 
@@ -1988,7 +2022,7 @@ impl Project {
             worktree.expand_all_for_entry(entry_id, cx)
         });
         Some(cx.spawn(async move |this, cx| {
-            task.ok_or_else(|| anyhow!("no task"))?.await?;
+            task.context("no task")?.await?;
             this.update(cx, |_, cx| {
                 cx.emit(Event::ExpandedAllForEntry(worktree_id, entry_id));
             })?;
@@ -1997,9 +2031,10 @@ impl Project {
     }
 
     pub fn shared(&mut self, project_id: u64, cx: &mut Context<Self>) -> Result<()> {
-        if !matches!(self.client_state, ProjectClientState::Local) {
-            return Err(anyhow!("project was already shared"));
-        }
+        anyhow::ensure!(
+            matches!(self.client_state, ProjectClientState::Local),
+            "project was already shared"
+        );
 
         self.client_subscriptions.extend([
             self.client
@@ -2117,9 +2152,10 @@ impl Project {
     }
 
     fn unshare_internal(&mut self, cx: &mut App) -> Result<()> {
-        if self.is_via_collab() {
-            return Err(anyhow!("attempted to unshare a remote project"));
-        }
+        anyhow::ensure!(
+            !self.is_via_collab(),
+            "attempted to unshare a remote project"
+        );
 
         if let ProjectClientState::Shared { remote_id, .. } = self.client_state {
             self.client_state = ProjectClientState::Local;
@@ -2155,7 +2191,7 @@ impl Project {
                 .ok();
             Ok(())
         } else {
-            Err(anyhow!("attempted to unshare an unshared project"))
+            anyhow::bail!("attempted to unshare an unshared project");
         }
     }
 
@@ -2286,7 +2322,7 @@ impl Project {
         &mut self,
         path: ProjectPath,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(Option<ProjectEntryId>, AnyEntity)>> {
+    ) -> Task<Result<(Option<ProjectEntryId>, Entity<Buffer>)>> {
         let task = self.open_buffer(path.clone(), cx);
         cx.spawn(async move |_project, cx| {
             let buffer = task.await?;
@@ -2294,8 +2330,7 @@ impl Project {
                 File::from_dyn(buffer.file()).and_then(|file| file.project_entry_id(cx))
             })?;
 
-            let buffer: &AnyEntity = &buffer;
-            Ok((project_entry_id, buffer.clone()))
+            Ok((project_entry_id, buffer))
         })
     }
 
@@ -2397,7 +2432,7 @@ impl Project {
         if let Some(buffer) = self.buffer_for_id(id, cx) {
             Task::ready(Ok(buffer))
         } else if self.is_local() || self.is_via_ssh() {
-            Task::ready(Err(anyhow!("buffer {} does not exist", id)))
+            Task::ready(Err(anyhow!("buffer {id} does not exist")))
         } else if let Some(project_id) = self.remote_id() {
             let request = self.client.request(proto::OpenBufferById {
                 project_id,
@@ -2487,9 +2522,7 @@ impl Project {
         let weak_project = cx.entity().downgrade();
         cx.spawn(async move |_, cx| {
             let image_item = open_image_task.await?;
-            let project = weak_project
-                .upgrade()
-                .ok_or_else(|| anyhow!("Project dropped"))?;
+            let project = weak_project.upgrade().context("Project dropped")?;
 
             let metadata = ImageItem::load_image_metadata(image_item.clone(), project, cx).await?;
             image_item.update(cx, |image_item, cx| {
@@ -3534,53 +3567,45 @@ impl Project {
         range: Range<text::Anchor>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Vec<InlayHint>>> {
-        let snapshot = buffer_handle.read(cx).snapshot();
-
-        let Some(inline_value_provider) = session
+        let language_name = buffer_handle
             .read(cx)
-            .adapter_name()
-            .map(|adapter_name| DapRegistry::global(cx).adapter(&adapter_name))
-            .and_then(|adapter| adapter.inline_value_provider())
+            .language()
+            .map(|language| language.name().to_string());
+
+        let Some(inline_value_provider) = language_name
+            .and_then(|language| DapRegistry::global(cx).inline_value_provider(&language))
         else {
             return Task::ready(Err(anyhow::anyhow!("Inline value provider not found")));
         };
 
-        let mut text_objects =
-            snapshot.text_object_ranges(range.end..range.end, Default::default());
-        let text_object_range = text_objects
-            .find(|(_, obj)| matches!(obj, language::TextObject::AroundFunction))
-            .map(|(range, _)| snapshot.anchor_before(range.start))
-            .unwrap_or(range.start);
+        let snapshot = buffer_handle.read(cx).snapshot();
 
-        let variable_ranges = snapshot
-            .debug_variable_ranges(
-                text_object_range.to_offset(&snapshot)..range.end.to_offset(&snapshot),
-            )
-            .filter_map(|range| {
-                let lsp_range = language::range_to_lsp(
-                    range.range.start.to_point_utf16(&snapshot)
-                        ..range.range.end.to_point_utf16(&snapshot),
-                )
-                .ok()?;
+        let Some(root_node) = snapshot.syntax_root_ancestor(range.end) else {
+            return Task::ready(Ok(vec![]));
+        };
 
-                Some((
-                    snapshot.text_for_range(range.range).collect::<String>(),
-                    lsp_range,
-                ))
-            })
-            .collect::<Vec<_>>();
+        let row = snapshot
+            .summary_for_anchor::<text::PointUtf16>(&range.end)
+            .row as usize;
 
-        let inline_values = inline_value_provider.provide(variable_ranges);
+        let inline_value_locations = inline_value_provider.provide(
+            root_node,
+            snapshot
+                .text_for_range(Anchor::MIN..range.end)
+                .collect::<String>()
+                .as_str(),
+            row,
+        );
 
         let stack_frame_id = active_stack_frame.stack_frame_id;
         cx.spawn(async move |this, cx| {
             this.update(cx, |project, cx| {
                 project.dap_store().update(cx, |dap_store, cx| {
-                    dap_store.resolve_inline_values(
+                    dap_store.resolve_inline_value_locations(
                         session,
                         stack_frame_id,
                         buffer_handle,
-                        inline_values,
+                        inline_value_locations,
                         cx,
                     )
                 })
@@ -3628,7 +3653,7 @@ impl Project {
             let mut buffer_count = 0;
             let mut limit_reached = false;
             let query = Arc::new(query);
-            let mut chunks = matching_buffers_rx.ready_chunks(64);
+            let chunks = matching_buffers_rx.ready_chunks(64);
 
             // Now that we know what paths match the query, we will load at most
             // 64 buffers at a time to avoid overwhelming the main thread. For each
@@ -3636,9 +3661,8 @@ impl Project {
             // ranges in the buffer matched by the query.
             let mut chunks = pin!(chunks);
             'outer: while let Some(matching_buffer_chunk) = chunks.next().await {
-                let mut chunk_results = Vec::new();
+                let mut chunk_results = Vec::with_capacity(matching_buffer_chunk.len());
                 for buffer in matching_buffer_chunk {
-                    let buffer = buffer.clone();
                     let query = query.clone();
                     let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
                     chunk_results.push(cx.background_spawn(async move {
@@ -3886,11 +3910,7 @@ impl Project {
         })
     }
 
-    pub fn resolve_abs_path(
-        &self,
-        path: &str,
-        cx: &mut Context<Self>,
-    ) -> Task<Option<ResolvedPath>> {
+    pub fn resolve_abs_path(&self, path: &str, cx: &App) -> Task<Option<ResolvedPath>> {
         if self.is_local() {
             let expanded = PathBuf::from(shellexpand::tilde(&path).into_owned());
             let fs = self.fs.clone();
@@ -4149,23 +4169,36 @@ impl Project {
         let path = path.as_ref();
         let worktree_store = self.worktree_store.read(cx);
 
-        for worktree in worktree_store.visible_worktrees(cx) {
-            let worktree_root_name = worktree.read(cx).root_name();
-            if let Ok(relative_path) = path.strip_prefix(worktree_root_name) {
-                return Some(ProjectPath {
-                    worktree_id: worktree.read(cx).id(),
-                    path: relative_path.into(),
-                });
-            }
-        }
+        if path.is_absolute() {
+            for worktree in worktree_store.visible_worktrees(cx) {
+                let worktree_abs_path = worktree.read(cx).abs_path();
 
-        for worktree in worktree_store.visible_worktrees(cx) {
-            let worktree = worktree.read(cx);
-            if let Some(entry) = worktree.entry_for_path(path) {
-                return Some(ProjectPath {
-                    worktree_id: worktree.id(),
-                    path: entry.path.clone(),
-                });
+                if let Ok(relative_path) = path.strip_prefix(worktree_abs_path) {
+                    return Some(ProjectPath {
+                        worktree_id: worktree.read(cx).id(),
+                        path: relative_path.into(),
+                    });
+                }
+            }
+        } else {
+            for worktree in worktree_store.visible_worktrees(cx) {
+                let worktree_root_name = worktree.read(cx).root_name();
+                if let Ok(relative_path) = path.strip_prefix(worktree_root_name) {
+                    return Some(ProjectPath {
+                        worktree_id: worktree.read(cx).id(),
+                        path: relative_path.into(),
+                    });
+                }
+            }
+
+            for worktree in worktree_store.visible_worktrees(cx) {
+                let worktree = worktree.read(cx);
+                if let Some(entry) = worktree.entry_for_path(path) {
+                    return Some(ProjectPath {
+                        worktree_id: worktree.id(),
+                        path: entry.path.clone(),
+                    });
+                }
             }
         }
 
@@ -4237,7 +4270,7 @@ impl Project {
             .payload
             .collaborator
             .take()
-            .ok_or_else(|| anyhow!("empty collaborator"))?;
+            .context("empty collaborator")?;
 
         let collaborator = Collaborator::from_proto(collaborator)?;
         this.update(&mut cx, |this, cx| {
@@ -4261,16 +4294,16 @@ impl Project {
         let old_peer_id = envelope
             .payload
             .old_peer_id
-            .ok_or_else(|| anyhow!("missing old peer id"))?;
+            .context("missing old peer id")?;
         let new_peer_id = envelope
             .payload
             .new_peer_id
-            .ok_or_else(|| anyhow!("missing new peer id"))?;
+            .context("missing new peer id")?;
         this.update(&mut cx, |this, cx| {
             let collaborator = this
                 .collaborators
                 .remove(&old_peer_id)
-                .ok_or_else(|| anyhow!("received UpdateProjectCollaborator for unknown peer"))?;
+                .context("received UpdateProjectCollaborator for unknown peer")?;
             let is_host = collaborator.is_host;
             this.collaborators.insert(new_peer_id, collaborator);
 
@@ -4301,14 +4334,11 @@ impl Project {
         mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
-            let peer_id = envelope
-                .payload
-                .peer_id
-                .ok_or_else(|| anyhow!("invalid peer id"))?;
+            let peer_id = envelope.payload.peer_id.context("invalid peer id")?;
             let replica_id = this
                 .collaborators
                 .remove(&peer_id)
-                .ok_or_else(|| anyhow!("unknown peer {:?}", peer_id))?
+                .with_context(|| format!("unknown peer {peer_id:?}"))?
                 .replica_id;
             this.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.forget_shared_buffers_for(&peer_id);
@@ -4358,7 +4388,7 @@ impl Project {
         envelope: TypedEnvelope<proto::LanguageServerPromptRequest>,
         mut cx: AsyncApp,
     ) -> Result<proto::LanguageServerPromptResponse> {
-        let (tx, mut rx) = smol::channel::bounded(1);
+        let (tx, rx) = smol::channel::bounded(1);
         let actions: Vec<_> = envelope
             .payload
             .actions
@@ -4522,11 +4552,7 @@ impl Project {
     ) -> Result<proto::FindSearchCandidatesResponse> {
         let peer_id = envelope.original_sender_id()?;
         let message = envelope.payload;
-        let query = SearchQuery::from_proto(
-            message
-                .query
-                .ok_or_else(|| anyhow!("missing query field"))?,
-        )?;
+        let query = SearchQuery::from_proto(message.query.context("missing query field")?)?;
         let results = this.update(&mut cx, |this, cx| {
             this.find_search_candidate_buffers(&query, message.limit as _, cx)
         })?;
@@ -4604,13 +4630,10 @@ impl Project {
                 .file()
                 .map(|f| f.is_private())
                 .unwrap_or_default();
-            if is_private {
-                Err(anyhow!(ErrorCode::UnsharedItem))
-            } else {
-                Ok(proto::OpenBufferResponse {
-                    buffer_id: this.create_buffer_for_peer(&buffer, peer_id, cx).into(),
-                })
-            }
+            anyhow::ensure!(!is_private, ErrorCode::UnsharedItem);
+            Ok(proto::OpenBufferResponse {
+                buffer_id: this.create_buffer_for_peer(&buffer, peer_id, cx).into(),
+            })
         })?
     }
 
@@ -5106,6 +5129,13 @@ impl ResolvedPath {
         }
     }
 
+    pub fn into_abs_path(self) -> Option<PathBuf> {
+        match self {
+            Self::AbsPath { path, .. } => Some(path),
+            _ => None,
+        }
+    }
+
     pub fn project_path(&self) -> Option<&ProjectPath> {
         match self {
             Self::ProjectPath { project_path, .. } => Some(&project_path),
@@ -5151,15 +5181,25 @@ impl ProjectItem for Buffer {
 }
 
 impl Completion {
+    pub fn kind(&self) -> Option<CompletionItemKind> {
+        self.source
+            // `lsp::CompletionListItemDefaults` has no `kind` field
+            .lsp_completion(false)
+            .and_then(|lsp_completion| lsp_completion.kind)
+    }
+
+    pub fn label(&self) -> Option<String> {
+        self.source
+            .lsp_completion(false)
+            .map(|lsp_completion| lsp_completion.label.clone())
+    }
+
     /// A key that can be used to sort completions when displaying
     /// them to the user.
     pub fn sort_key(&self) -> (usize, &str) {
         const DEFAULT_KIND_KEY: usize = 3;
         let kind_key = self
-            .source
-            // `lsp::CompletionListItemDefaults` has no `kind` field
-            .lsp_completion(false)
-            .and_then(|lsp_completion| lsp_completion.kind)
+            .kind()
             .and_then(|lsp_completion_kind| match lsp_completion_kind {
                 lsp::CompletionItemKind::KEYWORD => Some(0),
                 lsp::CompletionItemKind::VARIABLE => Some(1),

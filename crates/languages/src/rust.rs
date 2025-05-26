@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use collections::HashMap;
@@ -22,6 +22,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
+use util::archive::extract_zip;
 use util::merge_json_value_into;
 use util::{ResultExt, fs::remove_matching, maybe};
 
@@ -215,14 +216,11 @@ impl LspAdapter for RustLspAdapter {
                         })?;
                 }
                 AssetKind::Zip => {
-                    node_runtime::extract_zip(
-                        &destination_path,
-                        BufReader::new(response.body_mut()),
-                    )
-                    .await
-                    .with_context(|| {
-                        format!("unzipping {} to {:?}", version.url, destination_path)
-                    })?;
+                    extract_zip(&destination_path, response.body_mut())
+                        .await
+                        .with_context(|| {
+                            format!("unzipping {} to {:?}", version.url, destination_path)
+                        })?;
                 }
             };
 
@@ -651,11 +649,6 @@ impl ContextProvider for RustContextProvider {
         } else {
             vec!["run".into()]
         };
-        let build_task_args = if let Some(package_to_run) = package_to_run {
-            vec!["build".into(), "-p".into(), package_to_run]
-        } else {
-            vec!["build".into()]
-        };
         let mut task_templates = vec![
             TaskTemplate {
                 label: format!(
@@ -689,9 +682,10 @@ impl ContextProvider for RustContextProvider {
                     "test".into(),
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
-                    RUST_TEST_NAME_TASK_VARIABLE.template_value(),
                     "--".into(),
                     "--nocapture".into(),
+                    "--include-ignored".into(),
+                    RUST_TEST_NAME_TASK_VARIABLE.template_value(),
                 ],
                 tags: vec!["rust-test".to_owned()],
                 cwd: Some("$ZED_DIRNAME".to_owned()),
@@ -709,9 +703,10 @@ impl ContextProvider for RustContextProvider {
                     "--doc".into(),
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
-                    RUST_DOC_TEST_NAME_TASK_VARIABLE.template_value(),
                     "--".into(),
                     "--nocapture".into(),
+                    "--include-ignored".into(),
+                    RUST_DOC_TEST_NAME_TASK_VARIABLE.template_value(),
                 ],
                 tags: vec!["rust-doc-test".to_owned()],
                 cwd: Some("$ZED_DIRNAME".to_owned()),
@@ -728,6 +723,7 @@ impl ContextProvider for RustContextProvider {
                     "test".into(),
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                    "--".into(),
                     RUST_TEST_FRAGMENT_TASK_VARIABLE.template_value(),
                 ],
                 tags: vec!["rust-mod-test".to_owned()],
@@ -783,37 +779,6 @@ impl ContextProvider for RustContextProvider {
                 cwd: Some("$ZED_DIRNAME".to_owned()),
                 ..TaskTemplate::default()
             },
-            TaskTemplate {
-                label: format!(
-                    "Build {} {} (package: {})",
-                    RUST_BIN_KIND_TASK_VARIABLE.template_value(),
-                    RUST_BIN_NAME_TASK_VARIABLE.template_value(),
-                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
-                ),
-                cwd: Some("$ZED_DIRNAME".to_owned()),
-                command: "cargo".into(),
-                args: build_task_args,
-                tags: vec!["rust-main".to_owned()],
-                ..TaskTemplate::default()
-            },
-            TaskTemplate {
-                label: format!(
-                    "Build Test '{}' (package: {})",
-                    RUST_TEST_NAME_TASK_VARIABLE.template_value(),
-                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
-                ),
-                command: "cargo".into(),
-                args: vec![
-                    "test".into(),
-                    "-p".into(),
-                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
-                    RUST_TEST_NAME_TASK_VARIABLE.template_value(),
-                    "--no-run".into(),
-                ],
-                tags: vec!["rust-test".to_owned()],
-                cwd: Some("$ZED_DIRNAME".to_owned()),
-                ..TaskTemplate::default()
-            },
         ];
 
         if let Some(custom_target_dir) = custom_target_dir {
@@ -837,10 +802,6 @@ impl ContextProvider for RustContextProvider {
 
     fn lsp_task_source(&self) -> Option<LanguageServerName> {
         Some(SERVER_NAME)
-    }
-
-    fn debug_adapter(&self) -> Option<String> {
-        Some("CodeLLDB".to_owned())
     }
 }
 
@@ -1011,7 +972,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
         }
 
         anyhow::Ok(LanguageServerBinary {
-            path: last.ok_or_else(|| anyhow!("no cached binary"))?,
+            path: last.context("no cached binary")?,
             env: None,
             arguments: Default::default(),
         })

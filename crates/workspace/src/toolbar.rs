@@ -106,6 +106,7 @@ impl Render for Toolbar {
         v_flex()
             .group("toolbar")
             .relative()
+            .p(DynamicSpacing::Base08.rems(cx))
             .when(has_left_items || has_right_items, |this| {
                 this.gap(DynamicSpacing::Base08.rems(cx))
             })
@@ -121,7 +122,6 @@ impl Render for Toolbar {
                         .when(has_left_items, |this| {
                             this.child(
                                 h_flex()
-                                    .p(DynamicSpacing::Base08.rems(cx))
                                     .flex_auto()
                                     .justify_start()
                                     .overflow_x_hidden()

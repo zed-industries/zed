@@ -75,7 +75,7 @@ impl Default for DebugAccountState {
         Self {
             enabled: false,
             trial_expired: false,
-            plan: Plan::Free,
+            plan: Plan::ZedFree,
             custom_prompt_usage: RequestUsage {
                 limit: UsageLimit::Unlimited,
                 amount: 0,

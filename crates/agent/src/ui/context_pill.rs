@@ -16,7 +16,8 @@ use crate::context::{
     AgentContext, AgentContextHandle, ContextId, ContextKind, DirectoryContext,
     DirectoryContextHandle, FetchedUrlContext, FileContext, FileContextHandle, ImageContext,
     ImageStatus, RulesContext, RulesContextHandle, SelectionContext, SelectionContextHandle,
-    SymbolContext, SymbolContextHandle, ThreadContext, ThreadContextHandle,
+    SymbolContext, SymbolContextHandle, TextThreadContext, TextThreadContextHandle, ThreadContext,
+    ThreadContextHandle,
 };
 
 #[derive(IntoElement)]
@@ -301,6 +302,7 @@ impl AddedContext {
             AgentContextHandle::Selection(handle) => Self::pending_selection(handle, cx),
             AgentContextHandle::FetchedUrl(handle) => Some(Self::fetched_url(handle)),
             AgentContextHandle::Thread(handle) => Some(Self::pending_thread(handle, cx)),
+            AgentContextHandle::TextThread(handle) => Some(Self::pending_text_thread(handle, cx)),
             AgentContextHandle::Rules(handle) => Self::pending_rules(handle, prompt_store, cx),
             AgentContextHandle::Image(handle) => Some(Self::image(handle)),
         }
@@ -314,6 +316,7 @@ impl AddedContext {
             AgentContext::Selection(context) => Self::attached_selection(context, cx),
             AgentContext::FetchedUrl(context) => Self::fetched_url(context.clone()),
             AgentContext::Thread(context) => Self::attached_thread(context),
+            AgentContext::TextThread(context) => Self::attached_text_thread(context),
             AgentContext::Rules(context) => Self::attached_rules(context),
             AgentContext::Image(context) => Self::image(context.clone()),
         }
@@ -517,6 +520,43 @@ impl AddedContext {
                 }))
             },
             handle: AgentContextHandle::Thread(context.handle.clone()),
+        }
+    }
+
+    fn pending_text_thread(handle: TextThreadContextHandle, cx: &App) -> AddedContext {
+        AddedContext {
+            kind: ContextKind::TextThread,
+            name: handle.title(cx),
+            parent: None,
+            tooltip: None,
+            icon_path: None,
+            status: ContextStatus::Ready,
+            render_hover: {
+                let context = handle.context.clone();
+                Some(Rc::new(move |_, cx| {
+                    let text = context.read(cx).to_xml(cx);
+                    ContextPillHover::new_text(text.into(), cx).into()
+                }))
+            },
+            handle: AgentContextHandle::TextThread(handle),
+        }
+    }
+
+    fn attached_text_thread(context: &TextThreadContext) -> AddedContext {
+        AddedContext {
+            kind: ContextKind::TextThread,
+            name: context.title.clone(),
+            parent: None,
+            tooltip: None,
+            icon_path: None,
+            status: ContextStatus::Ready,
+            render_hover: {
+                let text = context.text.clone();
+                Some(Rc::new(move |_, cx| {
+                    ContextPillHover::new_text(text.clone(), cx).into()
+                }))
+            },
+            handle: AgentContextHandle::TextThread(context.handle.clone()),
         }
     }
 

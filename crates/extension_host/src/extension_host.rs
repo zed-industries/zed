@@ -14,9 +14,10 @@ use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
 pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
-    ExtensionContextServerProxy, ExtensionEvents, ExtensionGrammarProxy, ExtensionHostProxy,
-    ExtensionIndexedDocsProviderProxy, ExtensionLanguageProxy, ExtensionLanguageServerProxy,
-    ExtensionSlashCommandProxy, ExtensionSnippetProxy, ExtensionThemeProxy,
+    ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy, ExtensionEvents,
+    ExtensionGrammarProxy, ExtensionHostProxy, ExtensionIndexedDocsProviderProxy,
+    ExtensionLanguageProxy, ExtensionLanguageServerProxy, ExtensionSlashCommandProxy,
+    ExtensionSnippetProxy, ExtensionThemeProxy,
 };
 use fs::{Fs, RemoveOptions};
 use futures::{
@@ -716,7 +717,7 @@ impl ExtensionStore {
             let mut response = http_client
                 .get(url.as_ref(), Default::default(), true)
                 .await
-                .map_err(|err| anyhow!("error downloading extension: {}", err))?;
+                .context("downloading extension")?;
 
             fs.remove_dir(
                 &extension_dir,
@@ -1015,7 +1016,7 @@ impl ExtensionStore {
     /// added to the manifest, or whose files have changed on disk.
     fn extensions_updated(
         &mut self,
-        new_index: ExtensionIndex,
+        mut new_index: ExtensionIndex,
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let old_index = &self.extension_index;
@@ -1130,6 +1131,10 @@ impl ExtensionStore {
                         .remove_language_server(&language, language_server_name);
                 }
             }
+
+            for (server_id, _) in extension.manifest.context_servers.iter() {
+                self.proxy.unregister_context_server(server_id.clone(), cx);
+            }
         }
 
         self.wasm_extensions
@@ -1139,11 +1144,6 @@ impl ExtensionStore {
         self.proxy
             .remove_languages(&languages_to_remove, &grammars_to_remove);
 
-        let languages_to_add = new_index
-            .languages
-            .iter()
-            .filter(|(_, entry)| extensions_to_load.contains(&entry.extension))
-            .collect::<Vec<_>>();
         let mut grammars_to_add = Vec::new();
         let mut themes_to_add = Vec::new();
         let mut icon_themes_to_add = Vec::new();
@@ -1184,7 +1184,11 @@ impl ExtensionStore {
         }
 
         self.proxy.register_grammars(grammars_to_add);
-
+        let languages_to_add = new_index
+            .languages
+            .iter_mut()
+            .filter(|(_, entry)| extensions_to_load.contains(&entry.extension))
+            .collect::<Vec<_>>();
         for (language_name, language) in languages_to_add {
             let mut language_path = self.installed_dir.clone();
             language_path.extend([
@@ -1227,7 +1231,6 @@ impl ExtensionStore {
             .iter()
             .filter_map(|name| new_index.extensions.get(name).cloned())
             .collect::<Vec<_>>();
-
         self.extension_index = new_index;
         cx.notify();
         cx.emit(Event::ExtensionsUpdated);
@@ -1326,6 +1329,11 @@ impl ExtensionStore {
                         this.proxy
                             .register_indexed_docs_provider(extension.clone(), provider_id.clone());
                     }
+
+                    for debug_adapter in &manifest.debug_adapters {
+                        this.proxy
+                            .register_debug_adapter(extension.clone(), debug_adapter.clone());
+                    }
                 }
 
                 this.wasm_extensions.extend(wasm_extensions);
@@ -1407,7 +1415,7 @@ impl ExtensionStore {
         let is_dev = fs
             .metadata(&extension_dir)
             .await?
-            .ok_or_else(|| anyhow!("directory does not exist"))?
+            .context("directory does not exist")?
             .is_symlink;
 
         if let Ok(mut language_paths) = fs.read_dir(&extension_dir.join("languages")).await {

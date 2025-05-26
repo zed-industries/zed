@@ -76,8 +76,8 @@ workspace-hack.workspace = true
 zed_llm_client.workspace = true
 
 [dev-dependencies]
-assistant = { workspace = true, features = ["test-support"] }
 assistant_context_editor.workspace = true
+assistant_settings.workspace = true
 assistant_slash_command.workspace = true
 assistant_tool.workspace = true
 async-trait.workspace = true
@@ -92,6 +92,7 @@ command_palette_hooks.workspace = true
 context_server.workspace = true
 ctor.workspace = true
 dap = { workspace = true, features = ["test-support"] }
+dap_adapters = { workspace = true, features = ["test-support"] }
 debugger_ui = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true

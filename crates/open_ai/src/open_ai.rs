@@ -37,7 +37,7 @@ impl TryFrom<String> for Role {
             "assistant" => Ok(Self::Assistant),
             "system" => Ok(Self::System),
             "tool" => Ok(Self::Tool),
-            _ => Err(anyhow!("invalid role '{value}'")),
+            _ => anyhow::bail!("invalid role '{value}'"),
         }
     }
 }
@@ -118,7 +118,7 @@ impl Model {
             "o3-mini" => Ok(Self::O3Mini),
             "o3" => Ok(Self::O3),
             "o4-mini" => Ok(Self::O4Mini),
-            _ => Err(anyhow!("invalid model id")),
+            invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
 
@@ -278,20 +278,73 @@ pub struct FunctionDefinition {
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum RequestMessage {
     Assistant {
-        content: Option<String>,
+        content: Option<MessageContent>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
     },
     User {
-        content: String,
+        content: MessageContent,
     },
     System {
-        content: String,
+        content: MessageContent,
     },
     Tool {
-        content: String,
+        content: MessageContent,
         tool_call_id: String,
     },
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+#[serde(untagged)]
+pub enum MessageContent {
+    Plain(String),
+    Multipart(Vec<MessagePart>),
+}
+
+impl MessageContent {
+    pub fn empty() -> Self {
+        MessageContent::Multipart(vec![])
+    }
+
+    pub fn push_part(&mut self, part: MessagePart) {
+        match self {
+            MessageContent::Plain(text) => {
+                *self =
+                    MessageContent::Multipart(vec![MessagePart::Text { text: text.clone() }, part]);
+            }
+            MessageContent::Multipart(parts) if parts.is_empty() => match part {
+                MessagePart::Text { text } => *self = MessageContent::Plain(text),
+                MessagePart::Image { .. } => *self = MessageContent::Multipart(vec![part]),
+            },
+            MessageContent::Multipart(parts) => parts.push(part),
+        }
+    }
+}
+
+impl From<Vec<MessagePart>> for MessageContent {
+    fn from(mut parts: Vec<MessagePart>) -> Self {
+        if let [MessagePart::Text { text }] = parts.as_mut_slice() {
+            MessageContent::Plain(std::mem::take(text))
+        } else {
+            MessageContent::Multipart(parts)
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+#[serde(tag = "type")]
+pub enum MessagePart {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image_url")]
+    Image { image_url: ImageUrl },
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+pub struct ImageUrl {
+    pub url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -438,16 +491,15 @@ pub async fn complete(
         }
 
         match serde_json::from_str::<OpenAiResponse>(&body) {
-            Ok(response) if !response.error.message.is_empty() => Err(anyhow!(
+            Ok(response) if !response.error.message.is_empty() => anyhow::bail!(
                 "Failed to connect to OpenAI API: {}",
                 response.error.message,
-            )),
-
-            _ => Err(anyhow!(
+            ),
+            _ => anyhow::bail!(
                 "Failed to connect to OpenAI API: {} {}",
                 response.status(),
                 body,
-            )),
+            ),
         }
     }
 }
@@ -488,16 +540,15 @@ pub async fn complete_text(
         }
 
         match serde_json::from_str::<OpenAiResponse>(&body) {
-            Ok(response) if !response.error.message.is_empty() => Err(anyhow!(
+            Ok(response) if !response.error.message.is_empty() => anyhow::bail!(
                 "Failed to connect to OpenAI API: {}",
                 response.error.message,
-            )),
-
-            _ => Err(anyhow!(
+            ),
+            _ => anyhow::bail!(
                 "Failed to connect to OpenAI API: {} {}",
                 response.status(),
                 body,
-            )),
+            ),
         }
     }
 }
@@ -509,24 +560,46 @@ fn adapt_response_to_stream(response: Response) -> ResponseStreamEvent {
         choices: response
             .choices
             .into_iter()
-            .map(|choice| ChoiceDelta {
-                index: choice.index,
-                delta: ResponseMessageDelta {
-                    role: Some(match choice.message {
-                        RequestMessage::Assistant { .. } => Role::Assistant,
-                        RequestMessage::User { .. } => Role::User,
-                        RequestMessage::System { .. } => Role::System,
-                        RequestMessage::Tool { .. } => Role::Tool,
-                    }),
-                    content: match choice.message {
-                        RequestMessage::Assistant { content, .. } => content,
-                        RequestMessage::User { content } => Some(content),
-                        RequestMessage::System { content } => Some(content),
-                        RequestMessage::Tool { content, .. } => Some(content),
+            .map(|choice| {
+                let content = match &choice.message {
+                    RequestMessage::Assistant { content, .. } => content.as_ref(),
+                    RequestMessage::User { content } => Some(content),
+                    RequestMessage::System { content } => Some(content),
+                    RequestMessage::Tool { content, .. } => Some(content),
+                };
+
+                let mut text_content = String::new();
+                match content {
+                    Some(MessageContent::Plain(text)) => text_content.push_str(&text),
+                    Some(MessageContent::Multipart(parts)) => {
+                        for part in parts {
+                            match part {
+                                MessagePart::Text { text } => text_content.push_str(&text),
+                                MessagePart::Image { .. } => {}
+                            }
+                        }
+                    }
+                    None => {}
+                };
+
+                ChoiceDelta {
+                    index: choice.index,
+                    delta: ResponseMessageDelta {
+                        role: Some(match choice.message {
+                            RequestMessage::Assistant { .. } => Role::Assistant,
+                            RequestMessage::User { .. } => Role::User,
+                            RequestMessage::System { .. } => Role::System,
+                            RequestMessage::Tool { .. } => Role::Tool,
+                        }),
+                        content: if text_content.is_empty() {
+                            None
+                        } else {
+                            Some(text_content)
+                        },
+                        tool_calls: None,
                     },
-                    tool_calls: None,
-                },
-                finish_reason: choice.finish_reason,
+                    finish_reason: choice.finish_reason,
+                }
             })
             .collect(),
         usage: Some(response.usage),
@@ -598,11 +671,11 @@ pub async fn stream_completion(
                 response.error.message,
             )),
 
-            _ => Err(anyhow!(
+            _ => anyhow::bail!(
                 "Failed to connect to OpenAI API: {} {}",
                 response.status(),
                 body,
-            )),
+            ),
         }
     }
 }
@@ -658,16 +731,14 @@ pub fn embed<'a>(
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
 
-        if response.status().is_success() {
-            let response: OpenAiEmbeddingResponse =
-                serde_json::from_str(&body).context("failed to parse OpenAI embedding response")?;
-            Ok(response)
-        } else {
-            Err(anyhow!(
-                "error during embedding, status: {:?}, body: {:?}",
-                response.status(),
-                body
-            ))
-        }
+        anyhow::ensure!(
+            response.status().is_success(),
+            "error during embedding, status: {:?}, body: {:?}",
+            response.status(),
+            body
+        );
+        let response: OpenAiEmbeddingResponse =
+            serde_json::from_str(&body).context("failed to parse OpenAI embedding response")?;
+        Ok(response)
     }
 }

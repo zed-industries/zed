@@ -581,16 +581,22 @@ async fn test_ssh_collaboration_formatting_with_prettier(
 }
 
 #[gpui::test]
-async fn test_remote_server_debugger(cx_a: &mut TestAppContext, server_cx: &mut TestAppContext) {
+async fn test_remote_server_debugger(
+    cx_a: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+    executor: BackgroundExecutor,
+) {
     cx_a.update(|cx| {
         release_channel::init(SemanticVersion::default(), cx);
         command_palette_hooks::init(cx);
         if std::env::var("RUST_LOG").is_ok() {
             env_logger::try_init().ok();
         }
+        dap_adapters::init(cx);
     });
     server_cx.update(|cx| {
         release_channel::init(SemanticVersion::default(), cx);
+        dap_adapters::init(cx);
     });
     let (opts, server_ssh) = SshRemoteClient::fake_server(cx_a, server_cx);
     let remote_fs = FakeFs::new(server_cx.executor());
@@ -679,7 +685,7 @@ async fn test_remote_server_debugger(cx_a: &mut TestAppContext, server_cx: &mut 
     });
 
     client_ssh.update(cx_a, |a, _| {
-        a.shutdown_processes(Some(proto::ShutdownRemoteServer {}))
+        a.shutdown_processes(Some(proto::ShutdownRemoteServer {}), executor)
     });
 
     shutdown_session.await.unwrap();

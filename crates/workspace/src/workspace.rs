@@ -52,7 +52,8 @@ use language::{Buffer, LanguageRegistry, Rope};
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
 use notifications::{
-    DetachAndPromptErr, Notifications, simple_message_notification::MessageNotification,
+    DetachAndPromptErr, Notifications, dismiss_app_notification,
+    simple_message_notification::MessageNotification,
 };
 pub use pane::*;
 pub use pane_group::*;
@@ -159,6 +160,7 @@ actions!(
         ActivatePreviousWindow,
         AddFolderToProject,
         ClearAllNotifications,
+        CloseActiveDock,
         CloseAllDocks,
         CloseWindow,
         Feedback,
@@ -179,6 +181,7 @@ actions!(
         SaveAs,
         SaveWithoutFormat,
         ShutdownDebugAdapters,
+        SuppressNotification,
         ToggleBottomDock,
         ToggleCenteredLayout,
         ToggleLeftDock,
@@ -867,6 +870,7 @@ pub enum Event {
     },
     ZoomChanged,
     ModalOpened,
+    ClearActivityIndicator,
 }
 
 #[derive(Debug)]
@@ -921,6 +925,7 @@ pub struct Workspace {
     toast_layer: Entity<ToastLayer>,
     titlebar_item: Option<AnyView>,
     notifications: Notifications,
+    suppressed_notifications: HashSet<NotificationId>,
     project: Entity<Project>,
     follower_states: HashMap<CollaboratorId, FollowerState>,
     last_leaders_by_pane: HashMap<WeakEntity<Pane>, CollaboratorId>,
@@ -937,7 +942,7 @@ pub struct Workspace {
     _schedule_serialize: Option<Task<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
     bounds: Bounds<Pixels>,
-    centered_layout: bool,
+    pub centered_layout: bool,
     bounds_save_task_queued: Option<Task<()>>,
     on_prompt_for_new_path: Option<PromptForNewPath>,
     on_prompt_for_open_path: Option<PromptForOpenPath>,
@@ -1245,7 +1250,8 @@ impl Workspace {
             modal_layer,
             toast_layer,
             titlebar_item: None,
-            notifications: Default::default(),
+            notifications: Notifications::default(),
+            suppressed_notifications: HashSet::default(),
             left_dock,
             bottom_dock,
             bottom_dock_layout,
@@ -1290,7 +1296,7 @@ impl Workspace {
     ) -> Task<
         anyhow::Result<(
             WindowHandle<Workspace>,
-            Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
+            Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>,
         )>,
     > {
         let project_handle = Project::local(
@@ -1313,7 +1319,7 @@ impl Workspace {
                 }
             }
 
-            let serialized_workspace: Option<SerializedWorkspace> =
+            let serialized_workspace =
                 persistence::DB.workspace_for_roots(paths_to_open.as_slice());
 
             let workspace_location = serialized_workspace
@@ -1363,7 +1369,13 @@ impl Workspace {
             };
 
             let toolchains = DB.toolchains(workspace_id).await?;
+
             for (toolchain, worktree_id, path) in toolchains {
+                let toolchain_path = PathBuf::from(toolchain.path.clone().to_string());
+                if !app_state.fs.is_file(toolchain_path.as_path()).await {
+                    continue;
+                }
+
                 project_handle
                     .update(cx, |this, cx| {
                         this.activate_toolchain(ProjectPath { worktree_id, path }, toolchain, cx)
@@ -1701,6 +1713,7 @@ impl Workspace {
                         pane.update_in(cx, |pane, window, cx| {
                             let item = pane.open_item(
                                 project_entry_id,
+                                project_path,
                                 true,
                                 entry.is_preview,
                                 true,
@@ -2180,7 +2193,7 @@ impl Workspace {
                 }
 
                 *keystrokes.borrow_mut() = Default::default();
-                Err(anyhow!("over 100 keystrokes passed to send_keystrokes"))
+                anyhow::bail!("over 100 keystrokes passed to send_keystrokes");
             })
             .detach_and_log_err(cx);
     }
@@ -2317,7 +2330,7 @@ impl Workspace {
         pane: Option<WeakEntity<Pane>>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>> {
+    ) -> Task<Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>> {
         log::info!("open paths {abs_paths:?}");
 
         let fs = self.app_state.fs.clone();
@@ -2731,6 +2744,20 @@ impl Workspace {
         self.serialize_workspace(window, cx);
     }
 
+    fn active_dock(&self, window: &Window, cx: &Context<Self>) -> Option<&Entity<Dock>> {
+        self.all_docks().into_iter().find(|&dock| {
+            dock.read(cx).is_open() && dock.focus_handle(cx).contains_focused(window, cx)
+        })
+    }
+
+    fn close_active_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(dock) = self.active_dock(window, cx) {
+            dock.update(cx, |dock, cx| {
+                dock.set_open(false, window, cx);
+            });
+        }
+    }
+
     pub fn close_all_docks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         for dock in self.all_docks() {
             dock.update(cx, |dock, cx| {
@@ -2755,10 +2782,17 @@ impl Workspace {
 
     /// Focus the panel of the given type if it isn't already focused. If it is
     /// already focused, then transfer focus back to the workspace center.
-    pub fn toggle_panel_focus<T: Panel>(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn toggle_panel_focus<T: Panel>(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let mut did_focus_panel = false;
         self.focus_or_unfocus_panel::<T>(window, cx, |panel, window, cx| {
-            !panel.panel_focus_handle(cx).contains_focused(window, cx)
+            did_focus_panel = !panel.panel_focus_handle(cx).contains_focused(window, cx);
+            did_focus_panel
         });
+        did_focus_panel
     }
 
     pub fn activate_panel_for_proto_id(
@@ -2792,7 +2826,7 @@ impl Workspace {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-        should_focus: impl Fn(&dyn PanelHandle, &mut Window, &mut Context<Dock>) -> bool,
+        mut should_focus: impl FnMut(&dyn PanelHandle, &mut Window, &mut Context<Dock>) -> bool,
     ) -> Option<Arc<dyn PanelHandle>> {
         let mut result_panel = None;
         let mut serialize = false;
@@ -3048,7 +3082,7 @@ impl Workspace {
         focus_item: bool,
         window: &mut Window,
         cx: &mut App,
-    ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
+    ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         self.open_path_preview(path, pane, focus_item, false, true, window, cx)
     }
 
@@ -3061,7 +3095,7 @@ impl Workspace {
         activate: bool,
         window: &mut Window,
         cx: &mut App,
-    ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
+    ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         let pane = pane.unwrap_or_else(|| {
             self.last_active_center_pane.clone().unwrap_or_else(|| {
                 self.panes
@@ -3071,12 +3105,14 @@ impl Workspace {
             })
         });
 
-        let task = self.load_path(path.into(), window, cx);
+        let project_path = path.into();
+        let task = self.load_path(project_path.clone(), window, cx);
         window.spawn(cx, async move |cx| {
             let (project_entry_id, build_item) = task.await?;
             let result = pane.update_in(cx, |pane, window, cx| {
                 let result = pane.open_item(
                     project_entry_id,
+                    project_path,
                     focus_item,
                     allow_preview,
                     activate,
@@ -3097,7 +3133,7 @@ impl Workspace {
         path: impl Into<ProjectPath>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
+    ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         self.split_path_preview(path, false, None, window, cx)
     }
 
@@ -3108,7 +3144,7 @@ impl Workspace {
         split_direction: Option<SplitDirection>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Box<dyn ItemHandle>, anyhow::Error>> {
+    ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         let pane = self.last_active_center_pane.clone().unwrap_or_else(|| {
             self.panes
                 .first()
@@ -3122,7 +3158,8 @@ impl Workspace {
             }
         }
 
-        let task = self.load_path(path.into(), window, cx);
+        let project_path = path.into();
+        let task = self.load_path(project_path.clone(), window, cx);
         cx.spawn_in(window, async move |this, cx| {
             let (project_entry_id, build_item) = task.await?;
             this.update_in(cx, move |this, window, cx| -> Option<_> {
@@ -3136,6 +3173,7 @@ impl Workspace {
                 new_pane.update(cx, |new_pane, cx| {
                     Some(new_pane.open_item(
                         project_entry_id,
+                        project_path,
                         true,
                         allow_preview,
                         true,
@@ -3146,7 +3184,7 @@ impl Workspace {
                     ))
                 })
             })
-            .map(|option| option.ok_or_else(|| anyhow!("pane was dropped")))?
+            .map(|option| option.context("pane was dropped"))?
         })
     }
 
@@ -3906,12 +3944,12 @@ impl Workspace {
                         let state = this
                             .follower_states
                             .get_mut(&leader_id)
-                            .ok_or_else(|| anyhow!("following interrupted"))?;
+                            .context("following interrupted")?;
                         state.active_view_id = response
                             .active_view
                             .as_ref()
                             .and_then(|view| ViewId::from_proto(view.id.clone()?).ok());
-                        Ok::<_, anyhow::Error>(())
+                        anyhow::Ok(())
                     })??;
                     if let Some(view) = response.active_view {
                         Self::add_view_from_leader(this.clone(), leader_peer_id, &view, cx).await?;
@@ -4254,7 +4292,7 @@ impl Workspace {
         update: proto::UpdateFollowers,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
-        match update.variant.ok_or_else(|| anyhow!("invalid update"))? {
+        match update.variant.context("invalid update")? {
             proto::update_followers::Variant::CreateView(view) => {
                 let view_id = ViewId::from_proto(view.id.clone().context("invalid view id")?)?;
                 let should_add_view = this.update(cx, |this, _| {
@@ -4296,12 +4334,8 @@ impl Workspace {
                 }
             }
             proto::update_followers::Variant::UpdateView(update_view) => {
-                let variant = update_view
-                    .variant
-                    .ok_or_else(|| anyhow!("missing update view variant"))?;
-                let id = update_view
-                    .id
-                    .ok_or_else(|| anyhow!("missing update view id"))?;
+                let variant = update_view.variant.context("missing update view variant")?;
+                let id = update_view.id.context("missing update view id")?;
                 let mut tasks = Vec::new();
                 this.update_in(cx, |this, window, cx| {
                     let project = this.project.clone();
@@ -4336,7 +4370,7 @@ impl Workspace {
         let this = this.upgrade().context("workspace dropped")?;
 
         let Some(id) = view.id.clone() else {
-            return Err(anyhow!("no id for view"));
+            anyhow::bail!("no id for view");
         };
         let id = ViewId::from_proto(id)?;
         let panel_id = view.panel_id.and_then(proto::PanelId::from_i32);
@@ -4363,18 +4397,16 @@ impl Workspace {
             existing_item
         } else {
             let variant = view.variant.clone();
-            if variant.is_none() {
-                Err(anyhow!("missing view variant"))?;
-            }
+            anyhow::ensure!(variant.is_some(), "missing view variant");
 
             let task = cx.update(|window, cx| {
                 FollowableViewRegistry::from_state_proto(this.clone(), id, variant, window, cx)
             })?;
 
             let Some(task) = task else {
-                return Err(anyhow!(
+                anyhow::bail!(
                     "failed to construct view from leader (maybe from a different version of zed?)"
-                ));
+                );
             };
 
             let mut new_item = task.await?;
@@ -4967,7 +4999,10 @@ impl Workspace {
 
         if let Some(location) = self.serialize_workspace_location(cx) {
             let breakpoints = self.project.update(cx, |project, cx| {
-                project.breakpoint_store().read(cx).all_breakpoints(cx)
+                project
+                    .breakpoint_store()
+                    .read(cx)
+                    .all_source_breakpoints(cx)
             });
 
             let center_group = build_serialized_pane_group(&self.center.root, window, cx);
@@ -5064,7 +5099,7 @@ impl Workspace {
     ) -> Result<()> {
         self.serializable_items_tx
             .unbounded_send(item)
-            .map_err(|err| anyhow!("failed to send serializable item over channel: {}", err))
+            .map_err(|err| anyhow!("failed to send serializable item over channel: {err}"))
     }
 
     pub(crate) fn load_workspace(
@@ -5291,6 +5326,11 @@ impl Workspace {
                     workspace.toggle_dock(DockPosition::Bottom, window, cx);
                 },
             ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &CloseActiveDock, window, cx| {
+                    workspace.close_active_dock(window, cx);
+                },
+            ))
             .on_action(
                 cx.listener(|workspace: &mut Workspace, _: &CloseAllDocks, window, cx| {
                     workspace.close_all_docks(window, cx);
@@ -5302,11 +5342,19 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &SuppressNotification, _, cx| {
+                    if let Some((notification_id, _)) = workspace.notifications.pop() {
+                        workspace.suppress_notification(&notification_id, cx);
+                    }
+                },
+            ))
+            .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &ReopenClosedItem, window, cx| {
                     workspace.reopen_closed_item(window, cx).detach();
                 },
             ))
             .on_action(cx.listener(Workspace::toggle_centered_layout))
+            .on_action(cx.listener(Workspace::cancel))
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -5346,7 +5394,7 @@ impl Workspace {
         self.workspace_actions.push(Box::new(move |div, _, cx| {
             let callback = callback.clone();
             div.on_action(cx.listener(move |workspace, event, window, cx| {
-                (callback.clone())(workspace, event, window, cx)
+                (callback)(workspace, event, window, cx)
             }))
         }));
         self
@@ -5476,6 +5524,17 @@ impl Workspace {
         prev_window
             .update(cx, |_, window, _| window.activate_window())
             .ok();
+    }
+
+    pub fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        if cx.stop_active_drag(window) {
+            return;
+        } else if let Some((notification_id, _)) = self.notifications.pop() {
+            dismiss_app_notification(&notification_id, cx);
+        } else {
+            cx.emit(Event::ClearActivityIndicator);
+            cx.propagate();
+        }
     }
 }
 
@@ -5706,6 +5765,11 @@ impl Render for Workspace {
 
         let theme = cx.theme().clone();
         let colors = theme.colors();
+        let notification_entities = self
+            .notifications
+            .iter()
+            .map(|(_, notification)| notification.entity_id())
+            .collect::<Vec<_>>();
 
         client_side_decorations(
             self.actions(div(), window, cx)
@@ -5721,6 +5785,11 @@ impl Render for Workspace {
                 .text_color(colors.text)
                 .overflow_hidden()
                 .children(self.titlebar_item.clone())
+                .on_modifiers_changed(move |_, _, cx| {
+                    for &id in &notification_entities {
+                        cx.notify(id);
+                    }
+                })
                 .child(
                     div()
                         .size_full()
@@ -6229,7 +6298,7 @@ impl ViewId {
             creator: message
                 .creator
                 .map(CollaboratorId::PeerId)
-                .ok_or_else(|| anyhow!("creator is missing"))?,
+                .context("creator is missing")?,
             id: message.id,
         })
     }
@@ -6371,7 +6440,7 @@ async fn join_channel_internal(
     // this loop will terminate within client::CONNECTION_TIMEOUT seconds.
     'outer: loop {
         let Some(status) = client_status.recv().await else {
-            return Err(anyhow!("error connecting"));
+            anyhow::bail!("error connecting");
         };
 
         match status {
@@ -6593,7 +6662,7 @@ pub fn open_paths(
 ) -> Task<
     anyhow::Result<(
         WindowHandle<Workspace>,
-        Vec<Option<Result<Box<dyn ItemHandle>, anyhow::Error>>>,
+        Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>,
     )>,
 > {
     let abs_paths = abs_paths.to_vec();
@@ -6755,7 +6824,7 @@ pub fn create_and_open_local_file(
             .await;
 
         let item = items.pop().flatten();
-        item.ok_or_else(|| anyhow!("path {path:?} is not a file"))?
+        item.with_context(|| format!("path {path:?} is not a file"))?
     })
 }
 
@@ -6876,9 +6945,7 @@ async fn open_ssh_project_inner(
     }
 
     if project_paths_to_open.is_empty() {
-        return Err(project_path_errors
-            .pop()
-            .unwrap_or_else(|| anyhow!("no paths given")));
+        return Err(project_path_errors.pop().context("no paths given")?);
     }
 
     cx.update_window(window.into(), |_, window, cx| {
@@ -6984,7 +7051,7 @@ pub fn join_in_room_project(
             let active_call = cx.update(|cx| ActiveCall::global(cx))?;
             let room = active_call
                 .read_with(cx, |call, _| call.room().cloned())?
-                .ok_or_else(|| anyhow!("not in a call"))?;
+                .context("not in a call")?;
             let project = room
                 .update(cx, |room, cx| {
                     room.join_project(
@@ -7210,7 +7277,7 @@ pub fn client_side_decorations(
                         .when(!tiling.left, |div| div.border_l(BORDER_SIZE))
                         .when(!tiling.right, |div| div.border_r(BORDER_SIZE))
                         .when(!tiling.is_tiled(), |div| {
-                            div.shadow(smallvec::smallvec![gpui::BoxShadow {
+                            div.shadow(vec![gpui::BoxShadow {
                                 color: Hsla {
                                     h: 0.,
                                     s: 0.,
@@ -7469,6 +7536,64 @@ pub fn move_active_item(
             );
         });
     });
+}
+
+#[derive(Debug)]
+pub struct WorkspacePosition {
+    pub window_bounds: Option<WindowBounds>,
+    pub display: Option<Uuid>,
+    pub centered_layout: bool,
+}
+
+pub fn ssh_workspace_position_from_db(
+    host: String,
+    port: Option<u16>,
+    user: Option<String>,
+    paths_to_open: &[PathBuf],
+    cx: &App,
+) -> Task<Result<WorkspacePosition>> {
+    let paths = paths_to_open
+        .iter()
+        .map(|path| path.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+
+    cx.background_spawn(async move {
+        let serialized_ssh_project = persistence::DB
+            .get_or_create_ssh_project(host, port, paths, user)
+            .await
+            .context("fetching serialized ssh project")?;
+        let serialized_workspace =
+            persistence::DB.workspace_for_ssh_project(&serialized_ssh_project);
+
+        let (window_bounds, display) = if let Some(bounds) = window_bounds_env_override() {
+            (Some(WindowBounds::Windowed(bounds)), None)
+        } else {
+            let restorable_bounds = serialized_workspace
+                .as_ref()
+                .and_then(|workspace| Some((workspace.display?, workspace.window_bounds?)))
+                .or_else(|| {
+                    let (display, window_bounds) = DB.last_window().log_err()?;
+                    Some((display?, window_bounds?))
+                });
+
+            if let Some((serialized_display, serialized_status)) = restorable_bounds {
+                (Some(serialized_status.0), Some(serialized_display))
+            } else {
+                (None, None)
+            }
+        };
+
+        let centered_layout = serialized_workspace
+            .as_ref()
+            .map(|w| w.centered_layout)
+            .unwrap_or(false);
+
+        Ok(WorkspacePosition {
+            window_bounds,
+            display,
+            centered_layout,
+        })
+    })
 }
 
 #[cfg(test)]
@@ -9250,7 +9375,7 @@ mod tests {
                 _project: &Entity<Project>,
                 path: &ProjectPath,
                 cx: &mut App,
-            ) -> Option<Task<gpui::Result<Entity<Self>>>> {
+            ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
                 if path.path.extension().unwrap() == "png" {
                     Some(cx.spawn(async move |cx| cx.new(|_| TestPngItem {})))
                 } else {
@@ -9325,7 +9450,7 @@ mod tests {
                 _project: &Entity<Project>,
                 path: &ProjectPath,
                 cx: &mut App,
-            ) -> Option<Task<gpui::Result<Entity<Self>>>> {
+            ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
                 if path.path.extension().unwrap() == "ipynb" {
                     Some(cx.spawn(async move |cx| cx.new(|_| TestIpynbItem {})))
                 } else {

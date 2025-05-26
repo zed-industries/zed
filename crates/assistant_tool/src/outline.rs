@@ -1,5 +1,5 @@
 use crate::ActionLog;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result};
 use gpui::{AsyncApp, Entity};
 use language::{OutlineItem, ParseStatus};
 use project::Project;
@@ -22,7 +22,7 @@ pub async fn file_outline(
         let project_path = project.read_with(cx, |project, cx| {
             project
                 .find_project_path(&path, cx)
-                .ok_or_else(|| anyhow!("Path {path} not found in project"))
+                .with_context(|| format!("Path {path} not found in project"))
         })??;
 
         project
@@ -31,7 +31,7 @@ pub async fn file_outline(
     };
 
     action_log.update(cx, |action_log, cx| {
-        action_log.track_buffer(buffer.clone(), cx);
+        action_log.buffer_read(buffer.clone(), cx);
     })?;
 
     // Wait until the buffer has been fully parsed, so that we can read its outline.
@@ -41,9 +41,9 @@ pub async fn file_outline(
     }
 
     let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-    let Some(outline) = snapshot.outline(None) else {
-        return Err(anyhow!("No outline information available for this file."));
-    };
+    let outline = snapshot
+        .outline(None)
+        .context("No outline information available for this file at path {path}")?;
 
     render_outline(
         outline

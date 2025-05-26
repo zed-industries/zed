@@ -13,28 +13,17 @@ path = "src/context_server.rs"
 
 [dependencies]
 anyhow.workspace = true
-assistant_tool.workspace = true
 async-trait.workspace = true
 collections.workspace = true
-command_palette_hooks.workspace = true
-context_server_settings.workspace = true
-extension.workspace = true
 futures.workspace = true
 gpui.workspace = true
-icons.workspace = true
-language_model.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
-project.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-settings.workspace = true
 smol.workspace = true
 url = { workspace = true, features = ["serde"] }
 util.workspace = true
 workspace-hack.workspace = true
-
-[dev-dependencies]
-gpui = { workspace = true, features = ["test-support"] }
-project = { workspace = true, features = ["test-support"] }

@@ -104,6 +104,8 @@
 
 (comment) @comment
 
+(hash_bang_line) @comment
+
 [
   (string)
   (template_string)
