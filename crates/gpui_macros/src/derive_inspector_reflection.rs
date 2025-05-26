@@ -77,9 +77,10 @@ fn generate_reflected_trait(trait_item: ItemTrait) -> TokenStream {
             // Include methods of form fn name(self) -> Self or fn name(mut self) -> Self
             // This includes methods with default implementations
             if has_valid_self_receiver && returns_self && param_count == 1 {
-                // Extract documentation from attributes
+                // Extract documentation and cfg attributes
                 let doc = extract_doc_comment(&method.attrs);
-                method_infos.push((method_name.clone(), doc));
+                let cfg_attrs = extract_cfg_attributes(&method.attrs);
+                method_infos.push((method_name.clone(), doc, cfg_attrs));
             }
         }
     }
@@ -92,12 +93,13 @@ fn generate_reflected_trait(trait_item: ItemTrait) -> TokenStream {
 
     // Generate wrapper functions for each method
     // These wrappers use type erasure to allow runtime invocation
-    let wrapper_functions = method_infos.iter().map(|(method_name, _doc)| {
+    let wrapper_functions = method_infos.iter().map(|(method_name, _doc, cfg_attrs)| {
         let wrapper_name = Ident::new(
             &format!("__wrapper_{}", method_name),
             method_name.span(),
         );
         quote! {
+            #(#cfg_attrs)*
             fn #wrapper_name<T: #trait_name + 'static>(value: Box<dyn std::any::Any>) -> Box<dyn std::any::Any> {
                 if let Ok(concrete) = value.downcast::<T>() {
                     Box::new(concrete.#method_name())
@@ -109,7 +111,7 @@ fn generate_reflected_trait(trait_item: ItemTrait) -> TokenStream {
     });
 
     // Generate method info entries
-    let method_info_entries = method_infos.iter().map(|(method_name, doc)| {
+    let method_info_entries = method_infos.iter().map(|(method_name, doc, cfg_attrs)| {
         let method_name_str = method_name.to_string();
         let wrapper_name = Ident::new(&format!("__wrapper_{}", method_name), method_name.span());
         let doc_expr = match doc {
@@ -117,6 +119,7 @@ fn generate_reflected_trait(trait_item: ItemTrait) -> TokenStream {
             None => quote! { None },
         };
         quote! {
+            #(#cfg_attrs)*
             #inspector_reflection_path::FunctionReflection {
                 name: #method_name_str,
                 function: #wrapper_name::<T>,
@@ -125,8 +128,6 @@ fn generate_reflected_trait(trait_item: ItemTrait) -> TokenStream {
             }
         }
     });
-
-    let method_count = method_infos.len();
 
     // Generate the complete output
     let output = quote! {
@@ -139,8 +140,8 @@ fn generate_reflected_trait(trait_item: ItemTrait) -> TokenStream {
             #(#wrapper_functions)*
 
             /// Get all reflectable methods for a concrete type implementing the trait
-            pub const fn methods<T: #trait_name + 'static>() -> [#inspector_reflection_path::FunctionReflection<T>; #method_count] {
-                [
+            pub fn methods<T: #trait_name + 'static>() -> Vec<#inspector_reflection_path::FunctionReflection<T>> {
+                vec![
                     #(#method_info_entries),*
                 ]
             }
@@ -177,6 +178,14 @@ fn extract_doc_comment(attrs: &[Attribute]) -> Option<String> {
     } else {
         Some(doc_lines.join("\n"))
     }
+}
+
+fn extract_cfg_attributes(attrs: &[Attribute]) -> Vec<Attribute> {
+    attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("cfg"))
+        .cloned()
+        .collect()
 }
 
 fn is_called_from_gpui_crate(_span: Span) -> bool {

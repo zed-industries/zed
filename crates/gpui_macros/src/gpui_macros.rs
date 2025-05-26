@@ -189,8 +189,8 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
 /// The generated module will have the name `<snake_case_trait_name>_reflection` and contain the
 /// following functions:
 ///
-/// ```
-/// pub fn methods::<T: TheTrait + 'static>() -> [gpui::inspector_reflection::FunctionReflection<T>];
+/// ```ignore
+/// pub fn methods::<T: TheTrait + 'static>() -> Vec<gpui::inspector_reflection::FunctionReflection<T>>;
 ///
 /// pub fn find_method::<T: TheTrait + 'static>() -> Option<gpui::inspector_reflection::FunctionReflection<T>>;
 /// ```
