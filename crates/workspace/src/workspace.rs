@@ -9371,6 +9371,117 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_moving_items_create_panes(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let item_1 = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "first.txt", cx)])
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item_1), None, true, window, cx);
+            workspace.move_item_to_pane_in_direction(
+                &MoveItemToPaneInDirection {
+                    direction: SplitDirection::Right,
+                    focus: true,
+                },
+                window,
+                cx,
+            );
+            workspace.move_item_to_pane_at_index(
+                &MoveItemToPane {
+                    destination: 3,
+                    focus: true,
+                },
+                window,
+                cx,
+            );
+
+            assert_eq!(workspace.panes.len(), 1, "No new panes were created");
+            assert_eq!(
+                pane_items_paths(&workspace.active_pane, cx),
+                vec!["first.txt".to_string()],
+                "Single item was not moved anywhere"
+            );
+        });
+
+        let item_2 = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(2, "second.txt", cx)])
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item_2), None, true, window, cx);
+            assert_eq!(
+                pane_items_paths(&workspace.panes[0], cx),
+                vec!["first.txt".to_string(), "second.txt".to_string()],
+            );
+            workspace.move_item_to_pane_in_direction(
+                &MoveItemToPaneInDirection {
+                    direction: SplitDirection::Right,
+                    focus: true,
+                },
+                window,
+                cx,
+            );
+
+            assert_eq!(workspace.panes.len(), 2, "A new pane should be created");
+            assert_eq!(
+                pane_items_paths(&workspace.panes[0], cx),
+                vec!["first.txt".to_string()],
+                "After moving, one item should be left in the original pane"
+            );
+            assert_eq!(
+                pane_items_paths(&workspace.panes[1], cx),
+                vec!["second.txt".to_string()],
+                "New item should have been moved to the new pane"
+            );
+        });
+
+        let item_3 = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(3, "third.txt", cx)])
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            let original_pane = workspace.panes[0].clone();
+            workspace.set_active_pane(&original_pane, window, cx);
+            workspace.add_item_to_active_pane(Box::new(item_3), None, true, window, cx);
+            assert_eq!(workspace.panes.len(), 2, "No new panes were created");
+            assert_eq!(
+                pane_items_paths(&workspace.active_pane, cx),
+                vec!["first.txt".to_string(), "third.txt".to_string()],
+                "New pane should be ready to move one item out"
+            );
+
+            workspace.move_item_to_pane_at_index(
+                &MoveItemToPane {
+                    destination: 3,
+                    focus: true,
+                },
+                window,
+                cx,
+            );
+            assert_eq!(workspace.panes.len(), 3, "A new pane should be created");
+            assert_eq!(
+                pane_items_paths(&workspace.active_pane, cx),
+                vec!["first.txt".to_string()],
+                "After moving, one item should be left in the original pane"
+            );
+            assert_eq!(
+                pane_items_paths(&workspace.panes[1], cx),
+                vec!["second.txt".to_string()],
+                "Previously created pane should be unchanged"
+            );
+            assert_eq!(
+                pane_items_paths(&workspace.panes[2], cx),
+                vec!["third.txt".to_string()],
+                "New item should have been moved to the new pane"
+            );
+        });
+    }
+
     mod register_project_item_tests {
 
         use super::*;
@@ -9684,6 +9795,17 @@ mod tests {
                 .await;
             assert!(handle.is_err());
         }
+    }
+
+    fn pane_items_paths(pane: &Entity<Pane>, cx: &App) -> Vec<String> {
+        pane.read(cx)
+            .items()
+            .flat_map(|item| {
+                item.project_paths(cx)
+                    .into_iter()
+                    .map(|path| path.path.to_string_lossy().to_string())
+            })
+            .collect()
     }
 
     pub fn init_test(cx: &mut TestAppContext) {
