@@ -1947,9 +1947,31 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
-        if !self.editor.read(cx).has_available_code_actions() {
-            return None;
-        }
+        let icon_size = ui::IconSize::XSmall;
+
+        let mut button = None;
+        let mut active = false;
+        self.editor.update(cx, |editor, cx| {
+            if let Some(crate::CodeContextMenu::CodeActions(CodeActionsMenu {
+                deployed_from,
+                ..
+            })) = editor.context_menu.borrow().as_ref()
+            {
+                active = deployed_from.as_ref().map_or(false, |code_action_source| {
+                    match code_action_source {
+                        CodeActionSource::Indicator(..) => true,
+                        _ => false,
+                    }
+                });
+            };
+            button = editor.render_inline_code_actions(
+                icon_size.clone(),
+                display_row.clone(),
+                active,
+                cx,
+            );
+        });
+        let mut button = button?;
 
         const OVERLFOW_CHAR_LIMIT: u32 = 3;
         const MAX_ALTERNATE_DISTANCE: u32 = 8;
@@ -2044,38 +2066,6 @@ impl EditorElement {
             )
             .row();
 
-        let focus_handle = self.editor.focus_handle(cx);
-        let editor = self.editor.clone();
-        let icon_size = ui::IconSize::XSmall;
-        let mut element = IconButton::new("inline_code_actions", ui::IconName::BoltFilled)
-            .icon_size(icon_size)
-            .shape(ui::IconButtonShape::Square)
-            .icon_color(ui::Color::Hidden)
-            .tooltip(move |window, cx| {
-                ui::Tooltip::for_action_in(
-                    "Code Actions",
-                    &crate::actions::ToggleCodeActions::default(),
-                    &focus_handle,
-                    window,
-                    cx,
-                )
-            })
-            .on_click(move |_, window, cx| {
-                editor.update(cx, |editor, cx| {
-                    editor.toggle_code_actions(
-                        &crate::actions::ToggleCodeActions {
-                            deployed_from: Some(crate::actions::CodeActionSource::Indicator(
-                                display_row, // pass original one
-                            )),
-                            quick_launch: false,
-                        },
-                        window,
-                        cx,
-                    );
-                });
-            })
-            .into_any_element();
-
         let start_y = content_origin.y
             + ((new_display_row.as_f32() - (scroll_pixel_position.y / line_height)) * line_height)
             + (line_height / 2.0)
@@ -2083,14 +2073,14 @@ impl EditorElement {
         let start_x = content_origin.x - scroll_pixel_position.x + (window.rem_size() * 0.2);
 
         let absolute_offset = gpui::point(start_x, start_y);
-        element.layout_as_root(gpui::AvailableSpace::min_size(), window, cx);
-        element.prepaint_as_root(
+        button.layout_as_root(gpui::AvailableSpace::min_size(), window, cx);
+        button.prepaint_as_root(
             absolute_offset,
             gpui::AvailableSpace::min_size(),
             window,
             cx,
         );
-        Some(element)
+        Some(button)
     }
 
     fn layout_inline_blame(
@@ -8165,17 +8155,22 @@ impl Element for EditorElement {
                             let line_layout = &line_layouts[line_ix];
                             let crease_trailer_layout = crease_trailers[line_ix].as_ref();
 
-                            inline_code_actions = self.layout_inline_code_actions(
-                                display_row,
-                                content_origin,
-                                scroll_pixel_position,
-                                line_height,
-                                &snapshot,
-                                window,
-                                cx,
-                            );
+                            let show_inline_code_actions = snapshot
+                                .show_code_actions
+                                .unwrap_or(EditorSettings::get_global(cx).inline_code_actions);
 
-                            // Layout inline blame (at end of line)
+                            if show_inline_code_actions {
+                                inline_code_actions = self.layout_inline_code_actions(
+                                    display_row,
+                                    content_origin,
+                                    scroll_pixel_position,
+                                    line_height,
+                                    &snapshot,
+                                    window,
+                                    cx,
+                                );
+                            }
+
                             inline_blame = self.layout_inline_blame(
                                 display_row,
                                 row_info,

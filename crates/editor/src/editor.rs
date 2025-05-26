@@ -1071,6 +1071,7 @@ pub struct EditorSnapshot {
     show_gutter: bool,
     show_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
+    show_code_actions: Option<bool>,
     show_runnables: Option<bool>,
     show_breakpoints: Option<bool>,
     git_blame_gutter_max_author_length: Option<usize>,
@@ -2305,6 +2306,7 @@ impl Editor {
             show_gutter: self.show_gutter,
             show_line_numbers: self.show_line_numbers,
             show_git_diff_gutter: self.show_git_diff_gutter,
+            show_code_actions: self.show_code_actions,
             show_runnables: self.show_runnables,
             show_breakpoints: self.show_breakpoints,
             git_blame_gutter_max_author_length,
@@ -5753,7 +5755,7 @@ impl Editor {
         self.refresh_code_actions(window, cx);
     }
 
-    pub fn code_actions_enabled(&self, cx: &App) -> bool {
+    pub fn code_actions_enabled_for_toolbar(&self, cx: &App) -> bool {
         !self.code_action_providers.is_empty()
             && EditorSettings::get_global(cx).toolbar.code_actions
     }
@@ -5762,6 +5764,57 @@ impl Editor {
         self.available_code_actions
             .as_ref()
             .is_some_and(|(_, actions)| !actions.is_empty())
+    }
+
+    fn render_inline_code_actions(
+        &self,
+        icon_size: ui::IconSize,
+        display_row: DisplayRow,
+        is_active: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if self.available_code_actions.is_none() {
+            return None;
+        }
+        let show_tooltip = !self.context_menu_visible();
+        Some(
+            IconButton::new("inline_code_actions", ui::IconName::BoltFilled)
+                .icon_size(icon_size.clone())
+                .shape(ui::IconButtonShape::Square)
+                .icon_color(ui::Color::Hidden)
+                .toggle_state(is_active)
+                .when(show_tooltip, |this| {
+                    this.tooltip({
+                        let focus_handle = self.focus_handle.clone();
+                        move |window, cx| {
+                            Tooltip::for_action_in(
+                                "Toggle Code Actions",
+                                &ToggleCodeActions {
+                                    deployed_from: None,
+                                    quick_launch: false,
+                                },
+                                &focus_handle,
+                                window,
+                                cx,
+                            )
+                        }
+                    })
+                })
+                .on_click(cx.listener(move |editor, _: &ClickEvent, window, cx| {
+                    window.focus(&editor.focus_handle(cx));
+                    editor.toggle_code_actions(
+                        &crate::actions::ToggleCodeActions {
+                            deployed_from: Some(crate::actions::CodeActionSource::Indicator(
+                                display_row,
+                            )),
+                            quick_launch: false,
+                        },
+                        window,
+                        cx,
+                    );
+                }))
+                .into_any_element(),
+        )
     }
 
     pub fn context_menu(&self) -> &RefCell<Option<CodeContextMenu>> {
