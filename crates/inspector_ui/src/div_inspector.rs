@@ -183,17 +183,17 @@ impl DivInspector {
             }
         });
 
-        let rust_style =
-            match self.reset_style_editors(&rust_style_editor, &json_style_editor, window, cx) {
-                Ok(rust_style) => {
-                    self.json_style_error = None;
-                    rust_style
-                }
-                Err(err) => {
-                    self.json_style_error = Some(format!("{err}").into());
-                    return;
-                }
-            };
+        let rust_style = match self.reset_style_editors(&rust_style_buffer, &json_style_buffer, cx)
+        {
+            Ok(rust_style) => {
+                self.json_style_error = None;
+                rust_style
+            }
+            Err(err) => {
+                self.json_style_error = Some(format!("{err}").into());
+                return;
+            }
+        };
 
         cx.subscribe_in(&json_style_editor, window, {
             let id = id.clone();
@@ -246,17 +246,12 @@ impl DivInspector {
         })
         .detach();
 
-        cx.subscribe_in(&rust_style_editor, window, {
-            let json_style_editor = json_style_editor.clone();
+        cx.subscribe(&rust_style_editor, {
+            let json_style_buffer = json_style_buffer.clone();
             let rust_style_buffer = rust_style_buffer.clone();
-            move |this, _editor, event: &EditorEvent, window, cx| match event {
+            move |this, _editor, event: &EditorEvent, cx| match event {
                 EditorEvent::BufferEdited => {
-                    this.update_json_style_from_rust(
-                        &json_style_editor,
-                        &rust_style_buffer,
-                        window,
-                        cx,
-                    );
+                    this.update_json_style_from_rust(&json_style_buffer, &rust_style_buffer, cx);
                 }
                 _ => {}
             }
@@ -273,17 +268,16 @@ impl DivInspector {
         };
     }
 
-    fn reset_style(&mut self, window: &mut Window, cx: &mut App) {
+    fn reset_style(&mut self, cx: &mut App) {
         match &self.state {
             State::Ready {
-                rust_style_editor,
-                json_style_editor,
+                rust_style_buffer,
+                json_style_buffer,
                 ..
             } => {
                 if let Err(err) = self.reset_style_editors(
-                    &rust_style_editor.clone(),
-                    &json_style_editor.clone(),
-                    window,
+                    &rust_style_buffer.clone(),
+                    &json_style_buffer.clone(),
                     cx,
                 ) {
                     self.json_style_error = Some(format!("{err}").into());
@@ -297,9 +291,8 @@ impl DivInspector {
 
     fn reset_style_editors(
         &self,
-        rust_style_editor: &Entity<Editor>,
-        json_style_editor: &Entity<Editor>,
-        window: &mut Window,
+        rust_style_buffer: &Entity<Buffer>,
+        json_style_buffer: &Entity<Buffer>,
         cx: &mut App,
     ) -> Result<StyleRefinement> {
         let json_text = match serde_json::to_string_pretty(&self.initial_style) {
@@ -310,11 +303,11 @@ impl DivInspector {
         };
 
         let (rust_code, rust_style) = guess_rust_code_from_style(&self.initial_style);
-        rust_style_editor.update(cx, |rust_style_editor, cx| {
-            rust_style_editor.set_text(rust_code, window, cx);
+        rust_style_buffer.update(cx, |rust_style_buffer, cx| {
+            rust_style_buffer.set_text(rust_code, cx);
         });
-        json_style_editor.update(cx, |json_style_editor, cx| {
-            json_style_editor.set_text(json_text, window, cx);
+        json_style_buffer.update(cx, |json_style_buffer, cx| {
+            json_style_buffer.set_text(json_text, cx);
         });
 
         Ok(rust_style)
@@ -323,20 +316,18 @@ impl DivInspector {
     fn handle_rust_completion_selection_change(
         &mut self,
         rust_completion: Option<String>,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.rust_completion = rust_completion;
         if let State::Ready {
             rust_style_buffer,
-            json_style_editor,
+            json_style_buffer,
             ..
         } = &self.state
         {
             self.update_json_style_from_rust(
-                &json_style_editor.clone(),
+                &json_style_buffer.clone(),
                 &rust_style_buffer.clone(),
-                window,
                 cx,
             );
         }
@@ -344,9 +335,8 @@ impl DivInspector {
 
     fn update_json_style_from_rust(
         &mut self,
-        json_style_editor: &Entity<Editor>,
+        json_style_buffer: &Entity<Buffer>,
         rust_style_buffer: &Entity<Buffer>,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let rust_style = rust_style_buffer.update(cx, |rust_style_buffer, cx| {
@@ -385,8 +375,8 @@ impl DivInspector {
 
         match serde_json::to_string_pretty(&new_style) {
             Ok(json) => {
-                json_style_editor.update(cx, |json_style_editor, cx| {
-                    json_style_editor.set_text(json, window, cx);
+                json_style_buffer.update(cx, |json_style_buffer, cx| {
+                    json_style_buffer.set_text(json, cx);
                 });
             }
             Err(err) => {
@@ -531,7 +521,7 @@ impl Render for DivInspector {
                                         IconButton::new("reset-style", IconName::Eraser)
                                             .tooltip(Tooltip::text("Reset style"))
                                             .on_click(cx.listener(|this, _, window, cx| {
-                                                this.reset_style(window, cx);
+                                                this.reset_style(cx);
                                             })),
                                     ),
                             )
@@ -680,9 +670,9 @@ impl CompletionProvider for RustStyleCompletionProvider {
     fn selection_changed(&self, mat: Option<&StringMatch>, window: &mut Window, cx: &mut App) {
         let div_inspector = self.div_inspector.clone();
         let rust_completion = mat.as_ref().map(|mat| mat.string.clone());
-        window.defer(cx, move |window, cx| {
+        cx.defer(move |cx| {
             div_inspector.update(cx, |div_inspector, cx| {
-                div_inspector.handle_rust_completion_selection_change(rust_completion, window, cx);
+                div_inspector.handle_rust_completion_selection_change(rust_completion, cx);
             });
         });
     }
