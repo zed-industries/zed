@@ -50,7 +50,7 @@ use std::{
     sync::{Arc, Once},
 };
 use task::{DebugScenario, SpawnInTerminal, TaskTemplate};
-use util::{ResultExt as _, merge_json_value_into};
+use util::ResultExt as _;
 use worktree::Worktree;
 
 #[derive(Debug)]
@@ -195,10 +195,7 @@ impl DapStore {
                     .and_then(|s| s.binary.as_ref().map(PathBuf::from));
 
                 let delegate = self.delegate(&worktree, console, cx);
-                let cwd: Arc<Path> = definition
-                    .cwd()
-                    .unwrap_or(worktree.read(cx).abs_path().as_ref())
-                    .into();
+                let cwd: Arc<Path> = worktree.read(cx).abs_path().as_ref().into();
 
                 cx.spawn(async move |this, cx| {
                     let mut binary = adapter
@@ -410,15 +407,11 @@ impl DapStore {
         cx.spawn({
             let session = session.clone();
             async move |this, cx| {
-                let mut binary = this
+                let binary = this
                     .update(cx, |this, cx| {
                         this.get_debug_adapter_binary(definition.clone(), session_id, console, cx)
                     })?
                     .await?;
-
-                if let Some(args) = definition.initialize_args {
-                    merge_json_value_into(args, &mut binary.request_args.configuration);
-                }
 
                 session
                     .update(cx, |session, cx| {

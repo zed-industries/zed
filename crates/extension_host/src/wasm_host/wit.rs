@@ -922,6 +922,20 @@ impl Extension {
             _ => anyhow::bail!("`get_dap_binary` not available prior to v0.6.0"),
         }
     }
+
+    pub async fn call_dap_schema(&self, store: &mut Store<WasmState>) -> Result<String, String> {
+        match self {
+            Extension::V0_6_0(ext) => {
+                let schema = ext
+                    .call_dap_schema(store)
+                    .await
+                    .map_err(|err| err.to_string())?;
+
+                schema
+            }
+            _ => Err("`get_dap_binary` not available prior to v0.6.0".to_string()),
+        }
+    }
 }
 
 trait ToWasmtimeResult<T> {

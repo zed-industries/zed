@@ -3,6 +3,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
+use dap::DapRegistry;
 use futures::StreamExt;
 use gpui::{App, AsyncApp};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
@@ -25,7 +26,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-use task::{TaskTemplate, TaskTemplates, VariableName};
+use task::{AdapterSchemas, TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into};
 
 const SERVER_PATH: &str =
@@ -75,7 +76,11 @@ impl JsonLspAdapter {
         }
     }
 
-    fn get_workspace_config(language_names: Vec<String>, cx: &mut App) -> Value {
+    fn get_workspace_config(
+        language_names: Vec<String>,
+        adapter_schemas: AdapterSchemas,
+        cx: &mut App,
+    ) -> Value {
         let keymap_schema = KeymapFile::generate_json_schema_for_registered_actions(cx);
         let font_names = &cx.text_system().all_font_names();
         let settings_schema = cx.global::<SettingsStore>().json_schema(
@@ -85,11 +90,71 @@ impl JsonLspAdapter {
             },
             cx,
         );
+
         let tasks_schema = task::TaskTemplates::generate_json_schema();
-        let debug_schema = task::DebugTaskFile::generate_json_schema();
+        let debug_schema = task::DebugTaskFile::generate_json_schema(&adapter_schemas);
         let snippets_schema = snippet_provider::format::VsSnippetsFile::generate_json_schema();
         let tsconfig_schema = serde_json::Value::from_str(TSCONFIG_SCHEMA).unwrap();
         let package_json_schema = serde_json::Value::from_str(PACKAGE_JSON_SCHEMA).unwrap();
+
+        #[allow(unused_mut)]
+        let mut schemas = serde_json::json!([
+            {
+                "fileMatch": ["tsconfig.json"],
+                "schema":tsconfig_schema
+            },
+            {
+                "fileMatch": ["package.json"],
+                "schema":package_json_schema
+            },
+            {
+                "fileMatch": [
+                    schema_file_match(paths::settings_file()),
+                    paths::local_settings_file_relative_path()
+                ],
+                "schema": settings_schema,
+            },
+            {
+                "fileMatch": [schema_file_match(paths::keymap_file())],
+                "schema": keymap_schema,
+            },
+            {
+                "fileMatch": [
+                    schema_file_match(paths::tasks_file()),
+                    paths::local_tasks_file_relative_path()
+                ],
+                "schema": tasks_schema,
+            },
+            {
+                "fileMatch": [
+                    schema_file_match(
+                        paths::snippets_dir()
+                            .join("*.json")
+                            .as_path()
+                    )
+                ],
+                "schema": snippets_schema,
+            },
+            {
+                "fileMatch": [
+                    schema_file_match(paths::debug_scenarios_file()),
+                    paths::local_debug_file_relative_path()
+                ],
+                "schema": debug_schema,
+            },
+        ]);
+
+        #[cfg(debug_assertions)]
+        {
+            schemas.as_array_mut().unwrap().push(serde_json::json!(
+                {
+                    "fileMatch": [
+                        "zed-inspector-style.json"
+                    ],
+                    "schema": generate_inspector_style_schema(),
+                }
+            ))
+        }
 
         // This can be viewed via `dev: open language server logs` -> `json-language-server` ->
         // `Server Info`
@@ -102,52 +167,7 @@ impl JsonLspAdapter {
                 {
                     "enable": true,
                 },
-                "schemas": [
-                    {
-                        "fileMatch": ["tsconfig.json"],
-                        "schema":tsconfig_schema
-                    },
-                    {
-                        "fileMatch": ["package.json"],
-                        "schema":package_json_schema
-                    },
-                    {
-                        "fileMatch": [
-                            schema_file_match(paths::settings_file()),
-                            paths::local_settings_file_relative_path()
-                        ],
-                        "schema": settings_schema,
-                    },
-                    {
-                        "fileMatch": [schema_file_match(paths::keymap_file())],
-                        "schema": keymap_schema,
-                    },
-                    {
-                        "fileMatch": [
-                            schema_file_match(paths::tasks_file()),
-                            paths::local_tasks_file_relative_path()
-                        ],
-                        "schema": tasks_schema,
-                    },
-                    {
-                        "fileMatch": [
-                            schema_file_match(
-                                paths::snippets_dir()
-                                    .join("*.json")
-                                    .as_path()
-                            )
-                        ],
-                        "schema": snippets_schema,
-                    },
-                    {
-                        "fileMatch": [
-                            schema_file_match(paths::debug_scenarios_file()),
-                            paths::local_debug_file_relative_path()
-                        ],
-                        "schema": debug_schema,
-
-                    },
-                ]
+                "schemas": schemas
             }
         })
     }
@@ -160,11 +180,28 @@ impl JsonLspAdapter {
             }
         }
         let mut writer = self.workspace_config.write().await;
-        let config =
-            cx.update(|cx| Self::get_workspace_config(self.languages.language_names(), cx))?;
+
+        let adapter_schemas = cx
+            .read_global::<DapRegistry, _>(|dap_registry, _| dap_registry.to_owned())?
+            .adapters_schema()
+            .await;
+
+        let config = cx.update(|cx| {
+            Self::get_workspace_config(self.languages.language_names().clone(), adapter_schemas, cx)
+        })?;
         writer.replace(config.clone());
         return Ok(config);
     }
+}
+
+#[cfg(debug_assertions)]
+fn generate_inspector_style_schema() -> serde_json_lenient::Value {
+    let schema = schemars::r#gen::SchemaSettings::draft07()
+        .with(|settings| settings.option_add_null_type = false)
+        .into_generator()
+        .into_root_schema_for::<gpui::StyleRefinement>();
+
+    serde_json_lenient::to_value(schema).unwrap()
 }
 
 #[async_trait(?Send)]
@@ -429,11 +466,7 @@ impl LspAdapter for NodeVersionAdapter {
                 .await
                 .context("downloading release")?;
             if version.url.ends_with(".zip") {
-                extract_zip(
-                    &destination_container_path,
-                    BufReader::new(response.body_mut()),
-                )
-                .await?;
+                extract_zip(&destination_container_path, response.body_mut()).await?;
             } else if version.url.ends_with(".tar.gz") {
                 let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
                 let archive = Archive::new(decompressed_bytes);
@@ -449,15 +482,6 @@ impl LspAdapter for NodeVersionAdapter {
                 &destination_path,
             )
             .await?;
-            // todo("windows")
-            #[cfg(not(windows))]
-            {
-                fs::set_permissions(
-                    &destination_path,
-                    <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
-                )
-                .await?;
-            }
             remove_matching(&container_dir, |entry| entry != destination_path).await;
         }
         Ok(LanguageServerBinary {
