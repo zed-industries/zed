@@ -872,6 +872,13 @@
     }
   },
   {
+    "context": "VariableList",
+    "bindings": {
+      "left": "variable_list::CollapseSelectedEntry",
+      "right": "variable_list::ExpandSelectedEntry"
+    }
+  },
+  {
     "context": "CollabPanel && not_editing",
     "bindings": {
       "ctrl-backspace": "collab_panel::Remove",
