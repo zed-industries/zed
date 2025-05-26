@@ -5779,8 +5779,9 @@ impl Editor {
         let show_tooltip = !self.context_menu_visible();
         Some(
             IconButton::new("inline_code_actions", ui::IconName::BoltFilled)
-                .icon_size(icon_size.clone())
+                .icon_size(icon_size)
                 .shape(ui::IconButtonShape::Square)
+                .style(ButtonStyle::Transparent)
                 .icon_color(ui::Color::Hidden)
                 .toggle_state(is_active)
                 .when(show_tooltip, |this| {

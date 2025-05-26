@@ -326,7 +326,7 @@
     // Whether to show agent review buttons in the editor toolbar.
     "agent_review": true,
     // Whether to show code action buttons in the editor toolbar.
-    "code_actions": true
+    "code_actions": false
   },
   // Titlebar related settings
   "title_bar": {

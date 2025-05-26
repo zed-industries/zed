@@ -1973,7 +1973,7 @@ impl EditorElement {
         });
         let mut button = button?;
 
-        const OVERLFOW_CHAR_LIMIT: u32 = 3;
+        const OVERLFOW_CHAR_LIMIT: u32 = 2;
         const MAX_ALTERNATE_DISTANCE: u32 = 8;
 
         let buffer_point = snapshot
@@ -2069,8 +2069,8 @@ impl EditorElement {
         let start_y = content_origin.y
             + ((new_display_row.as_f32() - (scroll_pixel_position.y / line_height)) * line_height)
             + (line_height / 2.0)
-            - (icon_size.square(window, cx) / 2.0);
-        let start_x = content_origin.x - scroll_pixel_position.x + (window.rem_size() * 0.2);
+            - (icon_size.square(window, cx) / 2.);
+        let start_x = content_origin.x - scroll_pixel_position.x + (window.rem_size() * 0.1);
 
         let absolute_offset = gpui::point(start_x, start_y);
         button.layout_as_root(gpui::AvailableSpace::min_size(), window, cx);
