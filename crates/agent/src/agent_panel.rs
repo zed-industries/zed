@@ -524,8 +524,8 @@ impl AgentPanel {
 
         let panel_type = AssistantSettings::get_global(cx).default_view;
         let active_view = match panel_type {
-            DefaultView::Agent => ActiveView::thread(thread.clone(), window, cx),
-            DefaultView::Thread => {
+            DefaultView::Thread => ActiveView::thread(thread.clone(), window, cx),
+            DefaultView::TextThread => {
                 let context =
                     context_store.update(cx, |context_store, cx| context_store.create(cx));
                 let lsp_adapter_delegate = make_lsp_adapter_delegate(&project.clone(), cx).unwrap();

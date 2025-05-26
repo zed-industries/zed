@@ -35,8 +35,8 @@ pub enum AssistantDockPosition {
 #[serde(rename_all = "snake_case")]
 pub enum DefaultView {
     #[default]
-    Agent,
     Thread,
+    TextThread,
 }
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -644,9 +644,9 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: write
     default_profile: Option<AgentProfileId>,
-    /// The default assistant panel type.
+    /// Which view type to show by default in the Agent Panel.
     ///
-    /// Default: agentic
+    /// Default: "thread"
     default_view: Option<DefaultView>,
     /// The available agent profiles.
     pub profiles: Option<IndexMap<AgentProfileId, AgentProfileContent>>,
