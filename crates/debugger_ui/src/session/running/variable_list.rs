@@ -425,29 +425,20 @@ impl VariableList {
         cx.notify();
     }
 
-    fn confirm_variable_edit(
-        &mut self,
-        _: &menu::Confirm,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let res = maybe!({
-            let (var_path, editor) = self.edited_path.take()?;
-            let state = self.entry_states.get(&var_path)?;
+    fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((var_path, editor)) = self.edited_path.take() {
+            let Some(state) = self.entry_states.get(&var_path) else {
+                return;
+            };
             let variables_reference = state.parent_reference;
-            let name = var_path.leaf_name?;
+            let Some(name) = var_path.leaf_name else {
+                return;
+            };
             let value = editor.read(cx).text(cx);
 
             self.session.update(cx, |session, cx| {
                 session.set_variable_value(variables_reference, name.into(), value, cx)
             });
-            Some(())
-        });
-
-        if res.is_none() {
-            log::error!(
-                "Couldn't confirm variable edit because variable doesn't have a leaf name or a parent reference id"
-            );
         }
     }
 
@@ -946,7 +937,7 @@ impl Render for VariableList {
             .on_action(cx.listener(Self::expand_selected_entry))
             .on_action(cx.listener(Self::collapse_selected_entry))
             .on_action(cx.listener(Self::cancel_variable_edit))
-            .on_action(cx.listener(Self::confirm_variable_edit))
+            .on_action(cx.listener(Self::confirm))
             .child(
                 uniform_list(
                     cx.entity().clone(),
