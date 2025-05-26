@@ -2223,7 +2223,7 @@ impl EditorElement {
 
         self.editor.update(cx, |editor, cx| {
             if mouse_over_inline_blame || mouse_over_popover {
-                editor.show_blame_popover(&blame_entry, mouse_position, cx);
+                editor.show_blame_popover(&blame_entry, mouse_position, false, cx);
             } else {
                 editor.hide_blame_popover(cx);
             }
