@@ -1973,26 +1973,19 @@ impl EditorElement {
         });
         let mut button = button?;
 
-        const OVERLFOW_CHAR_LIMIT: u32 = 2;
+        const OVERLFOW_CHAR_LIMIT: u32 = 4;
         const MAX_ALTERNATE_DISTANCE: u32 = 8;
 
         let buffer_point = snapshot
             .display_snapshot
             .display_point_to_point(display_point, text::Bias::Left);
 
-        if let Some((buffer_snapshot, line_range)) = snapshot
+        let line_indent = snapshot
             .display_snapshot
             .buffer_snapshot
-            .buffer_line_for_row(MultiBufferRow(buffer_point.row))
-        {
-            let line_indent = text::LineIndent::from_iter(
-                buffer_snapshot
-                    .text_for_range(line_range)
-                    .flat_map(|chunk| chunk.chars()),
-            );
-            if line_indent.is_line_blank() {
-                return None;
-            }
+            .line_indent_for_row(MultiBufferRow(buffer_point.row));
+        if line_indent.is_line_blank() {
+            return None;
         }
 
         let excerpt_id = snapshot
@@ -2011,36 +2004,24 @@ impl EditorElement {
                 .buffer_snapshot
                 .excerpt_containing(candidate_point..candidate_point)
                 .map(|excerpt| excerpt.id());
-
             if excerpt_id != candidate_excerpt_id {
                 return false;
             }
-
             if buffer_point.row == row_candidate && buffer_point.column < OVERLFOW_CHAR_LIMIT {
                 return false;
             }
-
-            if let Some((buffer_snapshot, line_range)) = snapshot
+            let line_indent = snapshot
                 .display_snapshot
                 .buffer_snapshot
-                .buffer_line_for_row(MultiBufferRow(row_candidate))
-            {
-                let line_indent = text::LineIndent::from_iter(
-                    buffer_snapshot
-                        .text_for_range(line_range.clone())
-                        .flat_map(|chunk| chunk.chars()),
-                );
-                if line_indent.is_line_blank() {
-                    true
-                } else {
-                    let tab_size = buffer_snapshot
-                        .settings_at(line_range.start, cx)
-                        .tab_size
-                        .get();
-                    line_indent.len(tab_size) >= OVERLFOW_CHAR_LIMIT
-                }
+                .line_indent_for_row(MultiBufferRow(row_candidate));
+            if line_indent.is_line_blank() {
+                true
             } else {
-                false
+                let indent_size = snapshot
+                    .display_snapshot
+                    .buffer_snapshot
+                    .indent_size_for_line(MultiBufferRow(row_candidate));
+                indent_size.len >= OVERLFOW_CHAR_LIMIT
             }
         };
 
@@ -8161,15 +8142,21 @@ impl Element for EditorElement {
                                 .unwrap_or(EditorSettings::get_global(cx).inline_code_actions);
 
                             if show_inline_code_actions {
-                                inline_code_actions = self.layout_inline_code_actions(
-                                    newest_selection_head,
-                                    content_origin,
-                                    scroll_pixel_position,
-                                    line_height,
-                                    &snapshot,
-                                    window,
-                                    cx,
-                                );
+                                let newest_selection_point =
+                                    newest_selection_head.to_point(&snapshot.display_snapshot);
+                                if !snapshot
+                                    .is_line_folded(MultiBufferRow(newest_selection_point.row))
+                                {
+                                    inline_code_actions = self.layout_inline_code_actions(
+                                        newest_selection_head,
+                                        content_origin,
+                                        scroll_pixel_position,
+                                        line_height,
+                                        &snapshot,
+                                        window,
+                                        cx,
+                                    );
+                                }
                             }
 
                             let line_ix = display_row.minus(start_row) as usize;
