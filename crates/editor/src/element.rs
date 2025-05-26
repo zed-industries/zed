@@ -1955,34 +1955,32 @@ impl EditorElement {
         }
 
         let icon_size = ui::IconSize::XSmall;
-
-        let mut button = None;
-        let mut active = false;
-        self.editor.update(cx, |editor, cx| {
-            if let Some(crate::CodeContextMenu::CodeActions(CodeActionsMenu {
-                deployed_from,
-                ..
-            })) = editor.context_menu.borrow().as_ref()
-            {
-                active = deployed_from.as_ref().map_or(false, |code_action_source| {
-                    match code_action_source {
-                        CodeActionSource::Indicator(..) => true,
-                        _ => false,
+        let mut button = self.editor.update(cx, |editor, cx| {
+            let active = editor
+                .context_menu
+                .borrow()
+                .as_ref()
+                .and_then(|menu| {
+                    if let crate::CodeContextMenu::CodeActions(CodeActionsMenu {
+                        deployed_from,
+                        ..
+                    }) = menu
+                    {
+                        deployed_from.as_ref()
+                    } else {
+                        None
                     }
+                })
+                .map_or(false, |source| {
+                    matches!(source, CodeActionSource::Indicator(..))
                 });
-            };
-            button = editor.render_inline_code_actions(
-                icon_size.clone(),
-                display_point.row(),
-                active,
-                cx,
-            );
-        });
-        let mut button = button?;
+            editor.render_inline_code_actions(icon_size.clone(), display_point.row(), active, cx)
+        })?;
 
         let buffer_point = display_point.to_point(&snapshot.display_snapshot);
+
         // do not show code action for folded line
-        if !snapshot.is_line_folded(MultiBufferRow(buffer_point.row)) {
+        if snapshot.is_line_folded(MultiBufferRow(buffer_point.row)) {
             return None;
         }
 
