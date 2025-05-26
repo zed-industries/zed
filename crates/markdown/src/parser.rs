@@ -702,6 +702,24 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_code_content_range() {
+        let input = "```let x = 5;```";
+        assert_eq!(extract_code_content_range(input), 3..13);
+
+        let input = "``let x = 5;``";
+        assert_eq!(extract_code_content_range(input), 2..12);
+
+        let input = "`let x = 5;`";
+        assert_eq!(extract_code_content_range(input), 1..11);
+
+        let input = "plain text";
+        assert_eq!(extract_code_content_range(input), 0..10);
+
+        let input = "``let x = 5;`";
+        assert_eq!(extract_code_content_range(input), 0..13);
+    }
+
+    #[test]
     fn test_extract_code_block_content_range() {
         let input = "```rust\nlet x = 5;\n```";
         assert_eq!(extract_code_block_content_range(input), 8..19);
