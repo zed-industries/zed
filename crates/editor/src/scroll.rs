@@ -18,7 +18,7 @@ use language::{Bias, Point};
 use scroll_animation_manager::ScrollAnimationManager;
 pub(crate) use scroll_animation_manager::UpdateResponse;
 pub use scroll_amount::ScrollAmount;
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 use std::{
     cmp::Ordering,
     time::{Duration, Instant},
@@ -174,7 +174,7 @@ pub struct ScrollManager {
     anchor: ScrollAnchor,
     ongoing: OngoingScroll,
     scroll_instigator: ScrollInstigator,
-    animation_manager: ScrollAnimationManager,
+    animation_manager: Option<ScrollAnimationManager>,
     autoscroll_request: Option<(Autoscroll, bool)>,
     last_autoscroll: Option<(gpui::Point<f32>, f32, f32, AutoscrollStrategy)>,
     show_scrollbars: bool,
@@ -187,13 +187,36 @@ pub struct ScrollManager {
 }
 
 impl ScrollManager {
-    pub fn new(cx: &mut App) -> Self {
+    pub fn new(cx: &mut Context<Editor>) -> Self {
+        cx.observe_global::<SettingsStore>(move |editor, cx| {
+            if EditorSettings::get_global(cx).smooth_scroll {
+                if let Some(ref mut anim_manager) = editor.scroll_manager.animation_manager {
+                    anim_manager.set_duration(
+                        EditorSettings::get_global(cx).smooth_scroll_duration
+                    );
+                } else {
+                    editor.scroll_manager.animation_manager = Some(
+                        ScrollAnimationManager::new(cx)
+                    );
+                }
+            } else {
+                editor.scroll_manager.animation_manager = None;
+            }
+        })
+        .detach();
+
+        let animation_manager = if EditorSettings::get_global(cx).smooth_scroll {
+            Some(ScrollAnimationManager::new(cx))
+        } else {
+            None
+        };
+
         ScrollManager {
             vertical_scroll_margin: EditorSettings::get_global(cx).vertical_scroll_margin,
             anchor: ScrollAnchor::new(),
             ongoing: OngoingScroll::new(),
             scroll_instigator: ScrollInstigator::default(),
-            animation_manager: ScrollAnimationManager::new(),
+            animation_manager,
             autoscroll_request: None,
             show_scrollbars: true,
             hide_scrollbar_task: None,
@@ -229,15 +252,24 @@ impl ScrollManager {
     }
 
     pub(crate) fn requires_animation_update(&self) -> bool {
-        self.animation_manager.has_anim() 
+        match &self.animation_manager {
+            None => false,
+            Some(animation_manager) => animation_manager.has_anim()
+        }
     }
     
     pub(crate) fn update_animation(&mut self, window: &mut Window, cx: &mut Context<Editor>) -> UpdateResponse {
-        let update_response = self.animation_manager.update();
+        let update_response = match self.animation_manager {
+            Some(ref mut animation_manager) => animation_manager.update(),
+            None => UpdateResponse::Nothing,
+        };
 
         let update_values = match update_response {
             UpdateResponse::RequiresAnimationFrame { ref updated_position } => {
-                Some((updated_position.clone(), self.animation_manager.get_state().unwrap()))
+                Some((
+                    updated_position.clone(), 
+                    self.animation_manager.as_ref().unwrap().get_state().unwrap()
+                ))
             },
             UpdateResponse::Finished { ref end_position, ref state } => Some((end_position.clone(), state.clone())),
             UpdateResponse::Nothing => None
@@ -277,9 +309,12 @@ impl ScrollManager {
 
         let instigator = self.scroll_instigator.consume();
 
-        if instigator != ScrollInstigator::AnimationManager && !is_pixel_hardware {
+        if 
+        self.animation_manager.is_some() && 
+        instigator != ScrollInstigator::AnimationManager && 
+        !is_pixel_hardware {
             let current = self.scroll_position(map);
-            self.animation_manager.start(
+            self.animation_manager.as_mut().unwrap().start( 
                 current,
                 scroll_position,
                 local,

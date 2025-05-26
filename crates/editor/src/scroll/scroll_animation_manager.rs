@@ -1,5 +1,6 @@
-use gpui::{Point, point};
-use crate::{WorkspaceId, DisplaySnapshot};
+use gpui::{Point, point, App};
+use crate::{WorkspaceId, DisplaySnapshot, EditorSettings};
+use settings::Settings;
 use std::time::Instant;
 
 pub(crate) enum UpdateResponse {
@@ -17,6 +18,8 @@ pub(crate) enum UpdateResponse {
 pub(crate) struct PersistentState {
     pub(crate) snapshot: DisplaySnapshot,
     pub(crate) workspace_id: Option<WorkspaceId>,
+
+    // here for completedness, actually useless
     #[allow(dead_code)]
     pub(crate) autoscroll: bool,
     #[allow(dead_code)]
@@ -32,12 +35,14 @@ pub(crate) struct Anim {
 
 pub(crate) struct ScrollAnimationManager {
     anim: Option<Anim>,
+    scroll_duration: f32,
 }
 
 impl ScrollAnimationManager {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(cx: &App) -> Self {
         ScrollAnimationManager {
             anim: None,
+            scroll_duration: EditorSettings::get_global(cx).smooth_scroll_duration
         }
     }
 
@@ -50,7 +55,6 @@ impl ScrollAnimationManager {
         snapshot: &DisplaySnapshot,
         workspace_id: Option<WorkspaceId>
     ) {
-        //log::info!("from: {from:?}; to: {to:?}");
         self.anim = Some(Anim {
             start: from.y,
             delta: to.y - from.y,
@@ -64,6 +68,10 @@ impl ScrollAnimationManager {
         });
     }
 
+    pub(crate) fn set_duration(&mut self, new_dur: f32) {
+        self.scroll_duration = new_dur;
+    }
+
     pub(crate) fn has_anim(&self) -> bool {
         self.anim.is_some()
     }
@@ -73,18 +81,16 @@ impl ScrollAnimationManager {
     }
 
     pub(crate) fn update(&mut self) -> UpdateResponse {
-        const MAX_DUR: f32 = 0.5;
-
         if let Some(anim) = &self.anim {
             let time_since_start = anim.start_moment.elapsed().as_secs_f32();
-            if time_since_start >= MAX_DUR {
+            if time_since_start >= self.scroll_duration {
                 let anim = self.anim.take().unwrap(); 
                 UpdateResponse::Finished { 
                     end_position: point(0.0, anim.start + anim.delta), 
                     state: anim.state 
                 }
             } else {
-                let curr_y = anim.start + (anim.delta * time_since_start / MAX_DUR);
+                let curr_y = anim.start + (anim.delta * time_since_start / self.scroll_duration);
                 UpdateResponse::RequiresAnimationFrame { updated_position: point(0.0, curr_y) }
             }
         } else {
