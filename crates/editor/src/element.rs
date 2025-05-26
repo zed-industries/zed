@@ -9154,9 +9154,13 @@ impl MinimapLayout {
         visible_minimap_lines: f32,
         scroll_position: f32,
     ) -> f32 {
-        let scroll_percentage =
-            (scroll_position / (document_lines - visible_editor_lines)).clamp(0., 1.);
-        scroll_percentage * (document_lines - visible_minimap_lines).max(0.)
+        let non_visible_document_lines = (document_lines - visible_editor_lines).max(0.);
+        if non_visible_document_lines == 0. {
+            0.
+        } else {
+            let scroll_percentage = (scroll_position / non_visible_document_lines).clamp(0., 1.);
+            scroll_percentage * (document_lines - visible_minimap_lines).max(0.)
+        }
     }
 }
 
