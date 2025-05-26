@@ -2,7 +2,6 @@ use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{AnyWindowHandle, App, Entity, Task};
-use indoc::indoc;
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
@@ -126,41 +125,35 @@ impl Tool for ListDirectoryTool {
             return Task::ready(Err(anyhow!("{} is not a directory.", input.path))).into();
         }
 
-        let mut folder_paths = Vec::new();
-        let mut file_paths = Vec::new();
-        let mut has_any_entries = false;
+        let mut folders = Vec::new();
+        let mut files = Vec::new();
 
         for entry in worktree.child_entries(&project_path.path) {
-            has_any_entries = true;
             let full_path = Path::new(worktree.root_name())
                 .join(&entry.path)
                 .display()
                 .to_string();
             if entry.is_dir() {
-                folder_paths.push(full_path);
+                folders.push(full_path);
             } else {
-                file_paths.push(full_path);
+                files.push(full_path);
             }
-        }
-
-        if !has_any_entries {
-            return Task::ready(Ok(format!("{} is empty.", input.path).into())).into();
         }
 
         let mut output = String::new();
-        if !folder_paths.is_empty() {
-            writeln!(output, "# Folders:").unwrap();
-            for path_str in folder_paths {
-                writeln!(output, "{}", path_str).unwrap();
-            }
+
+        if !folders.is_empty() {
+            writeln!(output, "# Folders:\n{}", folders.join("\n")).unwrap();
         }
 
-        if !file_paths.is_empty() {
-            writeln!(output, "\n# Files:").unwrap();
-            for path_str in file_paths {
-                writeln!(output, "{}", path_str).unwrap();
-            }
+        if !files.is_empty() {
+            writeln!(output, "\n# Files:\n{}", files.join("\n")).unwrap();
         }
+
+        if output.is_empty() {
+            writeln!(output, "{} is empty.", input.path).unwrap();
+        }
+
         Task::ready(Ok(output.into())).into()
     }
 }
@@ -170,6 +163,7 @@ mod tests {
     use super::*;
     use assistant_tool::Tool;
     use gpui::{AppContext, TestAppContext};
+    use indoc::indoc;
     use language_model::fake_provider::FakeLanguageModel;
     use project::{FakeFs, Project};
     use serde_json::json;
@@ -344,7 +338,7 @@ mod tests {
             .unwrap();
 
         let content = result.content.as_str().unwrap();
-        assert_eq!(content, "project/empty_dir is empty.");
+        assert_eq!(content, "project/empty_dir is empty.\n");
     }
 
     #[gpui::test]
