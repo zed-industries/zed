@@ -137,7 +137,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
     let user_id = 5;
     let channel_id = 5;
     let channel_store = cx.update(init_test);
-    let client = channel_store.update(cx, |s, _| s.client());
+    let client = channel_store.read_with(cx, |s, _| s.client());
     let server = FakeServer::for_client(user_id, &client, cx).await;
 
     // Get the available channels.

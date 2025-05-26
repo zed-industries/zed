@@ -1702,7 +1702,7 @@ impl SshRemoteConnection {
     ) -> Result<PathBuf> {
         let version_str = match release_channel {
             ReleaseChannel::Nightly => {
-                let commit = commit.map(|s| s.0.to_string()).unwrap_or_default();
+                let commit = commit.map(|s| s.full()).unwrap_or_default();
 
                 format!("{}-{}", version, commit)
             }

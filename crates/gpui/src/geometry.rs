@@ -2,13 +2,15 @@
 //! can be used to describe common units, concepts, and the relationships
 //! between them.
 
+use anyhow::{Context as _, anyhow};
 use core::fmt::Debug;
 use derive_more::{Add, AddAssign, Div, DivAssign, Mul, Neg, Sub, SubAssign};
 use refineable::Refineable;
-use serde_derive::{Deserialize, Serialize};
+use schemars::{JsonSchema, SchemaGenerator, schema::Schema};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{
     cmp::{self, PartialOrd},
-    fmt,
+    fmt::{self, Display},
     hash::Hash,
     ops::{Add, Div, Mul, MulAssign, Neg, Sub},
 };
@@ -71,9 +73,10 @@ pub trait Along {
     Eq,
     Serialize,
     Deserialize,
+    JsonSchema,
     Hash,
 )]
-#[refineable(Debug)]
+#[refineable(Debug, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
 pub struct Point<T: Default + Clone + Debug> {
     /// The x coordinate of the point.
@@ -375,12 +378,18 @@ impl<T: Clone + Default + Debug> Clone for Point<T> {
     }
 }
 
+impl<T: Default + Clone + Debug + Display> Display for Point<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "({}, {})", self.x, self.y)
+    }
+}
+
 /// A structure representing a two-dimensional size with width and height in a given unit.
 ///
 /// This struct is generic over the type `T`, which can be any type that implements `Clone`, `Default`, and `Debug`.
 /// It is commonly used to specify dimensions for elements in a UI, such as a window or element.
 #[derive(Refineable, Default, Clone, Copy, PartialEq, Div, Hash, Serialize, Deserialize)]
-#[refineable(Debug)]
+#[refineable(Debug, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
 pub struct Size<T: Clone + Default + Debug> {
     /// The width component of the size.
@@ -646,6 +655,12 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Size {{ {:?} × {:?} }}", self.width, self.height)
+    }
+}
+
+impl<T: Default + Clone + Debug + Display> Display for Size<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} × {}", self.width, self.height)
     }
 }
 
@@ -1388,6 +1403,44 @@ where
             && point.y <= self.origin.y.clone() + self.size.height.clone()
     }
 
+    /// Checks if this bounds is completely contained within another bounds.
+    ///
+    /// This method determines whether the current bounds is entirely enclosed by the given bounds.
+    /// A bounds is considered to be contained within another if its origin (top-left corner) and
+    /// its bottom-right corner are both contained within the other bounds.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - A reference to another `Bounds` that might contain this bounds.
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if this bounds is completely inside the other bounds, `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use gpui::{Bounds, Point, Size};
+    /// let outer_bounds = Bounds {
+    ///     origin: Point { x: 0, y: 0 },
+    ///     size: Size { width: 20, height: 20 },
+    /// };
+    /// let inner_bounds = Bounds {
+    ///     origin: Point { x: 5, y: 5 },
+    ///     size: Size { width: 10, height: 10 },
+    /// };
+    /// let overlapping_bounds = Bounds {
+    ///     origin: Point { x: 15, y: 15 },
+    ///     size: Size { width: 10, height: 10 },
+    /// };
+    ///
+    /// assert!(inner_bounds.is_contained_within(&outer_bounds));
+    /// assert!(!overlapping_bounds.is_contained_within(&outer_bounds));
+    /// ```
+    pub fn is_contained_within(&self, other: &Self) -> bool {
+        other.contains(&self.origin) && other.contains(&self.bottom_right())
+    }
+
     /// Applies a function to the origin and size of the bounds, producing a new `Bounds<U>`.
     ///
     /// This method allows for converting a `Bounds<T>` to a `Bounds<U>` by specifying a closure
@@ -1503,6 +1556,18 @@ impl<T: PartialOrd + Default + Debug + Clone> Bounds<T> {
     }
 }
 
+impl<T: Default + Clone + Debug + Display + Add<T, Output = T>> Display for Bounds<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} - {} (size {})",
+            self.origin,
+            self.bottom_right(),
+            self.size
+        )
+    }
+}
+
 impl Size<DevicePixels> {
     /// Converts the size from physical to logical pixels.
     pub(crate) fn to_pixels(self, scale_factor: f32) -> Size<Pixels> {
@@ -1609,7 +1674,7 @@ impl<T: Clone + Debug + Copy + Default> Copy for Bounds<T> {}
 /// assert_eq!(edges.left, 40.0);
 /// ```
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
-#[refineable(Debug)]
+#[refineable(Debug, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
 pub struct Edges<T: Clone + Default + Debug> {
     /// The size of the top edge.
@@ -2086,7 +2151,7 @@ impl Corner {
 ///
 /// Each field represents the size of the corner on one side of the box: `top_left`, `top_right`, `bottom_right`, and `bottom_left`.
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
-#[refineable(Debug)]
+#[refineable(Debug, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
 pub struct Corners<T: Clone + Default + Debug> {
     /// The value associated with the top left corner.
@@ -2470,15 +2535,10 @@ impl From<Percentage> for Radians {
     PartialEq,
     Serialize,
     Deserialize,
+    JsonSchema,
 )]
 #[repr(transparent)]
 pub struct Pixels(pub f32);
-
-impl std::fmt::Display for Pixels {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_fmt(format_args!("{}px", self.0))
-    }
-}
 
 impl Div for Pixels {
     type Output = f32;
@@ -2543,6 +2603,30 @@ impl Mul<Pixels> for usize {
 impl MulAssign<f32> for Pixels {
     fn mul_assign(&mut self, rhs: f32) {
         self.0 *= rhs;
+    }
+}
+
+impl Display for Pixels {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}px", self.0)
+    }
+}
+
+impl Debug for Pixels {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Display::fmt(self, f)
+    }
+}
+
+impl TryFrom<&'_ str> for Pixels {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &'_ str) -> Result<Self, Self::Error> {
+        value
+            .strip_suffix("px")
+            .context("expected 'px' suffix")
+            .and_then(|number| Ok(number.parse()?))
+            .map(Self)
     }
 }
 
@@ -2665,12 +2749,6 @@ impl From<f64> for Pixels {
 impl From<f32> for Pixels {
     fn from(pixels: f32) -> Self {
         Pixels(pixels)
-    }
-}
-
-impl Debug for Pixels {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} px", self.0)
     }
 }
 
@@ -2872,7 +2950,7 @@ impl Ord for ScaledPixels {
 
 impl Debug for ScaledPixels {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} px (scaled)", self.0)
+        write!(f, "{}px (scaled)", self.0)
     }
 }
 
@@ -2994,9 +3072,27 @@ impl Mul<Pixels> for Rems {
     }
 }
 
+impl Display for Rems {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}rem", self.0)
+    }
+}
+
 impl Debug for Rems {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} rem", self.0)
+        Display::fmt(self, f)
+    }
+}
+
+impl TryFrom<&'_ str> for Rems {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &'_ str) -> Result<Self, Self::Error> {
+        value
+            .strip_suffix("rem")
+            .context("expected 'rem' suffix")
+            .and_then(|number| Ok(number.parse()?))
+            .map(Self)
     }
 }
 
@@ -3006,7 +3102,7 @@ impl Debug for Rems {
 /// affected by the current font size, or a number of rems, which is relative to the font size of
 /// the root element. It is used for specifying dimensions that are either independent of or
 /// related to the typographic scale.
-#[derive(Clone, Copy, Debug, Neg, PartialEq)]
+#[derive(Clone, Copy, Neg, PartialEq)]
 pub enum AbsoluteLength {
     /// A length in pixels.
     Pixels(Pixels),
@@ -3088,6 +3184,87 @@ impl Default for AbsoluteLength {
     }
 }
 
+impl Display for AbsoluteLength {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Pixels(pixels) => write!(f, "{pixels}"),
+            Self::Rems(rems) => write!(f, "{rems}"),
+        }
+    }
+}
+
+impl Debug for AbsoluteLength {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Display::fmt(self, f)
+    }
+}
+
+const EXPECTED_ABSOLUTE_LENGTH: &str = "number with 'px' or 'rem' suffix";
+
+impl TryFrom<&'_ str> for AbsoluteLength {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &'_ str) -> Result<Self, Self::Error> {
+        if let Ok(pixels) = value.try_into() {
+            Ok(Self::Pixels(pixels))
+        } else if let Ok(rems) = value.try_into() {
+            Ok(Self::Rems(rems))
+        } else {
+            Err(anyhow!(
+                "invalid AbsoluteLength '{value}', expected {EXPECTED_ABSOLUTE_LENGTH}"
+            ))
+        }
+    }
+}
+
+impl JsonSchema for AbsoluteLength {
+    fn schema_name() -> String {
+        "AbsoluteLength".to_string()
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        use schemars::schema::{InstanceType, SchemaObject, StringValidation};
+
+        Schema::Object(SchemaObject {
+            instance_type: Some(InstanceType::String.into()),
+            string: Some(Box::new(StringValidation {
+                pattern: Some(r"^-?\d+(\.\d+)?(px|rem)$".to_string()),
+                ..Default::default()
+            })),
+            ..Default::default()
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for AbsoluteLength {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct StringVisitor;
+
+        impl de::Visitor<'_> for StringVisitor {
+            type Value = AbsoluteLength;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                write!(f, "{EXPECTED_ABSOLUTE_LENGTH}")
+            }
+
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                AbsoluteLength::try_from(value).map_err(E::custom)
+            }
+        }
+
+        deserializer.deserialize_str(StringVisitor)
+    }
+}
+
+impl Serialize for AbsoluteLength {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&format!("{self}"))
+    }
+}
+
 /// A non-auto length that can be defined in pixels, rems, or percent of parent.
 ///
 /// This enum represents lengths that have a specific value, as opposed to lengths that are automatically
@@ -3143,10 +3320,85 @@ impl DefiniteLength {
 
 impl Debug for DefiniteLength {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Display::fmt(self, f)
+    }
+}
+
+impl Display for DefiniteLength {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DefiniteLength::Absolute(length) => Debug::fmt(length, f),
-            DefiniteLength::Fraction(fract) => write!(f, "{}%", (fract * 100.0) as i32),
+            DefiniteLength::Absolute(length) => write!(f, "{length}"),
+            DefiniteLength::Fraction(fraction) => write!(f, "{}%", (fraction * 100.0) as i32),
         }
+    }
+}
+
+const EXPECTED_DEFINITE_LENGTH: &str = "expected number with 'px', 'rem', or '%' suffix";
+
+impl TryFrom<&'_ str> for DefiniteLength {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &'_ str) -> Result<Self, Self::Error> {
+        if let Some(percentage) = value.strip_suffix('%') {
+            let fraction: f32 = percentage.parse::<f32>().with_context(|| {
+                format!("invalid DefiniteLength '{value}', expected {EXPECTED_DEFINITE_LENGTH}")
+            })?;
+            Ok(DefiniteLength::Fraction(fraction / 100.0))
+        } else if let Ok(absolute_length) = value.try_into() {
+            Ok(DefiniteLength::Absolute(absolute_length))
+        } else {
+            Err(anyhow!(
+                "invalid DefiniteLength '{value}', expected {EXPECTED_DEFINITE_LENGTH}"
+            ))
+        }
+    }
+}
+
+impl JsonSchema for DefiniteLength {
+    fn schema_name() -> String {
+        "DefiniteLength".to_string()
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        use schemars::schema::{InstanceType, SchemaObject, StringValidation};
+
+        Schema::Object(SchemaObject {
+            instance_type: Some(InstanceType::String.into()),
+            string: Some(Box::new(StringValidation {
+                pattern: Some(r"^-?\d+(\.\d+)?(px|rem|%)$".to_string()),
+                ..Default::default()
+            })),
+            ..Default::default()
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for DefiniteLength {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct StringVisitor;
+
+        impl de::Visitor<'_> for StringVisitor {
+            type Value = DefiniteLength;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                write!(f, "{EXPECTED_DEFINITE_LENGTH}")
+            }
+
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                DefiniteLength::try_from(value).map_err(E::custom)
+            }
+        }
+
+        deserializer.deserialize_str(StringVisitor)
+    }
+}
+
+impl Serialize for DefiniteLength {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&format!("{self}"))
     }
 }
 
@@ -3185,10 +3437,82 @@ pub enum Length {
 
 impl Debug for Length {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Display::fmt(self, f)
+    }
+}
+
+impl Display for Length {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Length::Definite(definite_length) => write!(f, "{:?}", definite_length),
+            Length::Definite(definite_length) => write!(f, "{}", definite_length),
             Length::Auto => write!(f, "auto"),
         }
+    }
+}
+
+const EXPECTED_LENGTH: &str = "expected 'auto' or number with 'px', 'rem', or '%' suffix";
+
+impl TryFrom<&'_ str> for Length {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &'_ str) -> Result<Self, Self::Error> {
+        if value == "auto" {
+            Ok(Length::Auto)
+        } else if let Ok(definite_length) = value.try_into() {
+            Ok(Length::Definite(definite_length))
+        } else {
+            Err(anyhow!(
+                "invalid Length '{value}', expected {EXPECTED_LENGTH}"
+            ))
+        }
+    }
+}
+
+impl JsonSchema for Length {
+    fn schema_name() -> String {
+        "Length".to_string()
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        use schemars::schema::{InstanceType, SchemaObject, StringValidation};
+
+        Schema::Object(SchemaObject {
+            instance_type: Some(InstanceType::String.into()),
+            string: Some(Box::new(StringValidation {
+                pattern: Some(r"^(auto|-?\d+(\.\d+)?(px|rem|%))$".to_string()),
+                ..Default::default()
+            })),
+            ..Default::default()
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for Length {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct StringVisitor;
+
+        impl de::Visitor<'_> for StringVisitor {
+            type Value = Length;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                write!(f, "{EXPECTED_LENGTH}")
+            }
+
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                Length::try_from(value).map_err(E::custom)
+            }
+        }
+
+        deserializer.deserialize_str(StringVisitor)
+    }
+}
+
+impl Serialize for Length {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&format!("{self}"))
     }
 }
 

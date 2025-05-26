@@ -348,11 +348,11 @@ impl LocalLspStore {
                         delegate.update_status(
                             adapter.name(),
                             BinaryStatus::Failed {
-                                error: format!("{err}\n-- stderr--\n{}", log),
+                                error: format!("{err}\n-- stderr--\n{log}"),
                             },
                         );
-                        log::error!("Failed to start language server {server_name:?}: {err}");
-                        log::error!("server stderr: {:?}", log);
+                        log::error!("Failed to start language server {server_name:?}: {err:#?}");
+                        log::error!("server stderr: {log}");
                         None
                     }
                 }
