@@ -603,7 +603,7 @@ impl LanguageServer {
         Ok(())
     }
 
-    pub fn default_initialize_params(&self, cx: &App) -> InitializeParams {
+    pub fn default_initialize_params(&self, pull_diagnostics: bool, cx: &App) -> InitializeParams {
         let workspace_folders = self
             .workspace_folders
             .lock()
@@ -644,7 +644,8 @@ impl LanguageServer {
                     }),
                     diagnostic: Some(DiagnosticWorkspaceClientCapabilities {
                         refresh_support: Some(true),
-                    }),
+                    })
+                    .filter(|_| pull_diagnostics),
                     code_lens: Some(CodeLensWorkspaceClientCapabilities {
                         refresh_support: Some(true),
                     }),
@@ -1709,7 +1710,7 @@ mod tests {
 
         let server = cx
             .update(|cx| {
-                let params = server.default_initialize_params(cx);
+                let params = server.default_initialize_params(false, cx);
                 let configuration = DidChangeConfigurationParams {
                     settings: Default::default(),
                 };

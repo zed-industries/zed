@@ -252,6 +252,10 @@ impl LocalLspStore {
             let this = self.weak.clone();
             let pending_workspace_folders = pending_workspace_folders.clone();
             let fs = self.fs.clone();
+            let pull_diagnostics = ProjectSettings::get_global(cx)
+                .diagnostics
+                .lsp_pull_diagnostics_debounce_ms
+                .is_some();
             cx.spawn(async move |cx| {
                 let result = async {
                     let toolchains = this.update(cx, |this, cx| this.toolchain_store(cx))?;
@@ -282,7 +286,8 @@ impl LocalLspStore {
                     }
 
                     let initialization_params = cx.update(|cx| {
-                        let mut params = language_server.default_initialize_params(cx);
+                        let mut params =
+                            language_server.default_initialize_params(pull_diagnostics, cx);
                         params.initialization_options = initialization_options;
                         adapter.adapter.prepare_initialize_params(params, cx)
                     })??;
