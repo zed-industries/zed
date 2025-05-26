@@ -212,8 +212,8 @@ impl GitExcludeOverride {
     }
 
     pub async fn add_excludes(&mut self, excludes: &str) -> Result<()> {
-        self.added_excludes = Some(if let Some(ref alread_added) = self.added_excludes {
-            format!("{alread_added}\n{excludes}")
+        self.added_excludes = Some(if let Some(ref already_added) = self.added_excludes {
+            format!("{already_added}\n{excludes}")
         } else {
             excludes.to_string()
         });
