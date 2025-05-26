@@ -471,27 +471,27 @@ impl LmStudioEventMapper {
         &mut self,
         event: ResponseStreamEvent,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        let Some(choice) = event.choices.first() else {
+        let Some(choice) = event.choices.into_iter().next() else {
             return vec![Err(LanguageModelCompletionError::Other(anyhow!(
                 "Response contained no choices"
             )))];
         };
 
         let mut events = Vec::new();
-        if let Some(content) = choice.delta.content.clone() {
+        if let Some(content) = choice.delta.content {
             events.push(Ok(LanguageModelCompletionEvent::Text(content)));
         }
 
-        if let Some(tool_calls) = choice.delta.tool_calls.as_ref() {
+        if let Some(tool_calls) = choice.delta.tool_calls {
             for tool_call in tool_calls {
                 let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
 
-                if let Some(tool_id) = tool_call.id.clone() {
+                if let Some(tool_id) = tool_call.id {
                     entry.id = tool_id;
                 }
 
-                if let Some(function) = tool_call.function.as_ref() {
-                    if let Some(name) = function.name.clone() {
+                if let Some(function) = tool_call.function {
+                    if let Some(name) = function.name {
                         // At the time of writing this code LM Studio (0.3.15) is incompatible with the OpenAI API:
                         // 1. It sends function name in the first chunk
                         // 2. It sends empty string in the function name field in all subsequent chunks for arguments
@@ -502,7 +502,7 @@ impl LmStudioEventMapper {
                         }
                     }
 
-                    if let Some(arguments) = function.arguments.clone() {
+                    if let Some(arguments) = function.arguments {
                         entry.arguments.push_str(&arguments);
                     }
                 }
@@ -518,16 +518,16 @@ impl LmStudioEventMapper {
                     match serde_json::Value::from_str(&tool_call.arguments) {
                         Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
                             LanguageModelToolUse {
-                                id: tool_call.id.clone().into(),
-                                name: tool_call.name.as_str().into(),
+                                id: tool_call.id.into(),
+                                name: tool_call.name.into(),
                                 is_input_complete: true,
                                 input,
-                                raw_input: tool_call.arguments.clone(),
+                                raw_input: tool_call.arguments,
                             },
                         )),
                         Err(error) => Err(LanguageModelCompletionError::BadInputJson {
                             id: tool_call.id.into(),
-                            tool_name: tool_call.name.as_str().into(),
+                            tool_name: tool_call.name.into(),
                             raw_input: tool_call.arguments.into(),
                             json_parse_error: error.to_string(),
                         }),
