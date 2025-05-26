@@ -30,7 +30,6 @@ util.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
-buffer_diff = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 rand.workspace = true

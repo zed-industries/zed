@@ -2220,7 +2220,6 @@ name = "buffer_diff"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "buffer_diff",
  "clock",
  "ctor",
  "futures 0.3.31",
