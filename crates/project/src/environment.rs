@@ -246,91 +246,44 @@ async fn load_shell_environment(
     Option<EnvironmentErrorMessage>,
 ) {
     use crate::direnv::{DirenvError, load_direnv_environment};
-    use std::path::PathBuf;
-    use util::parse_env_output;
+    use util::shell_env;
 
     fn message<T>(with: &str) -> (Option<T>, Option<EnvironmentErrorMessage>) {
         let message = EnvironmentErrorMessage::from_str(with);
         (None, Some(message))
     }
 
-    const MARKER: &str = "ZED_SHELL_START";
     let Some(shell) = std::env::var("SHELL").log_err() else {
         return message("Failed to get login environment. SHELL environment variable is not set");
     };
-    let shell_path = PathBuf::from(&shell);
-    let shell_name = shell_path.file_name().and_then(|f| f.to_str());
 
-    // What we're doing here is to spawn a shell and then `cd` into
-    // the project directory to get the env in there as if the user
-    // `cd`'d into it. We do that because tools like direnv, asdf, ...
-    // hook into `cd` and only set up the env after that.
-    //
+    let dir_ = dir.to_owned();
+    let captured = match smol::unblock(move || shell_env::capture(shell, Some(dir_))).await {
+        Err(err) => {
+            util::log_err(&err);
+            return message(
+                "Failed to spawn login shell to source login environment variables. See logs for details",
+            );
+        }
+        Ok(Err(err)) => {
+            util::log_err(&err);
+            return message("Login shell exited with nonzero exit code. See logs for details");
+        }
+        Ok(Ok(output)) => output,
+    };
+
+    let Some(parsed_env) = shell_env::parse(&captured).log_err() else {
+        return message("Failed to parse exported environment variables. See logs for the output");
+    };
+    let mut parsed_env = parsed_env
+        .into_iter()
+        .filter_map(|(key, value)| Some((key.to_string(), value?.to_string())))
+        .collect::<HashMap<String, String>>();
+
     // If the user selects `Direct` for direnv, it would set an environment
     // variable that later uses to know that it should not run the hook.
     // We would include in `.envs` call so it is okay to run the hook
     // even if direnv direct mode is enabled.
-    //
-    // In certain shells we need to execute additional_command in order to
-    // trigger the behavior of direnv, etc.
-
-    let command = match shell_name {
-        Some("fish") => format!(
-            "cd '{}'; emit fish_prompt; printf '%s' {MARKER}; /usr/bin/env;",
-            dir.display()
-        ),
-        _ => format!(
-            "cd '{}'; printf '%s' {MARKER}; /usr/bin/env;",
-            dir.display()
-        ),
-    };
-
-    // csh/tcsh only supports `-l` if it's the only flag. So this won't be a login shell.
-    // Users must rely on vars from `~/.tcshrc` or `~/.cshrc` and not `.login` as a result.
-    let args = match shell_name {
-        Some("tcsh") | Some("csh") => vec!["-i".to_string(), "-c".to_string(), command],
-        _ => vec![
-            "-l".to_string(),
-            "-i".to_string(),
-            "-c".to_string(),
-            command,
-        ],
-    };
-
-    let Some(output) = smol::unblock(move || {
-        util::set_pre_exec_to_start_new_session(std::process::Command::new(&shell).args(&args))
-            .output()
-    })
-    .await
-    .log_err() else {
-        return message(
-            "Failed to spawn login shell to source login environment variables. See logs for details",
-        );
-    };
-
-    if !output.status.success() {
-        log::error!("login shell exited with {}", output.status);
-        return message("Login shell exited with nonzero exit code. See logs for details");
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let Some(env_output_start) = stdout.find(MARKER) else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        log::error!(
-            "failed to parse output of `env` command in login shell. stdout: {:?}, stderr: {:?}",
-            stdout,
-            stderr
-        );
-        return message("Failed to parse stdout of env command. See logs for the output");
-    };
-
-    let mut parsed_env = HashMap::default();
-    let env_output = &stdout[env_output_start + MARKER.len()..];
-
-    parse_env_output(env_output, |key, value| {
-        parsed_env.insert(key, value);
-    });
-
     let (direnv_environment, direnv_error) = match load_direnv {
         DirenvSettings::ShellHook => (None, None),
         DirenvSettings::Direct => match load_direnv_environment(&parsed_env, dir).await {
@@ -341,7 +294,6 @@ async fn load_shell_environment(
             ),
         },
     };
-
     for (key, value) in direnv_environment.unwrap_or(HashMap::default()) {
         parsed_env.insert(key, value);
     }
