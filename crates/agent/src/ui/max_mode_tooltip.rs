@@ -18,18 +18,18 @@ impl MaxModeTooltip {
 
 impl Render for MaxModeTooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let title = h_flex()
+            .gap_1p5()
+            .child(Icon::new(IconName::ZedMaxMode))
+            .child(Label::new("Lit Mode"));
+
         tooltip_container(window, cx, |this, _, _| {
-            this.gap_1()
+            this.gap_0p5()
                 .map(|header| if self.selected {
                     header.child(
                         h_flex()
                             .justify_between()
-                            .child(
-                                h_flex()
-                                    .gap_1p5()
-                                    .child(Icon::new(IconName::ZedMaxMode).size(IconSize::Small).color(Color::Accent))
-                                    .child(Label::new("Zed's Max Mode"))
-                            )
+                            .child(title)
                             .child(
                                 h_flex()
                                     .gap_0p5()
@@ -38,18 +38,13 @@ impl Render for MaxModeTooltip {
                             )
                     )
                 } else {
-                    header.child(
-                        h_flex()
-                            .gap_1p5()
-                            .child(Icon::new(IconName::ZedMaxMode).size(IconSize::Small))
-                            .child(Label::new("Zed's Max Mode"))
-                    )
+                    header.child(title)
                 })
                 .child(
                     div()
                         .max_w_72()
                         .child(
-                            Label::new("This mode enables models to use large context windows, unlimited tool calls, and other capabilities for expanded reasoning, offering an unfettered agentic experience.")
+                            Label::new("Enables models to use large context windows, unlimited tool calls, and other capabilities for expanded reasoning, offering an unfettered agentic experience.")
                                 .size(LabelSize::Small)
                                 .color(Color::Muted)
                         )

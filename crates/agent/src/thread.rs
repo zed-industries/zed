@@ -115,6 +115,7 @@ pub struct Message {
     pub segments: Vec<MessageSegment>,
     pub loaded_context: LoadedContext,
     pub creases: Vec<MessageCrease>,
+    pub is_hidden: bool,
 }
 
 impl Message {
@@ -540,6 +541,7 @@ impl Thread {
                             context: None,
                         })
                         .collect(),
+                    is_hidden: false,
                 })
                 .collect(),
             next_message_id,
@@ -841,7 +843,7 @@ impl Thread {
             .get(ix + 1)
             .and_then(|message| {
                 self.message(message.id)
-                    .map(|next_message| next_message.role == Role::User)
+                    .map(|next_message| next_message.role == Role::User && !next_message.is_hidden)
             })
             .unwrap_or(false)
     }
@@ -958,6 +960,32 @@ impl Thread {
         message_id
     }
 
+    pub fn insert_invisible_continue_message(&mut self, cx: &mut Context<Self>) -> MessageId {
+        let id = self.next_message_id.post_inc();
+
+        self.messages.push(Message {
+            id,
+            role: Role::User,
+            segments: vec![MessageSegment::Text("continue".into())],
+            loaded_context: LoadedContext::default(),
+            creases: vec![],
+            is_hidden: true,
+        });
+        self.touch_updated_at();
+
+        // Reset the tool use limit flag since we're adding a user message
+        // This should help the server recognize that the consecutive tool use chain is broken
+        self.tool_use_limit_reached = false;
+
+        // Don't emit ThreadEvent::MessageAdded to prevent the message from being displayed
+        // Just emit a generic update event so the thread state is refreshed
+        cx.notify();
+
+        self.pending_checkpoint = None;
+
+        id
+    }
+
     pub fn insert_assistant_message(
         &mut self,
         segments: Vec<MessageSegment>,
@@ -987,6 +1015,7 @@ impl Thread {
             segments,
             loaded_context,
             creases,
+            is_hidden: false,
         });
         self.touch_updated_at();
         cx.emit(ThreadEvent::MessageAdded(id));
@@ -1773,6 +1802,9 @@ impl Thread {
                             thread.cancel_last_completion(window, cx);
                         }
                     }
+
+                    thread.pending_completions.retain(|completion| completion.id != pending_completion_id);
+
                     cx.emit(ThreadEvent::Stopped(result.map_err(Arc::new)));
 
                     if let Some((request_callback, (request, response_events))) = thread
