@@ -2,7 +2,7 @@ pub mod participant;
 pub mod room;
 
 use crate::call_settings::CallSettings;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use audio::Audio;
 use client::{ChannelId, Client, TypedEnvelope, User, UserStore, ZED_ALWAYS_ACTIVE, proto};
 use collections::HashSet;
@@ -187,7 +187,7 @@ impl ActiveCall {
 
         let invite = if let Some(room) = room {
             cx.spawn(async move |_, cx| {
-                let room = room.await.map_err(|err| anyhow!("{:?}", err))?;
+                let room = room.await.map_err(|err| anyhow!("{err:?}"))?;
 
                 let initial_project_id = if let Some(initial_project) = initial_project {
                     Some(
@@ -236,7 +236,7 @@ impl ActiveCall {
                 .shared();
             self.pending_room_creation = Some(room.clone());
             cx.background_spawn(async move {
-                room.await.map_err(|err| anyhow!("{:?}", err))?;
+                room.await.map_err(|err| anyhow!("{err:?}"))?;
                 anyhow::Ok(())
             })
         };
@@ -326,7 +326,7 @@ impl ActiveCall {
             .0
             .borrow_mut()
             .take()
-            .ok_or_else(|| anyhow!("no incoming call"))?;
+            .context("no incoming call")?;
         telemetry::event!("Incoming Call Declined", room_id = call.room_id);
         self.client.send(proto::DeclineCall {
             room_id: call.room_id,
@@ -399,12 +399,9 @@ impl ActiveCall {
         project: Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        if let Some((room, _)) = self.room.as_ref() {
-            self.report_call_event("Project Unshared", cx);
-            room.update(cx, |room, cx| room.unshare_project(project, cx))
-        } else {
-            Err(anyhow!("no active call"))
-        }
+        let (room, _) = self.room.as_ref().context("no active call")?;
+        self.report_call_event("Project Unshared", cx);
+        room.update(cx, |room, cx| room.unshare_project(project, cx))
     }
 
     pub fn location(&self) -> Option<&WeakEntity<Project>> {

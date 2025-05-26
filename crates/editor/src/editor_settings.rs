@@ -4,7 +4,10 @@ use project::project_settings::DiagnosticSeverity;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources, VsCodeSettings};
+use util::serde::default_true;
 
+/// Imports from the VSCode settings at
+/// https://code.visualstudio.com/docs/reference/default-settings
 #[derive(Deserialize, Clone)]
 pub struct EditorSettings {
     pub cursor_blink: bool,
@@ -44,6 +47,7 @@ pub struct EditorSettings {
     pub snippet_sort_order: SnippetSortOrder,
     #[serde(default)]
     pub diagnostics_max_severity: Option<DiagnosticSeverity>,
+    pub inline_code_actions: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -106,6 +110,7 @@ pub struct Toolbar {
     pub quick_actions: bool,
     pub selections_menu: bool,
     pub agent_review: bool,
+    pub code_actions: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -276,6 +281,9 @@ pub enum ScrollBeyondLastLine {
 /// Default options for buffer and project search items.
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct SearchSettings {
+    /// Whether to show the project search button in the status bar.
+    #[serde(default = "default_true")]
+    pub button: bool,
     #[serde(default)]
     pub whole_word: bool,
     #[serde(default)]
@@ -328,6 +336,7 @@ pub enum SnippetSortOrder {
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 pub struct EditorSettingsContent {
     /// Whether the cursor blinks in the editor.
     ///
@@ -364,9 +373,9 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub hover_popover_enabled: Option<bool>,
-    /// Time to wait before showing the informational hover box
+    /// Time to wait in milliseconds before showing the informational hover box.
     ///
-    /// Default: 350
+    /// Default: 300
     pub hover_popover_delay: Option<u64>,
     /// Toolbar related settings
     pub toolbar: Option<ToolbarContent>,
@@ -474,6 +483,11 @@ pub struct EditorSettingsContent {
     /// Default: warning
     #[serde(default)]
     pub diagnostics_max_severity: Option<DiagnosticSeverity>,
+
+    /// Whether to show code action button at start of buffer line.
+    ///
+    /// Default: true
+    pub inline_code_actions: Option<bool>,
 }
 
 // Toolbar related settings
@@ -496,6 +510,10 @@ pub struct ToolbarContent {
     ///
     /// Default: true
     pub agent_review: Option<bool>,
+    /// Whether to display code action buttons in the editor toolbar.
+    ///
+    /// Default: false
+    pub code_actions: Option<bool>,
 }
 
 /// Scrollbar related settings
@@ -534,7 +552,7 @@ pub struct ScrollbarContent {
 }
 
 /// Minimap related settings
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct MinimapContent {
     /// When to show the minimap in the editor.
     ///
@@ -764,6 +782,33 @@ impl Settings for EditorSettings {
         if let Some(use_ignored) = vscode.read_bool("search.useIgnoreFiles") {
             let search = current.search.get_or_insert_default();
             search.include_ignored = use_ignored;
+        }
+
+        let mut minimap = MinimapContent::default();
+        let minimap_enabled = vscode.read_bool("editor.minimap.enabled").unwrap_or(true);
+        let autohide = vscode.read_bool("editor.minimap.autohide");
+        if minimap_enabled {
+            if let Some(false) = autohide {
+                minimap.show = Some(ShowMinimap::Always);
+            } else {
+                minimap.show = Some(ShowMinimap::Auto);
+            }
+        } else {
+            minimap.show = Some(ShowMinimap::Never);
+        }
+
+        vscode.enum_setting(
+            "editor.minimap.showSlider",
+            &mut minimap.thumb,
+            |s| match s {
+                "always" => Some(MinimapThumb::Always),
+                "mouseover" => Some(MinimapThumb::Hover),
+                _ => None,
+            },
+        );
+
+        if minimap != MinimapContent::default() {
+            current.minimap = Some(minimap)
         }
     }
 }

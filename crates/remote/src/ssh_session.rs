@@ -100,7 +100,7 @@ macro_rules! shell_script {
 fn parse_port_number(port_str: &str) -> Result<u16> {
     port_str
         .parse()
-        .map_err(|e| anyhow!("Invalid port number: {}: {}", port_str, e))
+        .with_context(|| format!("parsing port number: {port_str}"))
 }
 
 fn parse_port_forward_spec(spec: &str) -> Result<SshPortForwardOption> {
@@ -151,9 +151,7 @@ impl SshConnectionOptions {
             "-w",
         ];
 
-        let mut tokens = shlex::split(input)
-            .ok_or_else(|| anyhow!("invalid input"))?
-            .into_iter();
+        let mut tokens = shlex::split(input).context("invalid input")?.into_iter();
 
         'outer: while let Some(arg) = tokens.next() {
             if ALLOWED_OPTS.contains(&(&arg as &str)) {
@@ -369,14 +367,12 @@ impl SshSocket {
 
     async fn run_command(&self, program: &str, args: &[&str]) -> Result<String> {
         let output = self.ssh_command(program, args).output().await?;
-        if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).to_string())
-        } else {
-            Err(anyhow!(
-                "failed to run command: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ))
-        }
+        anyhow::ensure!(
+            output.status.success(),
+            "failed to run command: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 
     fn ssh_options<'a>(&self, command: &'a mut process::Command) -> &'a mut process::Command {
@@ -727,13 +723,13 @@ impl SshRemoteClient {
             .map(|state| state.can_reconnect())
             .unwrap_or(false);
         if !can_reconnect {
+            log::info!("aborting reconnect, because not in state that allows reconnecting");
             let error = if let Some(state) = lock.as_ref() {
                 format!("invalid state, cannot reconnect while in state {state}")
             } else {
                 "no state set".to_string()
             };
-            log::info!("aborting reconnect, because not in state that allows reconnecting");
-            return Err(anyhow!(error));
+            anyhow::bail!(error);
         }
 
         let state = lock.take().unwrap();
@@ -925,7 +921,7 @@ impl SshRemoteClient {
 
                             if missed_heartbeats != 0 {
                                 missed_heartbeats = 0;
-                                this.update(cx, |this, mut cx| {
+                                let _ =this.update(cx, |this, mut cx| {
                                     this.handle_heartbeat_result(missed_heartbeats, &mut cx)
                                 })?;
                             }
@@ -1363,14 +1359,13 @@ impl RemoteConnection for SshRemoteConnection {
         cx.background_spawn(async move {
             let output = output.await?;
 
-            if !output.status.success() {
-                return Err(anyhow!(
-                    "failed to upload directory {} -> {}: {}",
-                    src_path.display(),
-                    dest_path.display(),
-                    String::from_utf8_lossy(&output.stderr)
-                ));
-            }
+            anyhow::ensure!(
+                output.status.success(),
+                "failed to upload directory {} -> {}: {}",
+                src_path.display(),
+                dest_path.display(),
+                String::from_utf8_lossy(&output.stderr)
+            );
 
             Ok(())
         })
@@ -1446,7 +1441,7 @@ impl SshRemoteConnection {
         _delegate: Arc<dyn SshClientDelegate>,
         _cx: &mut AsyncApp,
     ) -> Result<Self> {
-        Err(anyhow!("ssh is not supported on this platform"))
+        anyhow::bail!("ssh is not supported on this platform");
     }
 
     #[cfg(unix)]
@@ -1506,10 +1501,10 @@ impl SshRemoteConnection {
                 match result {
                     AskPassResult::CancelledByUser => {
                         master_process.kill().ok();
-                        Err(anyhow!("SSH connection canceled"))?
+                        anyhow::bail!("SSH connection canceled")
                     }
                     AskPassResult::Timedout => {
-                        Err(anyhow!("connecting to host timed out"))?
+                        anyhow::bail!("connecting to host timed out")
                     }
                 }
             }
@@ -1531,7 +1526,7 @@ impl SshRemoteConnection {
                 "failed to connect: {}",
                 String::from_utf8_lossy(&output).trim()
             );
-            Err(anyhow!(error_message))?;
+            anyhow::bail!(error_message);
         }
 
         drop(askpass);
@@ -1566,15 +1561,15 @@ impl SshRemoteConnection {
     async fn platform(&self) -> Result<SshPlatform> {
         let uname = self.socket.run_command("sh", &["-c", "uname -sm"]).await?;
         let Some((os, arch)) = uname.split_once(" ") else {
-            Err(anyhow!("unknown uname: {uname:?}"))?
+            anyhow::bail!("unknown uname: {uname:?}")
         };
 
         let os = match os.trim() {
             "Darwin" => "macos",
             "Linux" => "linux",
-            _ => Err(anyhow!(
+            _ => anyhow::bail!(
                 "Prebuilt remote servers are not yet available for {os:?}. See https://zed.dev/docs/remote-development"
-            ))?,
+            ),
         };
         // exclude armv5,6,7 as they are 32-bit.
         let arch = if arch.starts_with("armv8")
@@ -1586,9 +1581,9 @@ impl SshRemoteConnection {
         } else if arch.starts_with("x86") {
             "x86_64"
         } else {
-            Err(anyhow!(
+            anyhow::bail!(
                 "Prebuilt remote servers are not yet available for {arch:?}. See https://zed.dev/docs/remote-development"
-            ))?
+            )
         };
 
         Ok(SshPlatform { os, arch })
@@ -1707,7 +1702,7 @@ impl SshRemoteConnection {
     ) -> Result<PathBuf> {
         let version_str = match release_channel {
             ReleaseChannel::Nightly => {
-                let commit = commit.map(|s| s.0.to_string()).unwrap_or_default();
+                let commit = commit.map(|s| s.full()).unwrap_or_default();
 
                 format!("{}-{}", version, commit)
             }
@@ -1940,16 +1935,14 @@ impl SshRemoteConnection {
             .output()
             .await?;
 
-        if output.status.success() {
-            Ok(())
-        } else {
-            Err(anyhow!(
-                "failed to upload file {} -> {}: {}",
-                src_path.display(),
-                dest_path.display(),
-                String::from_utf8_lossy(&output.stderr)
-            ))
-        }
+        anyhow::ensure!(
+            output.status.success(),
+            "failed to upload file {} -> {}: {}",
+            src_path.display(),
+            dest_path.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
     }
 
     #[cfg(debug_assertions)]
@@ -1967,9 +1960,10 @@ impl SshRemoteConnection {
                 .stderr(Stdio::inherit())
                 .output()
                 .await?;
-            if !output.status.success() {
-                Err(anyhow!("Failed to run command: {:?}", command))?;
-            }
+            anyhow::ensure!(
+                output.status.success(),
+                "Failed to run command: {command:?}"
+            );
             Ok(())
         }
 
@@ -2242,8 +2236,7 @@ impl ChannelClient {
         async move {
             let response = response.await?;
             log::debug!("ssh request finish. name:{}", T::NAME);
-            T::Response::from_envelope(response)
-                .ok_or_else(|| anyhow!("received a response of the wrong type"))
+            T::Response::from_envelope(response).context("received a response of the wrong type")
         }
     }
 
@@ -2263,7 +2256,7 @@ impl ChannelClient {
             },
             async {
                 smol::Timer::after(timeout).await;
-                Err(anyhow!("Timeout detected"))
+                anyhow::bail!("Timeout detected")
             },
         )
         .await
@@ -2277,7 +2270,7 @@ impl ChannelClient {
             },
             async {
                 smol::Timer::after(timeout).await;
-                Err(anyhow!("Timeout detected"))
+                anyhow::bail!("Timeout detected")
             },
         )
         .await
@@ -2307,8 +2300,8 @@ impl ChannelClient {
         };
         async move {
             if let Err(error) = &result {
-                log::error!("failed to send message: {}", error);
-                return Err(anyhow!("failed to send message: {}", error));
+                log::error!("failed to send message: {error}");
+                anyhow::bail!("failed to send message: {error}");
             }
 
             let response = rx.await.context("connection lost")?.0;

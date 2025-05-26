@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod context_tests;
 
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Context as _, Result, bail};
 use assistant_settings::AssistantSettings;
 use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandLine, SlashCommandOutputSection,
@@ -21,8 +21,8 @@ use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, P
 use language_model::{
     LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
     LanguageModelImage, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
-    Role, StopReason, report_assistant_event,
+    LanguageModelToolUseId, MessageContent, PaymentRequiredError, Role, StopReason,
+    report_assistant_event,
 };
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
@@ -447,7 +447,6 @@ impl ContextOperation {
 pub enum ContextEvent {
     ShowAssistError(SharedString),
     ShowPaymentRequiredError,
-    ShowMaxMonthlySpendReachedError,
     MessagesEdited,
     SummaryChanged,
     SummaryGenerated,
@@ -2155,12 +2154,6 @@ impl AssistantContext {
                                 metadata.status = MessageStatus::Canceled;
                             });
                             Some(error.to_string())
-                        } else if error.is::<MaxMonthlySpendReachedError>() {
-                            cx.emit(ContextEvent::ShowMaxMonthlySpendReachedError);
-                            this.update_metadata(assistant_message_id, cx, |metadata| {
-                                metadata.status = MessageStatus::Canceled;
-                            });
-                            Some(error.to_string())
                         } else {
                             let error_message = error
                                 .chain()
@@ -2211,6 +2204,7 @@ impl AssistantContext {
                             StopReason::ToolUse => {}
                             StopReason::EndTurn => {}
                             StopReason::MaxTokens => {}
+                            StopReason::Refusal => {}
                         }
                     }
                 })
@@ -3018,7 +3012,7 @@ impl SavedContext {
         let saved_context_json = serde_json::from_str::<serde_json::Value>(json)?;
         match saved_context_json
             .get("version")
-            .ok_or_else(|| anyhow!("version not found"))?
+            .context("version not found")?
         {
             serde_json::Value::String(version) => match version.as_str() {
                 SavedContext::VERSION => {
@@ -3039,9 +3033,9 @@ impl SavedContext {
                         serde_json::from_value::<SavedContextV0_1_0>(saved_context_json)?;
                     Ok(saved_context.upgrade())
                 }
-                _ => Err(anyhow!("unrecognized saved context version: {}", version)),
+                _ => anyhow::bail!("unrecognized saved context version: {version:?}"),
             },
-            _ => Err(anyhow!("version not found on saved context")),
+            _ => anyhow::bail!("version not found on saved context"),
         }
     }
 

@@ -1,4 +1,5 @@
 pub mod arc_cow;
+pub mod archive;
 pub mod command;
 pub mod fs;
 pub mod markdown;
@@ -13,6 +14,7 @@ use anyhow::Result;
 use futures::Future;
 use itertools::Either;
 use regex::Regex;
+use std::num::NonZeroU32;
 use std::sync::{LazyLock, OnceLock};
 use std::{
     borrow::Cow,
@@ -27,7 +29,7 @@ use std::{
 use unicase::UniCase;
 
 #[cfg(unix)]
-use anyhow::{Context as _, anyhow};
+use anyhow::Context as _;
 
 pub use take_until::*;
 #[cfg(any(test, feature = "test-support"))]
@@ -182,29 +184,208 @@ pub fn truncate_lines_to_byte_limit(s: &str, max_bytes: usize) -> &str {
     truncate_to_byte_limit(s, max_bytes)
 }
 
-#[test]
-fn test_truncate_lines_to_byte_limit() {
-    let text = "Line 1\nLine 2\nLine 3\nLine 4";
+fn char_len_with_expanded_tabs(offset: usize, text: &str, tab_size: NonZeroU32) -> usize {
+    let tab_size = tab_size.get() as usize;
+    let mut width = offset;
 
-    // Limit that includes all lines
-    assert_eq!(truncate_lines_to_byte_limit(text, 100), text);
+    for ch in text.chars() {
+        width += if ch == '\t' {
+            tab_size - (width % tab_size)
+        } else {
+            1
+        };
+    }
 
-    // Exactly the first line
-    assert_eq!(truncate_lines_to_byte_limit(text, 7), "Line 1\n");
+    width - offset
+}
 
-    // Limit between lines
-    assert_eq!(truncate_lines_to_byte_limit(text, 13), "Line 1\n");
-    assert_eq!(truncate_lines_to_byte_limit(text, 20), "Line 1\nLine 2\n");
+/// Tokenizes a string into runs of text that should stick together, or that is whitespace.
+struct WordBreakingTokenizer<'a> {
+    input: &'a str,
+}
 
-    // Limit before first newline
-    assert_eq!(truncate_lines_to_byte_limit(text, 6), "Line ");
+impl<'a> WordBreakingTokenizer<'a> {
+    fn new(input: &'a str) -> Self {
+        Self { input }
+    }
+}
 
-    // Test with non-ASCII characters
-    let text_utf8 = "Line 1\nLíne 2\nLine 3";
-    assert_eq!(
-        truncate_lines_to_byte_limit(text_utf8, 15),
-        "Line 1\nLíne 2\n"
-    );
+fn is_char_ideographic(ch: char) -> bool {
+    use unicode_script::Script::*;
+    use unicode_script::UnicodeScript;
+    matches!(ch.script(), Han | Tangut | Yi)
+}
+
+fn is_grapheme_ideographic(text: &str) -> bool {
+    text.chars().any(is_char_ideographic)
+}
+
+fn is_grapheme_whitespace(text: &str) -> bool {
+    text.chars().any(|x| x.is_whitespace())
+}
+
+fn should_stay_with_preceding_ideograph(text: &str) -> bool {
+    text.chars().next().map_or(false, |ch| {
+        matches!(ch, '。' | '、' | '，' | '？' | '！' | '：' | '；' | '…')
+    })
+}
+
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+enum WordBreakToken<'a> {
+    Word { token: &'a str, grapheme_len: usize },
+    InlineWhitespace { token: &'a str, grapheme_len: usize },
+    Newline,
+}
+
+impl<'a> Iterator for WordBreakingTokenizer<'a> {
+    /// Yields a span, the count of graphemes in the token, and whether it was
+    /// whitespace. Note that it also breaks at word boundaries.
+    type Item = WordBreakToken<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        use unicode_segmentation::UnicodeSegmentation;
+        if self.input.is_empty() {
+            return None;
+        }
+
+        let mut iter = self.input.graphemes(true).peekable();
+        let mut offset = 0;
+        let mut grapheme_len = 0;
+        if let Some(first_grapheme) = iter.next() {
+            let is_newline = first_grapheme == "\n";
+            let is_whitespace = is_grapheme_whitespace(first_grapheme);
+            offset += first_grapheme.len();
+            grapheme_len += 1;
+            if is_grapheme_ideographic(first_grapheme) && !is_whitespace {
+                if let Some(grapheme) = iter.peek().copied() {
+                    if should_stay_with_preceding_ideograph(grapheme) {
+                        offset += grapheme.len();
+                        grapheme_len += 1;
+                    }
+                }
+            } else {
+                let mut words = self.input[offset..].split_word_bound_indices().peekable();
+                let mut next_word_bound = words.peek().copied();
+                if next_word_bound.map_or(false, |(i, _)| i == 0) {
+                    next_word_bound = words.next();
+                }
+                while let Some(grapheme) = iter.peek().copied() {
+                    if next_word_bound.map_or(false, |(i, _)| i == offset) {
+                        break;
+                    };
+                    if is_grapheme_whitespace(grapheme) != is_whitespace
+                        || (grapheme == "\n") != is_newline
+                    {
+                        break;
+                    };
+                    offset += grapheme.len();
+                    grapheme_len += 1;
+                    iter.next();
+                }
+            }
+            let token = &self.input[..offset];
+            self.input = &self.input[offset..];
+            if token == "\n" {
+                Some(WordBreakToken::Newline)
+            } else if is_whitespace {
+                Some(WordBreakToken::InlineWhitespace {
+                    token,
+                    grapheme_len,
+                })
+            } else {
+                Some(WordBreakToken::Word {
+                    token,
+                    grapheme_len,
+                })
+            }
+        } else {
+            None
+        }
+    }
+}
+
+pub fn wrap_with_prefix(
+    line_prefix: String,
+    unwrapped_text: String,
+    wrap_column: usize,
+    tab_size: NonZeroU32,
+    preserve_existing_whitespace: bool,
+) -> String {
+    let line_prefix_len = char_len_with_expanded_tabs(0, &line_prefix, tab_size);
+    let mut wrapped_text = String::new();
+    let mut current_line = line_prefix.clone();
+
+    let tokenizer = WordBreakingTokenizer::new(&unwrapped_text);
+    let mut current_line_len = line_prefix_len;
+    let mut in_whitespace = false;
+    for token in tokenizer {
+        let have_preceding_whitespace = in_whitespace;
+        match token {
+            WordBreakToken::Word {
+                token,
+                grapheme_len,
+            } => {
+                in_whitespace = false;
+                if current_line_len + grapheme_len > wrap_column
+                    && current_line_len != line_prefix_len
+                {
+                    wrapped_text.push_str(current_line.trim_end());
+                    wrapped_text.push('\n');
+                    current_line.truncate(line_prefix.len());
+                    current_line_len = line_prefix_len;
+                }
+                current_line.push_str(token);
+                current_line_len += grapheme_len;
+            }
+            WordBreakToken::InlineWhitespace {
+                mut token,
+                mut grapheme_len,
+            } => {
+                in_whitespace = true;
+                if have_preceding_whitespace && !preserve_existing_whitespace {
+                    continue;
+                }
+                if !preserve_existing_whitespace {
+                    token = " ";
+                    grapheme_len = 1;
+                }
+                if current_line_len + grapheme_len > wrap_column {
+                    wrapped_text.push_str(current_line.trim_end());
+                    wrapped_text.push('\n');
+                    current_line.truncate(line_prefix.len());
+                    current_line_len = line_prefix_len;
+                } else if current_line_len != line_prefix_len || preserve_existing_whitespace {
+                    current_line.push_str(token);
+                    current_line_len += grapheme_len;
+                }
+            }
+            WordBreakToken::Newline => {
+                in_whitespace = true;
+                if preserve_existing_whitespace {
+                    wrapped_text.push_str(current_line.trim_end());
+                    wrapped_text.push('\n');
+                    current_line.truncate(line_prefix.len());
+                    current_line_len = line_prefix_len;
+                } else if have_preceding_whitespace {
+                    continue;
+                } else if current_line_len + 1 > wrap_column && current_line_len != line_prefix_len
+                {
+                    wrapped_text.push_str(current_line.trim_end());
+                    wrapped_text.push('\n');
+                    current_line.truncate(line_prefix.len());
+                    current_line_len = line_prefix_len;
+                } else if current_line_len != line_prefix_len {
+                    current_line.push(' ');
+                    current_line_len += 1;
+                }
+            }
+        }
+    }
+
+    if !current_line.is_empty() {
+        wrapped_text.push_str(&current_line);
+    }
+    wrapped_text
 }
 
 pub fn post_inc<T: From<u8> + AddAssign<T> + Copy>(value: &mut T) -> T {
@@ -335,9 +516,7 @@ pub fn load_login_shell_environment() -> Result<()> {
     )
     .output()
     .context("failed to spawn login shell to source login environment variables")?;
-    if !output.status.success() {
-        Err(anyhow!("login shell exited with error"))?;
-    }
+    anyhow::ensure!(output.status.success(), "login shell exited with error");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -399,6 +578,31 @@ pub fn parse_env_output(env: &str, mut f: impl FnMut(String, String)) {
     }
     if let Some((key, value)) = Option::zip(current_key.take(), current_value.take()) {
         f(key, value)
+    }
+}
+
+pub fn merge_json_lenient_value_into(
+    source: serde_json_lenient::Value,
+    target: &mut serde_json_lenient::Value,
+) {
+    match (source, target) {
+        (serde_json_lenient::Value::Object(source), serde_json_lenient::Value::Object(target)) => {
+            for (key, value) in source {
+                if let Some(target) = target.get_mut(&key) {
+                    merge_json_lenient_value_into(value, target);
+                } else {
+                    target.insert(key, value);
+                }
+            }
+        }
+
+        (serde_json_lenient::Value::Array(source), serde_json_lenient::Value::Array(target)) => {
+            for value in source {
+                target.push(value);
+            }
+        }
+
+        (source, target) => *target = source,
     }
 }
 
@@ -1009,6 +1213,28 @@ pub fn word_consists_of_emojis(s: &str) -> bool {
     prev_end == s.len()
 }
 
+/// Similar to `str::split`, but also provides byte-offset ranges of the results. Unlike
+/// `str::split`, this is not generic on pattern types and does not return an `Iterator`.
+pub fn split_str_with_ranges(s: &str, pat: impl Fn(char) -> bool) -> Vec<(Range<usize>, &str)> {
+    let mut result = Vec::new();
+    let mut start = 0;
+
+    for (i, ch) in s.char_indices() {
+        if pat(ch) {
+            if i > start {
+                result.push((start..i, &s[start..i]));
+            }
+            start = i + ch.len_utf8();
+        }
+    }
+
+    if s.len() > start {
+        result.push((start..s.len(), &s[start..s.len()]));
+    }
+
+    result
+}
+
 pub fn default<D: Default>() -> D {
     Default::default()
 }
@@ -1277,5 +1503,178 @@ Line 3"#
             iterate_expanded_and_wrapped_usize_range(3..5, 4, 4, 8).collect::<Vec<usize>>(),
             (0..8).collect::<Vec<usize>>()
         );
+    }
+
+    #[test]
+    fn test_truncate_lines_to_byte_limit() {
+        let text = "Line 1\nLine 2\nLine 3\nLine 4";
+
+        // Limit that includes all lines
+        assert_eq!(truncate_lines_to_byte_limit(text, 100), text);
+
+        // Exactly the first line
+        assert_eq!(truncate_lines_to_byte_limit(text, 7), "Line 1\n");
+
+        // Limit between lines
+        assert_eq!(truncate_lines_to_byte_limit(text, 13), "Line 1\n");
+        assert_eq!(truncate_lines_to_byte_limit(text, 20), "Line 1\nLine 2\n");
+
+        // Limit before first newline
+        assert_eq!(truncate_lines_to_byte_limit(text, 6), "Line ");
+
+        // Test with non-ASCII characters
+        let text_utf8 = "Line 1\nLíne 2\nLine 3";
+        assert_eq!(
+            truncate_lines_to_byte_limit(text_utf8, 15),
+            "Line 1\nLíne 2\n"
+        );
+    }
+
+    #[test]
+    fn test_string_size_with_expanded_tabs() {
+        let nz = |val| NonZeroU32::new(val).unwrap();
+        assert_eq!(char_len_with_expanded_tabs(0, "", nz(4)), 0);
+        assert_eq!(char_len_with_expanded_tabs(0, "hello", nz(4)), 5);
+        assert_eq!(char_len_with_expanded_tabs(0, "\thello", nz(4)), 9);
+        assert_eq!(char_len_with_expanded_tabs(0, "abc\tab", nz(4)), 6);
+        assert_eq!(char_len_with_expanded_tabs(0, "hello\t", nz(4)), 8);
+        assert_eq!(char_len_with_expanded_tabs(0, "\t\t", nz(8)), 16);
+        assert_eq!(char_len_with_expanded_tabs(0, "x\t", nz(8)), 8);
+        assert_eq!(char_len_with_expanded_tabs(7, "x\t", nz(8)), 9);
+    }
+
+    #[test]
+    fn test_word_breaking_tokenizer() {
+        let tests: &[(&str, &[WordBreakToken<'static>])] = &[
+            ("", &[]),
+            ("  ", &[whitespace("  ", 2)]),
+            ("Ʒ", &[word("Ʒ", 1)]),
+            ("Ǽ", &[word("Ǽ", 1)]),
+            ("⋑", &[word("⋑", 1)]),
+            ("⋑⋑", &[word("⋑⋑", 2)]),
+            (
+                "原理，进而",
+                &[word("原", 1), word("理，", 2), word("进", 1), word("而", 1)],
+            ),
+            (
+                "hello world",
+                &[word("hello", 5), whitespace(" ", 1), word("world", 5)],
+            ),
+            (
+                "hello, world",
+                &[word("hello,", 6), whitespace(" ", 1), word("world", 5)],
+            ),
+            (
+                "  hello world",
+                &[
+                    whitespace("  ", 2),
+                    word("hello", 5),
+                    whitespace(" ", 1),
+                    word("world", 5),
+                ],
+            ),
+            (
+                "这是什么 \n 钢笔",
+                &[
+                    word("这", 1),
+                    word("是", 1),
+                    word("什", 1),
+                    word("么", 1),
+                    whitespace(" ", 1),
+                    newline(),
+                    whitespace(" ", 1),
+                    word("钢", 1),
+                    word("笔", 1),
+                ],
+            ),
+            (" mutton", &[whitespace(" ", 1), word("mutton", 6)]),
+        ];
+
+        fn word(token: &'static str, grapheme_len: usize) -> WordBreakToken<'static> {
+            WordBreakToken::Word {
+                token,
+                grapheme_len,
+            }
+        }
+
+        fn whitespace(token: &'static str, grapheme_len: usize) -> WordBreakToken<'static> {
+            WordBreakToken::InlineWhitespace {
+                token,
+                grapheme_len,
+            }
+        }
+
+        fn newline() -> WordBreakToken<'static> {
+            WordBreakToken::Newline
+        }
+
+        for (input, result) in tests {
+            assert_eq!(
+                WordBreakingTokenizer::new(input)
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+                *result,
+            );
+        }
+    }
+
+    #[test]
+    fn test_wrap_with_prefix() {
+        assert_eq!(
+            wrap_with_prefix(
+                "# ".to_string(),
+                "abcdefg".to_string(),
+                4,
+                NonZeroU32::new(4).unwrap(),
+                false,
+            ),
+            "# abcdefg"
+        );
+        assert_eq!(
+            wrap_with_prefix(
+                "".to_string(),
+                "\thello world".to_string(),
+                8,
+                NonZeroU32::new(4).unwrap(),
+                false,
+            ),
+            "hello\nworld"
+        );
+        assert_eq!(
+            wrap_with_prefix(
+                "// ".to_string(),
+                "xx \nyy zz aa bb cc".to_string(),
+                12,
+                NonZeroU32::new(4).unwrap(),
+                false,
+            ),
+            "// xx yy zz\n// aa bb cc"
+        );
+        assert_eq!(
+            wrap_with_prefix(
+                String::new(),
+                "这是什么 \n 钢笔".to_string(),
+                3,
+                NonZeroU32::new(4).unwrap(),
+                false,
+            ),
+            "这是什\n么 钢\n笔"
+        );
+    }
+
+    #[test]
+    fn test_split_with_ranges() {
+        let input = "hi";
+        let result = split_str_with_ranges(input, |c| c == ' ');
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], (0..2, "hi"));
+
+        let input = "héllo🦀world";
+        let result = split_str_with_ranges(input, |c| c == '🦀');
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], (0..6, "héllo")); // 'é' is 2 bytes
+        assert_eq!(result[1], (10..15, "world")); // '🦀' is 4 bytes
     }
 }

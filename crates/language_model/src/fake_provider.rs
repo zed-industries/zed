@@ -157,6 +157,10 @@ impl LanguageModel for FakeLanguageModel {
         false
     }
 
+    fn supports_images(&self) -> bool {
+        false
+    }
+
     fn telemetry_id(&self) -> String {
         "fake".to_string()
     }

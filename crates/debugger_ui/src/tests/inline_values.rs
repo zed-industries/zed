@@ -1,7 +1,7 @@
 use std::{path::Path, sync::Arc};
 
 use dap::{Scope, StackFrame, Variable, requests::Variables};
-use editor::{Editor, EditorMode, MultiBuffer, actions::ToggleInlineValues};
+use editor::{Editor, EditorMode, MultiBuffer};
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_python, tree_sitter_rust};
 use project::{FakeFs, Project};
@@ -239,11 +239,7 @@ fn main() {
     });
     cx.run_until_parked();
 
-    editor.update_in(cx, |editor, window, cx| {
-        if !editor.inline_values_enabled() {
-            editor.toggle_inline_values(&ToggleInlineValues, window, cx);
-        }
-    });
+    editor.update(cx, |editor, cx| editor.refresh_inline_values(cx));
 
     cx.run_until_parked();
 
@@ -1604,11 +1600,7 @@ def process_data(untyped_param, typed_param: int, another_typed: str):
         )
     });
 
-    editor.update_in(cx, |editor, window, cx| {
-        if !editor.inline_values_enabled() {
-            editor.toggle_inline_values(&ToggleInlineValues, window, cx);
-        }
-    });
+    editor.update(cx, |editor, cx| editor.refresh_inline_values(cx));
 
     client.on_request::<dap::requests::Threads, _>(move |_, _| {
         Ok(dap::ThreadsResponse {

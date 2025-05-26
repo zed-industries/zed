@@ -4,7 +4,7 @@
 mod reliability;
 mod zed;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use clap::{Parser, command};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{Client, ProxySettings, UserStore, parse_zed_link};
@@ -217,7 +217,7 @@ fn main() {
 
     let app_version = AppVersion::load(env!("CARGO_PKG_VERSION"));
     let app_commit_sha =
-        option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha(commit_sha.to_string()));
+        option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha::new(commit_sha.to_string()));
 
     if args.system_specs {
         let system_specs = feedback::system_specs::SystemSpecs::new_stateless(
@@ -294,6 +294,11 @@ fn main() {
         fs.clone(),
         paths::settings_file().clone(),
     );
+    let global_settings_file_rx = watch_config_file(
+        &app.background_executor(),
+        fs.clone(),
+        paths::global_settings_file().clone(),
+    );
     let user_keymap_file_rx = watch_config_file(
         &app.background_executor(),
         fs.clone(),
@@ -309,6 +314,8 @@ fn main() {
                 shell_env_loaded_tx.send(()).ok();
             })
             .detach()
+    } else {
+        drop(shell_env_loaded_tx)
     }
 
     app.on_open_urls({
@@ -338,7 +345,12 @@ fn main() {
         }
         settings::init(cx);
         zlog_settings::init(cx);
-        handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
+        handle_settings_file_changes(
+            user_settings_file_rx,
+            global_settings_file_rx,
+            cx,
+            handle_settings_changed,
+        );
         handle_keymap_file_changes(user_keymap_file_rx, cx);
         client::init_settings(cx);
         let user_agent = format!(
@@ -407,6 +419,7 @@ fn main() {
         .detach();
         let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
 
+        debug_adapter_extension::init(extension_host_proxy.clone(), cx);
         language::init(cx);
         language_extension::init(extension_host_proxy.clone(), languages.clone());
         languages::init(languages.clone(), node_runtime.clone(), cx);
@@ -506,6 +519,7 @@ fn main() {
             app_state.client.clone(),
             prompt_builder.clone(),
             app_state.languages.clone(),
+            false,
             cx,
         );
         assistant_tools::init(app_state.client.http_client(), cx);
@@ -553,12 +567,14 @@ fn main() {
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
         git_ui::init(cx);
+        jj_ui::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
         welcome::init(cx);
         settings_ui::init(cx);
         extensions_ui::init(cx);
         zeta::init(cx);
+        inspector_ui::init(app_state.clone(), cx);
 
         cx.observe_global::<SettingsStore>({
             let fs = fs.clone();
@@ -1059,7 +1075,7 @@ fn parse_url_arg(arg: &str, cx: &App) -> Result<String> {
             {
                 Ok(arg.into())
             } else {
-                Err(anyhow!("error parsing path argument: {}", error))
+                anyhow::bail!("error parsing path argument: {error}")
             }
         }
     }

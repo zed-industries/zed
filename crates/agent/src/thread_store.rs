@@ -19,7 +19,7 @@ use gpui::{
 };
 use heed::Database;
 use heed::types::SerdeBincode;
-use language_model::{LanguageModelToolUseId, Role, TokenUsage};
+use language_model::{LanguageModelToolResultContent, LanguageModelToolUseId, Role, TokenUsage};
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
@@ -386,6 +386,25 @@ impl ThreadStore {
         })
     }
 
+    pub fn create_thread_from_serialized(
+        &mut self,
+        serialized: SerializedThread,
+        cx: &mut Context<Self>,
+    ) -> Entity<Thread> {
+        cx.new(|cx| {
+            Thread::deserialize(
+                ThreadId::new(),
+                serialized,
+                self.project.clone(),
+                self.tools.clone(),
+                self.prompt_builder.clone(),
+                self.project_context.clone(),
+                None,
+                cx,
+            )
+        })
+    }
+
     pub fn open_thread(
         &self,
         id: &ThreadId,
@@ -400,7 +419,7 @@ impl ThreadStore {
             let thread = database
                 .try_find_thread(id.clone())
                 .await?
-                .ok_or_else(|| anyhow!("no thread found with ID: {id:?}"))?;
+                .with_context(|| format!("no thread found with ID: {id:?}"))?;
 
             let thread = this.update_in(cx, |this, window, cx| {
                 cx.new(|cx| {
@@ -411,7 +430,7 @@ impl ThreadStore {
                         this.tools.clone(),
                         this.prompt_builder.clone(),
                         this.project_context.clone(),
-                        window,
+                        Some(window),
                         cx,
                     )
                 })
@@ -680,20 +699,14 @@ impl SerializedThread {
                 SerializedThread::VERSION => Ok(serde_json::from_value::<SerializedThread>(
                     saved_thread_json,
                 )?),
-                _ => Err(anyhow!(
-                    "unrecognized serialized thread version: {}",
-                    version
-                )),
+                _ => anyhow::bail!("unrecognized serialized thread version: {version:?}"),
             },
             None => {
                 let saved_thread =
                     serde_json::from_value::<LegacySerializedThread>(saved_thread_json)?;
                 Ok(saved_thread.upgrade())
             }
-            version => Err(anyhow!(
-                "unrecognized serialized thread version: {:?}",
-                version
-            )),
+            version => anyhow::bail!("unrecognized serialized thread version: {version:?}"),
         }
     }
 }
@@ -775,7 +788,7 @@ pub struct SerializedToolUse {
 pub struct SerializedToolResult {
     pub tool_use_id: LanguageModelToolUseId,
     pub is_error: bool,
-    pub content: Arc<str>,
+    pub content: LanguageModelToolResultContent,
     pub output: Option<serde_json::Value>,
 }
 
