@@ -1939,7 +1939,7 @@ impl EditorElement {
 
     fn layout_inline_code_actions(
         &self,
-        display_row: DisplayRow,
+        display_point: DisplayPoint,
         content_origin: gpui::Point<Pixels>,
         scroll_pixel_position: gpui::Point<Pixels>,
         line_height: Pixels,
@@ -1966,7 +1966,7 @@ impl EditorElement {
             };
             button = editor.render_inline_code_actions(
                 icon_size.clone(),
-                display_row.clone(),
+                display_point.row(),
                 active,
                 cx,
             );
@@ -1978,7 +1978,7 @@ impl EditorElement {
 
         let buffer_point = snapshot
             .display_snapshot
-            .display_point_to_point(DisplayPoint::new(display_row, 0), text::Bias::Left);
+            .display_point_to_point(display_point, text::Bias::Left);
 
         if let Some((buffer_snapshot, line_range)) = snapshot
             .display_snapshot
@@ -2016,21 +2016,27 @@ impl EditorElement {
                 return false;
             }
 
+            if buffer_point.row == row_candidate && buffer_point.column < OVERLFOW_CHAR_LIMIT {
+                return false;
+            }
+
             if let Some((buffer_snapshot, line_range)) = snapshot
                 .display_snapshot
                 .buffer_snapshot
                 .buffer_line_for_row(MultiBufferRow(row_candidate))
             {
-                let line_start = line_range.start;
                 let line_indent = text::LineIndent::from_iter(
                     buffer_snapshot
-                        .text_for_range(line_range)
+                        .text_for_range(line_range.clone())
                         .flat_map(|chunk| chunk.chars()),
                 );
                 if line_indent.is_line_blank() {
                     true
                 } else {
-                    let tab_size = buffer_snapshot.settings_at(line_start, cx).tab_size.get();
+                    let tab_size = buffer_snapshot
+                        .settings_at(line_range.start, cx)
+                        .tab_size
+                        .get();
                     line_indent.len(tab_size) >= OVERLFOW_CHAR_LIMIT
                 }
             } else {
@@ -8150,18 +8156,13 @@ impl Element for EditorElement {
                         if (start_row..end_row).contains(&display_row)
                             && !row_block_types.contains_key(&display_row)
                         {
-                            let line_ix = display_row.minus(start_row) as usize;
-                            let row_info = &row_infos[line_ix];
-                            let line_layout = &line_layouts[line_ix];
-                            let crease_trailer_layout = crease_trailers[line_ix].as_ref();
-
                             let show_inline_code_actions = snapshot
                                 .show_code_actions
                                 .unwrap_or(EditorSettings::get_global(cx).inline_code_actions);
 
                             if show_inline_code_actions {
                                 inline_code_actions = self.layout_inline_code_actions(
-                                    display_row,
+                                    newest_selection_head,
                                     content_origin,
                                     scroll_pixel_position,
                                     line_height,
@@ -8170,6 +8171,11 @@ impl Element for EditorElement {
                                     cx,
                                 );
                             }
+
+                            let line_ix = display_row.minus(start_row) as usize;
+                            let row_info = &row_infos[line_ix];
+                            let line_layout = &line_layouts[line_ix];
+                            let crease_trailer_layout = crease_trailers[line_ix].as_ref();
 
                             inline_blame = self.layout_inline_blame(
                                 display_row,
