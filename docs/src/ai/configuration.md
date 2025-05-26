@@ -460,7 +460,7 @@ However, you can change it either via the model dropdown in the Agent Panel's bo
 
 ```json
 {
-  "assistant": {
+  "agent": {
     "version": "2",
     "default_model": {
       "provider": "zed.dev",
@@ -484,7 +484,7 @@ Example configuration:
 
 ```json
 {
-  "assistant": {
+  "agent": {
     "version": "2",
     "default_model": {
       "provider": "zed.dev",
@@ -517,7 +517,7 @@ One with Claude 3.7 Sonnet, and one with GPT-4o.
 
 ```json
 {
-  "assistant": {
+  "agent": {
     "default_model": {
       "provider": "zed.dev",
       "model": "claude-3-7-sonnet"
@@ -529,6 +529,19 @@ One with Claude 3.7 Sonnet, and one with GPT-4o.
       }
     ],
     "version": "2"
+  }
+}
+```
+
+## Default View
+
+Use the `default_view` setting to set change the default view of the Agent Panel.
+You can choose between `thread` (the default) and `text_thread`:
+
+```json
+{
+  "agent": {
+    "default_view": "text_thread".
   }
 }
 ```
