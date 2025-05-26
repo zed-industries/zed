@@ -6601,8 +6601,7 @@ impl Editor {
                 }
 
                 // Store the transaction ID and selections before applying the edit
-                let transaction_id_prev =
-                    self.buffer.read_with(cx, |b, cx| b.last_transaction_id(cx));
+                let transaction_id_prev = self.buffer.read(cx).last_transaction_id(cx);
 
                 let snapshot = self.buffer.read(cx).snapshot(cx);
                 let last_edit_end = edits.last().unwrap().0.end.bias_right(&snapshot);
@@ -6616,9 +6615,7 @@ impl Editor {
                 });
 
                 let selections = self.selections.disjoint_anchors();
-                if let Some(transaction_id_now) =
-                    self.buffer.read_with(cx, |b, cx| b.last_transaction_id(cx))
-                {
+                if let Some(transaction_id_now) = self.buffer.read(cx).last_transaction_id(cx) {
                     let has_new_transaction = transaction_id_prev != Some(transaction_id_now);
                     if has_new_transaction {
                         self.selection_history
@@ -7114,9 +7111,10 @@ impl Editor {
         for (buffer_snapshot, range, excerpt_id) in
             multi_buffer_snapshot.range_to_buffer_ranges(range)
         {
-            let Some(buffer) = project.read_with(cx, |this, cx| {
-                this.buffer_for_id(buffer_snapshot.remote_id(), cx)
-            }) else {
+            let Some(buffer) = project
+                .read(cx)
+                .buffer_for_id(buffer_snapshot.remote_id(), cx)
+            else {
                 continue;
             };
             let breakpoints = breakpoint_store.read(cx).breakpoints(
@@ -9724,7 +9722,7 @@ impl Editor {
         })?;
 
         let enclosing_excerpt = breakpoint_position.excerpt_id;
-        let buffer = project.read_with(cx, |project, cx| project.buffer_for_id(buffer_id, cx))?;
+        let buffer = project.read(cx).buffer_for_id(buffer_id, cx)?;
         let buffer_snapshot = buffer.read(cx).snapshot();
 
         let row = buffer_snapshot
@@ -15153,7 +15151,7 @@ impl Editor {
             }
         };
 
-        let transaction_id_prev = buffer.read_with(cx, |b, cx| b.last_transaction_id(cx));
+        let transaction_id_prev = buffer.read(cx).last_transaction_id(cx);
         let selections_prev = transaction_id_prev
             .and_then(|transaction_id_prev| {
                 // default to selections as they were after the last edit, if we have them,
@@ -19516,9 +19514,7 @@ impl CollaborationHub for Entity<Project> {
     fn user_names(&self, cx: &App) -> HashMap<u64, SharedString> {
         let this = self.read(cx);
         let user_ids = this.collaborators().values().map(|c| c.user_id);
-        this.user_store().read_with(cx, |user_store, cx| {
-            user_store.participant_names(user_ids, cx)
-        })
+        this.user_store().read(cx).participant_names(user_ids, cx)
     }
 }
 

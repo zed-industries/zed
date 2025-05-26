@@ -842,9 +842,10 @@ impl LspLogView {
     ) {
         let typ = self
             .log_store
-            .read_with(cx, |v, _| {
-                v.language_servers.get(&server_id).map(|v| v.log_level)
-            })
+            .read(cx)
+            .language_servers
+            .get(&server_id)
+            .map(|v| v.log_level)
             .unwrap_or(MessageType::LOG);
         let log_contents = self
             .log_store

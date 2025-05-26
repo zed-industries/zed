@@ -222,9 +222,8 @@ impl LocalMode {
     ) -> Task<()> {
         let breakpoints =
             breakpoint_store
-                .read_with(cx, |store, cx| {
-                    store.source_breakpoints_from_path(&abs_path, cx)
-                })
+                .read(cx)
+                .source_breakpoints_from_path(&abs_path, cx)
                 .into_iter()
                 .filter(|bp| bp.state.is_enabled())
                 .chain(self.tmp_breakpoint.iter().filter_map(|breakpoint| {
@@ -303,8 +302,7 @@ impl LocalMode {
         cx: &App,
     ) -> Task<HashMap<Arc<Path>, anyhow::Error>> {
         let mut breakpoint_tasks = Vec::new();
-        let breakpoints =
-            breakpoint_store.read_with(cx, |store, cx| store.all_source_breakpoints(cx));
+        let breakpoints = breakpoint_store.read(cx).all_source_breakpoints(cx);
         let mut raw_breakpoints = breakpoint_store.read_with(cx, |this, _| this.all_breakpoints());
         debug_assert_eq!(raw_breakpoints.len(), breakpoints.len());
         let session_id = self.client.id();
