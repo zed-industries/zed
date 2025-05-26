@@ -218,7 +218,7 @@ impl SyntaxTreeView {
         let descendant_ix = cursor.descendant_index();
         self.selected_descendant_ix = Some(descendant_ix);
         self.list_scroll_handle
-            .scroll_to_item(descendant_ix, ScrollStrategy::Center);
+            .scroll_item_onscreen(descendant_ix, ScrollStrategy::Center);
 
         cx.notify();
         Some(())

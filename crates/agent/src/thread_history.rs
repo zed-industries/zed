@@ -362,7 +362,7 @@ impl ThreadHistory {
         };
 
         self.scroll_handle
-            .scroll_to_item(scroll_ix, ScrollStrategy::Top);
+            .scroll_item_onscreen(scroll_ix, ScrollStrategy::Top);
 
         cx.notify();
     }

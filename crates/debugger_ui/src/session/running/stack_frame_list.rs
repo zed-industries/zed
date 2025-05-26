@@ -559,7 +559,7 @@ impl StackFrameList {
         self.selected_ix = ix;
         if let Some(ix) = self.selected_ix {
             self.scroll_handle
-                .scroll_to_item(ix, ScrollStrategy::Center);
+                .scroll_item_onscreen(ix, ScrollStrategy::Center);
         }
         cx.notify();
     }

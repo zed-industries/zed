@@ -709,6 +709,21 @@
     }
   },
   {
+    "context": "(GitPanel || ProjectPanel || CollabPanel || OutlinePanel || ChatPanel || VimControl || EmptyPane || SharedScreen || MarkdownPreview || KeyContextView || DebugPanel) && not_editing",
+    "bindings": {
+      "0": ["vim::WorkspaceNumber", 0],
+      "1": ["vim::WorkspaceNumber", 1],
+      "2": ["vim::WorkspaceNumber", 2],
+      "3": ["vim::WorkspaceNumber", 3],
+      "4": ["vim::WorkspaceNumber", 4],
+      "5": ["vim::WorkspaceNumber", 5],
+      "6": ["vim::WorkspaceNumber", 6],
+      "7": ["vim::WorkspaceNumber", 7],
+      "8": ["vim::WorkspaceNumber", 8],
+      "9": ["vim::WorkspaceNumber", 9]
+    }
+  },
+  {
     "context": "GitPanel || ProjectPanel || CollabPanel || OutlinePanel || ChatPanel || VimControl || EmptyPane || SharedScreen || MarkdownPreview || KeyContextView || DebugPanel",
     "bindings": {
       // window related commands (ctrl-w X)
@@ -784,8 +799,8 @@
       "enter": "project_panel::OpenPermanent",
       "escape": "project_panel::ToggleFocus",
       "h": "project_panel::CollapseSelectedEntry",
-      "j": "menu::SelectNext",
-      "k": "menu::SelectPrevious",
+      "j": "vim::MenuSelectNext",
+      "k": "vim::MenuSelectPrevious",
       "l": "project_panel::ExpandSelectedEntry",
       "o": "project_panel::OpenPermanent",
       "shift-d": "project_panel::Delete",
@@ -803,7 +818,12 @@
       "{": "project_panel::SelectPrevDirectory",
       "shift-g": "menu::SelectLast",
       "g g": "menu::SelectFirst",
-      "-": "project_panel::SelectParent"
+      "-": "project_panel::SelectParent",
+      "ctrl-u": "project_panel::ScrollUp",
+      "ctrl-d": "project_panel::ScrollDown",
+      "z t": "project_panel::ScrollCursorTop",
+      "z z": "project_panel::ScrollCursorCenter",
+      "z b": "project_panel::ScrollCursorBottom"
     }
   },
   {

@@ -17242,6 +17242,7 @@ dependencies = [
  "language",
  "log",
  "lsp",
+ "menu",
  "multi_buffer",
  "nvim-rs",
  "parking_lot",
