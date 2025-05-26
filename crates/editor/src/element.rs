@@ -6342,10 +6342,15 @@ impl EditorElement {
             let base_scroll_sensitivity =
                 EditorSettings::get_global(cx).scroll_sensitivity.max(0.01);
 
+            // Use a minimum fast_scroll_sensitivity for same reason above
+            let fast_scroll_sensitivity = EditorSettings::get_global(cx)
+                .fast_scroll_sensitivity
+                .max(0.01);
+
             move |event: &ScrollWheelEvent, phase, window, cx| {
                 let scroll_sensitivity = {
                     if event.modifiers.alt {
-                        base_scroll_sensitivity * 4.0
+                        fast_scroll_sensitivity
                     } else {
                         base_scroll_sensitivity
                     }
