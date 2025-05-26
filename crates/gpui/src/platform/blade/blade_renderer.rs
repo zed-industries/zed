@@ -6,7 +6,7 @@ use crate::{
     Background, Bounds, ContentMask, DevicePixels, GpuSpecs, MonochromeSprite, PathVertex,
     PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Underline,
 };
-use blade_graphics as gpu;
+use blade_graphics::{self as gpu, DrawIndirectArgs};
 use blade_util::{BufferBelt, BufferBeltDescriptor};
 use bytemuck::{Pod, Zeroable};
 #[cfg(target_os = "macos")]
@@ -604,40 +604,52 @@ impl BladeRenderer {
                     }
                     PrimitiveBatch::Paths(paths) => {
                         let mut encoder = pass.with(&self.pipelines.paths);
-                        for path in paths {
-                            let sprites = [PathSprite {
-                                bounds: path
-                                    .bounds
-                                    .map_origin(|origin| origin.floor())
-                                    .map_size(|size| size.ceil()),
-                                color: path.color,
-                            }];
 
-                            let vertices = path
-                                .vertices
-                                .iter()
-                                .map(|v| PathVertex {
-                                    xy_position: v.xy_position,
-                                    content_mask: ContentMask {
-                                        bounds: path.content_mask.bounds,
-                                    },
-                                })
-                                .collect::<Vec<_>>();
+                        let mut vertices = Vec::new();
+                        let mut sprites = Vec::with_capacity(paths.len());
+                        let mut draw_indirect_commands = Vec::with_capacity(paths.len());
+                        let mut first_vertex = 0;
 
-                            let b_path_vertices =
-                                unsafe { self.instance_belt.alloc_typed(&vertices, &self.gpu) };
-                            let instance_buf =
-                                unsafe { self.instance_belt.alloc_typed(&sprites, &self.gpu) };
-                            encoder.bind(
-                                0,
-                                &ShaderPathsData {
-                                    globals,
-                                    b_path_vertices,
-                                    b_path_sprites: instance_buf,
+                        for (i, path) in paths.iter().enumerate() {
+                            draw_indirect_commands.push(DrawIndirectArgs {
+                                vertex_count: path.vertices.len() as u32,
+                                instance_count: 1,
+                                first_vertex,
+                                first_instance: i as u32,
+                            });
+                            first_vertex += path.vertices.len() as u32;
+
+                            vertices.extend(path.vertices.iter().map(|v| PathVertex {
+                                xy_position: v.xy_position,
+                                content_mask: ContentMask {
+                                    bounds: path.content_mask.bounds,
                                 },
-                            );
-                            encoder.draw(0, vertices.len() as u32, 0, sprites.len() as u32);
+                            }));
+
+                            sprites.push(PathSprite {
+                                bounds: path.bounds,
+                                color: path.color,
+                            });
                         }
+
+                        let b_path_vertices =
+                            unsafe { self.instance_belt.alloc_typed(&vertices, &self.gpu) };
+                        let instance_buf =
+                            unsafe { self.instance_belt.alloc_typed(&sprites, &self.gpu) };
+                        let indirect_buf = unsafe {
+                            self.instance_belt
+                                .alloc_typed(&draw_indirect_commands, &self.gpu)
+                        };
+
+                        encoder.bind(
+                            0,
+                            &ShaderPathsData {
+                                globals,
+                                b_path_vertices,
+                                b_path_sprites: instance_buf,
+                            },
+                        );
+                        encoder.draw_indirect(indirect_buf, paths.len() as u32);
                     }
                     PrimitiveBatch::Underlines(underlines) => {
                         let instance_buf =

@@ -151,8 +151,6 @@ impl PaintingViewer {
                 px(320.0 + (i as f32 * 10.0).sin() * 40.0),
             ));
         }
-        let path = builder.build().unwrap();
-        lines.push((path, gpui::green().into()));
 
         Self {
             default_lines: lines.clone(),
@@ -186,9 +184,10 @@ fn button(
         .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)))
 }
 
-th::scale` to return Self to used to give a base scale.)
 impl Render for PaintingViewer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        window.request_animation_frame();
+
         let default_lines = self.default_lines.clone();
         let lines = self.lines.clone();
         let window_size = window.bounds().size;
@@ -229,7 +228,7 @@ impl Render for PaintingViewer {
                             move |_, _, _| {},
                             move |_, _, window, _| {
                                 for (path, color) in default_lines {
-                                    window.paint_path(path.scale(scale), color);
+                                    window.paint_path(path.clone().scale(scale), color);
                                 }
 
                                 for points in lines {
