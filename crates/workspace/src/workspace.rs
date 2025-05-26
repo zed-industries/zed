@@ -3344,17 +3344,38 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(&target_pane) = self.center.panes().get(action.destination) else {
-            return;
+        let panes = self.center.panes();
+        let destination = match panes.get(action.destination) {
+            Some(&destination) => destination.clone(),
+            None => {
+                if self.active_pane.read(cx).items_len() < 2 {
+                    return;
+                }
+                let direction = SplitDirection::Right;
+                let split_off_pane = self
+                    .find_pane_in_direction(direction, cx)
+                    .unwrap_or_else(|| self.active_pane.clone());
+                let new_pane = self.add_pane(window, cx);
+                if self
+                    .center
+                    .split(&split_off_pane, &new_pane, direction)
+                    .log_err()
+                    .is_none()
+                {
+                    return;
+                };
+                new_pane
+            }
         };
+
         move_active_item(
             &self.active_pane,
-            target_pane,
+            &destination,
             action.focus,
             true,
             window,
             cx,
-        );
+        )
     }
 
     pub fn activate_next_pane(&mut self, window: &mut Window, cx: &mut App) {
@@ -3486,18 +3507,35 @@ impl Workspace {
         &mut self,
         action: &MoveItemToPaneInDirection,
         window: &mut Window,
-        cx: &mut App,
+        cx: &mut Context<Self>,
     ) {
-        if let Some(destination) = self.find_pane_in_direction(action.direction, cx) {
-            move_active_item(
-                &self.active_pane,
-                &destination,
-                action.focus,
-                true,
-                window,
-                cx,
-            );
-        }
+        let destination = match self.find_pane_in_direction(action.direction, cx) {
+            Some(destination) => destination,
+            None => {
+                if self.active_pane.read(cx).items_len() < 2 {
+                    return;
+                }
+                let new_pane = self.add_pane(window, cx);
+                if self
+                    .center
+                    .split(&self.active_pane, &new_pane, action.direction)
+                    .log_err()
+                    .is_none()
+                {
+                    return;
+                };
+                new_pane
+            }
+        };
+
+        move_active_item(
+            &self.active_pane,
+            &destination,
+            action.focus,
+            true,
+            window,
+            cx,
+        );
     }
 
     pub fn bounding_box_for_pane(&self, pane: &Entity<Pane>) -> Option<Bounds<Pixels>> {
