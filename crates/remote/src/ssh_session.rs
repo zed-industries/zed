@@ -1721,10 +1721,11 @@ impl SshRemoteConnection {
             std::process::id()
         ));
 
+        let build_remote_server = std::env::var("ZED_BUILD_REMOTE_SERVER").ok();
         #[cfg(debug_assertions)]
-        if std::env::var("ZED_BUILD_REMOTE_SERVER").is_ok() {
+        if let Some(build_remote_server) = build_remote_server {
             let src_path = self
-                .build_local(self.platform().await?, delegate, cx)
+                .build_local(build_remote_server, self.platform().await?, delegate, cx)
                 .await?;
             self.upload_local_server_binary(&src_path, &tmp_path_gz, delegate, cx)
                 .await?;
@@ -1948,6 +1949,7 @@ impl SshRemoteConnection {
     #[cfg(debug_assertions)]
     async fn build_local(
         &self,
+        build_remote_server: String,
         platform: SshPlatform,
         delegate: &Arc<dyn SshClientDelegate>,
         cx: &mut AsyncApp,
@@ -1998,43 +2000,65 @@ impl SshRemoteConnection {
         };
         smol::fs::create_dir_all("target/remote_server").await?;
 
-        delegate.set_status(Some("Installing cross.rs for cross-compilation"), cx);
-        log::info!("installing cross");
-        run_cmd(Command::new("cargo").args([
-            "install",
-            "cross",
-            "--git",
-            "https://github.com/cross-rs/cross",
-        ]))
-        .await?;
+        if build_remote_server == "zigbuild" {
+            delegate.set_status(
+                Some(&format!(
+                    "Building remote binary from source for {triple} with Zig"
+                )),
+                cx,
+            );
+            log::info!("building remote binary from source for {triple} with Zig");
+            run_cmd(Command::new("cargo").args([
+                "zigbuild",
+                "--package",
+                "remote_server",
+                "--features",
+                "debug-embed",
+                "--target-dir",
+                "target/remote_server",
+                "--target",
+                &triple,
+            ]))
+            .await?;
+        } else {
+            delegate.set_status(Some("Installing cross.rs for cross-compilation"), cx);
+            log::info!("installing cross");
+            run_cmd(Command::new("cargo").args([
+                "install",
+                "cross",
+                "--git",
+                "https://github.com/cross-rs/cross",
+            ]))
+            .await?;
 
-        delegate.set_status(
-            Some(&format!(
-                "Building remote server binary from source for {} with Docker",
-                &triple
-            )),
-            cx,
-        );
-        log::info!("building remote server binary from source for {}", &triple);
-        run_cmd(
-            Command::new("cross")
-                .args([
-                    "build",
-                    "--package",
-                    "remote_server",
-                    "--features",
-                    "debug-embed",
-                    "--target-dir",
-                    "target/remote_server",
-                    "--target",
-                    &triple,
-                ])
-                .env(
-                    "CROSS_CONTAINER_OPTS",
-                    "--mount type=bind,src=./target,dst=/app/target",
-                ),
-        )
-        .await?;
+            delegate.set_status(
+                Some(&format!(
+                    "Building remote server binary from source for {} with Docker",
+                    &triple
+                )),
+                cx,
+            );
+            log::info!("building remote server binary from source for {}", &triple);
+            run_cmd(
+                Command::new("cross")
+                    .args([
+                        "build",
+                        "--package",
+                        "remote_server",
+                        "--features",
+                        "debug-embed",
+                        "--target-dir",
+                        "target/remote_server",
+                        "--target",
+                        &triple,
+                    ])
+                    .env(
+                        "CROSS_CONTAINER_OPTS",
+                        "--mount type=bind,src=./target,dst=/app/target",
+                    ),
+            )
+            .await?;
+        }
 
         delegate.set_status(Some("Compressing binary"), cx);
 
