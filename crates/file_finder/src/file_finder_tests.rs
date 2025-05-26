@@ -206,6 +206,9 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
 
     for bandana_query in [
         "bandana",
+        "./bandana",
+        "a/bandana",
+        "b/bandana",
         " bandana",
         "bandana ",
         " bandana ",

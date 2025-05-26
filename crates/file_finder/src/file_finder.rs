@@ -1172,6 +1172,48 @@ impl PickerDelegate for FileFinderDelegate {
     ) -> Task<()> {
         let raw_query = raw_query.replace(' ', "");
         let raw_query = raw_query.trim();
+
+        let raw_query = match &raw_query.get(0..2) {
+            Some("./") => &raw_query[2..],
+            Some("a/") => {
+                if self
+                    .workspace
+                    .upgrade()
+                    .into_iter()
+                    .flat_map(|workspace| workspace.read(cx).worktrees(cx))
+                    .all(|worktree| {
+                        worktree
+                            .read(cx)
+                            .entry_for_path(Path::new("a"))
+                            .is_none_or(|entry| !entry.is_dir())
+                    })
+                {
+                    &raw_query[2..]
+                } else {
+                    raw_query
+                }
+            }
+            Some("b/") => {
+                if self
+                    .workspace
+                    .upgrade()
+                    .into_iter()
+                    .flat_map(|workspace| workspace.read(cx).worktrees(cx))
+                    .all(|worktree| {
+                        worktree
+                            .read(cx)
+                            .entry_for_path(Path::new("b"))
+                            .is_none_or(|entry| !entry.is_dir())
+                    })
+                {
+                    &raw_query[2..]
+                } else {
+                    raw_query
+                }
+            }
+            _ => raw_query,
+        };
+
         if raw_query.is_empty() {
             // if there was no query before, and we already have some (history) matches
             // there's no need to update anything, since nothing has changed.
