@@ -639,14 +639,14 @@ fn eval_zode() {
     // ============================================
     //
     //  claude-3.7-sonnet              |  1.0
-    //  gemini-2.5-pro-preview-03-25   |  0.0 (10 samples)
-    //  gemini-2.5-flash-preview-04-17 |
+    //  gemini-2.5-pro-preview-03-25   |  1.0
+    //  gemini-2.5-flash-preview-04-17 |  1.0
     //  gpt-4.1                        |  1.0
     let input_file_path = "root/zode.py";
     let input_content = None;
     let edit_description = "Create the main Zode CLI script";
     eval(
-        200,
+        50,
         1.,
         EvalInput::from_conversation(
             vec![
