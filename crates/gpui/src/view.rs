@@ -33,10 +33,6 @@ impl<V: Render> Element for Entity<V> {
         Some(ElementId::View(self.entity_id()))
     }
 
-    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
-        None
-    }
-
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
@@ -151,10 +147,6 @@ impl Element for AnyView {
 
     fn id(&self) -> Option<ElementId> {
         Some(ElementId::View(self.entity_id()))
-    }
-
-    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
-        None
     }
 
     fn request_layout(

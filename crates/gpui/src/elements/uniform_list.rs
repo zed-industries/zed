@@ -161,10 +161,6 @@ impl Element for UniformList {
         self.interactivity.element_id.clone()
     }
 
-    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
-        None
-    }
-
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,

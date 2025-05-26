@@ -655,10 +655,6 @@ impl Element for AnyElement {
         None
     }
 
-    fn source_location(&self) -> Option<&'static panic::Location<'static>> {
-        None
-    }
-
     fn request_layout(
         &mut self,
         _: Option<&GlobalElementId>,
@@ -724,10 +720,6 @@ impl Element for Empty {
     type PrepaintState = ();
 
     fn id(&self) -> Option<ElementId> {
-        None
-    }
-
-    fn source_location(&self) -> Option<&'static panic::Location<'static>> {
         None
     }
 

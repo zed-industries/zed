@@ -116,10 +116,6 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
         Some(self.id.clone())
     }
 
-    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
-        None
-    }
-
     fn request_layout(
         &mut self,
         id: Option<&GlobalElementId>,
