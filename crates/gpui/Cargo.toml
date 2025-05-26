@@ -25,14 +25,14 @@ test-support = [
 inspector = ["gpui_macros/inspector"]
 leak-detection = ["backtrace"]
 runtime_shaders = []
-macos-blade = [
-    "blade-graphics",
-    "blade-macros",
-    "blade-util",
-    "bytemuck",
-    "objc2",
-    "objc2-metal",
-]
+# macos-blade = [
+#     "blade-graphics",
+#     "blade-macros",
+#     "blade-util",
+#     "bytemuck",
+#     "objc2",
+#     "objc2-metal",
+# ]
 wayland = [
     "blade-graphics",
     "blade-macros",
