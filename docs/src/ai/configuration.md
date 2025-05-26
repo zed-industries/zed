@@ -77,8 +77,8 @@ by changing the mode in of your models configuration to `thinking`, for example:
 
 ```json
 {
-  "name": "claude-3-7-sonnet-latest",
-  "display_name": "claude-3-7-sonnet-thinking",
+  "name": "claude-4-sonnet-latest",
+  "display_name": "claude-4-sonnet-thinking",
   "max_tokens": 200000,
   "mode": {
     "type": "thinking",
@@ -375,7 +375,7 @@ Where `some-provider` can be any of the following values: `anthropic`, `google`,
 
 ### Default Model {#default-model}
 
-Zed's hosted LLM service sets `claude-3-7-sonnet-latest` as the default model.
+Zed's hosted LLM service sets `claude-4-sonnet-latest` as the default model.
 However, you can change it either via the model dropdown in the Agent Panel's bottom-right corner or by manually editing the `default_model` object in your settings:
 
 ```json
@@ -404,11 +404,11 @@ Example configuration:
 
 ```json
 {
-  "assistant": {
+  "agent": {
     "version": "2",
     "default_model": {
       "provider": "zed.dev",
-      "model": "claude-3-7-sonnet"
+      "model": "claude-4-sonnet"
     },
     "inline_assistant_model": {
       "provider": "anthropic",
@@ -437,10 +437,10 @@ One with Claude 3.7 Sonnet, and one with GPT-4o.
 
 ```json
 {
-  "assistant": {
+  "agent": {
     "default_model": {
       "provider": "zed.dev",
-      "model": "claude-3-7-sonnet"
+      "model": "claude-4-sonnet"
     },
     "inline_alternatives": [
       {

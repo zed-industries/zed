@@ -16,7 +16,7 @@ Zed's settings allow you to specify a custom temperature for a provider and/or m
       // To set parameters for a specific provider and model:
       {
         "provider": "zed.dev",
-        "model": "claude-3-7-sonnet-latest",
+        "model": "claude-4-sonnet",
         "temperature": 1.0
       }
     ],
