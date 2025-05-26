@@ -231,7 +231,7 @@ impl DebugAdapter for JsDebugAdapter {
                                 "attachSimplePort": {
                                     "type": "number",
                                     "description": "If set, attaches to the process via the given port. This is generally no longer necessary for Node.js programs and loses the ability to debug child processes, but can be useful in more esoteric scenarios such as with Deno and Docker launches. If set to 0, a random port will be chosen and --inspect-brk added to the launch arguments automatically."
-                                }
+                                },
                                 "runtimeExecutable": {
                                     "type": ["string", "null"],
                                     "description": "Runtime to use, an absolute path or the name of a runtime available on PATH",
