@@ -13,6 +13,7 @@ Here's an overview of the supported providers and tool call support:
 | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [Anthropic](#anthropic)                         | ✅                                                                                                                                                                          |
 | [GitHub Copilot Chat](#github-copilot-chat)     | For Some Models ([link](https://github.com/zed-industries/zed/blob/9e0330ba7d848755c9734bf456c716bddf0973f3/crates/language_models/src/provider/copilot_chat.rs#L189-L198)) |
+| [Amazon Bedrock](#amazon-bedrock)               | Depends on the model |
 | [Google AI](#google-ai)                         | ✅                                                                                                                                                                          |
 | [Mistral](#mistral)                             | ✅                                                                                                                                                                          |
 | [Ollama](#ollama)                               | ✅                                                                                                                                                                          |
@@ -90,41 +91,10 @@ by changing the mode in of your models configuration to `thinking`, for example:
 ### Amazon Bedrock {#amazon-bedrock}
 
 > ✅ Supports tool use with models that support streaming tool use.
-> More details can be found in the [Amazon Bedrock docs about Tool Use](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-supported-models-features.html)
+> More details can be found in the [Amazon Bedrock's Tool Use documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-supported-models-features.html).
 
-You can use Amazon Bedrock models by choosing them via the model dropdown in the Agent Panel.
-Amazon Bedrock requires AWS authentication, and there are two recommended ways to set this up:
-
-#### Authentication via Named Profile (Recommended)
-
-1. Ensure you have the AWS CLI installed and configured with a named profile
-2. Open the settings view (`zed: open settings`) and go to the Amazon Bedrock section
-3. Configure your settings with:
-   ```json
-   {
-     "language_models": {
-       "bedrock": {
-         "authentication_method": "named_profile",
-         "region": "your-aws-region",
-         "profile": "your-profile-name"
-       }
-     }
-   }
-   ```
-
-#### Authentication via Static Credentials
-
-While it's possible to configure through the UI by entering your AWS access key and secret directly, we recommend using named profiles instead for better security practices.
-To do this:
-
-1. Create an IAM User that you can assume in the [IAM Console](https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/users).
-2. Create security credentials for that User, save them and keep them secure.
-3. Open the Agent Configuration with (`agent: open configuration`) and go to the Amazon Bedrock section
-4. Copy the cerdentials from Step 2 into the respective **Access Key ID**, **Secret Access Key**, and **Region** fields.
-
-#### Required AWS Permissions
-
-Ensure your AWS credentials (whether via named profile or static credentials) have the following permissions:
+To use Amazon Bedrock's models, an AWS authentication is required.
+Ensure your credentials have the following permissions set up:
 
 - `bedrock:InvokeModelWithResponseStream`
 - `bedrock:InvokeModel`
@@ -149,18 +119,49 @@ Your IAM policy should look similar to:
 }
 ```
 
+With that done, choose one of the two authentication methods:
+
+#### Authentication via Named Profile (Recommended)
+
+1. Ensure you have the AWS CLI installed and configured with a named profile
+2. Open your `settings.json` (`zed: open settings`) and include the `bedrock` key under `language_models` with the following settings:
+   ```json
+   {
+     "language_models": {
+       "bedrock": {
+         "authentication_method": "named_profile",
+         "region": "your-aws-region",
+         "profile": "your-profile-name"
+       }
+     }
+   }
+   ```
+
+#### Authentication via Static Credentials
+
+While it's possible to configure through the Agent Panel settings UI by entering your AWS access key and secret directly, we recommend using named profiles instead for better security practices.
+To do this:
+
+1. Create an IAM User that you can assume in the [IAM Console](https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/users).
+2. Create security credentials for that User, save them and keep them secure.
+3. Open the Agent Configuration with (`agent: open configuration`) and go to the Amazon Bedrock section
+4. Copy the cerdentials from Step 2 into the respective **Access Key ID**, **Secret Access Key**, and **Region** fields.
+
 #### Cross-Region Inference
 
 The Zed implementation of Amazon Bedrock uses [Cross-Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html) for all the models and region combinations that support it.
-With cross-Region inference, you can distribute traffic across multiple AWS Regions, enabling higher throughput.
+With Cross-Region inference, you can distribute traffic across multiple AWS Regions, enabling higher throughput.
 
-For example: If you use `Claude Sonnet 3.7 Thinking` from `us-east-1` it may be processed across the US regions, namely: `us-east-1`, `us-east-2`, or `us-west-2`.
-Cross-Region inference requests are kept within the AWS Regions that are part of the geography where the data originally resides. For example, a request made within the US is kept within the AWS Regions in the US.
+For example, if you use `Claude Sonnet 3.7 Thinking` from `us-east-1`, it may be processed across the US regions, namely: `us-east-1`, `us-east-2`, or `us-west-2`.
+Cross-Region inference requests are kept within the AWS Regions that are part of the geography where the data originally resides.
+For example, a request made within the US is kept within the AWS Regions in the US.
 
-Although the data remains stored only in the source Region, your input prompts and output results might move outside of your source Region during cross-Region inference. All data will be transmitted encrypted across Amazon’s secure network.
+Although the data remains stored only in the source Region, your input prompts and output results might move outside of your source Region during cross-Region inference.
+All data will be transmitted encrypted across Amazon’s secure network.
 
-We will support Cross-Region inference for each of the models on a best-effort basis, please refer to the [Cross-Region Inference method Code](https://github.com/zed-industries/zed/blob/main/crates/bedrock/src/models.rs#L297)
-For the most up to date supported regions and models supported, refer to the [Supported Models and Regions for Cross Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html)
+We will support Cross-Region inference for each of the models on a best-effort basis, please refer to the [Cross-Region Inference method Code](https://github.com/zed-industries/zed/blob/main/crates/bedrock/src/models.rs#L297).
+
+For the most up to date supported regions and models supported, refer to the [Supported Models and Regions for Cross Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html).
 
 ### GitHub Copilot Chat {#github-copilot-chat}
 
