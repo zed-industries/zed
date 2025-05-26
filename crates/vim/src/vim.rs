@@ -178,6 +178,8 @@ actions!(
         PushReplayRegister,
         PushReplaceWithRegister,
         PushToggleComments,
+        MenuSelectNext,
+        MenuSelectPrevious
     ]
 );
 
@@ -199,6 +201,47 @@ pub fn init(cx: &mut App) {
             update_settings_file::<VimModeSetting>(fs, cx, move |setting, _| {
                 *setting = Some(!currently_enabled)
             })
+        });
+
+        workspace.register_action(|_, _: &MenuSelectNext, window, cx| {
+            let count = Vim::take_count(cx).unwrap_or(1);
+
+            for _ in 0..count {
+                window.dispatch_action(menu::SelectNext.boxed_clone(), cx);
+            }
+        });
+
+        workspace.register_action(|_, _: &MenuSelectPrevious, window, cx| {
+            let count = Vim::take_count(cx).unwrap_or(1);
+
+            for _ in 0..count {
+                window.dispatch_action(menu::SelectPrevious.boxed_clone(), cx);
+            }
+        });
+
+        workspace.register_action(|workspace, n: &Number, window, cx| {
+            let vim = workspace
+                .focused_pane(window, cx)
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.act_as::<Editor>(cx))
+                .and_then(|editor| editor.read(cx).addon::<VimAddon>().cloned());
+            if let Some(vim) = vim {
+                let digit = n.0;
+                vim.entity.update(cx, |_, cx| {
+                    cx.defer_in(window, move |vim, window, cx| {
+                        vim.push_count_digit(digit, window, cx)
+                    })
+                });
+            } else {
+                let count = Vim::globals(cx).pre_count.unwrap_or(0);
+                Vim::globals(cx).pre_count = Some(
+                    count
+                        .checked_mul(10)
+                        .and_then(|c| c.checked_add(n.0))
+                        .unwrap_or(count),
+                );
+            };
         });
 
         workspace.register_action(|_, _: &OpenDefaultKeymap, _, cx| {
@@ -685,9 +728,6 @@ impl Vim {
 
             Vim::action(editor, cx, |vim, _: &ClearOperators, window, cx| {
                 vim.clear_operator(window, cx)
-            });
-            Vim::action(editor, cx, |vim, n: &Number, window, cx| {
-                vim.push_count_digit(n.0, window, cx);
             });
             Vim::action(editor, cx, |vim, _: &Tab, window, cx| {
                 vim.input_ignored(" ".into(), window, cx)
