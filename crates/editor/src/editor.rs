@@ -15532,33 +15532,36 @@ impl Editor {
     }
 
     fn pull_diagnostics(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<()> {
+        let project = self.project.as_ref()?.downgrade();
         let debounce = Duration::from_millis(
             ProjectSettings::get_global(cx)
                 .diagnostics
                 .lsp_pull_diagnostics_debounce_ms?,
         );
-        let project = self.project.as_ref()?.downgrade();
         let buffers = self.buffer.read(cx).all_buffers();
 
         let background_executor = cx.background_executor().clone();
-
         self.tasks_pull_diagnostics_task = cx.spawn_in(window, async move |editor, cx| {
-            let Some(project) = project.upgrade() else {
-                return;
-            };
             background_executor.timer(debounce).await;
 
             let Ok(mut pull_diagnostics_tasks) = cx.update(|_, cx| {
                 buffers
                     .into_iter()
-                    .map(|buffer| project.update_pull_diagnostics_for_buffer(&buffer, cx))
+                    .flat_map(|buffer| {
+                        Some(
+                            project
+                                .upgrade()?
+                                .update_pull_diagnostics_for_buffer(&buffer, cx),
+                        )
+                    })
                     .collect::<FuturesUnordered<_>>()
             }) else {
                 return;
             };
 
             while let Some(pull_task) = pull_diagnostics_tasks.next().await {
-                if let Some(new_diagnostics) = pull_task.log_err() {
+                if let Some((new_diagnostics, project)) = pull_task.log_err().zip(project.upgrade())
+                {
                     let Ok(update_task) =
                         cx.update(|_, cx| project.update_pull_diagnostics(new_diagnostics, cx))
                     else {
