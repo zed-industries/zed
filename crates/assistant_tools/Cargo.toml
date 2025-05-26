@@ -59,12 +59,12 @@ ui.workspace = true
 util.workspace = true
 web_search.workspace = true
 which.workspace = true
-workspace.workspace = true
 workspace-hack.workspace = true
+workspace.workspace = true
 zed_llm_client.workspace = true
+once_cell = "1.21.3"
 
 [dev-dependencies]
-lsp = { workspace = true, features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
 clock = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }

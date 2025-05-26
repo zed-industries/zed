@@ -274,6 +274,7 @@
     "context": "MessageEditor > Editor",
     "bindings": {
       "enter": "agent::Chat",
+      "ctrl-enter": "agent::ChatWithFollow",
       "ctrl-i": "agent::ToggleProfileSelector",
       "shift-ctrl-r": "agent::OpenAgentDiff"
     }

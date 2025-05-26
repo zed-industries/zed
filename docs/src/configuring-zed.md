@@ -1203,6 +1203,16 @@ or
 }
 ```
 
+### Show Inline Code Actions
+
+- Description: Whether to show code action button at start of buffer line.
+- Setting: `inline_code_actions`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
 ## Editor Toolbar
 
 - Description: Whether or not to show various elements in the editor toolbar.
@@ -1215,7 +1225,7 @@ or
   "quick_actions": true,
   "selections_menu": true,
   "agent_review": true,
-  "code_actions": true
+  "code_actions": false
 },
 ```
 

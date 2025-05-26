@@ -13,7 +13,7 @@ use assistant_context_editor::{
     ContextSummary, SlashCommandCompletionProvider, humanize_token_count,
     make_lsp_adapter_delegate, render_remaining_tokens,
 };
-use assistant_settings::{AssistantDockPosition, AssistantSettings};
+use assistant_settings::{AssistantDockPosition, AssistantSettings, DefaultView};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 
@@ -523,7 +523,30 @@ impl AgentPanel {
 
         cx.observe(&history_store, |_, _, cx| cx.notify()).detach();
 
-        let active_view = ActiveView::thread(thread.clone(), window, cx);
+        let panel_type = AssistantSettings::get_global(cx).default_view;
+        let active_view = match panel_type {
+            DefaultView::Agent => ActiveView::thread(thread.clone(), window, cx),
+            DefaultView::Thread => {
+                let context =
+                    context_store.update(cx, |context_store, cx| context_store.create(cx));
+                let lsp_adapter_delegate = make_lsp_adapter_delegate(&project.clone(), cx).unwrap();
+                let context_editor = cx.new(|cx| {
+                    let mut editor = ContextEditor::for_context(
+                        context,
+                        fs.clone(),
+                        workspace.clone(),
+                        project.clone(),
+                        lsp_adapter_delegate,
+                        window,
+                        cx,
+                    );
+                    editor.insert_default_prompt(window, cx);
+                    editor
+                });
+                ActiveView::prompt_editor(context_editor, language_registry.clone(), window, cx)
+            }
+        };
+
         let thread_subscription = cx.subscribe(&thread, |_, _, event, cx| {
             if let ThreadEvent::MessageAdded(_) = &event {
                 // needed to leave empty state
