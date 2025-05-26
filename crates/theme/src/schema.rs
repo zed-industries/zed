@@ -28,6 +28,18 @@ pub(crate) fn try_parse_color(color: &str) -> Result<Hsla> {
     Ok(hsla)
 }
 
+fn ensure_non_opaque(color: Hsla) -> Hsla {
+    const MAXIMUM_OPACITY: f32 = 0.7;
+    if color.a <= MAXIMUM_OPACITY {
+        color
+    } else {
+        Hsla {
+            a: MAXIMUM_OPACITY,
+            ..color
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AppearanceContent {
@@ -378,6 +390,14 @@ pub struct ThemeColorsContent {
     #[serde(rename = "minimap.thumb.background")]
     pub minimap_thumb_background: Option<String>,
 
+    /// The color of the minimap thumb when hovered over.
+    #[serde(rename = "minimap.thumb.hover_background")]
+    pub minimap_thumb_hover_background: Option<String>,
+
+    /// The color of the minimap thumb whilst being actively dragged.
+    #[serde(rename = "minimap.thumb.active_background")]
+    pub minimap_thumb_active_background: Option<String>,
+
     /// The border color of the minimap thumb.
     #[serde(rename = "minimap.thumb.border")]
     pub minimap_thumb_border: Option<String>,
@@ -643,6 +663,15 @@ impl ThemeColorsContent {
                     .as_ref()
                     .and_then(|color| try_parse_color(color).ok())
             });
+        let scrollbar_thumb_hover_background = self
+            .scrollbar_thumb_hover_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok());
+        let scrollbar_thumb_active_background = self
+            .scrollbar_thumb_active_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok())
+            .or(scrollbar_thumb_background);
         let scrollbar_thumb_border = self
             .scrollbar_thumb_border
             .as_ref()
@@ -831,15 +860,8 @@ impl ThemeColorsContent {
                 .and_then(|color| try_parse_color(color).ok())
                 .or(border),
             scrollbar_thumb_background,
-            scrollbar_thumb_hover_background: self
-                .scrollbar_thumb_hover_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            scrollbar_thumb_active_background: self
-                .scrollbar_thumb_active_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok())
-                .or(scrollbar_thumb_background),
+            scrollbar_thumb_hover_background,
+            scrollbar_thumb_active_background,
             scrollbar_thumb_border,
             scrollbar_track_background: self
                 .scrollbar_track_background
@@ -853,15 +875,17 @@ impl ThemeColorsContent {
                 .minimap_thumb_background
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok())
-                .or_else(|| {
-                    scrollbar_thumb_background.map(|color| {
-                        if color.a > 0.7 {
-                            color.opacity(0.5)
-                        } else {
-                            color
-                        }
-                    })
-                }),
+                .or(scrollbar_thumb_background.map(ensure_non_opaque)),
+            minimap_thumb_hover_background: self
+                .minimap_thumb_hover_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok())
+                .or(scrollbar_thumb_hover_background.map(ensure_non_opaque)),
+            minimap_thumb_active_background: self
+                .minimap_thumb_active_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok())
+                .or(scrollbar_thumb_active_background.map(ensure_non_opaque)),
             minimap_thumb_border: self
                 .minimap_thumb_border
                 .as_ref()
