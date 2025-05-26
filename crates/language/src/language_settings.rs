@@ -1493,8 +1493,27 @@ impl settings::Settings for AllLanguageSettings {
                 associations.entry(v.into()).or_default().push(k.clone());
             }
         }
+
         // TODO: do we want to merge imported globs per filetype? for now we'll just replace
         current.file_types.extend(associations);
+
+        // cursor global ignore list applies to cursor-tab, so transfer it to edit_predictions.disabled_globs
+        if let Some(disabled_globs) = vscode
+            .read_value("cursor.general.globalCursorIgnoreList")
+            .and_then(|v| v.as_array())
+        {
+            current
+                .edit_predictions
+                .get_or_insert_default()
+                .disabled_globs
+                .get_or_insert_default()
+                .extend(
+                    disabled_globs
+                        .iter()
+                        .filter_map(|glob| glob.as_str())
+                        .map(|s| s.to_string()),
+                );
+        }
     }
 }
 
