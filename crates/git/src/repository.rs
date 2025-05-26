@@ -197,7 +197,7 @@ pub enum ResetMode {
 pub struct GitExcludeOverride {
     git_exclude_path: PathBuf,
     original_excludes: Option<String>,
-    is_original_modified: bool,
+    added_excludes: Option<String>,
 }
 
 impl GitExcludeOverride {
@@ -207,19 +207,23 @@ impl GitExcludeOverride {
         Ok(GitExcludeOverride {
             git_exclude_path,
             original_excludes,
-            is_original_modified: false,
+            added_excludes: None,
         })
     }
 
     pub async fn add_excludes(&mut self, excludes: &str) -> Result<()> {
+        self.added_excludes = Some(if let Some(ref alread_added) = self.added_excludes {
+            format!("{alread_added}\n{excludes}")
+        } else {
+            excludes.to_string()
+        });
+
         let mut content = self.original_excludes.clone().unwrap_or_default();
         content.push_str("\n\n#  ====== Auto-added by Zed: =======\n");
-        content.push_str(excludes);
+        content.push_str(self.added_excludes.as_ref().unwrap());
         content.push('\n');
 
         smol::fs::write(&self.git_exclude_path, content).await?;
-
-        self.is_original_modified = true;
         Ok(())
     }
 
@@ -232,14 +236,15 @@ impl GitExcludeOverride {
             }
         }
 
-        self.is_original_modified = false;
+        self.added_excludes = None;
+
         Ok(())
     }
 }
 
 impl Drop for GitExcludeOverride {
     fn drop(&mut self) {
-        if self.is_original_modified {
+        if self.added_excludes.is_some() {
             let git_exclude_path = self.git_exclude_path.clone();
             let original_excludes = self.original_excludes.clone();
             smol::spawn(async move {
@@ -1324,14 +1329,12 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let working_directory = working_directory?;
-                let mut git = GitBinary::new(git_binary_path, working_directory, executor)
+                let mut git = GitBinary::new(git_binary_path, working_directory.clone(), executor)
                     .envs(checkpoint_author_envs());
                 git.with_temp_index(async |git| {
                     let head_sha = git.run(&["rev-parse", "HEAD"]).await.ok();
-                    let mut excludes = git.with_exclude_overrides().await?;
-                    excludes
-                        .add_excludes(include_str!("./checkpoint.gitignore"))
-                        .await?;
+                    let mut excludes = exclude_files(git).await?;
+
                     git.run(&["add", "--all"]).await?;
                     let tree = git.run(&["write-tree"]).await?;
                     let checkpoint_sha = if let Some(head_sha) = head_sha.as_deref() {
@@ -1471,6 +1474,47 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
     args
 }
 
+/// Temporarily git-ignore commonly ignored files and files over 2MB
+async fn exclude_files(git: &GitBinary) -> Result<GitExcludeOverride> {
+    const MAX_SIZE: u64 = 2 * 1024 * 1024; // 2 MB
+    let mut excludes = git.with_exclude_overrides().await?;
+    excludes
+        .add_excludes(include_str!("./checkpoint.gitignore"))
+        .await?;
+
+    let working_directory = git.working_directory.clone();
+    let untracked_files = git.list_untracked_files().await?;
+    let excluded_paths = untracked_files.into_iter().map(|path| {
+        let working_directory = working_directory.clone();
+        smol::spawn(async move {
+            let full_path = working_directory.join(path.clone());
+            match smol::fs::metadata(&full_path).await {
+                Ok(metadata) if metadata.is_file() && metadata.len() >= MAX_SIZE => {
+                    Some(PathBuf::from("/").join(path.clone()))
+                }
+                _ => None,
+            }
+        })
+    });
+
+    let excluded_paths = futures::future::join_all(excluded_paths).await;
+    let excluded_paths = excluded_paths
+        .into_iter()
+        .filter_map(|x| x)
+        .collect::<Vec<_>>();
+
+    if !excluded_paths.is_empty() {
+        let exclude_patterns = excluded_paths
+            .into_iter()
+            .map(|path| path.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        excludes.add_excludes(&exclude_patterns).await?;
+    }
+
+    Ok(excludes)
+}
+
 struct GitBinary {
     git_binary_path: PathBuf,
     working_directory: PathBuf,
@@ -1492,6 +1536,19 @@ impl GitBinary {
             index_file_path: None,
             envs: HashMap::default(),
         }
+    }
+
+    async fn list_untracked_files(&self) -> Result<Vec<PathBuf>> {
+        let status_output = self
+            .run(&["status", "--porcelain=v1", "--untracked-files=all", "-z"])
+            .await?;
+
+        let paths = status_output
+            .split('\0')
+            .filter(|entry| entry.len() >= 3 && entry.starts_with("?? "))
+            .map(|entry| PathBuf::from(&entry[3..]))
+            .collect::<Vec<_>>();
+        Ok(paths)
     }
 
     fn envs(mut self, envs: HashMap<String, String>) -> Self {
@@ -2097,6 +2154,78 @@ mod tests {
         assert_eq!(
             smol::fs::read_to_string(&bin_path).await.unwrap(),
             "Modified binary file"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_checkpoint_excludes_large_untracked_files(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        let repo_path = repo_dir.path();
+
+        git2::Repository::init(repo_path).unwrap();
+
+        let repo = RealGitRepository::new(&repo_path.join(".git"), None, cx.executor()).unwrap();
+
+        // Create initial commit
+        let small_file_path = repo_path.join("small.txt");
+        smol::fs::write(&small_file_path, "Small file content")
+            .await
+            .unwrap();
+
+        repo.stage_paths(
+            vec![RepoPath::from_str("small.txt")],
+            Arc::new(HashMap::default()),
+        )
+        .await
+        .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        // Create a large untracked file (> 2 MB)
+        let large_file_path = repo_path.join("large.bin");
+        let large_content = vec![0u8; 3 * 1024 * 1024]; // 3 MB
+        smol::fs::write(&large_file_path, &large_content)
+            .await
+            .unwrap();
+
+        // Create another small untracked file
+        let new_small_path = repo_path.join("new_small.txt");
+        smol::fs::write(&new_small_path, "New small file")
+            .await
+            .unwrap();
+
+        // Create checkpoint
+        let checkpoint = repo.checkpoint().await.unwrap();
+
+        // Modify the untracked files
+        smol::fs::write(&large_file_path, "Modified large file")
+            .await
+            .unwrap();
+        smol::fs::write(&new_small_path, "Modified new small file")
+            .await
+            .unwrap();
+
+        // Restore checkpoint
+        repo.restore_checkpoint(checkpoint).await.unwrap();
+
+        // Small untracked file should be restored to checkpoint state
+        assert_eq!(
+            smol::fs::read_to_string(&new_small_path).await.unwrap(),
+            "New small file"
+        );
+
+        // Large untracked file should NOT be restored (it was excluded)
+        assert_eq!(
+            smol::fs::read_to_string(&large_file_path).await.unwrap(),
+            "Modified large file"
         );
     }
 
