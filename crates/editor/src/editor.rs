@@ -12,6 +12,37 @@
 //! All other submodules and structs are mostly concerned with holding editor data about the way it displays current buffer region(s).
 //!
 //! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and overrides its behavior.
+```rust
+use gpui::{ViewContext, View, div, IntoElement};
+use editor_settings::EditorSettings;
+
+impl Editor {
+    // Existing fields and methods...
+
+    fn render_inline_completion(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
+        let settings = cx.global::<EditorSettings>();
+
+        // Only render the indicator if show_prediction_indicator is true or unset
+        if settings.show_prediction_indicator.unwrap_or(true) {
+            Some(div()
+                .id("prediction-indicator")
+                .child("Z-> Hold Alt")
+                .into_element())
+        } else {
+            None
+        }
+    }
+
+    // Existing method (unchanged, for context)
+    fn generate_prediction(&self, cx: &mut ViewContext<Self>) {
+        // Logic to generate predictions
+    }
+
+    fn accept_prediction(&self, cx: &mut ViewContext<Self>) {
+        // Logic to accept predictions via Alt key
+    }
+}
+```
 pub mod actions;
 mod blink_manager;
 mod clangd_ext;
