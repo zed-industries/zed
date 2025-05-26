@@ -1947,6 +1947,13 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
+        if !snapshot
+            .show_code_actions
+            .unwrap_or(EditorSettings::get_global(cx).inline_code_actions)
+        {
+            return None;
+        }
+
         let icon_size = ui::IconSize::XSmall;
 
         let mut button = None;
@@ -1973,14 +1980,13 @@ impl EditorElement {
         });
         let mut button = button?;
 
-        const INLINE_SLOT_CHAR_LIMIT: u32 = 4;
-        const MAX_ALTERNATE_DISTANCE: u32 = 8;
+        let buffer_point = display_point.to_point(&snapshot.display_snapshot);
+        // do not show code action for folded line
+        if !snapshot.is_line_folded(MultiBufferRow(buffer_point.row)) {
+            return None;
+        }
 
-        let buffer_point = snapshot
-            .display_snapshot
-            .display_point_to_point(display_point, text::Bias::Left);
-
-        // do not show code action on blank line with cursor
+        // do not show code action for blank line with cursor
         let line_indent = snapshot
             .display_snapshot
             .buffer_snapshot
@@ -1989,13 +1995,16 @@ impl EditorElement {
             return None;
         }
 
+        const INLINE_SLOT_CHAR_LIMIT: u32 = 4;
+        const MAX_ALTERNATE_DISTANCE: u32 = 8;
+
         let excerpt_id = snapshot
             .display_snapshot
             .buffer_snapshot
             .excerpt_containing(buffer_point..buffer_point)
             .map(|excerpt| excerpt.id());
 
-        let is_valid_row_for_code_action = |row_candidate: u32| -> bool {
+        let is_valid_row = |row_candidate: u32| -> bool {
             // move to other row if folded row
             if snapshot.is_line_folded(MultiBufferRow(row_candidate)) {
                 return false;
@@ -2037,16 +2046,16 @@ impl EditorElement {
             }
         };
 
-        let new_buffer_row = if is_valid_row_for_code_action(buffer_point.row) {
+        let new_buffer_row = if is_valid_row(buffer_point.row) {
             Some(buffer_point.row)
         } else {
             let max_row = snapshot.display_snapshot.buffer_snapshot.max_point().row;
             (1..=MAX_ALTERNATE_DISTANCE).find_map(|offset| {
                 let row_above = buffer_point.row.saturating_sub(offset);
                 let row_below = buffer_point.row + offset;
-                if row_above != buffer_point.row && is_valid_row_for_code_action(row_above) {
+                if row_above != buffer_point.row && is_valid_row(row_above) {
                     Some(row_above)
-                } else if row_below <= max_row && is_valid_row_for_code_action(row_below) {
+                } else if row_below <= max_row && is_valid_row(row_below) {
                     Some(row_below)
                 } else {
                     None
@@ -8149,27 +8158,15 @@ impl Element for EditorElement {
                         if (start_row..end_row).contains(&display_row)
                             && !row_block_types.contains_key(&display_row)
                         {
-                            let show_inline_code_actions = snapshot
-                                .show_code_actions
-                                .unwrap_or(EditorSettings::get_global(cx).inline_code_actions);
-
-                            if show_inline_code_actions {
-                                let newest_selection_point =
-                                    newest_selection_head.to_point(&snapshot.display_snapshot);
-                                if !snapshot
-                                    .is_line_folded(MultiBufferRow(newest_selection_point.row))
-                                {
-                                    inline_code_actions = self.layout_inline_code_actions(
-                                        newest_selection_head,
-                                        content_origin,
-                                        scroll_pixel_position,
-                                        line_height,
-                                        &snapshot,
-                                        window,
-                                        cx,
-                                    );
-                                }
-                            }
+                            inline_code_actions = self.layout_inline_code_actions(
+                                newest_selection_head,
+                                content_origin,
+                                scroll_pixel_position,
+                                line_height,
+                                &snapshot,
+                                window,
+                                cx,
+                            );
 
                             let line_ix = display_row.minus(start_row) as usize;
                             let row_info = &row_infos[line_ix];

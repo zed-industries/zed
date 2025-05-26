@@ -510,7 +510,7 @@ pub struct ToolbarContent {
     ///
     /// Default: true
     pub agent_review: Option<bool>,
-    /// Whether to show code action button at start of buffer line.
+    /// Whether to display code action buttons in the editor toolbar.
     ///
     /// Default: false
     pub code_actions: Option<bool>,
