@@ -750,7 +750,10 @@ impl CustomMode {
 
         let program = cx.new(|cx| Editor::single_line(window, cx));
         program.update(cx, |this, cx| {
-            this.set_placeholder_text("Run", cx);
+            this.set_placeholder_text(
+                "ALPHA=\"Windows\" BETA=\"Wen\" your_program --arg1 --arg2=arg3",
+                cx,
+            );
 
             if let Some(past_program) = past_program {
                 this.set_text(past_program, window, cx);
@@ -779,7 +782,7 @@ impl CustomMode {
     }
 
     pub(super) fn debug_request(&self, cx: &App) -> task::LaunchRequest {
-        let path = resolve_path(&self.cwd.read(cx).text(cx));
+        let path = self.cwd.read(cx).text(cx);
         if cfg!(windows) {
             return task::LaunchRequest {
                 program: self.program.read(cx).text(cx),
@@ -797,12 +800,12 @@ impl CustomMode {
             env.insert(lhs.to_string(), rhs.to_string());
         }
 
-        let program = resolve_path(&if let Some(program) = args.next() {
+        let program = if let Some(program) = args.next() {
             program
         } else {
             env = FxHashMap::default();
             command
-        });
+        };
 
         let args = args.collect::<Vec<_>>();
 
@@ -1123,7 +1126,7 @@ impl PickerDelegate for DebugScenarioDelegate {
         let task_kind = &self.candidates[hit.candidate_id].0;
 
         let icon = match task_kind {
-            Some(TaskSourceKind::Lsp(..)) => Some(Icon::new(IconName::Bolt)),
+            Some(TaskSourceKind::Lsp(..)) => Some(Icon::new(IconName::BoltFilled)),
             Some(TaskSourceKind::UserInput) => Some(Icon::new(IconName::Terminal)),
             Some(TaskSourceKind::AbsPath { .. }) => Some(Icon::new(IconName::Settings)),
             Some(TaskSourceKind::Worktree { .. }) => Some(Icon::new(IconName::FileTree)),
@@ -1145,26 +1148,34 @@ impl PickerDelegate for DebugScenarioDelegate {
     }
 }
 
-fn resolve_path(path: &str) -> String {
+pub(crate) fn resolve_path(path: &mut String) {
     if path.starts_with('~') {
         let home = paths::home_dir().to_string_lossy().to_string();
-        let path = path.trim().to_owned();
-        path.replace('~', &home)
-    } else {
-        path.to_owned()
-    }
+        let trimmed_path = path.trim().to_owned();
+        *path = trimmed_path.replacen('~', &home, 1);
+    } else if let Some(strip_path) = path.strip_prefix(&format!(".{}", std::path::MAIN_SEPARATOR)) {
+        *path = format!(
+            "$ZED_WORKTREE_ROOT{}{}",
+            std::path::MAIN_SEPARATOR,
+            &strip_path
+        );
+    };
 }
 
 #[cfg(test)]
 mod tests {
     use paths::home_dir;
 
-    use super::*;
-
     #[test]
     fn test_normalize_paths() {
         let sep = std::path::MAIN_SEPARATOR;
         let home = home_dir().to_string_lossy().to_string();
+        let resolve_path = |path: &str| -> String {
+            let mut path = path.to_string();
+            super::resolve_path(&mut path);
+            path
+        };
+
         assert_eq!(resolve_path("bin"), format!("bin"));
         assert_eq!(resolve_path(&format!("{sep}foo")), format!("{sep}foo"));
         assert_eq!(resolve_path(""), format!(""));

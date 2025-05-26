@@ -274,6 +274,7 @@
     "context": "MessageEditor > Editor",
     "bindings": {
       "enter": "agent::Chat",
+      "ctrl-enter": "agent::ChatWithFollow",
       "ctrl-i": "agent::ToggleProfileSelector",
       "shift-ctrl-r": "agent::OpenAgentDiff"
     }
@@ -675,7 +676,7 @@
   {
     "bindings": {
       "ctrl-alt-shift-f": "workspace::FollowNextCollaborator",
-      "ctrl-alt-i": "zed::DebugElements"
+      "ctrl-alt-i": "dev::ToggleInspector"
     }
   },
   {

@@ -5,8 +5,15 @@ use dap::{
     adapters::DebugTaskDefinition,
 };
 use gpui::{AsyncApp, SharedString};
-use language::LanguageName;
-use std::{collections::HashMap, ffi::OsStr, path::PathBuf, sync::OnceLock};
+use json_dotpath::DotPaths;
+use language::{LanguageName, Toolchain};
+use serde_json::Value;
+use std::{
+    collections::HashMap,
+    ffi::OsStr,
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
 use util::ResultExt;
 
 #[derive(Default)]
@@ -26,8 +33,16 @@ impl PythonDebugAdapter {
     ) -> Result<StartDebuggingRequestArguments> {
         let request = self.validate_config(&task_definition.config)?;
 
+        let mut configuration = task_definition.config.clone();
+        if let Ok(console) = configuration.dot_get_mut("console") {
+            // Use built-in Zed terminal if user did not explicitly provide a setting for console.
+            if console.is_null() {
+                *console = Value::String("integratedTerminal".into());
+            }
+        }
+
         Ok(StartDebuggingRequestArguments {
-            configuration: task_definition.config.clone(),
+            configuration,
             request,
         })
     }
@@ -77,7 +92,7 @@ impl PythonDebugAdapter {
         delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
-        cx: &mut AsyncApp,
+        toolchain: Option<Toolchain>,
     ) -> Result<DebugAdapterBinary> {
         const BINARY_NAMES: [&str; 3] = ["python3", "python", "py"];
         let tcp_connection = config.tcp_connection.clone().unwrap_or_default();
@@ -95,16 +110,6 @@ impl PythonDebugAdapter {
             .await
             .context("Debugpy directory not found")?
         };
-
-        let toolchain = delegate
-            .toolchain_store()
-            .active_toolchain(
-                delegate.worktree_id(),
-                Arc::from("".as_ref()),
-                language::LanguageName::new(Self::LANGUAGE_NAME),
-                cx,
-            )
-            .await;
 
         let python_path = if let Some(toolchain) = toolchain {
             Some(toolchain.path.to_string())
@@ -553,6 +558,32 @@ impl DebugAdapter for PythonDebugAdapter {
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
+        let toolchain = delegate
+            .toolchain_store()
+            .active_toolchain(
+                delegate.worktree_id(),
+                Arc::from("".as_ref()),
+                language::LanguageName::new(Self::LANGUAGE_NAME),
+                cx,
+            )
+            .await;
+
+        if let Some(toolchain) = &toolchain {
+            if let Some(path) = Path::new(&toolchain.path.to_string()).parent() {
+                let debugpy_path = path.join("debugpy");
+                if smol::fs::metadata(&debugpy_path).await.is_ok() {
+                    return self
+                        .get_installed_binary(
+                            delegate,
+                            &config,
+                            Some(debugpy_path.to_path_buf()),
+                            Some(toolchain.clone()),
+                        )
+                        .await;
+                }
+            }
+        }
+
         if self.checked.set(()).is_ok() {
             delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
             if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
@@ -560,7 +591,7 @@ impl DebugAdapter for PythonDebugAdapter {
             }
         }
 
-        self.get_installed_binary(delegate, &config, user_installed_path, cx)
+        self.get_installed_binary(delegate, &config, user_installed_path, toolchain)
             .await
     }
 }

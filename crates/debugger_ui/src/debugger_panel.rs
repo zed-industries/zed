@@ -68,12 +68,13 @@ pub struct DebugPanel {
     pub(crate) thread_picker_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub(crate) session_picker_menu_handle: PopoverMenuHandle<ContextMenu>,
     fs: Arc<dyn Fs>,
+    _subscriptions: [Subscription; 1],
 }
 
 impl DebugPanel {
     pub fn new(
         workspace: &Workspace,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         cx.new(|cx| {
@@ -81,6 +82,14 @@ impl DebugPanel {
             let focus_handle = cx.focus_handle();
             let thread_picker_menu_handle = PopoverMenuHandle::default();
             let session_picker_menu_handle = PopoverMenuHandle::default();
+
+            let focus_subscription = cx.on_focus(
+                &focus_handle,
+                window,
+                |this: &mut DebugPanel, window, cx| {
+                    this.focus_active_item(window, cx);
+                },
+            );
 
             Self {
                 size: px(300.),
@@ -93,6 +102,7 @@ impl DebugPanel {
                 fs: workspace.app_state().fs.clone(),
                 thread_picker_menu_handle,
                 session_picker_menu_handle,
+                _subscriptions: [focus_subscription],
             }
         })
     }
@@ -101,15 +111,12 @@ impl DebugPanel {
         let Some(session) = self.active_session.clone() else {
             return;
         };
-        let Some(active_pane) = session
+        let active_pane = session
             .read(cx)
             .running_state()
             .read(cx)
             .active_pane()
-            .cloned()
-        else {
-            return;
-        };
+            .clone();
         active_pane.update(cx, |pane, cx| {
             pane.focus_active_item(window, cx);
         });
@@ -273,7 +280,7 @@ impl DebugPanel {
             let session = session.clone();
             async move |this, cx| {
                 let debug_session =
-                    Self::register_session(this.clone(), session.clone(), cx).await?;
+                    Self::register_session(this.clone(), session.clone(), true, cx).await?;
                 let definition = debug_session
                     .update_in(cx, |debug_session, window, cx| {
                         debug_session.running_state().update(cx, |running, cx| {
@@ -318,69 +325,21 @@ impl DebugPanel {
     pub(crate) async fn register_session(
         this: WeakEntity<Self>,
         session: Entity<Session>,
+        focus: bool,
         cx: &mut AsyncWindowContext,
     ) -> Result<Entity<DebugSession>> {
-        let adapter_name = session.update(cx, |session, _| session.adapter())?;
-        this.update_in(cx, |_, window, cx| {
-            cx.subscribe_in(
-                &session,
-                window,
-                move |this, session, event: &SessionStateEvent, window, cx| match event {
-                    SessionStateEvent::Restart => {
-                        this.handle_restart_request(session.clone(), window, cx);
-                    }
-                    SessionStateEvent::SpawnChildSession { request } => {
-                        this.handle_start_debugging_request(request, session.clone(), window, cx);
-                    }
-                    _ => {}
-                },
-            )
-            .detach();
-        })
-        .ok();
+        let debug_session = register_session_inner(&this, session, cx).await?;
 
-        let serialized_layout = persistence::get_serialized_layout(adapter_name).await;
+        let workspace = this.update_in(cx, |this, window, cx| {
+            if focus {
+                this.activate_session(debug_session.clone(), window, cx);
+            }
 
-        let (debug_session, workspace) = this.update_in(cx, |this, window, cx| {
-            this.sessions.retain(|session| {
-                !session
-                    .read(cx)
-                    .running_state()
-                    .read(cx)
-                    .session()
-                    .read(cx)
-                    .is_terminated()
-            });
-
-            let debug_session = DebugSession::running(
-                this.project.clone(),
-                this.workspace.clone(),
-                session,
-                cx.weak_entity(),
-                serialized_layout,
-                this.position(window, cx).axis(),
-                window,
-                cx,
-            );
-
-            // We might want to make this an event subscription and only notify when a new thread is selected
-            // This is used to filter the command menu correctly
-            cx.observe(
-                &debug_session.read(cx).running_state().clone(),
-                |_, _, cx| cx.notify(),
-            )
-            .detach();
-
-            this.sessions.push(debug_session.clone());
-            this.activate_session(debug_session.clone(), window, cx);
-
-            (debug_session, this.workspace.clone())
+            this.workspace.clone()
         })?;
-
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.focus_panel::<Self>(window, cx);
         })?;
-
         Ok(debug_session)
     }
 
@@ -390,9 +349,7 @@ impl DebugPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        while let Some(parent_session) =
-            curr_session.read_with(cx, |session, _| session.parent_session().cloned())
-        {
+        while let Some(parent_session) = curr_session.read(cx).parent_session().cloned() {
             curr_session = parent_session;
         }
 
@@ -418,7 +375,7 @@ impl DebugPanel {
                 });
                 (session, task)
             })?;
-            Self::register_session(this, session, cx).await?;
+            Self::register_session(this.clone(), session, true, cx).await?;
             task.await
         })
         .detach_and_log_err(cx);
@@ -441,7 +398,6 @@ impl DebugPanel {
         let adapter = parent_session.read(cx).adapter().clone();
         let mut binary = parent_session.read(cx).binary().clone();
         binary.request_args = request.clone();
-
         cx.spawn_in(window, async move |this, cx| {
             let (session, task) = dap_store_handle.update(cx, |dap_store, cx| {
                 let session =
@@ -452,7 +408,7 @@ impl DebugPanel {
                 });
                 (session, task)
             })?;
-            Self::register_session(this, session, cx).await?;
+            Self::register_session(this, session, false, cx).await?;
             task.await
         })
         .detach_and_log_err(cx);
@@ -910,6 +866,21 @@ impl DebugPanel {
         }
     }
 
+    pub(crate) fn activate_session_by_id(
+        &mut self,
+        session_id: SessionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(session) = self
+            .sessions
+            .iter()
+            .find(|session| session.read(cx).session_id(cx) == session_id)
+        {
+            self.activate_session(session.clone(), window, cx);
+        }
+    }
+
     pub(crate) fn activate_session(
         &mut self,
         session_item: Entity<DebugSession>,
@@ -923,7 +894,7 @@ impl DebugPanel {
                 this.go_to_selected_stack_frame(window, cx);
             });
         });
-        self.active_session = Some(session_item.clone());
+        self.active_session = Some(session_item);
         cx.notify();
     }
 
@@ -997,6 +968,67 @@ impl DebugPanel {
     pub(crate) fn toggle_session_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.session_picker_menu_handle.toggle(window, cx);
     }
+}
+
+async fn register_session_inner(
+    this: &WeakEntity<DebugPanel>,
+    session: Entity<Session>,
+    cx: &mut AsyncWindowContext,
+) -> Result<Entity<DebugSession>> {
+    let adapter_name = session.update(cx, |session, _| session.adapter())?;
+    this.update_in(cx, |_, window, cx| {
+        cx.subscribe_in(
+            &session,
+            window,
+            move |this, session, event: &SessionStateEvent, window, cx| match event {
+                SessionStateEvent::Restart => {
+                    this.handle_restart_request(session.clone(), window, cx);
+                }
+                SessionStateEvent::SpawnChildSession { request } => {
+                    this.handle_start_debugging_request(request, session.clone(), window, cx);
+                }
+                _ => {}
+            },
+        )
+        .detach();
+    })
+    .ok();
+    let serialized_layout = persistence::get_serialized_layout(adapter_name).await;
+    let debug_session = this.update_in(cx, |this, window, cx| {
+        this.sessions.retain(|session| {
+            !session
+                .read(cx)
+                .running_state()
+                .read(cx)
+                .session()
+                .read(cx)
+                .is_terminated()
+        });
+
+        let debug_session = DebugSession::running(
+            this.project.clone(),
+            this.workspace.clone(),
+            session,
+            cx.weak_entity(),
+            serialized_layout,
+            this.position(window, cx).axis(),
+            window,
+            cx,
+        );
+
+        // We might want to make this an event subscription and only notify when a new thread is selected
+        // This is used to filter the command menu correctly
+        cx.observe(
+            &debug_session.read(cx).running_state().clone(),
+            |_, _, cx| cx.notify(),
+        )
+        .detach();
+
+        this.sessions.push(debug_session.clone());
+
+        debug_session
+    })?;
+    Ok(debug_session)
 }
 
 impl EventEmitter<PanelEvent> for DebugPanel {}

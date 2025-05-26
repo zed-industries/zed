@@ -205,10 +205,8 @@ impl Model {
             | Self::FourOmniMini
             | Self::FourPointOne
             | Self::FourPointOneMini
-            | Self::FourPointOneNano
-            | Self::O1
-            | Self::O1Preview
-            | Self::O1Mini => true,
+            | Self::FourPointOneNano => true,
+            Self::O1 | Self::O1Preview | Self::O1Mini => false,
             _ => false,
         }
     }
@@ -278,7 +276,7 @@ pub struct FunctionDefinition {
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum RequestMessage {
     Assistant {
-        content: MessageContent,
+        content: Option<MessageContent>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
     },
@@ -562,16 +560,16 @@ fn adapt_response_to_stream(response: Response) -> ResponseStreamEvent {
             .into_iter()
             .map(|choice| {
                 let content = match &choice.message {
-                    RequestMessage::Assistant { content, .. } => content,
-                    RequestMessage::User { content } => content,
-                    RequestMessage::System { content } => content,
-                    RequestMessage::Tool { content, .. } => content,
+                    RequestMessage::Assistant { content, .. } => content.as_ref(),
+                    RequestMessage::User { content } => Some(content),
+                    RequestMessage::System { content } => Some(content),
+                    RequestMessage::Tool { content, .. } => Some(content),
                 };
 
                 let mut text_content = String::new();
                 match content {
-                    MessageContent::Plain(text) => text_content.push_str(&text),
-                    MessageContent::Multipart(parts) => {
+                    Some(MessageContent::Plain(text)) => text_content.push_str(&text),
+                    Some(MessageContent::Multipart(parts)) => {
                         for part in parts {
                             match part {
                                 MessagePart::Text { text } => text_content.push_str(&text),
@@ -579,6 +577,7 @@ fn adapt_response_to_stream(response: Response) -> ResponseStreamEvent {
                             }
                         }
                     }
+                    None => {}
                 };
 
                 ChoiceDelta {

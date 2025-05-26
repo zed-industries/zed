@@ -7,7 +7,10 @@ pub mod variable_list;
 
 use std::{any::Any, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 
-use crate::persistence::{self, DebuggerPaneItem, SerializedLayout};
+use crate::{
+    new_session_modal::resolve_path,
+    persistence::{self, DebuggerPaneItem, SerializedLayout},
+};
 
 use super::DebugPanelItemEvent;
 use anyhow::{Context as _, Result, anyhow};
@@ -71,7 +74,7 @@ pub struct RunningState {
     console: Entity<Console>,
     breakpoint_list: Entity<BreakpointList>,
     panes: PaneGroup,
-    active_pane: Option<Entity<Pane>>,
+    active_pane: Entity<Pane>,
     pane_close_subscriptions: HashMap<EntityId, Subscription>,
     dock_axis: Axis,
     _schedule_serialize: Option<Task<()>>,
@@ -82,8 +85,8 @@ impl RunningState {
         self.thread_id
     }
 
-    pub(crate) fn active_pane(&self) -> Option<&Entity<Pane>> {
-        self.active_pane.as_ref()
+    pub(crate) fn active_pane(&self) -> &Entity<Pane> {
+        &self.active_pane
     }
 }
 
@@ -543,6 +546,32 @@ impl RunningState {
         }
     }
 
+    pub(crate) fn relativlize_paths(
+        key: Option<&str>,
+        config: &mut serde_json::Value,
+        context: &TaskContext,
+    ) {
+        match config {
+            serde_json::Value::Object(obj) => {
+                obj.iter_mut()
+                    .for_each(|(key, value)| Self::relativlize_paths(Some(key), value, context));
+            }
+            serde_json::Value::Array(array) => {
+                array
+                    .iter_mut()
+                    .for_each(|value| Self::relativlize_paths(None, value, context));
+            }
+            serde_json::Value::String(s) if key == Some("program") || key == Some("cwd") => {
+                resolve_path(s);
+
+                if let Some(substituted) = substitute_variables_in_str(&s, context) {
+                    *s = substituted;
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub(crate) fn new(
         session: Entity<Session>,
         project: Entity<Project>,
@@ -585,14 +614,25 @@ impl RunningState {
             cx.subscribe_in(&session, window, |this, _, event, window, cx| {
                 match event {
                     SessionEvent::Stopped(thread_id) => {
-                        this.workspace
+                        let panel = this
+                            .workspace
                             .update(cx, |workspace, cx| {
                                 workspace.open_panel::<crate::DebugPanel>(window, cx);
+                                workspace.panel::<crate::DebugPanel>(cx)
                             })
-                            .log_err();
+                            .log_err()
+                            .flatten();
 
                         if let Some(thread_id) = thread_id {
                             this.select_thread(*thread_id, window, cx);
+                        }
+                        if let Some(panel) = panel {
+                            let id = this.session_id;
+                            window.defer(cx, move |window, cx| {
+                                panel.update(cx, |this, cx| {
+                                    this.activate_session_by_id(id, window, cx);
+                                })
+                            })
                         }
                     }
                     SessionEvent::Threads => {
@@ -663,6 +703,7 @@ impl RunningState {
 
             workspace::PaneGroup::with_root(root)
         };
+        let active_pane = panes.first_pane();
 
         Self {
             session,
@@ -675,7 +716,7 @@ impl RunningState {
             stack_frame_list,
             session_id,
             panes,
-            active_pane: None,
+            active_pane,
             module_list,
             console,
             breakpoint_list,
@@ -741,6 +782,7 @@ impl RunningState {
                 mut config,
                 tcp_connection,
             } = scenario;
+            Self::relativlize_paths(None, &mut config, &task_context);
             Self::substitute_variables_in_config(&mut config, &task_context);
 
             let request_type = dap_registry
@@ -886,6 +928,7 @@ impl RunningState {
                     .ok_or_else(|| anyhow!("{}: is not a valid adapter name", &adapter))
                     .map(|adapter| adapter.config_from_zed_format(zed_config))??;
                 config = scenario.config;
+                Self::substitute_variables_in_config(&mut config, &task_context);
             } else {
                 anyhow::bail!("No request or build provided");
             };
@@ -1188,7 +1231,7 @@ impl RunningState {
                 cx.notify();
             }
             Event::Focus => {
-                this.active_pane = Some(source_pane.clone());
+                this.active_pane = source_pane.clone();
             }
             Event::ZoomIn => {
                 source_pane.update(cx, |pane, cx| {
@@ -1212,10 +1255,10 @@ impl RunningState {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let active_pane = self.active_pane.clone();
         if let Some(pane) = self
-            .active_pane
-            .as_ref()
-            .and_then(|pane| self.panes.find_pane_in_direction(pane, direction, cx))
+            .panes
+            .find_pane_in_direction(&active_pane, direction, cx)
         {
             pane.update(cx, |pane, cx| {
                 pane.focus_active_item(window, cx);

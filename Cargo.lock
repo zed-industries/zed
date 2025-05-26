@@ -14,6 +14,7 @@ dependencies = [
  "gpui",
  "language",
  "project",
+ "release_channel",
  "smallvec",
  "ui",
  "util",
@@ -111,7 +112,6 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
- "smallvec",
  "smol",
  "streaming_diff",
  "telemetry",
@@ -4038,7 +4038,7 @@ dependencies = [
 [[package]]
 name = "dap-types"
 version = "0.0.1"
-source = "git+https://github.com/zed-industries/dap-types?rev=be69a016ba710191b9fdded28c8b042af4b617f7#be69a016ba710191b9fdded28c8b042af4b617f7"
+source = "git+https://github.com/zed-industries/dap-types?rev=68516de327fa1be15214133a0a2e52a12982ce75#68516de327fa1be15214133a0a2e52a12982ce75"
 dependencies = [
  "schemars",
  "serde",
@@ -4054,6 +4054,7 @@ dependencies = [
  "dap",
  "futures 0.3.31",
  "gpui",
+ "json_dotpath",
  "language",
  "paths",
  "serde",
@@ -4350,7 +4351,7 @@ version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 1.0.109",
+ "syn 2.0.101",
  "workspace-hack",
 ]
 
@@ -7124,7 +7125,7 @@ dependencies = [
  "gpui",
  "proc-macro2",
  "quote",
- "syn 1.0.109",
+ "syn 2.0.101",
  "workspace-hack",
 ]
 
@@ -8158,6 +8159,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "inspector_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "command_palette_hooks",
+ "editor",
+ "gpui",
+ "language",
+ "project",
+ "serde_json",
+ "serde_json_lenient",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+ "workspace-hack",
+ "zed_actions",
+]
+
+[[package]]
 name = "install_cli"
 version = "0.1.0"
 dependencies = [
@@ -8552,6 +8573,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "json_dotpath"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dbdcfef3cf5591f0cef62da413ae795e3d1f5a00936ccec0b2071499a32efd1a"
+dependencies = [
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "jsonschema"
 version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8770,19 +8803,16 @@ dependencies = [
  "client",
  "collections",
  "futures 0.3.31",
- "google_ai",
  "gpui",
  "http_client",
  "icons",
  "image",
- "open_ai",
  "parking_lot",
  "proto",
  "schemars",
  "serde",
  "serde_json",
  "smol",
- "strum 0.27.1",
  "telemetry_events",
  "thiserror 2.0.12",
  "util",
@@ -8806,7 +8836,6 @@ dependencies = [
  "credentials_provider",
  "deepseek",
  "editor",
- "feature_flags",
  "fs",
  "futures 0.3.31",
  "google_ai",
@@ -8918,8 +8947,10 @@ dependencies = [
  "regex",
  "rope",
  "rust-embed",
+ "schemars",
  "serde",
  "serde_json",
+ "serde_json_lenient",
  "settings",
  "smol",
  "snippet_provider",
@@ -14744,7 +14775,7 @@ version = "0.1.0"
 dependencies = [
  "sqlez",
  "sqlformat",
- "syn 1.0.109",
+ "syn 2.0.101",
  "workspace-hack",
 ]
 
@@ -16829,7 +16860,7 @@ name = "ui_macros"
 version = "0.1.0"
 dependencies = [
  "quote",
- "syn 1.0.109",
+ "syn 2.0.101",
  "workspace-hack",
 ]
 
@@ -17086,7 +17117,7 @@ name = "util_macros"
 version = "0.1.0"
 dependencies = [
  "quote",
- "syn 1.0.109",
+ "syn 2.0.101",
  "workspace-hack",
 ]
 
@@ -19737,6 +19768,7 @@ dependencies = [
  "image_viewer",
  "indoc",
  "inline_completion_button",
+ "inspector_ui",
  "install_cli",
  "jj_ui",
  "journal",
@@ -19876,9 +19908,9 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.8.2"
+version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9be71e2f9b271e1eb8eb3e0d986075e770d1a0a299fb036abc3f1fc13a2fa7eb"
+checksum = "22a8b9575b215536ed8ad254ba07171e4e13bd029eda3b54cca4b184d2768050"
 dependencies = [
  "anyhow",
  "serde",
@@ -19918,7 +19950,7 @@ dependencies = [
 
 [[package]]
 name = "zed_toml"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]

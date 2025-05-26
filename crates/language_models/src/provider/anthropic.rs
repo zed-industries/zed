@@ -240,8 +240,8 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
 
     fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         [
-            anthropic::Model::Claude3_7Sonnet,
-            anthropic::Model::Claude3_7SonnetThinking,
+            anthropic::Model::ClaudeSonnet4,
+            anthropic::Model::ClaudeSonnet4Thinking,
         ]
         .into_iter()
         .map(|model| self.create_language_model(model))
@@ -825,6 +825,7 @@ impl AnthropicEventMapper {
                         "end_turn" => StopReason::EndTurn,
                         "max_tokens" => StopReason::MaxTokens,
                         "tool_use" => StopReason::ToolUse,
+                        "refusal" => StopReason::Refusal,
                         _ => {
                             log::error!("Unexpected anthropic stop_reason: {stop_reason}");
                             StopReason::EndTurn
