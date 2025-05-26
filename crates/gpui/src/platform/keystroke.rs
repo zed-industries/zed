@@ -94,37 +94,33 @@ impl Keystroke {
     /// secondary means "cmd" on macOS and "ctrl" on other platforms
     /// when matching a key with an key_char set will be matched without it.
     pub fn parse(source: &str) -> std::result::Result<Self, InvalidKeystrokeError> {
-        let mut control = false;
-        let mut alt = false;
-        let mut shift = false;
-        let mut platform = false;
-        let mut function = false;
+        let mut modifiers = Modifiers::none();
         let mut key = None;
         let mut key_char = None;
 
         let mut components = source.split('-').peekable();
         while let Some(component) = components.next() {
             if component.eq_ignore_ascii_case("ctrl") {
-                control = true;
+                modifiers.control = true;
                 continue;
             }
             if component.eq_ignore_ascii_case("alt") {
-                alt = true;
+                modifiers.alt = true;
                 continue;
             }
             if component.eq_ignore_ascii_case("shift") {
-                shift = true;
+                modifiers.shift = true;
                 continue;
             }
             if component.eq_ignore_ascii_case("fn") {
-                function = true;
+                modifiers.function = true;
                 continue;
             }
             if component.eq_ignore_ascii_case("secondary") {
                 if cfg!(target_os = "macos") {
-                    platform = true;
+                    modifiers.platform = true;
                 } else {
-                    control = true;
+                    modifiers.control = true;
                 };
                 continue;
             }
@@ -134,7 +130,7 @@ impl Keystroke {
                 || component.eq_ignore_ascii_case("win");
 
             if is_platform {
-                platform = true;
+                modifiers.platform = true;
                 continue;
             }
 
@@ -158,7 +154,7 @@ impl Keystroke {
 
             if component.len() == 1 && component.as_bytes()[0].is_ascii_uppercase() {
                 // Convert to shift + lowercase char
-                shift = true;
+                modifiers.shift = true;
                 key_str.make_ascii_lowercase();
             } else {
                 // convert ascii chars to lowercase so that named keys like "tab" and "enter"
@@ -170,37 +166,30 @@ impl Keystroke {
 
         // Allow for the user to specify a keystroke modifier as the key itself
         // This sets the `key` to the modifier, and disables the modifier
-        if key.is_none() {
-            if shift {
-                key = Some("shift".to_string());
-                shift = false;
-            } else if control {
-                key = Some("control".to_string());
-                control = false;
-            } else if alt {
-                key = Some("alt".to_string());
-                alt = false;
-            } else if platform {
-                key = Some("platform".to_string());
-                platform = false;
-            } else if function {
-                key = Some("function".to_string());
-                function = false;
+        key = key.or_else(|| {
+            use std::mem;
+            // std::mem::take clears bool incase its true
+            if mem::take(&mut modifiers.shift) {
+                Some("shift".to_string())
+            } else if mem::take(&mut modifiers.control) {
+                Some("control".to_string())
+            } else if mem::take(&mut modifiers.alt) {
+                Some("alt".to_string())
+            } else if mem::take(&mut modifiers.platform) {
+                Some("platform".to_string())
+            } else if mem::take(&mut modifiers.function) {
+                Some("function".to_string())
+            } else {
+                None
             }
-        }
+        });
 
         let key = key.ok_or_else(|| InvalidKeystrokeError {
             keystroke: source.to_owned(),
         })?;
 
         Ok(Keystroke {
-            modifiers: Modifiers {
-                control,
-                alt,
-                shift,
-                platform,
-                function,
-            },
+            modifiers,
             key,
             key_char,
         })
