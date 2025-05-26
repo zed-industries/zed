@@ -86,7 +86,7 @@ To do this:
 1. Create an IAM User that you can assume in the [IAM Console](https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/users).
 2. Create security credentials for that User, save them and keep them secure.
 3. Open the Agent Configuration with (`agent: open configuration`) and go to the Amazon Bedrock section
-4. Copy the cerdentials from Step 2 into the respective **Access Key ID**, **Secret Access Key**, and **Region** fields.
+4. Copy the credentials from Step 2 into the respective **Access Key ID**, **Secret Access Key**, and **Region** fields.
 
 #### Cross-Region Inference
 
@@ -102,7 +102,7 @@ All data will be transmitted encrypted across Amazon's secure network.
 
 We will support Cross-Region inference for each of the models on a best-effort basis, please refer to the [Cross-Region Inference method Code](https://github.com/zed-industries/zed/blob/main/crates/bedrock/src/models.rs#L297).
 
-For the most up to date supported regions and models supported, refer to the [Supported Models and Regions for Cross Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html).
+For the most up-to-date supported regions and models, refer to the [Supported Models and Regions for Cross Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html).
 
 ### Anthropic {#anthropic}
 
@@ -148,8 +148,7 @@ You can add custom models to the Anthropic provider by adding the following to y
 
 Custom models will be listed in the model dropdown in the Agent Panel.
 
-You can configure a model to use [extended thinking](https://docs.anthropic.com/en/docs/about-claude/models/extended-thinking-models) (if it supports it),
-by changing the mode in of your models configuration to `thinking`, for example:
+You can configure a model to use [extended thinking](https://docs.anthropic.com/en/docs/about-claude/models/extended-thinking-models) (if it supports it) by changing the mode in your model's configuration to `thinking`, for example:
 
 ```json
 {
@@ -217,7 +216,7 @@ You can use GitHub Copilot chat with the Zed assistant by choosing it via the mo
 
 You can use Gemini 1.5 Pro/Flash with the Zed assistant by choosing it via the model dropdown in the Agent Panel.
 
-1. Go the Google AI Studio site and [create an API key](https://aistudio.google.com/app/apikey).
+1. Go to the Google AI Studio site and [create an API key](https://aistudio.google.com/app/apikey).
 2. Open the settings view (`agent: open configuration`) and go to the Google AI section
 3. Enter your Google AI API key and press enter.
 
@@ -227,7 +226,7 @@ Zed will also use the `GOOGLE_AI_API_KEY` environment variable if it's defined.
 
 #### Google AI custom models {#google-ai-custom-models}
 
-By default Zed will use `stable` versions of models, but you can use specific versions of models, including [experimental models](https://ai.google.dev/gemini-api/docs/models/experimental-models) with the Google AI provider by adding the following to your Zed `settings.json`:
+By default, Zed will use `stable` versions of models, but you can use specific versions of models, including [experimental models](https://ai.google.dev/gemini-api/docs/models/experimental-models), with the Google AI provider by adding the following to your Zed `settings.json`:
 
 ```json
 {
@@ -270,7 +269,7 @@ Tip: Set [LM Studio as a login item](https://lmstudio.ai/docs/advanced/headless#
 
 ### Mistral {#mistral}
 
-> 🔨Supports tool use
+> ✅ Supports tool use
 
 1. Visit the Mistral platform and [create an API key](https://console.mistral.ai/api-keys/)
 2. Open the configuration view (`assistant: show configuration`) and navigate to the Mistral section
@@ -332,7 +331,7 @@ Zed has pre-configured maximum context lengths (`max_tokens`) to match the capab
 Zed API requests to Ollama include this as `num_ctx` parameter, but the default values do not exceed `16384` so users with ~16GB of ram are able to use most models out of the box.
 See [get_max_tokens in ollama.rs](https://github.com/zed-industries/zed/blob/main/crates/ollama/src/ollama.rs) for a complete set of defaults.
 
-> **Note**: Tokens counts displayed in the Agent Panel are only estimates and will differ from the models native tokenizer.
+> **Note**: Token counts displayed in the Agent Panel are only estimates and will differ from the model's native tokenizer.
 
 Depending on your hardware or use-case you may wish to limit or increase the context length for a specific model via settings.json:
 
@@ -356,7 +355,7 @@ Depending on your hardware or use-case you may wish to limit or increase the con
 
 If you specify a context length that is too large for your hardware, Ollama will log an error. You can watch these logs by running: `tail -f ~/.ollama/logs/ollama.log` (MacOS) or `journalctl -u ollama -f` (Linux). Depending on the memory available on your machine, you may need to adjust the context length to a smaller value.
 
-You may also optionally specify a value for `keep_alive` for each available model. This can be an integer (seconds) or alternately a string duration like "5m", "10m", "1h", "1d", etc., For example `"keep_alive": "120s"` will allow the remote server to unload the model (freeing up GPU VRAM) after 120seconds.
+You may also optionally specify a value for `keep_alive` for each available model. This can be an integer (seconds) or alternatively a string duration like "5m", "10m", "1h", "1d", etc. For example, `"keep_alive": "120s"` will allow the remote server to unload the model (freeing up GPU VRAM) after 120 seconds.
 
 The `supports_tools` option controls whether or not the model will use additional tools.
 If the model is tagged with `tools` in the Ollama catalog this option should be supplied, and built in profiles `Ask` and `Write` can be used.
@@ -379,7 +378,7 @@ Zed will also use the `OPENAI_API_KEY` environment variable if it's defined.
 
 #### OpenAI Custom Models {#openai-custom-models}
 
-The Zed Assistant comes pre-configured to use the latest version for common models (GPT-3.5 Turbo, GPT-4, GPT-4 Turbo, GPT-4o, GPT-4o mini). If you wish to use alternate models, perhaps a preview release or a dated model release or you wish to control the request parameters you can do so by adding the following to your Zed `settings.json`:
+The Zed Assistant comes pre-configured to use the latest version for common models (GPT-3.5 Turbo, GPT-4, GPT-4 Turbo, GPT-4o, GPT-4o mini). If you wish to use alternate models, perhaps a preview release or a dated model release, or you wish to control the request parameters, you can do so by adding the following to your Zed `settings.json`:
 
 ```json
 {
@@ -404,7 +403,7 @@ The Zed Assistant comes pre-configured to use the latest version for common mode
 }
 ```
 
-You must provide the model's Context Window in the `max_tokens` parameter, this can be found [OpenAI Model Docs](https://platform.openai.com/docs/models). OpenAI `o1` models should set `max_completion_tokens` as well to avoid incurring high reasoning token costs. Custom models will be listed in the model dropdown in the Agent Panel.
+You must provide the model's Context Window in the `max_tokens` parameter; this can be found in the [OpenAI Model Docs](https://platform.openai.com/docs/models). OpenAI `o1` models should set `max_completion_tokens` as well to avoid incurring high reasoning token costs. Custom models will be listed in the model dropdown in the Agent Panel.
 
 ### OpenAI API Compatible{#openai-api-compatible}
 
@@ -434,7 +433,7 @@ Example configuration for using X.ai Grok with Zed:
 
 ### Custom Provider Endpoints {#custom-provider-endpoint}
 
-You can use a custom API endpoint for different providers, as long as it's compatible with the providers API structure.
+You can use a custom API endpoint for different providers, as long as it's compatible with the provider's API structure.
 To do so, add the following to your `settings.json`:
 
 ```json
