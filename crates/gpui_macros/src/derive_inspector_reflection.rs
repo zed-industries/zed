@@ -164,13 +164,8 @@ fn extract_doc_comment(attrs: &[Attribute]) -> Option<String> {
                 if let Expr::Lit(expr_lit) = &meta.value {
                     if let Lit::Str(lit_str) = &expr_lit.lit {
                         let line = lit_str.value();
-                        // Trim leading space that rustdoc adds
-                        let trimmed = if line.starts_with(' ') {
-                            &line[1..]
-                        } else {
-                            &line
-                        };
-                        doc_lines.push(trimmed.to_string());
+                        let line = line.strip_prefix(' ').unwrap_or(&line);
+                        doc_lines.push(line.to_string());
                     }
                 }
             }

@@ -365,7 +365,7 @@ impl DivInspector {
         //
         // This results in a behavior where user changes to the json style that do overlap with the
         // rust style will get set to the rust style when the user edits the rust style. It would be
-        // possible to update the rust style when the json style changes, but this is undesireable
+        // possible to update the rust style when the json style changes, but this is undesirable
         // as the user may be working on the actual code in the rust style.
         let mut new_style = self.unconvertible_style.clone();
         new_style.refine(&self.json_style_overrides);
