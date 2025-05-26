@@ -95,7 +95,6 @@ dap = { workspace = true, features = ["test-support"] }
 dap_adapters = { workspace = true, features = ["test-support"] }
 debugger_ui = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
-env_logger.workspace = true
 extension.workspace = true
 file_finder.workspace = true
 fs = { workspace = true, features = ["test-support"] }
@@ -133,6 +132,7 @@ unindent.workspace = true
 util.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
+zlog.workspace = true
 
 [package.metadata.cargo-machete]
 ignored = ["async-stripe"]

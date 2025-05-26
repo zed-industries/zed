@@ -1347,7 +1347,7 @@ mod tests {
 
     #[ctor::ctor]
     fn init_logger() {
-        env_logger::init();
+        zlog::init_test();
     }
 
     fn init_test(cx: &mut TestAppContext) {

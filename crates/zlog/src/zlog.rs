@@ -22,13 +22,21 @@ pub fn try_init() -> anyhow::Result<()> {
 }
 
 pub fn init_test() {
-    if try_init().is_ok() {
-        init_output_stdout();
+    if get_env_config().is_some() {
+        if try_init().is_ok() {
+            init_output_stdout();
+        }
     }
 }
 
+fn get_env_config() -> Option<String> {
+    std::env::var("ZED_LOG")
+        .or_else(|_| std::env::var("RUST_LOG"))
+        .ok()
+}
+
 pub fn process_env() {
-    let Ok(env_config) = std::env::var("ZED_LOG").or_else(|_| std::env::var("RUST_LOG")) else {
+    let Some(env_config) = get_env_config() else {
         return;
     };
     match env_config::parse(&env_config) {

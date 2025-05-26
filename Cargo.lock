@@ -593,7 +593,6 @@ dependencies = [
  "collections",
  "context_server",
  "editor",
- "env_logger 0.11.8",
  "feature_flags",
  "fs",
  "futures 0.3.31",
@@ -619,6 +618,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "worktree",
+ "zlog",
 ]
 
 [[package]]
@@ -631,7 +631,6 @@ dependencies = [
  "collections",
  "ctor",
  "derive_more",
- "env_logger 0.11.8",
  "futures 0.3.31",
  "gpui",
  "icons",
@@ -650,6 +649,7 @@ dependencies = [
  "util",
  "workspace",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -2220,9 +2220,9 @@ name = "buffer_diff"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "buffer_diff",
  "clock",
  "ctor",
- "env_logger 0.11.8",
  "futures 0.3.31",
  "git2",
  "gpui",
@@ -2237,6 +2237,7 @@ dependencies = [
  "unindent",
  "util",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -3007,7 +3008,6 @@ dependencies = [
  "debugger_ui",
  "derive_more",
  "editor",
- "env_logger 0.11.8",
  "envy",
  "extension",
  "file_finder",
@@ -3082,6 +3082,7 @@ dependencies = [
  "workspace-hack",
  "worktree",
  "zed_llm_client",
+ "zlog",
 ]
 
 [[package]]
@@ -3336,7 +3337,6 @@ dependencies = [
  "command_palette_hooks",
  "ctor",
  "editor",
- "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -3362,6 +3362,7 @@ dependencies = [
  "util",
  "workspace",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -4012,7 +4013,6 @@ dependencies = [
  "client",
  "collections",
  "dap-types",
- "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -4033,6 +4033,7 @@ dependencies = [
  "telemetry",
  "util",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -4219,7 +4220,6 @@ dependencies = [
  "db",
  "debugger_tools",
  "editor",
- "env_logger 0.11.8",
  "feature_flags",
  "file_icons",
  "futures 0.3.31",
@@ -4248,6 +4248,7 @@ dependencies = [
  "util",
  "workspace",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -4364,7 +4365,6 @@ dependencies = [
  "component",
  "ctor",
  "editor",
- "env_logger 0.11.8",
  "futures 0.3.31",
  "gpui",
  "indoc",
@@ -4385,6 +4385,7 @@ dependencies = [
  "util",
  "workspace",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -4683,7 +4684,6 @@ dependencies = [
  "dap",
  "db",
  "emojis",
- "env_logger 0.11.8",
  "feature_flags",
  "file_icons",
  "fs",
@@ -4738,6 +4738,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
+ "zlog",
 ]
 
 [[package]]
@@ -5165,7 +5166,6 @@ dependencies = [
  "criterion",
  "ctor",
  "dap",
- "env_logger 0.11.8",
  "extension",
  "fs",
  "futures 0.3.31",
@@ -5202,6 +5202,7 @@ dependencies = [
  "wasmtime",
  "wasmtime-wasi",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -5375,7 +5376,6 @@ dependencies = [
  "collections",
  "ctor",
  "editor",
- "env_logger 0.11.8",
  "file_icons",
  "futures 0.3.31",
  "fuzzy",
@@ -5395,6 +5395,7 @@ dependencies = [
  "util",
  "workspace",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -6109,7 +6110,6 @@ dependencies = [
  "ctor",
  "db",
  "editor",
- "env_logger 0.11.8",
  "futures 0.3.31",
  "fuzzy",
  "git",
@@ -6145,6 +6145,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
+ "zlog",
 ]
 
 [[package]]
@@ -8726,7 +8727,6 @@ dependencies = [
  "ctor",
  "diffy",
  "ec4rs",
- "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -8771,6 +8771,7 @@ dependencies = [
  "unindent",
  "util",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -8897,7 +8898,6 @@ dependencies = [
  "collections",
  "copilot",
  "editor",
- "env_logger 0.11.8",
  "futures 0.3.31",
  "gpui",
  "itertools 0.14.0",
@@ -8914,6 +8914,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
+ "zlog",
 ]
 
 [[package]]
@@ -9436,7 +9437,6 @@ dependencies = [
  "async-pipe",
  "collections",
  "ctor",
- "env_logger 0.11.8",
  "futures 0.3.31",
  "gpui",
  "log",
@@ -9450,6 +9450,7 @@ dependencies = [
  "smol",
  "util",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -9946,7 +9947,6 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
- "env_logger 0.11.8",
  "gpui",
  "indoc",
  "itertools 0.14.0",
@@ -9967,6 +9967,7 @@ dependencies = [
  "tree-sitter",
  "util",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -12033,7 +12034,6 @@ dependencies = [
  "context_server",
  "dap",
  "dap_adapters",
- "env_logger 0.11.8",
  "extension",
  "fancy-regex 0.14.0",
  "fs",
@@ -13018,6 +13018,7 @@ dependencies = [
  "unindent",
  "util",
  "worktree",
+ "zlog",
 ]
 
 [[package]]
@@ -13359,7 +13360,6 @@ dependencies = [
  "arrayvec",
  "criterion",
  "ctor",
- "env_logger 0.11.8",
  "gpui",
  "log",
  "rand 0.8.5",
@@ -13369,6 +13369,7 @@ dependencies = [
  "unicode-segmentation",
  "util",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -13386,7 +13387,6 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "collections",
- "env_logger 0.11.8",
  "futures 0.3.31",
  "gpui",
  "parking_lot",
@@ -13400,6 +13400,7 @@ dependencies = [
  "tracing",
  "util",
  "workspace-hack",
+ "zlog",
  "zstd",
 ]
 
@@ -14115,7 +14116,6 @@ dependencies = [
  "client",
  "clock",
  "collections",
- "env_logger 0.11.8",
  "feature_flags",
  "fs",
  "futures 0.3.31",
@@ -14146,6 +14146,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "worktree",
+ "zlog",
 ]
 
 [[package]]
@@ -15175,11 +15176,11 @@ version = "0.1.0"
 dependencies = [
  "arrayvec",
  "ctor",
- "env_logger 0.11.8",
  "log",
  "rand 0.8.5",
  "rayon",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -15490,7 +15491,6 @@ dependencies = [
  "collections",
  "ctor",
  "editor",
- "env_logger 0.11.8",
  "fuzzy",
  "gpui",
  "language",
@@ -15507,6 +15507,7 @@ dependencies = [
  "util",
  "workspace",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -15752,7 +15753,6 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
- "env_logger 0.11.8",
  "gpui",
  "http_client",
  "log",
@@ -15765,6 +15765,7 @@ dependencies = [
  "sum_tree",
  "util",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -19152,7 +19153,6 @@ dependencies = [
  "component",
  "dap",
  "db",
- "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -19184,6 +19184,7 @@ dependencies = [
  "windows 0.61.1",
  "workspace-hack",
  "zed_actions",
+ "zlog",
 ]
 
 [[package]]
@@ -19381,7 +19382,6 @@ dependencies = [
  "anyhow",
  "clock",
  "collections",
- "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -19408,6 +19408,7 @@ dependencies = [
  "text",
  "util",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -20101,7 +20102,6 @@ dependencies = [
  "ctor",
  "db",
  "editor",
- "env_logger 0.11.8",
  "feature_flags",
  "fs",
  "futures 0.3.31",
@@ -20140,6 +20140,7 @@ dependencies = [
  "worktree",
  "zed_actions",
  "zed_llm_client",
+ "zlog",
 ]
 
 [[package]]

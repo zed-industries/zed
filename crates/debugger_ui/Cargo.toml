@@ -21,7 +21,6 @@ test-support = [
     "project/test-support",
     "util/test-support",
     "workspace/test-support",
-    "env_logger",
     "unindent",
     "debugger_tools"
 ]
@@ -62,7 +61,6 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 workspace-hack.workspace = true
-env_logger = { workspace = true, optional = true }
 debugger_tools = { workspace = true, optional = true }
 unindent = { workspace = true, optional = true }
 
@@ -71,9 +69,9 @@ dap = { workspace = true, features = ["test-support"] }
 dap_adapters = { workspace = true, features = ["test-support"] }
 debugger_tools = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
-env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
+zlog.workspace = true
