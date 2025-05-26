@@ -11,7 +11,7 @@ Here's an overview of the supported providers and tool call support:
 
 | Provider                                        | Tool Use Supported                                                                                                                                                          |
 | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Amazon Bedrock](#amazon-bedrock)               | Depends on the model |
+| [Amazon Bedrock](#amazon-bedrock)               | Depends on the model                                                                                                                                                        |
 | [Anthropic](#anthropic)                         | ✅                                                                                                                                                                          |
 | [DeepSeek](#deepseek)                           | 🚫                                                                                                                                                                          |
 | [GitHub Copilot Chat](#github-copilot-chat)     | For Some Models ([link](https://github.com/zed-industries/zed/blob/9e0330ba7d848755c9734bf456c716bddf0973f3/crates/language_models/src/provider/copilot_chat.rs#L189-L198)) |
