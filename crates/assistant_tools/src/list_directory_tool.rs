@@ -125,17 +125,44 @@ impl Tool for ListDirectoryTool {
             return Task::ready(Err(anyhow!("{} is not a directory.", input.path))).into();
         }
 
-        let mut output = String::new();
+        let mut folder_paths = Vec::new();
+        let mut file_paths = Vec::new();
+        let mut has_any_entries = false;
+
         for entry in worktree.child_entries(&project_path.path) {
-            writeln!(
-                output,
-                "{}",
-                Path::new(worktree.root_name()).join(&entry.path).display(),
-            )
-            .unwrap();
+            has_any_entries = true;
+            let full_path = Path::new(worktree.root_name())
+                .join(&entry.path)
+                .display()
+                .to_string();
+            if entry.is_dir() {
+                folder_paths.push(full_path);
+            } else {
+                file_paths.push(full_path);
+            }
         }
-        if output.is_empty() {
+
+        if !has_any_entries {
             return Task::ready(Ok(format!("{} is empty.", input.path).into())).into();
+        }
+
+        // Sort paths for consistent output
+        folder_paths.sort();
+        file_paths.sort();
+
+        let mut output = String::new();
+        writeln!(output, "# Folders:").unwrap();
+        if !folder_paths.is_empty() {
+            for path_str in folder_paths {
+                writeln!(output, "{}", path_str).unwrap();
+            }
+        }
+
+        writeln!(output, "\n# Files:").unwrap();
+        if !file_paths.is_empty() {
+            for path_str in file_paths {
+                writeln!(output, "{}", path_str).unwrap();
+            }
         }
         Task::ready(Ok(output.into())).into()
     }
