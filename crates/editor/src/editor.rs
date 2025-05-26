@@ -74,8 +74,9 @@ pub use element::{
 };
 use feature_flags::{DebuggerFeatureFlag, FeatureFlagAppExt};
 use futures::{
-    FutureExt,
+    FutureExt, StreamExt as _,
     future::{self, Shared, join},
+    stream::FuturesUnordered,
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
 
@@ -108,9 +109,10 @@ pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 use language::{
     AutoindentMode, BracketMatch, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CursorShape, DiagnosticEntry, DiffOptions, DocumentationConfig, EditPredictionsMode,
-    EditPreview, HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point,
-    Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
+    CursorShape, DiagnosticEntry, DiagnosticSourceKind, DiffOptions, DocumentationConfig,
+    EditPredictionsMode, EditPreview, HighlightedText, IndentKind, IndentSize, Language,
+    OffsetRangeExt, Point, Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
+    WordsQuery,
     language_settings::{
         self, InlayHintSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
         all_language_settings, language_settings,
@@ -161,8 +163,8 @@ use multi_buffer::{
 use parking_lot::Mutex;
 use project::{
     CodeAction, Completion, CompletionIntent, CompletionSource, DocumentHighlight, InlayHint,
-    Location, LocationLink, PrepareRenameResponse, Project, ProjectItem, ProjectTransaction,
-    TaskSourceKind,
+    Location, LocationLink, LspPullDiagnostics, PrepareRenameResponse, Project, ProjectItem,
+    ProjectTransaction, TaskSourceKind,
     debugger::breakpoint_store::Breakpoint,
     lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
     project_settings::{GitGutterSetting, ProjectSettings},
@@ -1026,6 +1028,7 @@ pub struct Editor {
     tasks_update_task: Option<Task<()>>,
     breakpoint_store: Option<Entity<BreakpointStore>>,
     gutter_breakpoint_indicator: (Option<PhantomBreakpointIndicator>, Option<Task<()>>),
+    pull_diagnostics_task: Task<()>,
     in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
@@ -1630,6 +1633,11 @@ impl Editor {
                             editor
                                 .refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
                         }
+                        project::Event::LanguageServerAdded(_, _, _)
+                        | project::Event::LanguageServerRemoved(_)
+                        | project::Event::RefreshDocumentsDiagnostics => {
+                            editor.pull_diagnostics(window, cx);
+                        }
                         project::Event::SnippetEdit(id, snippet_edits) => {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
                                 let focus_handle = editor.focus_handle(cx);
@@ -1884,6 +1892,7 @@ impl Editor {
                 }),
             ],
             tasks_update_task: None,
+            pull_diagnostics_task: Task::ready(()),
             linked_edit_ranges: Default::default(),
             in_project_search: false,
             previous_search_ranges: None,
@@ -15580,6 +15589,60 @@ impl Editor {
         });
     }
 
+    fn pull_diagnostics(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<()> {
+        let project = self.project.as_ref()?.downgrade();
+        let debounce = Duration::from_millis(
+            ProjectSettings::get_global(cx)
+                .diagnostics
+                .lsp_pull_diagnostics_debounce_ms?,
+        );
+        let buffers = self.buffer.read(cx).all_buffers();
+
+        let background_executor = cx.background_executor().clone();
+        self.pull_diagnostics_task = cx.spawn_in(window, async move |editor, cx| {
+            background_executor.timer(debounce).await;
+
+            let Ok(mut pull_diagnostics_tasks) = cx.update(|_, cx| {
+                buffers
+                    .into_iter()
+                    .flat_map(|buffer| {
+                        Some(project.upgrade()?.pull_diagnostics_for_buffer(&buffer, cx))
+                    })
+                    .collect::<FuturesUnordered<_>>()
+            }) else {
+                return;
+            };
+
+            while let Some(pull_task) = pull_diagnostics_tasks.next().await {
+                let Some(project) = project.upgrade() else {
+                    return;
+                };
+                if let Some(new_diagnostics) = pull_task.log_err() {
+                    let Ok(update_task) =
+                        cx.update(|_, cx| project.update_pull_diagnostics(new_diagnostics, cx))
+                    else {
+                        return;
+                    };
+                    match update_task.await {
+                        Ok(()) => {
+                            if editor
+                                .update_in(cx, |editor, window, cx| {
+                                    editor.update_diagnostics_state(window, cx);
+                                })
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
+                        Err(e) => log::error!("Failed to update project diagnostics: {e:#}"),
+                    }
+                }
+            }
+        });
+
+        Some(())
+    }
+
     pub fn set_selections_from_remote(
         &mut self,
         selections: Vec<Selection<Anchor>>,
@@ -18283,7 +18346,7 @@ impl Editor {
         match event {
             multi_buffer::Event::Edited {
                 singleton_buffer_edited,
-                edited_buffer: buffer_edited,
+                edited_buffer,
             } => {
                 self.scrollbar_marker_state.dirty = true;
                 self.active_indent_guides_state.dirty = true;
@@ -18294,18 +18357,27 @@ impl Editor {
                 if self.has_active_inline_completion() {
                     self.update_visible_inline_completion(window, cx);
                 }
-                if let Some(buffer) = buffer_edited {
-                    let buffer_id = buffer.read(cx).remote_id();
-                    if !self.registered_buffers.contains_key(&buffer_id) {
-                        if let Some(project) = self.project.as_ref() {
-                            project.update(cx, |project, cx| {
+                if let Some(project) = self.project.as_ref() {
+                    project.update(cx, |project, cx| {
+                        // Diagnostics are not local: an edit within one file (`pub mod foo()` -> `pub mod bar()`), may cause errors in another files with `foo()`.
+                        // Hence, emit a project-wide event to pull for every buffer's diagnostics that has an open editor.
+                        if edited_buffer
+                            .as_ref()
+                            .is_some_and(|buffer| buffer.read(cx).file().is_some())
+                        {
+                            cx.emit(project::Event::RefreshDocumentsDiagnostics);
+                        }
+
+                        if let Some(buffer) = edited_buffer {
+                            let buffer_id = buffer.read(cx).remote_id();
+                            if !self.registered_buffers.contains_key(&buffer_id) {
                                 self.registered_buffers.insert(
                                     buffer_id,
                                     project.register_buffer_with_language_servers(&buffer, cx),
                                 );
-                            })
+                            }
                         }
-                    }
+                    });
                 }
                 cx.emit(EditorEvent::BufferEdited);
                 cx.emit(SearchEvent::MatchesInvalidated);
@@ -18424,13 +18496,17 @@ impl Editor {
             | multi_buffer::Event::BufferDiffChanged => cx.emit(EditorEvent::TitleChanged),
             multi_buffer::Event::Closed => cx.emit(EditorEvent::Closed),
             multi_buffer::Event::DiagnosticsUpdated => {
-                self.refresh_active_diagnostics(cx);
-                self.refresh_inline_diagnostics(true, window, cx);
-                self.scrollbar_marker_state.dirty = true;
-                cx.notify();
+                self.update_diagnostics_state(window, cx);
             }
             _ => {}
         };
+    }
+
+    fn update_diagnostics_state(&mut self, window: &mut Window, cx: &mut Context<'_, Editor>) {
+        self.refresh_active_diagnostics(cx);
+        self.refresh_inline_diagnostics(true, window, cx);
+        self.scrollbar_marker_state.dirty = true;
+        cx.notify();
     }
 
     pub fn start_temporary_diff_override(&mut self) {
@@ -19583,6 +19659,18 @@ pub trait SemanticsProvider {
         new_name: String,
         cx: &mut App,
     ) -> Option<Task<Result<ProjectTransaction>>>;
+
+    fn pull_diagnostics_for_buffer(
+        &self,
+        buffer: &Entity<Buffer>,
+        cx: &mut App,
+    ) -> Task<Result<Vec<LspPullDiagnostics>>>;
+
+    fn update_pull_diagnostics(
+        &self,
+        diagnostics: Vec<LspPullDiagnostics>,
+        cx: &mut App,
+    ) -> Task<Result<()>>;
 }
 
 pub trait CompletionProvider {
@@ -20095,6 +20183,63 @@ impl SemanticsProvider for Entity<Project> {
         Some(self.update(cx, |project, cx| {
             project.perform_rename(buffer.clone(), position, new_name, cx)
         }))
+    }
+
+    fn pull_diagnostics_for_buffer(
+        &self,
+        buffer: &Entity<Buffer>,
+        cx: &mut App,
+    ) -> Task<Result<Vec<LspPullDiagnostics>>> {
+        self.update(cx, |project, cx| {
+            project.lsp_store().update(cx, |lsp_store, cx| {
+                lsp_store.pull_diagnostics(buffer.clone(), cx)
+            })
+        })
+    }
+
+    fn update_pull_diagnostics(
+        &self,
+        diagnostics: Vec<LspPullDiagnostics>,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        self.update(cx, |project, cx| {
+            project.lsp_store().update(cx, |lsp_store, cx| {
+                for diagnostics_set in diagnostics {
+                    let Some(server_id) = diagnostics_set.server_id else {
+                        continue;
+                    };
+
+                    let adapter = lsp_store.language_server_adapter_for_id(server_id);
+                    let disk_based_sources = adapter
+                        .as_ref()
+                        .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
+                        .unwrap_or(&[]);
+                    let Some(uri) = diagnostics_set.uri.clone() else {
+                        continue;
+                    };
+                    lsp_store
+                        .merge_diagnostics(
+                            server_id,
+                            lsp::PublishDiagnosticsParams {
+                                uri,
+                                diagnostics: diagnostics_set.diagnostics.clone(),
+                                version: None,
+                            },
+                            DiagnosticSourceKind::Pulled,
+                            disk_based_sources,
+                            |old_diagnostic, cx| {
+                                // TODO(vs) this will overwrite the pushed diagnostics
+                                // TODO(vs) need to track responses' unchanged and partial
+                                false
+                            },
+                            cx,
+                        )
+                        .log_err();
+                }
+            })
+        });
+
+        Task::ready(Ok(()))
     }
 }
 
