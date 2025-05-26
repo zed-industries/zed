@@ -13404,6 +13404,76 @@ impl Editor {
         }
     }
 
+    pub fn unwrap_syntax_node(
+        &mut self,
+        _: &UnwrapSyntaxNode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
+
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let old_selections: Box<[_]> = self.selections.all::<usize>(cx).into();
+
+        let edits = old_selections
+            .iter()
+            // only consider the first selection for now
+            .take(1)
+            .map(|selection| {
+                // Only requires two branches once if-let-chains stabilize (#53667)
+                let selection_range = if !selection.is_empty() {
+                    selection.range()
+                } else if let Some((_, ancestor_range)) =
+                    buffer.syntax_ancestor(selection.start..selection.end)
+                {
+                    match ancestor_range {
+                        MultiOrSingleBufferOffsetRange::Single(range) => range,
+                        MultiOrSingleBufferOffsetRange::Multi(range) => range,
+                    }
+                } else {
+                    selection.range()
+                };
+
+                let mut new_range = selection_range.clone();
+                while let Some((_, ancestor_range)) = buffer.syntax_ancestor(new_range.clone()) {
+                    new_range = match ancestor_range {
+                        MultiOrSingleBufferOffsetRange::Single(range) => range,
+                        MultiOrSingleBufferOffsetRange::Multi(range) => range,
+                    };
+                    if new_range.start < selection_range.start
+                        || new_range.end > selection_range.end
+                    {
+                        break;
+                    }
+                }
+
+                (selection, selection_range, new_range)
+            })
+            .collect::<Vec<_>>();
+
+        self.transact(window, cx, |editor, window, cx| {
+            for (_, child, parent) in &edits {
+                let text = buffer.text_for_range(child.clone()).collect::<String>();
+                editor.replace_text_in_range(Some(parent.clone()), &text, window, cx);
+            }
+
+            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                s.select(
+                    edits
+                        .iter()
+                        .map(|(s, old, new)| Selection {
+                            id: s.id,
+                            start: new.start,
+                            end: new.start + old.len(),
+                            goal: SelectionGoal::None,
+                            reversed: s.reversed,
+                        })
+                        .collect(),
+                );
+            });
+        });
+    }
+
     fn refresh_runnables(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<()> {
         if !EditorSettings::get_global(cx).gutter.runnables {
             self.clear_tasks();
