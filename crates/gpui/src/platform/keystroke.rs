@@ -351,17 +351,29 @@ impl std::fmt::Display for Keystroke {
             write!(f, "shift-")?;
         }
         let key = match self.key.as_str() {
-            "backspace" if cfg!(target_os = "macos") => '⌫',
-            "up" if cfg!(target_os = "macos") => '↑',
-            "down" if cfg!(target_os = "macos") => '↓',
-            "left" if cfg!(target_os = "macos") => '←',
-            "right" if cfg!(target_os = "macos") => '→',
-            "tab" if cfg!(target_os = "macos") => '⇥',
-            "escape" if cfg!(target_os = "macos") => '⎋',
-            "shift" if cfg!(target_os = "macos") => '⇧',
-            "control" if cfg!(target_os = "macos") => '⌃',
-            "alt" if cfg!(target_os = "macos") => '⌥',
-            "platform" if cfg!(target_os = "macos") => '⌘',
+            #[cfg(target_os = "macos")]
+            "backspace" => '⌫',
+            #[cfg(target_os = "macos")]
+            "up" => '↑',
+            #[cfg(target_os = "macos")]
+            "down" => '↓',
+            #[cfg(target_os = "macos")]
+            "left" => '←',
+            #[cfg(target_os = "macos")]
+            "right" => '→',
+            #[cfg(target_os = "macos")]
+            "tab" => '⇥',
+            #[cfg(target_os = "macos")]
+            "escape" => '⎋',
+            #[cfg(target_os = "macos")]
+            "shift" => '⇧',
+            #[cfg(target_os = "macos")]
+            "control" => '⌃',
+            #[cfg(target_os = "macos")]
+            "alt" => '⌥',
+            #[cfg(target_os = "macos")]
+            "platform" => '⌘',
+
             key if key.len() == 1 => key.chars().next().unwrap().to_ascii_uppercase(),
             key => return f.write_str(key),
         };
