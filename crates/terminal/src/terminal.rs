@@ -1346,7 +1346,10 @@ impl Terminal {
         // Keep default terminal behavior
         let esc = to_esc_str(keystroke, &self.last_content.mode, alt_is_meta);
         if let Some(esc) = esc {
-            self.input(esc.into_bytes());
+            match esc {
+                Cow::Borrowed(string) => self.input(string.as_bytes()),
+                Cow::Owned(string) => self.input(string.into_bytes()),
+            };
             true
         } else {
             false
