@@ -1940,7 +1940,6 @@ impl EditorElement {
     fn layout_inline_code_actions(
         &self,
         display_row: DisplayRow,
-        em_width: Pixels,
         content_origin: gpui::Point<Pixels>,
         scroll_pixel_position: gpui::Point<Pixels>,
         line_height: Pixels,
@@ -1952,9 +1951,8 @@ impl EditorElement {
             return None;
         }
 
-        const OVERLFOW_CHAR_LIMIT: u32 = 2;
+        const OVERLFOW_CHAR_LIMIT: u32 = 3;
         const MAX_ALTERNATE_DISTANCE: u32 = 8;
-        const MARGIN_LEFT_EM_WIDTHS: f32 = 2.;
 
         let buffer_point = snapshot
             .display_snapshot
@@ -2035,7 +2033,7 @@ impl EditorElement {
             })
         }?;
 
-        let display_row = snapshot
+        let new_display_row = snapshot
             .display_snapshot
             .point_to_display_point(
                 Point {
@@ -2048,9 +2046,10 @@ impl EditorElement {
 
         let focus_handle = self.editor.focus_handle(cx);
         let editor = self.editor.clone();
+        let icon_size = ui::IconSize::XSmall;
         let mut element = IconButton::new("inline_code_actions", ui::IconName::BoltFilled)
+            .icon_size(icon_size)
             .shape(ui::IconButtonShape::Square)
-            .icon_size(ui::IconSize::Small)
             .icon_color(ui::Color::Hidden)
             .tooltip(move |window, cx| {
                 ui::Tooltip::for_action_in(
@@ -2066,7 +2065,7 @@ impl EditorElement {
                     editor.toggle_code_actions(
                         &crate::actions::ToggleCodeActions {
                             deployed_from: Some(crate::actions::CodeActionSource::Indicator(
-                                display_row,
+                                display_row, // pass original one
                             )),
                             quick_launch: false,
                         },
@@ -2078,9 +2077,10 @@ impl EditorElement {
             .into_any_element();
 
         let start_y = content_origin.y
-            + line_height * (display_row.as_f32() - scroll_pixel_position.y / line_height);
-        let start_x =
-            content_origin.x - scroll_pixel_position.x + (MARGIN_LEFT_EM_WIDTHS * em_width);
+            + ((new_display_row.as_f32() - (scroll_pixel_position.y / line_height)) * line_height)
+            + (line_height / 2.0)
+            - (icon_size.square(window, cx) / 2.0);
+        let start_x = content_origin.x - scroll_pixel_position.x + (window.rem_size() * 0.2);
 
         let absolute_offset = gpui::point(start_x, start_y);
         element.layout_as_root(gpui::AvailableSpace::min_size(), window, cx);
@@ -8167,7 +8167,6 @@ impl Element for EditorElement {
 
                             inline_code_actions = self.layout_inline_code_actions(
                                 display_row,
-                                em_width,
                                 content_origin,
                                 scroll_pixel_position,
                                 line_height,
