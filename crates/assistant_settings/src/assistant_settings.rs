@@ -383,7 +383,9 @@ impl AssistantSettingsContent {
                                 _ => None,
                             };
                             settings.provider = Some(AssistantProviderContentV1::LmStudio {
-                                default_model: Some(lmstudio::Model::new(&model, None, None)),
+                                default_model: Some(lmstudio::Model::new(
+                                    &model, None, None, false,
+                                )),
                                 api_url,
                             });
                         }
