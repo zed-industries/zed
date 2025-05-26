@@ -1664,7 +1664,7 @@ impl Terminal {
                 MouseButton::Middle => {
                     if let Some(item) = _cx.read_from_primary() {
                         let text = item.text().unwrap_or_default().to_string();
-                        self.input(text);
+                        self.input(text.into_bytes());
                     }
                 }
                 _ => {}
