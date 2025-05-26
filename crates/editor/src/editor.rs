@@ -5772,50 +5772,45 @@ impl Editor {
         display_row: DisplayRow,
         is_active: bool,
         cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if self.available_code_actions.is_none() {
-            return None;
-        }
+    ) -> AnyElement {
         let show_tooltip = !self.context_menu_visible();
-        Some(
-            IconButton::new("inline_code_actions", ui::IconName::BoltFilled)
-                .icon_size(icon_size)
-                .shape(ui::IconButtonShape::Square)
-                .style(ButtonStyle::Transparent)
-                .icon_color(ui::Color::Hidden)
-                .toggle_state(is_active)
-                .when(show_tooltip, |this| {
-                    this.tooltip({
-                        let focus_handle = self.focus_handle.clone();
-                        move |window, cx| {
-                            Tooltip::for_action_in(
-                                "Toggle Code Actions",
-                                &ToggleCodeActions {
-                                    deployed_from: None,
-                                    quick_launch: false,
-                                },
-                                &focus_handle,
-                                window,
-                                cx,
-                            )
-                        }
-                    })
+        IconButton::new("inline_code_actions", ui::IconName::BoltFilled)
+            .icon_size(icon_size)
+            .shape(ui::IconButtonShape::Square)
+            .style(ButtonStyle::Transparent)
+            .icon_color(ui::Color::Hidden)
+            .toggle_state(is_active)
+            .when(show_tooltip, |this| {
+                this.tooltip({
+                    let focus_handle = self.focus_handle.clone();
+                    move |window, cx| {
+                        Tooltip::for_action_in(
+                            "Toggle Code Actions",
+                            &ToggleCodeActions {
+                                deployed_from: None,
+                                quick_launch: false,
+                            },
+                            &focus_handle,
+                            window,
+                            cx,
+                        )
+                    }
                 })
-                .on_click(cx.listener(move |editor, _: &ClickEvent, window, cx| {
-                    window.focus(&editor.focus_handle(cx));
-                    editor.toggle_code_actions(
-                        &crate::actions::ToggleCodeActions {
-                            deployed_from: Some(crate::actions::CodeActionSource::Indicator(
-                                display_row,
-                            )),
-                            quick_launch: false,
-                        },
-                        window,
-                        cx,
-                    );
-                }))
-                .into_any_element(),
-        )
+            })
+            .on_click(cx.listener(move |editor, _: &ClickEvent, window, cx| {
+                window.focus(&editor.focus_handle(cx));
+                editor.toggle_code_actions(
+                    &crate::actions::ToggleCodeActions {
+                        deployed_from: Some(crate::actions::CodeActionSource::Indicator(
+                            display_row,
+                        )),
+                        quick_launch: false,
+                    },
+                    window,
+                    cx,
+                );
+            }))
+            .into_any_element()
     }
 
     pub fn context_menu(&self) -> &RefCell<Option<CodeContextMenu>> {

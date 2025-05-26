@@ -1956,6 +1956,7 @@ impl EditorElement {
 
         let icon_size = ui::IconSize::XSmall;
         let mut button = self.editor.update(cx, |editor, cx| {
+            editor.available_code_actions.as_ref()?;
             let active = editor
                 .context_menu
                 .borrow()
@@ -1974,7 +1975,7 @@ impl EditorElement {
                 .map_or(false, |source| {
                     matches!(source, CodeActionSource::Indicator(..))
                 });
-            editor.render_inline_code_actions(icon_size.clone(), display_point.row(), active, cx)
+            Some(editor.render_inline_code_actions(icon_size, display_point.row(), active, cx))
         })?;
 
         let buffer_point = display_point.to_point(&snapshot.display_snapshot);
