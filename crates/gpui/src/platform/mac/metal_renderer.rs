@@ -17,7 +17,10 @@ use core_video::{
     pixel_buffer::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
 };
 use foreign_types::{ForeignType, ForeignTypeRef};
-use metal::{CAMetalLayer, CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange};
+use metal::{
+    CAMetalLayer, CommandQueue, MTLDrawPrimitivesIndirectArguments, MTLPixelFormat,
+    MTLResourceOptions, NSRange,
+};
 use objc::{self, msg_send, sel, sel_impl};
 use parking_lot::Mutex;
 use std::{cell::Cell, ffi::c_void, mem, ptr, sync::Arc};
@@ -424,13 +427,31 @@ impl MetalRenderer {
                     viewport_size,
                     command_encoder,
                 ),
-                PrimitiveBatch::Paths(paths) => self.draw_paths(
-                    paths,
-                    instance_buffer,
-                    &mut instance_offset,
-                    viewport_size,
-                    command_encoder,
-                ),
+                PrimitiveBatch::Paths(paths) => {
+                    // TODO: `metal 0.32` added `metal::Device::support_indirect_command_buffers`` method,
+                    // which can be used to determine if we should use indirect command buffers
+                    // to draw paths.
+                    // let support_indirect_command_buffers =
+                    //     self.device.support_indirect_command_buffers();
+                    let support_indirect_command_buffers = false;
+                    if !support_indirect_command_buffers {
+                        self.draw_paths(
+                            paths,
+                            instance_buffer,
+                            &mut instance_offset,
+                            viewport_size,
+                            command_encoder,
+                        )
+                    } else {
+                        self.draw_paths_icb(
+                            paths,
+                            instance_buffer,
+                            &mut instance_offset,
+                            viewport_size,
+                            command_encoder,
+                        )
+                    }
+                }
                 PrimitiveBatch::Underlines(underlines) => self.draw_underlines(
                     underlines,
                     instance_buffer,
@@ -701,6 +722,123 @@ impl MetalRenderer {
             );
 
             *instance_offset = next_offset;
+        }
+
+        true
+    }
+
+    fn draw_paths_icb(
+        &self,
+        paths: &[Path<ScaledPixels>],
+        instance_buffer: &mut InstanceBuffer,
+        instance_offset: &mut usize,
+        viewport_size: Size<DevicePixels>,
+        command_encoder: &metal::RenderCommandEncoderRef,
+    ) -> bool {
+        if paths.is_empty() {
+            return true;
+        }
+
+        command_encoder.set_render_pipeline_state(&self.path_pipeline_state);
+
+        unsafe {
+            let base_addr = instance_buffer.metal_buffer.contents();
+            let mut p = (base_addr as *mut u8).add(*instance_offset);
+            let mut draw_indirect_commands = Vec::with_capacity(paths.len());
+
+            // copy vertices
+            let vertices_offset = (p as usize) - (base_addr as usize);
+            let mut first_vertex = 0;
+            for (i, path) in paths.iter().enumerate() {
+                if (p as usize) - (base_addr as usize)
+                    + (mem::size_of::<PathVertex<ScaledPixels>>() * path.vertices.len())
+                    > instance_buffer.size
+                {
+                    return false;
+                }
+
+                for v in &path.vertices {
+                    *(p as *mut PathVertex<ScaledPixels>) = PathVertex {
+                        xy_position: v.xy_position,
+                        content_mask: ContentMask {
+                            bounds: path.content_mask.bounds,
+                        },
+                    };
+                    p = p.add(mem::size_of::<PathVertex<ScaledPixels>>());
+                }
+
+                draw_indirect_commands.push(MTLDrawPrimitivesIndirectArguments {
+                    vertexCount: path.vertices.len() as u32,
+                    instanceCount: 1,
+                    vertexStart: first_vertex,
+                    baseInstance: i as u32,
+                });
+                first_vertex += path.vertices.len() as u32;
+            }
+
+            // copy sprites
+            let sprites_offset = (p as u64) - (base_addr as u64);
+            if (p as usize) - (base_addr as usize) + (mem::size_of::<PathSprite>() * paths.len())
+                > instance_buffer.size
+            {
+                return false;
+            }
+            for path in paths {
+                *(p as *mut PathSprite) = PathSprite {
+                    bounds: path.bounds,
+                    color: path.color,
+                };
+                p = p.add(mem::size_of::<PathSprite>());
+            }
+
+            // copy indirect commands
+            let icb_bytes_len = mem::size_of_val(draw_indirect_commands.as_slice());
+            let icb_offset = (p as u64) - (base_addr as u64);
+            if (p as usize) - (base_addr as usize) + icb_bytes_len > instance_buffer.size {
+                return false;
+            }
+            ptr::copy_nonoverlapping(
+                draw_indirect_commands.as_ptr() as *const u8,
+                p,
+                icb_bytes_len,
+            );
+            p = p.add(icb_bytes_len);
+
+            // draw path
+            command_encoder.set_vertex_buffer(
+                PathInputIndex::Vertices as u64,
+                Some(&instance_buffer.metal_buffer),
+                vertices_offset as u64,
+            );
+
+            command_encoder.set_vertex_bytes(
+                PathInputIndex::ViewportSize as u64,
+                mem::size_of_val(&viewport_size) as u64,
+                &viewport_size as *const Size<DevicePixels> as *const _,
+            );
+
+            command_encoder.set_vertex_buffer(
+                PathInputIndex::Sprites as u64,
+                Some(&instance_buffer.metal_buffer),
+                sprites_offset as u64,
+            );
+
+            command_encoder.set_fragment_buffer(
+                PathInputIndex::Sprites as u64,
+                Some(&instance_buffer.metal_buffer),
+                sprites_offset as u64,
+            );
+
+            for i in 0..paths.len() {
+                command_encoder.draw_primitives_indirect(
+                    metal::MTLPrimitiveType::Triangle,
+                    &instance_buffer.metal_buffer,
+                    icb_offset as u64
+                        + (i * std::mem::size_of::<MTLDrawPrimitivesIndirectArguments>()) as u64,
+                );
+            }
+
+            *instance_offset = (p as usize) - (base_addr as usize);
         }
 
         true
