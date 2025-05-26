@@ -101,6 +101,14 @@ fn render_inspector(
 
 fn render_inspector_id(inspector_id: &InspectorElementId, cx: &App) -> Div {
     let source_location = inspector_id.path.source_location;
+    // For unknown reasons, for some elements the path is absolute.
+    let source_location_string = source_location.to_string();
+    let source_location_string = source_location_string
+        .strip_prefix(env!("ZED_REPO_DIR"))
+        .and_then(|s| s.strip_prefix("/"))
+        .map(|s| s.to_string())
+        .unwrap_or(source_location_string);
+
     v_flex()
         .child(Label::new("Element ID").size(LabelSize::Large))
         .child(
@@ -118,7 +126,7 @@ fn render_inspector_id(inspector_id: &InspectorElementId, cx: &App) -> Div {
                 .text_ui(cx)
                 .bg(cx.theme().colors().editor_foreground.opacity(0.025))
                 .underline()
-                .child(format!("{}", source_location))
+                .child(source_location_string)
                 .tooltip(Tooltip::text("Click to open by running zed cli"))
                 .on_click(move |_, _window, cx| {
                     cx.background_spawn(open_zed_source_location(source_location))

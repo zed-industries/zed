@@ -418,6 +418,7 @@ impl DivInspector {
                 .map(|(range, name)| (Some(range), name.to_string()))
                 .collect::<Vec<_>>()
         };
+
         let mut style = StyleRefinement::default();
         let mut unrecognized_ranges = Vec::new();
         for (range, name) in method_names {
@@ -428,6 +429,7 @@ impl DivInspector {
                     .push(snapshot.anchor_before(range.start)..snapshot.anchor_before(range.end));
             }
         }
+
         (style, unrecognized_ranges)
     }
 
@@ -443,7 +445,7 @@ impl DivInspector {
             .map(|(ix, range)| DiagnosticEntry {
                 range,
                 diagnostic: Diagnostic {
-                    message: "unrecognized - won't be used".to_string(),
+                    message: "unrecognized".to_string(),
                     severity: DiagnosticSeverity::WARNING,
                     is_primary: true,
                     group_id: ix,
@@ -618,6 +620,7 @@ fn guess_rust_code_from_style(goal_style: &StyleRefinement) -> (String, StyleRef
         }
     }
     code.push_str("\n}");
+
     (code, style)
 }
 
