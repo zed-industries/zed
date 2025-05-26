@@ -77,7 +77,7 @@ use futures::{
     FutureExt,
     future::{self, Shared, join},
 };
-use fuzzy::StringMatchCandidate;
+use fuzzy::{StringMatch, StringMatchCandidate};
 
 use ::git::blame::BlameEntry;
 use ::git::{Restore, blame::ParsedCommitMessage};
@@ -912,7 +912,7 @@ pub struct Editor {
     // TODO: make this a access method
     pub project: Option<Entity<Project>>,
     semantics_provider: Option<Rc<dyn SemanticsProvider>>,
-    completion_provider: Option<Box<dyn CompletionProvider>>,
+    completion_provider: Option<Rc<dyn CompletionProvider>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
     blink_manager: Entity<BlinkManager>,
     show_cursor_names: bool,
@@ -1755,7 +1755,7 @@ impl Editor {
             soft_wrap_mode_override,
             diagnostics_max_severity,
             hard_wrap: None,
-            completion_provider: project.clone().map(|project| Box::new(project) as _),
+            completion_provider: project.clone().map(|project| Rc::new(project) as _),
             semantics_provider: project.clone().map(|project| Rc::new(project) as _),
             collaboration_hub: project.clone().map(|project| Box::new(project) as _),
             project,
@@ -2374,7 +2374,7 @@ impl Editor {
         self.custom_context_menu = Some(Box::new(f))
     }
 
-    pub fn set_completion_provider(&mut self, provider: Option<Box<dyn CompletionProvider>>) {
+    pub fn set_completion_provider(&mut self, provider: Option<Rc<dyn CompletionProvider>>) {
         self.completion_provider = provider;
     }
 
@@ -2684,9 +2684,10 @@ impl Editor {
                     drop(context_menu);
 
                     let query = Self::completion_query(buffer, cursor_position);
-                    cx.spawn(async move |this, cx| {
+                    let completion_provider = self.completion_provider.clone();
+                    cx.spawn_in(window, async move |this, cx| {
                         completion_menu
-                            .filter(query.as_deref(), cx.background_executor().clone())
+                            .filter(query.as_deref(), completion_provider, this.clone(), cx)
                             .await;
 
                         this.update(cx, |this, cx| {
@@ -4960,15 +4961,16 @@ impl Editor {
         let word_search_range = buffer_snapshot.point_to_offset(min_word_search)
             ..buffer_snapshot.point_to_offset(max_word_search);
 
-        let provider = self
-            .completion_provider
-            .as_ref()
-            .filter(|_| !ignore_completion_provider);
+        let provider = if ignore_completion_provider {
+            None
+        } else {
+            self.completion_provider.clone()
+        };
         let skip_digits = query
             .as_ref()
             .map_or(true, |query| !query.chars().any(|c| c.is_digit(10)));
 
-        let (mut words, provided_completions) = match provider {
+        let (mut words, provided_completions) = match &provider {
             Some(provider) => {
                 let completions = provider.completions(
                     position.excerpt_id,
@@ -5071,7 +5073,9 @@ impl Editor {
                         } else {
                             None
                         },
-                        cx.background_executor().clone(),
+                        provider,
+                        editor.clone(),
+                        cx,
                     )
                     .await;
 
@@ -8651,6 +8655,11 @@ impl Editor {
         let context_menu = self.context_menu.borrow_mut().take();
         self.stale_inline_completion_in_menu.take();
         self.update_visible_inline_completion(window, cx);
+        if let Some(CodeContextMenu::Completions(_)) = &context_menu {
+            if let Some(completion_provider) = &self.completion_provider {
+                completion_provider.selection_changed(None, window, cx);
+            }
+        }
         context_menu
     }
 
@@ -11353,7 +11362,7 @@ impl Editor {
             .context_menu
             .borrow_mut()
             .as_mut()
-            .map(|menu| menu.select_first(self.completion_provider.as_deref(), cx))
+            .map(|menu| menu.select_first(self.completion_provider.as_deref(), window, cx))
             .unwrap_or(false)
         {
             return;
@@ -11477,7 +11486,7 @@ impl Editor {
             .context_menu
             .borrow_mut()
             .as_mut()
-            .map(|menu| menu.select_last(self.completion_provider.as_deref(), cx))
+            .map(|menu| menu.select_last(self.completion_provider.as_deref(), window, cx))
             .unwrap_or(false)
         {
             return;
@@ -11532,44 +11541,44 @@ impl Editor {
     pub fn context_menu_first(
         &mut self,
         _: &ContextMenuFirst,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
-            context_menu.select_first(self.completion_provider.as_deref(), cx);
+            context_menu.select_first(self.completion_provider.as_deref(), window, cx);
         }
     }
 
     pub fn context_menu_prev(
         &mut self,
         _: &ContextMenuPrevious,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
-            context_menu.select_prev(self.completion_provider.as_deref(), cx);
+            context_menu.select_prev(self.completion_provider.as_deref(), window, cx);
         }
     }
 
     pub fn context_menu_next(
         &mut self,
         _: &ContextMenuNext,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
-            context_menu.select_next(self.completion_provider.as_deref(), cx);
+            context_menu.select_next(self.completion_provider.as_deref(), window, cx);
         }
     }
 
     pub fn context_menu_last(
         &mut self,
         _: &ContextMenuLast,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
-            context_menu.select_last(self.completion_provider.as_deref(), cx);
+            context_menu.select_last(self.completion_provider.as_deref(), window, cx);
         }
     }
 
@@ -19614,6 +19623,8 @@ pub trait CompletionProvider {
         trigger_in_words: bool,
         cx: &mut Context<Editor>,
     ) -> bool;
+
+    fn selection_changed(&self, _mat: Option<&StringMatch>, _window: &mut Window, _cx: &mut App) {}
 
     fn sort_completions(&self) -> bool {
         true
