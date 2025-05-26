@@ -1,7 +1,7 @@
 use crate::{
     CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
     SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
-    WorkspaceItemBuilder, clone_item,
+    WorkspaceItemBuilder,
     item::{
         ActivateOnClose, ClosePosition, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
         ProjectItemKind, ShowCloseButton, ShowDiagnostics, TabContentParams, TabTooltipContent,
@@ -18,9 +18,9 @@ use futures::{StreamExt, stream::FuturesUnordered};
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Corner, Div,
     DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
-    Focusable, KeyContext, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    NavigationDirection, Pixels, Point, PromptLevel, Render, ScrollHandle, Subscription, Task,
-    WeakEntity, WeakFocusHandle, Window, actions, anchored, deferred, impl_actions, prelude::*,
+    Focusable, KeyContext, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point,
+    PromptLevel, Render, ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle, Window,
+    actions, anchored, deferred, impl_actions, prelude::*,
 };
 use itertools::Itertools;
 use language::DiagnosticSeverity;
@@ -332,7 +332,6 @@ pub struct Pane {
     zoom_out_on_close: bool,
     /// If a certain project item wants to get recreated with specific data, it can persist its data before the recreation here.
     pub project_item_restoration_data: HashMap<ProjectItemKind, Box<dyn Any + Send>>,
-    current_modifiers: Modifiers,
 }
 
 pub struct ActivationHistoryEntry {
@@ -459,7 +458,6 @@ impl Pane {
             diagnostics: Default::default(),
             zoom_out_on_close: true,
             project_item_restoration_data: HashMap::default(),
-            current_modifiers: window.modifiers(),
         }
     }
 
@@ -475,16 +473,6 @@ impl Pane {
                 self.add_item(upgraded, true, true, None, window, cx);
             }
         }
-    }
-
-    fn handle_modifiers_changed(
-        &mut self,
-        event: &ModifiersChangedEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.current_modifiers = event.modifiers;
-        cx.notify();
     }
 
     pub fn track_alternate_file_items(&mut self) {
@@ -2845,8 +2833,8 @@ impl Pane {
             }
         }
 
-        let modifier = self.current_modifiers;
-        let ctrl_held = modifier.control;
+        let is_clone = cfg!(target_os = "macos") && window.modifiers().alt
+            || cfg!(not(target_os = "macos")) && window.modifiers().control;
 
         let from_pane = dragged_tab.pane.clone();
         self.workspace
@@ -2858,8 +2846,20 @@ impl Pane {
                     let database_id = workspace.database_id();
                     let old_ix = from_pane.read(cx).index_for_item_id(item_id);
                     let old_len = to_pane.read(cx).items.len();
-                    if ctrl_held {
-                        clone_item(&from_pane, &to_pane, item_id, database_id, window, cx);
+                    if is_clone {
+                        let Some(item) = from_pane
+                            .read(cx)
+                            .items()
+                            .find(|item| item.item_id() == item_id)
+                            .map(|item| item.clone())
+                        else {
+                            return;
+                        };
+                        if let Some(item) = item.clone_on_split(database_id, window, cx) {
+                            to_pane.update(cx, |pane, cx| {
+                                pane.add_item(item, true, true, None, window, cx);
+                            })
+                        }
                     } else {
                         move_item(&from_pane, &to_pane, item_id, ix, window, cx);
                     }
@@ -3212,7 +3212,6 @@ impl Render for Pane {
         v_flex()
             .key_context(key_context)
             .track_focus(&self.focus_handle(cx))
-            .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .size_full()
             .flex_none()
             .overflow_hidden()
