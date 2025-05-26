@@ -448,12 +448,6 @@ impl ContextProvider for PythonContextProvider {
                     TaskTemplate {
                         label: format!("pytest '{}'", VariableName::File.template_value()),
                         command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
-                        // args: vec![
-                        //     "-m".to_owned(),
-                        //     "pytest".to_owned(),
-                        //     ..pytest_args,
-                        //     VariableName::File.template_value_with_whitespace(),
-                        // ],
                         args: std::iter::once("-m".to_owned())
                             .chain(pytest_args.clone())
                             .chain(std::iter::once(
@@ -466,12 +460,6 @@ impl ContextProvider for PythonContextProvider {
                     TaskTemplate {
                         label: "pytest $ZED_CUSTOM_PYTHON_TEST_TARGET".to_owned(),
                         command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
-                        // args: vec![
-                        //     "-m".to_owned(),
-                        //     "pytest".to_owned(),
-                        //     ..pytest_args,
-                        //     PYTHON_TEST_TARGET_TASK_VARIABLE.template_value_with_whitespace(),
-                        // ],
                         args: std::iter::once("-m".to_owned())
                             .chain(pytest_args)
                             .chain(std::iter::once(
@@ -495,16 +483,16 @@ impl ContextProvider for PythonContextProvider {
 fn pytest_extra_args(location: Option<&Arc<dyn language::File>>, cx: &App) -> Vec<String> {
     const PYTEST_ARGS: &str = "PYTEST_ARGS";
     let setting = language_settings(Some(LanguageName::new("Python")), location, cx);
-    let args = setting.tasks.variables.get(PYTEST_ARGS);
-    if args.is_none() {
+    let Some(args) = setting.tasks.variables.get(PYTEST_ARGS) else {
         return vec![];
-    }
-    let r = shell_words::split(args.unwrap());
-    if r.is_err() {
-        log::error!("Invalid shell words: {}", args.unwrap());
+    };
+    
+    let Ok(r) = shell_words::split(args) else {
+        log::error!("Invalid shell words: {}", args);
         return vec![];
-    }
-    r.unwrap()
+    };
+    
+    r
 }
 
 fn selected_test_runner(location: Option<&Arc<dyn language::File>>, cx: &App) -> TestRunner {
