@@ -553,7 +553,7 @@ impl ContextPickerCompletionProvider {
                     let url_to_fetch = url_to_fetch.clone();
                     cx.spawn(async move |cx| {
                         if let Some(context) = context_store
-                            .update(cx, |context_store, _| {
+                            .read_with(cx, |context_store, _| {
                                 context_store.get_url_context(url_to_fetch.clone())
                             })
                             .ok()?
@@ -1289,7 +1289,7 @@ mod tests {
                     .map(Entity::downgrade)
             });
             window.focus(&editor.focus_handle(cx));
-            editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
+            editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
                 workspace.downgrade(),
                 context_store.downgrade(),
                 None,

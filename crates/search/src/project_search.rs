@@ -4019,7 +4019,7 @@ pub mod tests {
         window
             .update(cx, |workspace, window, cx| {
                 assert_eq!(workspace.active_pane(), &first_pane);
-                first_pane.update(cx, |this, _| {
+                first_pane.read_with(cx, |this, _| {
                     assert_eq!(this.active_item_index(), 1);
                     assert_eq!(this.items_len(), 2);
                 });
@@ -4203,7 +4203,7 @@ pub mod tests {
         });
         cx.run_until_parked();
         let project_search_view = pane
-            .update(&mut cx, |pane, _| {
+            .read_with(&mut cx, |pane, _| {
                 pane.active_item()
                     .and_then(|item| item.downcast::<ProjectSearchView>())
             })

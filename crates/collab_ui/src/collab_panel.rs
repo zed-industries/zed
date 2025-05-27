@@ -428,7 +428,7 @@ impl CollabPanel {
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let Some(serialization_key) = self
             .workspace
-            .update(cx, |workspace, _| CollabPanel::serialization_key(workspace))
+            .read_with(cx, |workspace, _| CollabPanel::serialization_key(workspace))
             .ok()
             .flatten()
         else {

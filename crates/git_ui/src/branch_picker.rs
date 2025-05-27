@@ -360,7 +360,7 @@ impl PickerDelegate for BranchListDelegate {
         }
 
         let current_branch = self.repo.as_ref().map(|repo| {
-            repo.update(cx, |repo, _| {
+            repo.read_with(cx, |repo, _| {
                 repo.branch.as_ref().map(|branch| branch.ref_name.clone())
             })
         });

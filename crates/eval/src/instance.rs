@@ -644,7 +644,7 @@ pub fn wait_for_lang_server(
     let (mut tx, mut rx) = mpsc::channel(1);
 
     let lsp_store = project
-        .update(cx, |project, _| project.lsp_store())
+        .read_with(cx, |project, _| project.lsp_store())
         .unwrap();
 
     let has_lang_server = buffer

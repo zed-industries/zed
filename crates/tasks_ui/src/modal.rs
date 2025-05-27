@@ -1176,7 +1176,7 @@ mod tests {
         scheduled_task_label: &str,
         cx: &mut VisualTestContext,
     ) {
-        let scheduled_task = tasks_picker.update(cx, |tasks_picker, _| {
+        let scheduled_task = tasks_picker.read_with(cx, |tasks_picker, _| {
             tasks_picker
                 .delegate
                 .candidates
@@ -1220,14 +1220,14 @@ mod tests {
         spawn_tasks: &Entity<Picker<TasksModalDelegate>>,
         cx: &mut VisualTestContext,
     ) -> String {
-        spawn_tasks.update(cx, |spawn_tasks, cx| spawn_tasks.query(cx))
+        spawn_tasks.read_with(cx, |spawn_tasks, cx| spawn_tasks.query(cx))
     }
 
     fn task_names(
         spawn_tasks: &Entity<Picker<TasksModalDelegate>>,
         cx: &mut VisualTestContext,
     ) -> Vec<String> {
-        spawn_tasks.update(cx, |spawn_tasks, _| {
+        spawn_tasks.read_with(cx, |spawn_tasks, _| {
             spawn_tasks
                 .delegate
                 .matches
