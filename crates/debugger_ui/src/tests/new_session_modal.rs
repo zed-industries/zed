@@ -32,7 +32,7 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
     // Set up task variables to simulate a real environment
     let test_variables = vec![(
         VariableName::WorktreeRoot,
-        "/test/worktree/path".to_string(),
+        path!("/test/worktree/path").to_string(),
     )]
     .into_iter()
     .collect();
@@ -45,33 +45,32 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
 
     let home_dir = paths::home_dir();
 
-    let sep = std::path::MAIN_SEPARATOR;
-
     // Test cases for different path formats
-    let test_cases: Vec<(Arc<String>, Arc<String>)> = vec![
+    let test_cases: Vec<(&'static str, &'static str)> = vec![
         // Absolute path - should not be relativized
         (
-            Arc::from(format!("{0}absolute{0}path{0}to{0}program", sep)),
-            Arc::from(format!("{0}absolute{0}path{0}to{0}program", sep)),
+            path!("/absolute/path/to/program"),
+            path!("/absolute/path/to/program"),
         ),
         // Relative path - should be prefixed with worktree root
         (
-            Arc::from(format!(".{0}src{0}program", sep)),
-            Arc::from(format!("{0}test{0}worktree{0}path{0}src{0}program", sep)),
+            path!("./src/program"),
+            path!("/test/worktree/path/src/program"),
         ),
-        // Home directory path - should be prefixed with worktree root
+        // Home directory path - should be expanded to full home directory path
         (
-            Arc::from(format!("~{0}src{0}program", sep)),
-            Arc::from(format!(
-                "{1}{0}src{0}program",
-                sep,
-                home_dir.to_string_lossy()
-            )),
+            path!("~/src/program"),
+            home_dir
+                .join("src")
+                .join("program")
+                .to_string_lossy()
+                .to_string()
+                .leak(),
         ),
         // Path with $ZED_WORKTREE_ROOT - should be substituted without double appending
         (
-            Arc::from(format!("$ZED_WORKTREE_ROOT{0}src{0}program", sep)),
-            Arc::from(format!("{0}test{0}worktree{0}path{0}src{0}program", sep)),
+            path!("$ZED_WORKTREE_ROOT/src/program"),
+            path!("/test/worktree/path/src/program"),
         ),
     ];
 
@@ -80,13 +79,9 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
     for (input_path, expected_path) in test_cases {
         let _subscription = project::debugger::test::intercept_debug_sessions(cx, {
             let called_launch = called_launch.clone();
-            let input_path = input_path.clone();
-            let expected_path = expected_path.clone();
             move |client| {
                 client.on_request::<dap::requests::Launch, _>({
                     let called_launch = called_launch.clone();
-                    let input_path = input_path.clone();
-                    let expected_path = expected_path.clone();
 
                     move |_, args| {
                         let config = args.raw.as_object().unwrap();
@@ -94,30 +89,32 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
                         // Verify the program path was substituted correctly
                         assert_eq!(
                             config["program"].as_str().unwrap(),
-                            expected_path.as_str(),
+                            expected_path,
                             "Program path was not correctly substituted for input: {}",
-                            input_path.as_str()
+                            input_path
                         );
 
                         // Verify the cwd path was substituted correctly
                         assert_eq!(
                             config["cwd"].as_str().unwrap(),
-                            expected_path.as_str(),
+                            expected_path,
                             "CWD path was not correctly substituted for input: {}",
-                            input_path.as_str()
+                            input_path
                         );
 
                         // Verify that otherField was substituted but not relativized
                         // It should still have $ZED_WORKTREE_ROOT substituted if present
                         let expected_other_field = if input_path.contains("$ZED_WORKTREE_ROOT") {
-                            input_path.replace("$ZED_WORKTREE_ROOT", path!("/test/worktree/path"))
+                            input_path
+                                .replace("$ZED_WORKTREE_ROOT", &path!("/test/worktree/path"))
+                                .to_owned()
                         } else {
                             input_path.to_string()
                         };
 
                         assert_eq!(
                             config["otherField"].as_str().unwrap(),
-                            expected_other_field,
+                            &expected_other_field,
                             "Other field was incorrectly modified for input: {}",
                             input_path
                         );
