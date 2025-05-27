@@ -837,7 +837,6 @@
     }
   },
   {
-    // FIXME linux
     "context": "VariableList",
     "use_key_equivalents": true,
     "bindings": {
