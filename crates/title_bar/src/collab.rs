@@ -32,20 +32,22 @@ fn toggle_screen_sharing(
     let call = ActiveCall::global(cx).read(cx);
     if let Some(room) = call.room().cloned() {
         let toggle_screen_sharing = room.update(cx, |room, cx| {
-            if room.is_sharing_screen() {
+            let unshare_current_screen = room.is_sharing_screen().then(|| {
                 telemetry::event!(
                     "Screen Share Disabled",
                     room_id = room.id(),
                     channel_id = room.channel_id(),
                 );
-                Task::ready(room.unshare_screen(cx))
-            } else if let Some(screen) = screen {
+                room.unshare_screen(cx)
+            });
+            if let Some(screen) = screen {
                 telemetry::event!(
                     "Screen Share Enabled",
                     room_id = room.id(),
                     channel_id = room.channel_id(),
                 );
                 cx.spawn(async move |room, cx| {
+                    unshare_current_screen.transpose()?;
                     room.update(cx, |room, cx| room.share_screen(screen, cx))?
                         .await
                 })
