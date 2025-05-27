@@ -1723,7 +1723,8 @@ impl SshRemoteConnection {
                 .build_local(build_remote_server, self.platform().await?, delegate, cx)
                 .await?;
             let tmp_path = paths::remote_server_dir_relative().join(format!(
-                "download-{}",
+                "download-{}-{}",
+                std::process::id(),
                 src_path.file_name().unwrap().to_string_lossy()
             ));
             self.upload_local_server_binary(&src_path, &tmp_path, delegate, cx)
