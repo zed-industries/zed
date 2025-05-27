@@ -272,7 +272,7 @@ If your zed binary fails to start, here are some "possible solution" for you.
 2025-03-06T11:25:41.8523248+08:00 [WARN] Rejected for device extension "VK_KHR_dynamic_rendering" not supported. Please update the driver!
 ```
 
-   Then you should try to update your driver.
+Then you should try to update your driver.
 
 3. If you find nothing but
 
@@ -282,12 +282,12 @@ If your zed binary fails to start, here are some "possible solution" for you.
 ==EOF==
 ```
 
-  Then you are in bad luck, check `4.`
+Then you are in bad luck, check `4.`
 
 4. One of the possible issue&solution we find untill NOW(2025/05/27)
 
-  Check if you have installed `bandicam`. If you do, try to uninstall it / remove the `bdcamvk64.dll`.
+Check if you have installed `bandicam`. If you do, try to uninstall it / remove the `bdcamvk64.dll`.
 
-  If zed starts right away, your a lucky guy
+If zed starts right away, your a lucky guy
 
 5. If nothing above, try to check the `Windows Event Viewer` and find some `Application Error` related with `zed.exe`
