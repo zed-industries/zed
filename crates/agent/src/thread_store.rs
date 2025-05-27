@@ -676,6 +676,8 @@ pub struct SerializedThread {
     pub model: Option<SerializedLanguageModel>,
     #[serde(default)]
     pub completion_mode: Option<CompletionMode>,
+    #[serde(default)]
+    pub tool_use_limit_reached: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -817,6 +819,7 @@ impl LegacySerializedThread {
             exceeded_window_error: None,
             model: None,
             completion_mode: None,
+            tool_use_limit_reached: false,
         }
     }
 }

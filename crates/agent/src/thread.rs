@@ -562,7 +562,7 @@ impl Thread {
             cumulative_token_usage: serialized.cumulative_token_usage,
             exceeded_window_error: None,
             last_usage: None,
-            tool_use_limit_reached: false,
+            tool_use_limit_reached: serialized.tool_use_limit_reached,
             feedback: None,
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
@@ -1171,6 +1171,7 @@ impl Thread {
                         model: model.model.id().0.to_string(),
                     }),
                 completion_mode: Some(this.completion_mode),
+                tool_use_limit_reached: this.tool_use_limit_reached,
             })
         })
     }
