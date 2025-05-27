@@ -2,6 +2,7 @@
 
 set -e
 
-git fetch origin main:tags/nightly -f
+remote=$("$(dirname "$0")"/lib/get-zed-remote)
+git fetch "$remote" main:tags/nightly -f
 git log --oneline -1 nightly
-git push -f origin nightly
+git push -f "$remote" nightly

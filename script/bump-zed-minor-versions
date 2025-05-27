@@ -14,7 +14,9 @@ if [[ $(git rev-parse --abbrev-ref HEAD) != "main" ]]; then
   echo "this command must be run on main"
   exit 1
 fi
-git pull -q --ff-only origin main
+
+remote=$("$(dirname "$0")"/lib/get-zed-remote)
+git pull -q --ff-only "$remote" main
 
 # Parse the current version
 version=$(script/get-crate-version zed)
@@ -30,8 +32,8 @@ next_minor_branch_name="v${major}.${next_minor}.x"
 preview_tag_name="v${major}.${minor}.${patch}-pre"
 bump_main_branch_name="set-minor-version-to-${major}.${next_minor}"
 
-git fetch origin ${prev_minor_branch_name}:${prev_minor_branch_name}
-git fetch origin --tags
+git fetch "$remote" ${prev_minor_branch_name}:${prev_minor_branch_name}
+git fetch "$remote" --tags
 cargo check -q
 
 function cleanup {
@@ -97,7 +99,7 @@ Prepared new Zed versions locally. You will need to push the branches and open a
 
 # To push and open a PR to update main:
 
-    git push origin \\
+    git push "$remote" \\
       ${preview_tag_name} \\
       ${stable_tag_name} \\
       ${minor_branch_name} \\

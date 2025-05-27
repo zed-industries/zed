@@ -21,6 +21,7 @@ new_version=$(script/get-crate-version $package)
 branch_name=$(git rev-parse --abbrev-ref HEAD)
 old_sha=$(git rev-parse HEAD)
 tag_name=${tag_prefix}${new_version}${tag_suffix}
+remote=$("$(dirname "$0")"/get-zed-remote)
 
 git commit --quiet --all --message "${package} ${new_version}"
 git tag ${tag_name}
@@ -30,7 +31,7 @@ Locally committed and tagged ${package} version ${new_version}
 
 To push this:
 
-    git push origin ${tag_name} ${branch_name}
+    git push ${remote} ${tag_name} ${branch_name}
 
 To undo this:
 

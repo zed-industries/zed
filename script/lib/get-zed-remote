@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+git remote -v |
+    grep 'zed-industries/zed' |
+    cut -f1 |
+    head -n1

@@ -2,6 +2,7 @@
 
 set -e
 
-git pull --ff-only origin main
+remote=$("$(dirname "$0")"/lib/get-zed-remote)
+git pull --ff-only "$remote" main
 git tag -f extension-cli
-git push -f origin extension-cli
+git push -f "$remote" extension-cli
