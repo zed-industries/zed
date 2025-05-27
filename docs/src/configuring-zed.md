@@ -3303,10 +3303,6 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "provider": "zed.dev",
     "model": "claude-sonnet-4"
   },
-  "editor_model": {
-    "provider": "zed.dev",
-    "model": "claude-sonnet-4"
-  },
   "single_file_review": true,
 }
 ```
