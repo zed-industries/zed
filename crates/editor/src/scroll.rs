@@ -730,15 +730,29 @@ impl Editor {
             .to_point(&self.buffer().read(cx).snapshot(cx))
             .row;
 
-        self.scroll_manager.set_anchor(
+        let snapshot = self.display_map.update(cx, |display_map, cx| {
+            display_map.snapshot(cx)
+        });
+
+        if !self.scroll_manager.try_start_anim(
             scroll_anchor,
             top_row,
+            &snapshot,
             true,
             false,
             workspace_id,
-            window,
-            cx,
-        );
+            cx
+        ) {
+            self.scroll_manager.set_anchor(
+                scroll_anchor,
+                top_row,
+                true,
+                false,
+                workspace_id,
+                window,
+                cx,
+            );
+        }
     }
 
     pub(crate) fn set_scroll_anchor_remote(
@@ -755,15 +769,28 @@ impl Editor {
             return;
         }
         let top_row = scroll_anchor.anchor.to_point(snapshot).row;
-        self.scroll_manager.set_anchor(
+
+        let snapshot = self.display_map.update(cx, |display_map, cx| display_map.snapshot(cx));
+
+        if !self.scroll_manager.try_start_anim(
             scroll_anchor,
             top_row,
+            &snapshot,
             false,
             false,
             workspace_id,
-            window,
-            cx,
-        );
+            cx
+        ) {
+            self.scroll_manager.set_anchor(
+                scroll_anchor,
+                top_row,
+                false,
+                false,
+                workspace_id,
+                window,
+                cx,
+            );
+        }
     }
 
     pub fn scroll_screen(
