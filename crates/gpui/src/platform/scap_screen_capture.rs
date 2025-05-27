@@ -37,7 +37,7 @@ pub(crate) fn start_scap_default_target_source(
 }
 
 struct ScapCaptureSource {
-    target: scap::Display,
+    target: scap::target::Display,
     size: Size<DevicePixels>,
 }
 
@@ -76,7 +76,7 @@ impl ScreenCaptureSource for ScapCaptureSource {
     fn metadata(&self) -> Result<SourceMetadata> {
         Ok(SourceMetadata {
             resolution: self.size,
-            label: self.target.clone().into(),
+            label: self.target.title.clone().into(),
             is_main: None,
             id: self.target.id as u64,
         })
@@ -95,7 +95,7 @@ impl ScreenCaptureSource for ScapCaptureSource {
             match new_scap_capturer(Some(scap::Target::Display(target.clone()))) {
                 Ok(mut capturer) => {
                     capturer.start_capture();
-                    run_capture(capturer, frame_callback, stream_tx);
+                    run_capture(capturer, target.clone(), frame_callback, stream_tx);
                 }
                 Err(e) => {
                     stream_tx.send(Err(e)).ok();
@@ -160,6 +160,8 @@ impl ScreenCaptureSource for ScapDefaultTargetCaptureSource {
         Ok(SourceMetadata {
             resolution: self.size,
             label: None,
+            is_main: None,
+            id: self.target.id as u64,
         })
     }
 
@@ -200,12 +202,19 @@ fn new_scap_capturer(target: Option<scap::Target>) -> Result<scap::capturer::Cap
 
 fn run_capture(
     mut capturer: scap::capturer::Capturer,
+    display: scap::Display,
     frame_callback: Box<dyn Fn(ScreenCaptureFrame) + Send>,
     stream_tx: oneshot::Sender<Result<ScapStream>>,
 ) {
     let cancel_stream = Arc::new(AtomicBool::new(false));
+    let size = Size {
+        width: DevicePixels(display.width as i32),
+        height: DevicePixels(display.height as i32),
+    };
     let stream_send_result = stream_tx.send(Ok(ScapStream {
         cancel_stream: cancel_stream.clone(),
+        display,
+        size,
     }));
     if let Err(_) = stream_send_result {
         return;
@@ -225,9 +234,19 @@ fn run_capture(
 struct ScapStream {
     cancel_stream: Arc<AtomicBool>,
     display: scap::Display,
+    size: Size<DevicePixels>,
 }
 
-impl ScreenCaptureStream for ScapStream {}
+impl ScreenCaptureStream for ScapStream {
+    fn metadata(&self) -> Result<SourceMetadata> {
+        Ok(SourceMetadata {
+            resolution: self.size,
+            label: self.display.title.clone().into(),
+            is_main: None,
+            id: self.display.id as u64,
+        })
+    }
+}
 
 impl Drop for ScapStream {
     fn drop(&mut self) {
