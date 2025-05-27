@@ -1822,6 +1822,7 @@ impl GitPanel {
 
     fn get_fetch_options(
         &self,
+        is_fetch_all: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl Future<Output = anyhow::Result<Option<FetchOptions>>> + use<> {
@@ -1838,8 +1839,10 @@ impl GitPanel {
             if remotes.len() > 1 {
                 remotes.push(FetchOptions::All);
             }
-            let selection = cx
-                .update(|window, cx| {
+            let selection = if is_fetch_all {
+                Some(remotes.len())
+            } else {
+                cx.update(|window, cx| {
                     picker_prompt::prompt(
                         "Pick which remote to fetch",
                         remotes.iter().map(|r| r.name()).collect(),
@@ -1848,12 +1851,18 @@ impl GitPanel {
                         cx,
                     )
                 })?
-                .await;
+                .await
+            };
             Ok(selection.map(|selection| remotes[selection].clone()))
         }
     }
 
-    pub(crate) fn fetch_from(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn fetch(
+        &mut self,
+        is_fetch_all: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.can_push_and_pull(cx) {
             return;
         }
@@ -1861,10 +1870,10 @@ impl GitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
-        telemetry::event!("Git Fetched From");
-        let askpass = self.askpass_delegate("git fetch from", window, cx);
+        telemetry::event!("Git Fetched");
+        let askpass = self.askpass_delegate("git fetch", window, cx);
         let this = cx.weak_entity();
-        let fetch_options = self.get_fetch_options(window, cx);
+        let fetch_options = self.get_fetch_options(is_fetch_all, window, cx);
         window
             .spawn(cx, async move |cx| {
                 let fetch_options = match fetch_options.await {
@@ -1878,41 +1887,6 @@ impl GitPanel {
                     }
                 };
                 let fetch = repo.update(cx, |repo, cx| repo.fetch(fetch_options, askpass, cx))?;
-
-                let remote_message = fetch.await?;
-                this.update(cx, |this, cx| {
-                    let action = RemoteAction::Fetch;
-                    match remote_message {
-                        Ok(remote_message) => this.show_remote_output(action, remote_message, cx),
-                        Err(e) => {
-                            log::error!("Error while fetching {:?}", e);
-                            this.show_error_toast(action.name(), e, cx)
-                        }
-                    }
-
-                    anyhow::Ok(())
-                })
-                .ok();
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
-    }
-
-    pub(crate) fn fetch(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.can_push_and_pull(cx) {
-            return;
-        }
-
-        let Some(repo) = self.active_repository.clone() else {
-            return;
-        };
-        telemetry::event!("Git Fetched");
-        let askpass = self.askpass_delegate("git fetch", window, cx);
-        let this = cx.weak_entity();
-        window
-            .spawn(cx, async move |cx| {
-                let fetch =
-                    repo.update(cx, |repo, cx| repo.fetch(FetchOptions::All, askpass, cx))?;
 
                 let remote_message = fetch.await?;
                 this.update(cx, |this, cx| {
