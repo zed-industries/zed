@@ -115,6 +115,7 @@ pub struct Message {
     pub segments: Vec<MessageSegment>,
     pub loaded_context: LoadedContext,
     pub creases: Vec<MessageCrease>,
+    pub is_hidden: bool,
 }
 
 impl Message {
@@ -540,6 +541,7 @@ impl Thread {
                             context: None,
                         })
                         .collect(),
+                    is_hidden: message.is_hidden,
                 })
                 .collect(),
             next_message_id,
@@ -560,7 +562,7 @@ impl Thread {
             cumulative_token_usage: serialized.cumulative_token_usage,
             exceeded_window_error: None,
             last_usage: None,
-            tool_use_limit_reached: false,
+            tool_use_limit_reached: serialized.tool_use_limit_reached,
             feedback: None,
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
@@ -849,7 +851,7 @@ impl Thread {
             .get(ix + 1)
             .and_then(|message| {
                 self.message(message.id)
-                    .map(|next_message| next_message.role == Role::User)
+                    .map(|next_message| next_message.role == Role::User && !next_message.is_hidden)
             })
             .unwrap_or(false)
     }
@@ -951,6 +953,7 @@ impl Thread {
             vec![MessageSegment::Text(text.into())],
             loaded_context.loaded_context,
             creases,
+            false,
             cx,
         );
 
@@ -966,6 +969,20 @@ impl Thread {
         message_id
     }
 
+    pub fn insert_invisible_continue_message(&mut self, cx: &mut Context<Self>) -> MessageId {
+        let id = self.insert_message(
+            Role::User,
+            vec![MessageSegment::Text("Continue where you left off".into())],
+            LoadedContext::default(),
+            vec![],
+            true,
+            cx,
+        );
+        self.pending_checkpoint = None;
+
+        id
+    }
+
     pub fn insert_assistant_message(
         &mut self,
         segments: Vec<MessageSegment>,
@@ -976,6 +993,7 @@ impl Thread {
             segments,
             LoadedContext::default(),
             Vec::new(),
+            false,
             cx,
         )
     }
@@ -986,6 +1004,7 @@ impl Thread {
         segments: Vec<MessageSegment>,
         loaded_context: LoadedContext,
         creases: Vec<MessageCrease>,
+        is_hidden: bool,
         cx: &mut Context<Self>,
     ) -> MessageId {
         let id = self.next_message_id.post_inc();
@@ -995,6 +1014,7 @@ impl Thread {
             segments,
             loaded_context,
             creases,
+            is_hidden,
         });
         self.touch_updated_at();
         cx.emit(ThreadEvent::MessageAdded(id));
@@ -1135,6 +1155,7 @@ impl Thread {
                                 label: crease.metadata.label.clone(),
                             })
                             .collect(),
+                        is_hidden: message.is_hidden,
                     })
                     .collect(),
                 initial_project_snapshot,
@@ -1150,6 +1171,7 @@ impl Thread {
                         model: model.model.id().0.to_string(),
                     }),
                 completion_mode: Some(this.completion_mode),
+                tool_use_limit_reached: this.tool_use_limit_reached,
             })
         })
     }
@@ -1781,6 +1803,7 @@ impl Thread {
                             thread.cancel_last_completion(window, cx);
                         }
                     }
+
                     cx.emit(ThreadEvent::Stopped(result.map_err(Arc::new)));
 
                     if let Some((request_callback, (request, response_events))) = thread
