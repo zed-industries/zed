@@ -2006,65 +2006,89 @@ impl ActiveThread {
                         .border_1()
                         .border_color(colors.border)
                         .hover(|hover| hover.border_color(colors.text_accent.opacity(0.5)))
-                        .cursor_pointer()
                         .child(
-                            h_flex()
+                            v_flex()
                                 .p_2p5()
                                 .gap_1()
-                                .items_end()
                                 .children(message_content)
                                 .when_some(editing_message_state, |this, state| {
                                     let focus_handle = state.editor.focus_handle(cx).clone();
-                                    this.w_full().justify_between().child(
+
+                                    this.child(
                                         h_flex()
-                                            .gap_0p5()
+                                            .w_full()
+                                            .gap_1()
+                                            .justify_between()
+                                            .flex_wrap()
                                             .child(
-                                                IconButton::new(
-                                                    "cancel-edit-message",
-                                                    IconName::Close,
-                                                )
-                                                .shape(ui::IconButtonShape::Square)
-                                                .icon_color(Color::Error)
-                                                .icon_size(IconSize::Small)
-                                                .tooltip({
-                                                    let focus_handle = focus_handle.clone();
-                                                    move |window, cx| {
-                                                        Tooltip::for_action_in(
-                                                            "Cancel Edit",
-                                                            &menu::Cancel,
-                                                            &focus_handle,
-                                                            window,
-                                                            cx,
-                                                        )
-                                                    }
-                                                })
-                                                .on_click(cx.listener(Self::handle_cancel_click)),
+                                                h_flex()
+                                                    .gap_1p5()
+                                                    .child(
+                                                        div()
+                                                            .opacity(0.8)
+                                                            .child(
+                                                                Icon::new(IconName::Warning)
+                                                                    .size(IconSize::Indicator)
+                                                                    .color(Color::Warning)
+                                                            ),
+                                                    )
+                                                    .child(
+                                                        Label::new("Editing will restart the thread from this point.")
+                                                            .color(Color::Muted)
+                                                            .size(LabelSize::XSmall),
+                                                    ),
                                             )
                                             .child(
-                                                IconButton::new(
-                                                    "confirm-edit-message",
-                                                    IconName::Return,
-                                                )
-                                                .disabled(state.editor.read(cx).is_empty(cx))
-                                                .shape(ui::IconButtonShape::Square)
-                                                .icon_color(Color::Muted)
-                                                .icon_size(IconSize::Small)
-                                                .tooltip({
-                                                    let focus_handle = focus_handle.clone();
-                                                    move |window, cx| {
-                                                        Tooltip::for_action_in(
-                                                            "Regenerate",
-                                                            &menu::Confirm,
-                                                            &focus_handle,
-                                                            window,
-                                                            cx,
+                                                h_flex()
+                                                    .gap_0p5()
+                                                    .child(
+                                                        IconButton::new(
+                                                            "cancel-edit-message",
+                                                            IconName::Close,
                                                         )
-                                                    }
-                                                })
-                                                .on_click(
-                                                    cx.listener(Self::handle_regenerate_click),
-                                                ),
-                                            ),
+                                                        .shape(ui::IconButtonShape::Square)
+                                                        .icon_color(Color::Error)
+                                                        .icon_size(IconSize::Small)
+                                                        .tooltip({
+                                                            let focus_handle = focus_handle.clone();
+                                                            move |window, cx| {
+                                                                Tooltip::for_action_in(
+                                                                    "Cancel Edit",
+                                                                    &menu::Cancel,
+                                                                    &focus_handle,
+                                                                    window,
+                                                                    cx,
+                                                                )
+                                                            }
+                                                        })
+                                                        .on_click(cx.listener(Self::handle_cancel_click)),
+                                                    )
+                                                    .child(
+                                                        IconButton::new(
+                                                            "confirm-edit-message",
+                                                            IconName::Return,
+                                                        )
+                                                        .disabled(state.editor.read(cx).is_empty(cx))
+                                                        .shape(ui::IconButtonShape::Square)
+                                                        .icon_color(Color::Muted)
+                                                        .icon_size(IconSize::Small)
+                                                        .tooltip({
+                                                            let focus_handle = focus_handle.clone();
+                                                            move |window, cx| {
+                                                                Tooltip::for_action_in(
+                                                                    "Regenerate",
+                                                                    &menu::Confirm,
+                                                                    &focus_handle,
+                                                                    window,
+                                                                    cx,
+                                                                )
+                                                            }
+                                                        })
+                                                        .on_click(
+                                                            cx.listener(Self::handle_regenerate_click),
+                                                        ),
+                                                    ),
+                                            )
                                     )
                                 }),
                         )
