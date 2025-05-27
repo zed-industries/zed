@@ -208,6 +208,7 @@ mod tests {
         vte::ansi::Handler,
     };
     use std::{cell::RefCell, ops::RangeInclusive, path::PathBuf};
+    use unicode_width::UnicodeWidthChar;
     use url::Url;
     use util::paths::PathWithPosition;
 
@@ -298,8 +299,8 @@ mod tests {
     //
     // <https://github.com/alacritty/alacritty/issues/8586>
     //
-    // This issue was recently fixed, as soon as update to a version containing the fix we
-    // can remove all the custom columns.
+    // This issue was recently fixed, as soon as we update to a version containing the fix we
+    // can remove all the custom columns from these tests.
     //
     macro_rules! test_hyperlink {
         ($($lines:expr),+; $hyperlink_kind:ident) => { {
@@ -311,6 +312,7 @@ mod tests {
                 test_lines.iter().copied()
                     .map(line_cells_count)
                     .fold((0, 0), |state, cells| (state.0 + cells, cmp::max(state.1, cells)));
+
             test_hyperlink!(
                 // Alacritty has issues with 2 columns, use 3 as the minimum for now.
                 [3, longest_line_cells / 2, longest_line_cells + 1];
@@ -322,16 +324,22 @@ mod tests {
 
         ($($columns:literal),+; $($lines:expr),+; $hyperlink_kind:ident) => { {
             use crate::terminal_hyperlinks::tests::line_cells_count;
+
             let test_lines = vec![$($lines),+];
             let total_cells = test_lines.iter().copied().map(line_cells_count).sum();
-            test_hyperlink!([ $($columns),+ ]; total_cells; test_lines.iter().copied(); $hyperlink_kind)
+
+            test_hyperlink!(
+                [ $($columns),+ ]; total_cells; test_lines.iter().copied(); $hyperlink_kind
+            )
         } };
 
         ([ $($columns:expr),+ ]; $total_cells:expr; $lines:expr; $hyperlink_kind:ident) => { {
+            use crate::terminal_hyperlinks::tests::{ test_hyperlink, HyperlinkKind };
+
+            let source_location = format!("{}:{}", std::file!(), std::line!());
             for columns in vec![ $($columns),+] {
-                use crate::terminal_hyperlinks::tests::{ test_hyperlink, HyperlinkKind };
                 test_hyperlink(columns, $total_cells, $lines, HyperlinkKind::$hyperlink_kind,
-                    format!("{}:{}", std::file!(), std::line!()));
+                    &source_location);
             }
         } };
     }
@@ -350,7 +358,9 @@ mod tests {
         ///
         macro_rules! test_path {
             ($($lines:literal),+) => { test_hyperlink!($($lines),+; Path) };
-            ($($columns:literal),+; $($lines:literal),+) => { test_hyperlink!($($columns),+; $($lines),+; Path) };
+            ($($columns:literal),+; $($lines:literal),+) => {
+                test_hyperlink!($($columns),+; $($lines),+; Path)
+            };
         }
 
         #[test]
@@ -517,7 +527,9 @@ mod tests {
                 )
             )]
             // <https://github.com/zed-industries/zed/issues/28194>
-            // #28194 was closed, but the link includes the description part (":in" here), which seems wrong...
+            //
+            // #28194 was closed, but the link includes the description part (":in" here), which
+            // seems wrong...
             fn issue_28194() {
                 test_path!(
                     "‹«test/c👉ontrollers/template_items_controller_test.rb»:«20»›:in 'block (2 levels) in <class:TemplateItemsControllerTest>'"
@@ -793,6 +805,8 @@ mod tests {
         hyperlink_match: RangeInclusive<AlacPoint>,
     }
 
+    /// Converts to Windows style paths on Windows, like path!(), but at runtime for improved test
+    /// readability.
     fn build_term_from_test_lines<'a>(
         hyperlink_kind: HyperlinkKind,
         term_size: TermSize,
@@ -926,7 +940,7 @@ mod tests {
                             && chars.peek().is_some_and(|c| *c != '\\');
 
                         if is_windows_abs_path_start {
-                            // Convert linux abs path start into Windows abs path start so that the
+                            // Convert Unix abs path start into Windows abs path start so that the
                             // same test can be used for both OSes.
                             term.input('C');
                             prev_input_point = prev_input_point_from_term(&term);
@@ -955,9 +969,9 @@ mod tests {
 
         if hyperlink_kind == HyperlinkKind::FileIri {
             iri_or_path = Url::parse(&iri_or_path)
-                .expect("Failed to parse file IRI: {iri_or_path}")
+                .expect("Failed to parse file IRI `{iri_or_path}`")
                 .to_file_path()
-                .expect("Failed to interpret file IRI as a path")
+                .expect("Failed to interpret file IRI `{iri_or_path}` as a path")
                 .to_string_lossy()
                 .to_string();
         }
@@ -988,27 +1002,11 @@ mod tests {
     }
 
     fn line_cells_count(line: &str) -> usize {
-        use unicode_width::UnicodeWidthChar;
         const CONTROL_CHARS: &str = "‹«👉👈»›";
         line.chars()
             .filter(|c| !CONTROL_CHARS.contains(*c))
             .filter_map(UnicodeWidthChar::width)
             .sum::<usize>()
-    }
-
-    use std::fmt::{self, Display};
-    struct TestMatch<'a>(&'a Match);
-    impl Display for TestMatch<'_> {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            write!(
-                f,
-                "({}, {})..=({}, {})",
-                self.0.start().line.0,
-                self.0.start().column.0,
-                self.0.end().line.0,
-                self.0.end().column.0
-            )
-        }
     }
 
     struct CheckHyperlinkMatch<'a> {
@@ -1046,7 +1044,10 @@ mod tests {
                         }
                     }
 
-                    result += &format!(", at grid cells {}", TestMatch(hyperlink_match));
+                    result += &format!(
+                        ", at grid cells {}",
+                        Self::format_hyperlink_match(hyperlink_match)
+                    );
                     result
                 };
 
@@ -1078,7 +1079,7 @@ mod tests {
             let format_iri_and_match = |iri: &String, hyperlink_match: &Match| {
                 format!(
                     "Url = «{iri}», at grid cells {}",
-                    TestMatch(hyperlink_match)
+                    Self::format_hyperlink_match(hyperlink_match)
                 )
             };
 
@@ -1100,6 +1101,16 @@ mod tests {
                 self.source_location,
                 self.format_renderable_content()
             );
+        }
+
+        fn format_hyperlink_match(hyperlink_match: &Match) -> String {
+            format!(
+                "({}, {})..=({}, {})",
+                hyperlink_match.start().line.0,
+                hyperlink_match.start().column.0,
+                hyperlink_match.end().line.0,
+                hyperlink_match.end().column.0
+            )
         }
 
         fn format_renderable_content(&self) -> String {
@@ -1156,7 +1167,7 @@ mod tests {
         total_cells: usize,
         test_lines: impl Iterator<Item = &'a str>,
         hyperlink_kind: HyperlinkKind,
-        source_location: String,
+        source_location: &str,
     ) {
         thread_local! {
             static HYPERLINK_FINDER: RefCell<HyperlinkFinder> = RefCell::new(HyperlinkFinder::new());
@@ -1171,7 +1182,7 @@ mod tests {
                 .find_from_grid_point(&mut term, expected_hyperlink.hovered_grid_point)
         });
         let check_hyperlink_match =
-            CheckHyperlinkMatch::new(&term, &expected_hyperlink, &source_location);
+            CheckHyperlinkMatch::new(&term, &expected_hyperlink, source_location);
         match hyperlink_found {
             Some((hyperlink_word, false, hyperlink_match)) => {
                 check_hyperlink_match.check_path_with_position_and_match(
