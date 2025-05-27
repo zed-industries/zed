@@ -5,6 +5,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use futures::channel::oneshot;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{self, AtomicBool};
 
@@ -36,7 +37,7 @@ pub(crate) fn start_scap_default_target_source(
 }
 
 struct ScapCaptureSource {
-    target: scap::Target,
+    target: scap::Display,
     size: Size<DevicePixels>,
 }
 
@@ -52,7 +53,7 @@ fn get_screen_targets(sources_tx: oneshot::Sender<Result<Vec<ScapCaptureSource>>
             }
         };
         let sources = targets
-            .iter()
+            .into_iter()
             .filter_map(|target| match target {
                 scap::Target::Display(display) => {
                     let size = Size {
@@ -60,7 +61,7 @@ fn get_screen_targets(sources_tx: oneshot::Sender<Result<Vec<ScapCaptureSource>>
                         height: DevicePixels(display.height as i32),
                     };
                     Some(ScapCaptureSource {
-                        target: target.clone(),
+                        target: target,
                         size,
                     })
                 }
@@ -88,15 +89,17 @@ impl ScreenCaptureSource for ScapCaptureSource {
         let target = self.target.clone();
 
         // Due to use of blocking APIs, a dedicated thread is used.
-        std::thread::spawn(move || match new_scap_capturer(Some(target)) {
-            Ok(mut capturer) => {
-                capturer.start_capture();
-                run_capture(capturer, frame_callback, stream_tx);
-            }
-            Err(e) => {
-                stream_tx.send(Err(e)).ok();
-            }
-        });
+        std::thread::spawn(
+            move || match new_scap_capturer(Some(scap::Target::Display(target))) {
+                Ok(mut capturer) => {
+                    capturer.start_capture();
+                    run_capture(capturer, frame_callback, stream_tx);
+                }
+                Err(e) => {
+                    stream_tx.send(Err(e)).ok();
+                }
+            },
+        );
 
         to_dyn_screen_capture_stream(stream_rx, foreground_executor)
     }
@@ -219,6 +222,7 @@ fn run_capture(
 
 struct ScapStream {
     cancel_stream: Arc<AtomicBool>,
+    display: scap::Display,
 }
 
 impl ScreenCaptureStream for ScapStream {}
