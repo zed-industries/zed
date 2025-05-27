@@ -247,6 +247,7 @@ enum BufferOrderedMessage {
     LanguageServerUpdate {
         language_server_id: LanguageServerId,
         message: proto::update_language_server::Variant,
+        name: Option<LanguageServerName>,
     },
     Resync,
 }
@@ -2535,7 +2536,7 @@ impl Project {
     }
 
     async fn send_buffer_ordered_messages(
-        this: WeakEntity<Self>,
+        project: WeakEntity<Self>,
         rx: UnboundedReceiver<BufferOrderedMessage>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
@@ -2572,7 +2573,7 @@ impl Project {
         let mut changes = rx.ready_chunks(MAX_BATCH_SIZE);
 
         while let Some(changes) = changes.next().await {
-            let is_local = this.read_with(cx, |this, _| this.is_local())?;
+            let is_local = project.read_with(cx, |this, _| this.is_local())?;
 
             for change in changes {
                 match change {
@@ -2592,7 +2593,7 @@ impl Project {
 
                     BufferOrderedMessage::Resync => {
                         operations_by_buffer_id.clear();
-                        if this
+                        if project
                             .update(cx, |this, cx| this.synchronize_remote_buffers(cx))?
                             .await
                             .is_ok()
@@ -2604,9 +2605,10 @@ impl Project {
                     BufferOrderedMessage::LanguageServerUpdate {
                         language_server_id,
                         message,
+                        name,
                     } => {
                         flush_operations(
-                            &this,
+                            &project,
                             &mut operations_by_buffer_id,
                             &mut needs_resync_with_host,
                             is_local,
@@ -2614,12 +2616,14 @@ impl Project {
                         )
                         .await?;
 
-                        this.read_with(cx, |this, _| {
-                            if let Some(project_id) = this.remote_id() {
-                                this.client
+                        project.read_with(cx, |project, _| {
+                            if let Some(project_id) = project.remote_id() {
+                                project
+                                    .client
                                     .send(proto::UpdateLanguageServer {
                                         project_id,
-                                        language_server_id: language_server_id.0 as u64,
+                                        server_name: name.map(|name| String::from(name.0)),
+                                        language_server_id: language_server_id.to_proto(),
                                         variant: Some(message),
                                     })
                                     .log_err();
@@ -2630,7 +2634,7 @@ impl Project {
             }
 
             flush_operations(
-                &this,
+                &project,
                 &mut operations_by_buffer_id,
                 &mut needs_resync_with_host,
                 is_local,
@@ -2751,12 +2755,14 @@ impl Project {
             LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
                 message,
+                name,
             } => {
                 if self.is_local() {
                     self.enqueue_buffer_ordered_message(
                         BufferOrderedMessage::LanguageServerUpdate {
                             language_server_id: *language_server_id,
                             message: message.clone(),
+                            name: name.clone(),
                         },
                     )
                     .ok();

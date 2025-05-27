@@ -532,12 +532,15 @@ message DiagnosticSummary {
 message UpdateLanguageServer {
     uint64 project_id = 1;
     uint64 language_server_id = 2;
+    optional string server_name = 8;
     oneof variant {
         LspWorkStart work_start = 3;
         LspWorkProgress work_progress = 4;
         LspWorkEnd work_end = 5;
         LspDiskBasedDiagnosticsUpdating disk_based_diagnostics_updating = 6;
         LspDiskBasedDiagnosticsUpdated disk_based_diagnostics_updated = 7;
+        StatusUpdate status_update = 9;
+        AssociationUpdate association_update = 10;
     }
 }
 
@@ -563,6 +566,29 @@ message LspWorkEnd {
 message LspDiskBasedDiagnosticsUpdating {}
 
 message LspDiskBasedDiagnosticsUpdated {}
+
+message StatusUpdate {
+    optional string message = 1;
+    Status status = 2;
+
+    enum Status {
+        Starting = 0;
+        Running = 1;
+        Warning = 2;
+        Error = 3;
+    }
+}
+
+message AssociationUpdate {
+    uint64 worktree_id = 1;
+    uint64 buffer_id = 2;
+    Kind kind = 3;
+
+    enum Kind {
+        Added = 0;
+        Removed = 1;
+    }
+}
 
 message LanguageServerLog {
     uint64 project_id = 1;

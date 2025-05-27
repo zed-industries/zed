@@ -1,11 +1,12 @@
 use std::sync::{Arc, Weak};
 
+use client::proto;
 use collections::HashSet;
 use editor::{
     Editor,
     actions::{RestartLanguageServer, StopLanguageServer},
 };
-use gpui::{Corner, Entity, WeakEntity};
+use gpui::{Corner, Entity, Subscription, WeakEntity};
 use language::CachedLspAdapter;
 use lsp::{LanguageServer, LanguageServerName};
 use project::LspStore;
@@ -21,20 +22,67 @@ pub struct LspTool {
         Weak<CachedLspAdapter>,
         Weak<LanguageServer>,
     )>,
+    _subscrtiptions: Vec<Subscription>,
 }
 
 impl LspTool {
     pub fn new(
         popover_menu_handle: PopoverMenuHandle<ContextMenu>,
         workspace: &Workspace,
-        cx: &App,
+        cx: &mut Context<Self>,
     ) -> Self {
         let lsp_store = workspace.project().read(cx).lsp_store();
+        let lsp_store_subscription = cx.subscribe(&lsp_store, |lsp_tool, lsp_store, e, cx| {
+            match e {
+                project::LspStoreEvent::LanguageServerAdded(
+                    language_server_id,
+                    language_server_name,
+                    worktree_id,
+                ) => {
+                    //
+                }
+                project::LspStoreEvent::LanguageServerRemoved(language_server_id) => {
+                    //
+                }
+                project::LspStoreEvent::LanguageServerUpdate {
+                    language_server_id,
+                    name,
+                    message: proto::update_language_server::Variant::StatusUpdate(status_update),
+                } => {
+                    //
+                    dbg!(status_update);
+                }
+                project::LspStoreEvent::LanguageServerUpdate {
+                    language_server_id,
+                    name,
+                    message: proto::update_language_server::Variant::AssociationUpdate(association_update),
+                } => {
+                    //
+                    dbg!(association_update);
+                }
+                project::LspStoreEvent::LanguageServerLog(
+                    language_server_id,
+                    language_server_log_type,
+                    _,
+                ) => {
+                    //
+                }
+                project::LspStoreEvent::LanguageServerPrompt(language_server_prompt_request) => {
+                    //
+                }
+                project::LspStoreEvent::Notification(_) => {
+                    //
+                }
+                _ => {}
+            }
+        });
+
         Self {
             lsp_store,
             popover_menu_handle,
             active_editor: None,
             selected_language_server: None,
+            _subscrtiptions: vec![lsp_store_subscription],
         }
     }
 
