@@ -5941,10 +5941,12 @@ impl EditorElement {
 
                         let line_height = position_map.line_height;
                         let max_glyph_width = position_map.em_width;
+                        let mut try_use_anim = true;
                         let (delta, axis) = match delta {
                             gpui::ScrollDelta::Pixels(mut pixels) => {
                                 //Trackpad
                                 let axis = position_map.snapshot.ongoing_scroll.filter(&mut pixels);
+                                try_use_anim = false;
                                 (pixels, axis)
                             }
 
@@ -5971,7 +5973,7 @@ impl EditorElement {
                         }
 
                         if scroll_position != current_scroll_position {
-                            editor.scroll(scroll_position, axis, window, cx);
+                            editor.scroll(scroll_position, axis, try_use_anim, window, cx);
                             cx.stop_propagation();
                         } else if y < 0. {
                             // Due to clamping, we may fail to detect cases of overscroll to the top;

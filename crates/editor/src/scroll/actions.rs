@@ -27,10 +27,11 @@ impl Editor {
         &mut self,
         scroll_position: Point<f32>,
         axis: Option<Axis>,
+        try_use_anim: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.scroll_manager.update_ongoing_scroll(axis);
+        self.scroll_manager.update_ongoing_scroll(axis, try_use_anim);
         self.set_scroll_position(scroll_position, window, cx);
     }
 

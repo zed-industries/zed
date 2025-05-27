@@ -68,6 +68,7 @@ impl ScrollAnchor {
 pub struct OngoingScroll {
     last_event: Instant,
     axis: Option<Axis>,
+    try_use_anim: bool,
 }
 
 impl OngoingScroll {
@@ -243,8 +244,10 @@ impl ScrollManager {
     }
 
     pub fn update_ongoing_scroll(&mut self, axis: Option<Axis>) {
+    pub fn update_ongoing_scroll(&mut self, axis: Option<Axis>, try_use_anim: bool) {
         self.ongoing.last_event = Instant::now();
         self.ongoing.axis = axis;
+        self.ongoing.try_use_anim = try_use_anim;
     }
 
     pub fn scroll_position(&self, snapshot: &DisplaySnapshot) -> gpui::Point<f32> {

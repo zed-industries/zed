@@ -1356,7 +1356,7 @@ impl ProjectSearchView {
                     editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                         s.select_ranges(range_to_select)
                     });
-                    editor.scroll(Point::default(), Some(Axis::Vertical), window, cx);
+                    editor.scroll(Point::default(), Some(Axis::Vertical), false, window, cx);
                 }
                 editor.highlight_background::<Self>(
                     &match_ranges,
