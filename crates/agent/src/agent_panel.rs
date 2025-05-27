@@ -7,7 +7,7 @@ use std::time::Duration;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
 
-use agent_settings::{AgentDockPosition, AgentSettings, DefaultView};
+use agent_settings::{AgentDockPosition, AgentSettings, CompletionMode, DefaultView};
 use anyhow::{Result, anyhow};
 use assistant_context_editor::{
     AgentPanelDelegate, AssistantContext, ConfigurationError, ContextEditor, ContextEvent,
