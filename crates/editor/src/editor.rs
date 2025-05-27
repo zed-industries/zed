@@ -4987,14 +4987,12 @@ impl Editor {
             (buffer_position..buffer_position, None)
         };
 
-        let completion_settings = language_settings(
-            buffer_snapshot
-                .language_at(buffer_position)
-                .map(|language| language.name()),
-            buffer_snapshot.file(),
-            cx,
-        )
-        .completions;
+        let language = buffer_snapshot
+            .language_at(buffer_position)
+            .map(|language| language.name());
+
+        let completion_settings =
+            language_settings(language.clone(), buffer_snapshot.file(), cx).completions;
 
         // The document can be large, so stay in reasonable bounds when searching for words,
         // otherwise completion pop-up might be slow to appear.
@@ -5106,16 +5104,26 @@ impl Editor {
                 let menu = if completions.is_empty() {
                     None
                 } else {
-                    let mut menu = CompletionsMenu::new(
-                        id,
-                        sort_completions,
-                        show_completion_documentation,
-                        ignore_completion_provider,
-                        position,
-                        buffer.clone(),
-                        completions.into(),
-                        snippet_sort_order,
-                    );
+                    let mut menu = editor.update(cx, |editor, cx| {
+                        let languages = editor
+                            .workspace
+                            .as_ref()
+                            .and_then(|(workspace, _)| workspace.upgrade())
+                            .map(|workspace| workspace.read(cx).app_state().languages.clone());
+                        CompletionsMenu::new(
+                            id,
+                            sort_completions,
+                            show_completion_documentation,
+                            ignore_completion_provider,
+                            position,
+                            buffer.clone(),
+                            completions.into(),
+                            snippet_sort_order,
+                            languages,
+                            language,
+                            cx,
+                        )
+                    })?;
 
                     menu.filter(
                         if filter_completions {
@@ -5188,6 +5196,22 @@ impl Editor {
         } else {
             None
         }
+    }
+
+    pub fn with_completions_menu_matching_id<R>(
+        &self,
+        id: CompletionId,
+        on_absent: impl FnOnce() -> R,
+        on_match: impl FnOnce(&mut CompletionsMenu) -> R,
+    ) -> R {
+        let mut context_menu = self.context_menu.borrow_mut();
+        let Some(CodeContextMenu::Completions(completions_menu)) = &mut *context_menu else {
+            return on_absent();
+        };
+        if completions_menu.id != id {
+            return on_absent();
+        }
+        on_match(completions_menu)
     }
 
     pub fn confirm_completion(
@@ -8686,7 +8710,7 @@ impl Editor {
     ) -> Option<AnyElement> {
         self.context_menu.borrow_mut().as_mut().and_then(|menu| {
             if menu.visible() {
-                menu.render_aside(self, max_size, window, cx)
+                menu.render_aside(max_size, window, cx)
             } else {
                 None
             }
