@@ -1045,7 +1045,13 @@ pub struct LanguageTaskConfig {
     pub variables: HashMap<String, String>,
     #[serde(default = "default_true")]
     pub enabled: bool,
-    /// Use LSP tasks over Zed ones, if non-empty LSP task set is returned.
+    /// Use LSP tasks over Zed language extension ones.
+    /// If no LSP tasks are returned due to error/timeout or regular execution,
+    /// Zed language extension tasks will be used instead.
+    ///
+    /// Other Zed tasks will still be shown:
+    /// * Zed task from either of the task config file
+    /// * Zed task from history (e.g. one-off task was spawned before)
     #[serde(default = "default_prefer_lsp_mode")]
     pub prefer_lsp: PreferLspMode,
 }

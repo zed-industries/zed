@@ -13616,11 +13616,13 @@ impl Editor {
                 return;
             };
 
-            let rows = if prefer_lsp && !lsp_tasks_by_rows.is_empty() {
-                Vec::new()
-            } else {
-                Self::runnable_rows(project, display_snapshot, new_rows, cx.clone())
-            };
+            let rows = Self::runnable_rows(
+                project,
+                display_snapshot,
+                prefer_lsp && !lsp_tasks_by_rows.is_empty(),
+                new_rows,
+                cx.clone(),
+            );
             editor
                 .update(cx, |editor, _| {
                     editor.clear_tasks();
@@ -13648,15 +13650,21 @@ impl Editor {
     fn runnable_rows(
         project: Entity<Project>,
         snapshot: DisplaySnapshot,
+        prefer_lsp: bool,
         runnable_ranges: Vec<RunnableRange>,
         mut cx: AsyncWindowContext,
     ) -> Vec<((BufferId, BufferRow), RunnableTasks)> {
         runnable_ranges
             .into_iter()
             .filter_map(|mut runnable| {
-                let tasks = cx
+                let mut tasks = cx
                     .update(|_, cx| Self::templates_with_tags(&project, &mut runnable.runnable, cx))
                     .ok()?;
+                if prefer_lsp {
+                    tasks.retain(|(task_kind, _)| {
+                        !matches!(task_kind, TaskSourceKind::Language { .. })
+                    });
+                }
                 if tasks.is_empty() {
                     return None;
                 }

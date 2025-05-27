@@ -267,7 +267,8 @@ impl PickerDelegate for TasksModalDelegate {
                                 };
 
                                 let mut new_candidates = used;
-                                let add_current_tasks = !prefer_lsp || lsp_tasks.is_empty();
+                                let add_current_language_tasks =
+                                    !prefer_lsp || lsp_tasks.is_empty();
                                 new_candidates.extend(lsp_tasks.into_iter().flat_map(
                                     |(kind, tasks_with_locations)| {
                                         tasks_with_locations
@@ -278,9 +279,12 @@ impl PickerDelegate for TasksModalDelegate {
                                             .map(move |(_, task)| (kind.clone(), task))
                                     },
                                 ));
-                                if add_current_tasks {
-                                    new_candidates.extend(current);
-                                }
+                                new_candidates.extend(current.into_iter().filter(
+                                    |(task_kind, _)| {
+                                        add_current_language_tasks
+                                            || !matches!(task_kind, TaskSourceKind::Language { .. })
+                                    },
+                                ));
                                 let match_candidates = string_match_candidates(&new_candidates);
                                 let _ = picker.delegate.candidates.insert(new_candidates);
                                 match_candidates
