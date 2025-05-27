@@ -240,13 +240,13 @@ impl DapStore {
 
                     let mut connection = None;
                     if let Some(c) = binary.connection {
-                        let local_bind_addr = Ipv4Addr::new(127, 0, 0, 1);
+                        let local_bind_addr = Ipv4Addr::LOCALHOST;
                         let port =
                             dap::transport::TcpTransport::unused_port(local_bind_addr).await?;
 
                         ssh_command.add_port_forwarding(port, c.host.to_string(), c.port);
                         connection = Some(TcpArguments {
-                            port: c.port,
+                            port,
                             host: local_bind_addr,
                             timeout: c.timeout,
                         })
