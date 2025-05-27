@@ -2,6 +2,8 @@ pub mod parser;
 mod path_range;
 
 use base64::Engine as _;
+use futures::FutureExt as _;
+use language::LanguageName;
 use log::Level;
 pub use path_range::{LineCol, PathWithRange};
 
@@ -101,7 +103,7 @@ pub struct Markdown {
     pending_parse: Option<Task<()>>,
     focus_handle: FocusHandle,
     language_registry: Option<Arc<LanguageRegistry>>,
-    fallback_code_block_language: Option<String>,
+    fallback_code_block_language: Option<LanguageName>,
     options: Options,
     copied_code_blocks: HashSet<ElementId>,
 }
@@ -144,7 +146,7 @@ impl Markdown {
     pub fn new(
         source: SharedString,
         language_registry: Option<Arc<LanguageRegistry>>,
-        fallback_code_block_language: Option<String>,
+        fallback_code_block_language: Option<LanguageName>,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
@@ -310,9 +312,9 @@ impl Markdown {
             if let Some(registry) = language_registry.as_ref() {
                 for name in language_names {
                     let language = if !name.is_empty() {
-                        registry.language_for_name_or_extension(&name)
+                        registry.language_for_name_or_extension(&name).left_future()
                     } else if let Some(fallback) = &fallback {
-                        registry.language_for_name_or_extension(fallback)
+                        registry.language_for_name(fallback.as_ref()).right_future()
                     } else {
                         continue;
                     };
