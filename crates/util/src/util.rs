@@ -670,7 +670,7 @@ pub fn measure<R>(label: &str, f: impl FnOnce() -> R) -> R {
     }
 }
 
-pub fn iterate_expanded_and_wrapped_usize_range(
+pub fn expanded_and_wrapped_usize_range(
     range: Range<usize>,
     additional_before: usize,
     additional_after: usize,
@@ -697,6 +697,43 @@ pub fn iterate_expanded_and_wrapped_usize_range(
     } else {
         Either::Left((range.start - additional_before)..(range.end + additional_after))
     }
+}
+
+/// Yields `[i, i + 1, i - 1, i + 2, ..]`, each modulo `wrap_length` and bounded by
+/// `additional_before` and `additional_after`. If the wrapping causes overlap, duplicates are not
+/// emitted. If wrap_length is 0, nothing is yielded.
+pub fn wrapped_usize_outward_from(
+    start: usize,
+    additional_before: usize,
+    additional_after: usize,
+    wrap_length: usize,
+) -> impl Iterator<Item = usize> {
+    let mut count = 0;
+    let mut after_offset = 1;
+    let mut before_offset = 1;
+
+    std::iter::from_fn(move || {
+        count += 1;
+        if count > wrap_length {
+            None
+        } else if count == 1 {
+            Some(start % wrap_length)
+        } else if after_offset <= additional_after && after_offset <= before_offset {
+            let value = (start + after_offset) % wrap_length;
+            after_offset += 1;
+            Some(value)
+        } else if before_offset <= additional_before {
+            let value = (start + wrap_length - before_offset) % wrap_length;
+            before_offset += 1;
+            Some(value)
+        } else if after_offset <= additional_after {
+            let value = (start + after_offset) % wrap_length;
+            after_offset += 1;
+            Some(value)
+        } else {
+            None
+        }
+    })
 }
 
 #[cfg(target_os = "windows")]
@@ -1462,46 +1499,85 @@ Line 3"#
     }
 
     #[test]
-    fn test_iterate_expanded_and_wrapped_usize_range() {
+    fn test_expanded_and_wrapped_usize_range() {
         // Neither wrap
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(2..4, 1, 1, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(2..4, 1, 1, 8).collect::<Vec<usize>>(),
             (1..5).collect::<Vec<usize>>()
         );
         // Start wraps
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(2..4, 3, 1, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(2..4, 3, 1, 8).collect::<Vec<usize>>(),
             ((0..5).chain(7..8)).collect::<Vec<usize>>()
         );
         // Start wraps all the way around
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(2..4, 5, 1, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(2..4, 5, 1, 8).collect::<Vec<usize>>(),
             (0..8).collect::<Vec<usize>>()
         );
         // Start wraps all the way around and past 0
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(2..4, 10, 1, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(2..4, 10, 1, 8).collect::<Vec<usize>>(),
             (0..8).collect::<Vec<usize>>()
         );
         // End wraps
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(3..5, 1, 4, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(3..5, 1, 4, 8).collect::<Vec<usize>>(),
             (0..1).chain(2..8).collect::<Vec<usize>>()
         );
         // End wraps all the way around
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(3..5, 1, 5, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(3..5, 1, 5, 8).collect::<Vec<usize>>(),
             (0..8).collect::<Vec<usize>>()
         );
         // End wraps all the way around and past the end
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(3..5, 1, 10, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(3..5, 1, 10, 8).collect::<Vec<usize>>(),
             (0..8).collect::<Vec<usize>>()
         );
         // Both start and end wrap
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(3..5, 4, 4, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(3..5, 4, 4, 8).collect::<Vec<usize>>(),
             (0..8).collect::<Vec<usize>>()
+        );
+    }
+
+    #[test]
+    fn test_wrapped_usize_outward_from() {
+        // No wrapping
+        assert_eq!(
+            wrapped_usize_outward_from(4, 2, 2, 10).collect::<Vec<usize>>(),
+            vec![4, 5, 3, 6, 2]
+        );
+        // Wrapping at end
+        assert_eq!(
+            wrapped_usize_outward_from(8, 2, 3, 10).collect::<Vec<usize>>(),
+            vec![8, 9, 7, 0, 6, 1]
+        );
+        // Wrapping at start
+        assert_eq!(
+            wrapped_usize_outward_from(1, 3, 2, 10).collect::<Vec<usize>>(),
+            vec![1, 2, 0, 3, 9, 8]
+        );
+        // All values wrap around
+        assert_eq!(
+            wrapped_usize_outward_from(5, 10, 10, 8).collect::<Vec<usize>>(),
+            vec![5, 6, 4, 7, 3, 0, 2, 1]
+        );
+        // None before / after
+        assert_eq!(
+            wrapped_usize_outward_from(3, 0, 0, 8).collect::<Vec<usize>>(),
+            vec![3]
+        );
+        // Starting point already wrapped
+        assert_eq!(
+            wrapped_usize_outward_from(15, 2, 2, 10).collect::<Vec<usize>>(),
+            vec![5, 6, 4, 7, 3]
+        );
+        // wrap_length of 0
+        assert_eq!(
+            wrapped_usize_outward_from(4, 2, 2, 0).collect::<Vec<usize>>(),
+            Vec::<usize>::new()
         );
     }
 

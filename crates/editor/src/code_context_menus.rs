@@ -4,6 +4,7 @@ use gpui::{
     Size, StrikethroughStyle, StyledText, UniformListScrollHandle, div, px, uniform_list,
 };
 use gpui::{AsyncWindowContext, WeakEntity};
+use itertools::Itertools;
 use language::CodeLabel;
 use language::{Buffer, LanguageName, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement};
@@ -46,14 +47,15 @@ pub const MENU_ASIDE_MAX_WIDTH: Pixels = px(500.);
 // Constants for the markdown cache. The purpose of this cache is to reduce flickering due to
 // documentation not yet being parsed.
 //
-// The size of the cache is set to the number of items fetched around the current selection. The
-// only current benefit of a larger cache would be doing less markdown parsing when the selection
-// revisits items.
+// The size of the cache is set to the number of items fetched around the current selection plus one
+// for the current selection and another to avoid cases where and adjacent selection exits the
+// cache. The only current benefit of a larger cache would be doing less markdown parsing when the
+// selection revisits items.
 //
 // One future benefit of a larger cache would be reducing flicker on backspace. This would require
 // not recreating the menu on every change, by not re-querying the language server when
 // `is_incomplete = false`.
-const MARKDOWN_CACHE_MAX_SIZE: usize = MARKDOWN_CACHE_BEFORE_ITEMS + MARKDOWN_CACHE_AFTER_ITEMS + 1;
+const MARKDOWN_CACHE_MAX_SIZE: usize = MARKDOWN_CACHE_BEFORE_ITEMS + MARKDOWN_CACHE_AFTER_ITEMS + 2;
 const MARKDOWN_CACHE_BEFORE_ITEMS: usize = 2;
 const MARKDOWN_CACHE_AFTER_ITEMS: usize = 2;
 
@@ -466,7 +468,7 @@ impl CompletionsMenu {
 
         // Expand the range to resolve more completions than are predicted to be visible, to reduce
         // jank on navigation.
-        let entry_indices = util::iterate_expanded_and_wrapped_usize_range(
+        let entry_indices = util::expanded_and_wrapped_usize_range(
             entry_range.clone(),
             RESOLVE_BEFORE_ITEMS,
             RESOLVE_AFTER_ITEMS,
@@ -519,20 +521,20 @@ impl CompletionsMenu {
     }
 
     fn start_markdown_parse_for_nearby_entries(&self, cx: &mut Context<Editor>) {
-        let entry_indices = util::iterate_expanded_and_wrapped_usize_range(
-            self.selected_item..self.selected_item + 1,
+        // Enqueue parse tasks of nearer items first.
+        //
+        // TODO: This means that the nearer items will actually be further back in the cache, which
+        // is not ideal. In practice this is fine because `get_or_create_markdown` moves the current
+        // selection to the front (when `is_render = true`).
+        let entry_indices = util::wrapped_usize_outward_from(
+            self.selected_item,
             MARKDOWN_CACHE_BEFORE_ITEMS,
             MARKDOWN_CACHE_AFTER_ITEMS,
             self.entries.borrow().len(),
         );
 
-        // Enqueue parse of current item first.
-        self.get_or_create_entry_markdown(self.selected_item, cx);
-
         for index in entry_indices {
-            if index != self.selected_item {
-                self.get_or_create_entry_markdown(index, cx);
-            }
+            self.get_or_create_entry_markdown(index, cx);
         }
     }
 
@@ -548,7 +550,7 @@ impl CompletionsMenu {
         let candidate_id = entries[index].candidate_id;
         match &self.completions.borrow()[candidate_id].documentation {
             Some(CompletionDocumentation::MultiLineMarkdown(source)) if !source.is_empty() => Some(
-                self.get_or_create_markdown(candidate_id, source.clone(), cx)
+                self.get_or_create_markdown(candidate_id, source.clone(), false, cx)
                     .1,
             ),
             Some(_) => None,
@@ -560,10 +562,24 @@ impl CompletionsMenu {
         &self,
         candidate_id: usize,
         source: SharedString,
+        is_render: bool,
         cx: &mut Context<Editor>,
     ) -> (bool, Entity<Markdown>) {
         let mut markdown_cache = self.markdown_cache.borrow_mut();
-        if let Some((_, markdown)) = markdown_cache.iter().find(|(id, _)| *id == candidate_id) {
+        if let Some((cache_index, (_, markdown))) = markdown_cache
+            .iter()
+            .find_position(|(id, _)| *id == candidate_id)
+        {
+            let markdown = if is_render && cache_index != 0 {
+                // Move the current selection's cache entry to the front.
+                markdown_cache.rotate_right(1);
+                let cache_len = markdown_cache.len();
+                markdown_cache.swap(0, (cache_index + 1) % cache_len);
+                &markdown_cache[0].1
+            } else {
+                markdown
+            };
+
             let is_parsing = markdown.update(cx, |markdown, cx| {
                 // `reset` is called as it's possible for documentation to change due to resolve
                 // requests. It does nothing if `source` is unchanged.
@@ -589,7 +605,8 @@ impl CompletionsMenu {
             (true, markdown)
         } else {
             debug_assert_eq!(markdown_cache.capacity(), MARKDOWN_CACHE_MAX_SIZE);
-            // The ring buffer is full, so this does no copying and just shifts indexes.
+            // Moves the last cache entry to the start. The ring buffer is full, so this does no
+            // copying and just shifts indexes.
             markdown_cache.rotate_right(1);
             markdown_cache[0].0 = candidate_id;
             let markdown = &markdown_cache[0].1;
@@ -768,7 +785,7 @@ impl CompletionsMenu {
             } => div().child(text.clone()),
             CompletionDocumentation::MultiLineMarkdown(source) if !source.is_empty() => {
                 let (is_parsing, markdown) =
-                    self.get_or_create_markdown(mat.candidate_id, source.clone(), cx);
+                    self.get_or_create_markdown(mat.candidate_id, source.clone(), true, cx);
                 if is_parsing {
                     return None;
                 }
