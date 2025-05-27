@@ -1213,6 +1213,28 @@ pub fn word_consists_of_emojis(s: &str) -> bool {
     prev_end == s.len()
 }
 
+/// Similar to `str::split`, but also provides byte-offset ranges of the results. Unlike
+/// `str::split`, this is not generic on pattern types and does not return an `Iterator`.
+pub fn split_str_with_ranges(s: &str, pat: impl Fn(char) -> bool) -> Vec<(Range<usize>, &str)> {
+    let mut result = Vec::new();
+    let mut start = 0;
+
+    for (i, ch) in s.char_indices() {
+        if pat(ch) {
+            if i > start {
+                result.push((start..i, &s[start..i]));
+            }
+            start = i + ch.len_utf8();
+        }
+    }
+
+    if s.len() > start {
+        result.push((start..s.len(), &s[start..s.len()]));
+    }
+
+    result
+}
+
 pub fn default<D: Default>() -> D {
     Default::default()
 }
@@ -1638,5 +1660,21 @@ Line 3"#
             ),
             "这是什\n么 钢\n笔"
         );
+    }
+
+    #[test]
+    fn test_split_with_ranges() {
+        let input = "hi";
+        let result = split_str_with_ranges(input, |c| c == ' ');
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], (0..2, "hi"));
+
+        let input = "héllo🦀world";
+        let result = split_str_with_ranges(input, |c| c == '🦀');
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], (0..6, "héllo")); // 'é' is 2 bytes
+        assert_eq!(result[1], (10..15, "world")); // '🦀' is 4 bytes
     }
 }

@@ -59,7 +59,7 @@ pub fn init(cx: &mut App) {
                     return;
                 };
                 panel.update(cx, |panel, cx| {
-                    panel.fetch(window, cx);
+                    panel.fetch(true, window, cx);
                 });
             });
             workspace.register_action(|workspace, _: &git::FetchFrom, window, cx| {
@@ -67,7 +67,7 @@ pub fn init(cx: &mut App) {
                     return;
                 };
                 panel.update(cx, |panel, cx| {
-                    panel.fetch_from(window, cx);
+                    panel.fetch(false, window, cx);
                 });
             });
             workspace.register_action(|workspace, _: &git::Push, window, cx| {

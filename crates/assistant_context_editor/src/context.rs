@@ -1730,9 +1730,8 @@ impl AssistantContext {
                                 merge_same_roles,
                             } => {
                                 if !merge_same_roles && Some(role) != last_role {
-                                    let offset = this.buffer.read_with(cx, |buffer, _cx| {
-                                        insert_position.to_offset(buffer)
-                                    });
+                                    let buffer = this.buffer.read(cx);
+                                    let offset = insert_position.to_offset(buffer);
                                     this.insert_message_at_offset(
                                         offset,
                                         role,
