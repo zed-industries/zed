@@ -164,13 +164,13 @@ impl ToolchainSelectorDelegate {
             let project = project.clone();
             async move |this, cx| {
                 let term = project
-                    .update(cx, |this, _| {
+                    .read_with(cx, |this, _| {
                         Project::toolchain_term(this.languages().clone(), language_name.clone())
                     })
                     .ok()?
                     .await?;
                 let relative_path = this
-                    .update(cx, |this, _| this.delegate.relative_path.clone())
+                    .read_with(cx, |this, _| this.delegate.relative_path.clone())
                     .ok()?;
                 let placeholder_text = format!(
                     "Select a {} for `{}`…",
@@ -257,7 +257,7 @@ impl PickerDelegate for ToolchainSelectorDelegate {
             let toolchain = self.candidates.toolchains[string_match.candidate_id].clone();
             if let Some(workspace_id) = self
                 .workspace
-                .update(cx, |this, _| this.database_id())
+                .read_with(cx, |this, _| this.database_id())
                 .ok()
                 .flatten()
             {

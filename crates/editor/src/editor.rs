@@ -1931,6 +1931,9 @@ impl Editor {
                             blink_manager.disable(cx);
                         }
                     });
+                    if active {
+                        editor.show_mouse_cursor();
+                    }
                 }),
             ],
             tasks_update_task: None,
@@ -2167,6 +2170,10 @@ impl Editor {
         }
 
         key_context
+    }
+
+    fn show_mouse_cursor(&mut self) {
+        self.mouse_cursor_hidden = false;
     }
 
     pub fn hide_mouse_cursor(&mut self, origin: &HideMouseCursorOrigin) {
@@ -14649,7 +14656,7 @@ impl Editor {
             let location = match location_task {
                 Some(task) => Some({
                     let target_buffer_handle = task.await.context("open local buffer")?;
-                    let range = target_buffer_handle.update(cx, |target_buffer, _| {
+                    let range = target_buffer_handle.read_with(cx, |target_buffer, _| {
                         let target_start = target_buffer
                             .clip_point_utf16(point_from_lsp(lsp_location.range.start), Bias::Left);
                         let target_end = target_buffer
@@ -14838,7 +14845,7 @@ impl Editor {
         } else {
             if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation {
                 let (preview_item_id, preview_item_idx) =
-                    workspace.active_pane().update(cx, |pane, _| {
+                    workspace.active_pane().read_with(cx, |pane, _| {
                         (pane.preview_item_id(), pane.preview_item_idx())
                     });
 
@@ -20154,7 +20161,7 @@ impl SemanticsProvider for Entity<Project> {
                     PrepareRenameResponse::InvalidPosition => None,
                     PrepareRenameResponse::OnlyUnpreparedRenameSupported => {
                         // Fallback on using TreeSitter info to determine identifier range
-                        buffer.update(cx, |buffer, _| {
+                        buffer.read_with(cx, |buffer, _| {
                             let snapshot = buffer.snapshot();
                             let (range, kind) = snapshot.surrounding_word(position);
                             if kind != Some(CharKind::Word) {
@@ -21533,7 +21540,7 @@ fn render_diff_hunk_controls(
         .rounded_b_lg()
         .bg(cx.theme().colors().editor_background)
         .gap_1()
-        .occlude()
+        .stop_mouse_events_except_scroll()
         .shadow_md()
         .child(if status.has_secondary_hunk() {
             Button::new(("stage", row as u64), "Stage")

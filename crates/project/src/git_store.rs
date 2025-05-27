@@ -2179,7 +2179,7 @@ impl GitStore {
         id: RepositoryId,
         cx: &mut AsyncApp,
     ) -> Result<Entity<Repository>> {
-        this.update(cx, |this, _| {
+        this.read_with(cx, |this, _| {
             this.repositories
                 .get(&id)
                 .context("missing repository handle")
@@ -4022,7 +4022,7 @@ impl Repository {
                     bail!("not a local repository")
                 };
                 let (snapshot, events) = this
-                    .update(&mut cx, |this, _| {
+                    .read_with(&mut cx, |this, _| {
                         compute_snapshot(
                             this.id,
                             this.work_directory_abs_path.clone(),

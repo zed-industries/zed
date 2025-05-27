@@ -553,7 +553,7 @@ impl ContextPickerCompletionProvider {
                     let url_to_fetch = url_to_fetch.clone();
                     cx.spawn(async move |cx| {
                         if let Some(context) = context_store
-                            .update(cx, |context_store, _| {
+                            .read_with(cx, |context_store, _| {
                                 context_store.get_url_context(url_to_fetch.clone())
                             })
                             .ok()?

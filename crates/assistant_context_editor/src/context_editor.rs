@@ -1903,7 +1903,7 @@ impl ContextEditor {
                             .on_click(cx.listener(|this, _event, _window, cx| {
                                 let client = this
                                     .workspace
-                                    .update(cx, |workspace, _| workspace.client().clone())
+                                    .read_with(cx, |workspace, _| workspace.client().clone())
                                     .log_err();
 
                                 if let Some(client) = client {

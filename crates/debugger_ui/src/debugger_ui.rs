@@ -47,6 +47,7 @@ actions!(
         ShowStackTrace,
         ToggleThreadPicker,
         ToggleSessionPicker,
+        RerunLastSession,
     ]
 );
 
@@ -116,6 +117,17 @@ pub fn init(cx: &mut App) {
                             .map(|session| session.read(cx).running_state().clone())
                         {
                             active_item.update(cx, |item, cx| item.step_over(cx))
+                        }
+                    }
+                })
+                .register_action(|workspace, _: &StepOut, _, cx| {
+                    if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
+                        if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
+                            panel
+                                .active_session()
+                                .map(|session| session.read(cx).running_state().clone())
+                        }) {
+                            active_item.update(cx, |item, cx| item.step_out(cx))
                         }
                     }
                 })
@@ -197,7 +209,18 @@ pub fn init(cx: &mut App) {
                 )
                 .register_action(|workspace: &mut Workspace, _: &Start, window, cx| {
                     NewSessionModal::show(workspace, window, cx);
-                });
+                })
+                .register_action(
+                    |workspace: &mut Workspace, _: &RerunLastSession, window, cx| {
+                        let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
+                            return;
+                        };
+
+                        debug_panel.update(cx, |debug_panel, cx| {
+                            debug_panel.rerun_last_session(workspace, window, cx);
+                        })
+                    },
+                );
         })
     })
     .detach();
