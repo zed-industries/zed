@@ -558,7 +558,6 @@ impl CloudLanguageModel {
             } else {
                 request_builder
             };
-            dbg!(&body);
 
             let request = request_builder
                 .header("Content-Type", "application/json")
@@ -870,7 +869,7 @@ impl LanguageModel for CloudLanguageModel {
                         Box::pin(
                             response_lines(response, includes_status_messages)
                                 .chain(usage_updated_event(usage))
-                                .chain(tool_use_limit_reached_event(dbg!(tool_use_limit_reached))),
+                                .chain(tool_use_limit_reached_event(tool_use_limit_reached)),
                         ),
                         move |event| mapper.map_event(event),
                     ))
@@ -1024,7 +1023,6 @@ fn response_lines<T: DeserializeOwned>(
             match body.read_line(&mut line).await {
                 Ok(0) => Ok(None),
                 Ok(_) => {
-                    dbg!(&line);
                     let event = if includes_status_messages {
                         serde_json::from_str::<CloudCompletionEvent<T>>(&line)?
                     } else {
