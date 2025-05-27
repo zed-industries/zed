@@ -221,7 +221,7 @@ impl WindowsPlatform {
         unsafe {
             while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
                 match msg.message {
-                    WM_QUIT => return true,
+                    WM_CLOSE => return true,
                     WM_INPUTLANGCHANGE
                     | WM_GPUI_CLOSE_ONE_WINDOW
                     | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
