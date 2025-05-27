@@ -56,9 +56,36 @@ use workspace::Pane;
 
 #[ctor::ctor]
 fn init_logger() {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::init();
+    zlog::init_test();
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_database_failure_during_client_reconnection(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client = server.create_client(cx, "user_a").await;
+
+    // Keep disconnecting the client until a database failure prevents it from
+    // reconnecting.
+    server.test_db.set_query_failure_probability(0.3);
+    loop {
+        server.disconnect_client(client.peer_id().unwrap());
+        executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+        if !client.status().borrow().is_connected() {
+            break;
+        }
     }
+
+    // Make the database healthy again and ensure the client can finally connect.
+    server.test_db.set_query_failure_probability(0.);
+    executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+    assert!(
+        matches!(*client.status().borrow(), client::Status::Connected { .. }),
+        "status was {:?}",
+        *client.status().borrow()
+    );
 }
 
 #[gpui::test(iterations = 10)]
@@ -1253,6 +1280,7 @@ async fn test_calls_on_multiple_connections(
     client_b1
         .authenticate_and_connect(false, &cx_b1.to_async())
         .await
+        .into_response()
         .unwrap();
 
     // User B hangs up, and user A calls them again.
@@ -1633,6 +1661,7 @@ async fn test_project_reconnect(
     client_a
         .authenticate_and_connect(false, &cx_a.to_async())
         .await
+        .into_response()
         .unwrap();
     executor.run_until_parked();
 
@@ -1761,6 +1790,7 @@ async fn test_project_reconnect(
     client_b
         .authenticate_and_connect(false, &cx_b.to_async())
         .await
+        .into_response()
         .unwrap();
     executor.run_until_parked();
 
@@ -1824,6 +1854,8 @@ async fn test_active_call_events(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    executor.run_until_parked();
+
     let active_call_a = cx_a.read(ActiveCall::global);
     let active_call_b = cx_b.read(ActiveCall::global);
 
@@ -2898,9 +2930,9 @@ async fn test_git_branch_name(
         assert_eq!(
             repository
                 .read(cx)
-                .repository_entry
-                .branch()
-                .map(|branch| branch.name.to_string()),
+                .branch
+                .as_ref()
+                .map(|branch| branch.name().to_owned()),
             branch_name
         )
     }
@@ -3033,7 +3065,6 @@ async fn test_git_status_sync(
         let repo = repos.into_iter().next().unwrap();
         assert_eq!(
             repo.read(cx)
-                .repository_entry
                 .status_for_path(&file.into())
                 .map(|entry| entry.status),
             status
@@ -4316,6 +4347,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
             token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
         })
         .await
+        .into_response()
         .unwrap();
     fake_language_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
@@ -5092,6 +5124,7 @@ async fn test_project_search(
                 false,
                 Default::default(),
                 Default::default(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5697,6 +5730,7 @@ async fn test_contacts(
     client_c
         .authenticate_and_connect(false, &cx_c.to_async())
         .await
+        .into_response()
         .unwrap();
 
     executor.run_until_parked();
@@ -6227,6 +6261,7 @@ async fn test_contact_requests(
         client
             .authenticate_and_connect(false, &cx.to_async())
             .await
+            .into_response()
             .unwrap();
     }
 }
@@ -6408,7 +6443,7 @@ async fn test_join_after_restart(cx1: &mut TestAppContext, cx2: &mut TestAppCont
 async fn test_preview_tabs(cx: &mut TestAppContext) {
     let (_server, client) = TestServer::start1(cx).await;
     let (workspace, cx) = client.build_test_workspace(cx).await;
-    let project = workspace.update(cx, |workspace, _| workspace.project().clone());
+    let project = workspace.read_with(cx, |workspace, _| workspace.project().clone());
 
     let worktree_id = project.update(cx, |project, cx| {
         project.worktrees(cx).next().unwrap().read(cx).id()
@@ -6427,7 +6462,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         path: Path::new("3.rs").into(),
     };
 
-    let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
     let get_path = |pane: &Pane, idx: usize, cx: &App| {
         pane.item_for_index(idx).unwrap().project_path(cx).unwrap()
@@ -6580,7 +6615,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         pane.split(workspace::SplitDirection::Right, cx);
     });
 
-    let right_pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    let right_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
     pane.update(cx, |pane, cx| {
         assert_eq!(pane.items_len(), 1);
@@ -6707,8 +6742,6 @@ async fn test_context_collaboration_with_reconnect(
         assert_eq!(project.collaborators().len(), 1);
     });
 
-    cx_a.update(context_server::init);
-    cx_b.update(context_server::init);
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context_store_a = cx_a
         .update(|cx| {
@@ -6862,15 +6895,19 @@ async fn test_remote_git_branches(
 
     let branches_b = branches_b
         .into_iter()
-        .map(|branch| branch.name.to_string())
+        .map(|branch| branch.name().to_string())
         .collect::<HashSet<_>>();
 
     assert_eq!(branches_b, branches_set);
 
-    cx_b.update(|cx| repo_b.read(cx).change_branch(new_branch.to_string()))
-        .await
-        .unwrap()
-        .unwrap();
+    cx_b.update(|cx| {
+        repo_b.update(cx, |repository, _cx| {
+            repository.change_branch(new_branch.to_string())
+        })
+    })
+    .await
+    .unwrap()
+    .unwrap();
 
     executor.run_until_parked();
 
@@ -6882,28 +6919,29 @@ async fn test_remote_git_branches(
                 .next()
                 .unwrap()
                 .read(cx)
-                .current_branch()
+                .branch
+                .as_ref()
                 .unwrap()
                 .clone()
         })
     });
 
-    assert_eq!(host_branch.name, branches[2]);
+    assert_eq!(host_branch.name(), branches[2]);
 
     // Also try creating a new branch
     cx_b.update(|cx| {
-        repo_b
-            .read(cx)
-            .create_branch("totally-new-branch".to_string())
+        repo_b.update(cx, |repository, _cx| {
+            repository.create_branch("totally-new-branch".to_string())
+        })
     })
     .await
     .unwrap()
     .unwrap();
 
     cx_b.update(|cx| {
-        repo_b
-            .read(cx)
-            .change_branch("totally-new-branch".to_string())
+        repo_b.update(cx, |repository, _cx| {
+            repository.change_branch("totally-new-branch".to_string())
+        })
     })
     .await
     .unwrap()
@@ -6919,11 +6957,12 @@ async fn test_remote_git_branches(
                 .next()
                 .unwrap()
                 .read(cx)
-                .current_branch()
+                .branch
+                .as_ref()
                 .unwrap()
                 .clone()
         })
     });
 
-    assert_eq!(host_branch.name, "totally-new-branch");
+    assert_eq!(host_branch.name(), "totally-new-branch");
 }

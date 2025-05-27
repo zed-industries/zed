@@ -3,6 +3,7 @@ mod contact_finder;
 
 use self::channel_modal::ChannelModal;
 use crate::{CollaborationPanelSettings, channel_view::ChannelView, chat_panel::ChatPanel};
+use anyhow::Context as _;
 use call::ActiveCall;
 use channel::{Channel, ChannelEvent, ChannelStore};
 use client::{ChannelId, Client, Contact, User, UserStore};
@@ -35,7 +36,7 @@ use ui::{
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
-    OpenChannelNotes, Workspace,
+    Deafen, LeaveCall, Mute, OpenChannelNotes, ScreenShare, ShareProject, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
 };
@@ -65,6 +66,15 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<CollabPanel>(window, cx);
+            if let Some(collab_panel) = workspace.panel::<CollabPanel>(cx) {
+                collab_panel.update(cx, |panel, cx| {
+                    panel.filter_editor.update(cx, |editor, cx| {
+                        if editor.snapshot(window, cx).is_focused() {
+                            editor.select_all(&Default::default(), window, cx);
+                        }
+                    });
+                })
+            }
         });
         workspace.register_action(|_, _: &OpenChannelNotes, window, cx| {
             let channel_id = ActiveCall::global(cx)
@@ -77,6 +87,57 @@ pub fn init(cx: &mut App) {
                 window.defer(cx, move |window, cx| {
                     ChannelView::open(channel_id, None, workspace, window, cx)
                         .detach_and_log_err(cx)
+                });
+            }
+        });
+        // TODO: make it possible to bind this one to a held key for push to talk?
+        // how to make "toggle_on_modifiers_press" contextual?
+        workspace.register_action(|_, _: &Mute, window, cx| {
+            let room = ActiveCall::global(cx).read(cx).room().cloned();
+            if let Some(room) = room {
+                window.defer(cx, move |_window, cx| {
+                    room.update(cx, |room, cx| room.toggle_mute(cx))
+                });
+            }
+        });
+        workspace.register_action(|_, _: &Deafen, window, cx| {
+            let room = ActiveCall::global(cx).read(cx).room().cloned();
+            if let Some(room) = room {
+                window.defer(cx, move |_window, cx| {
+                    room.update(cx, |room, cx| room.toggle_deafen(cx))
+                });
+            }
+        });
+        workspace.register_action(|_, _: &LeaveCall, window, cx| {
+            CollabPanel::leave_call(window, cx);
+        });
+        workspace.register_action(|workspace, _: &ShareProject, window, cx| {
+            let project = workspace.project().clone();
+            println!("{project:?}");
+            window.defer(cx, move |_window, cx| {
+                ActiveCall::global(cx).update(cx, move |call, cx| {
+                    if let Some(room) = call.room() {
+                        println!("{room:?}");
+                        if room.read(cx).is_sharing_project() {
+                            call.unshare_project(project, cx).ok();
+                        } else {
+                            call.share_project(project, cx).detach_and_log_err(cx);
+                        }
+                    }
+                });
+            });
+        });
+        workspace.register_action(|_, _: &ScreenShare, window, cx| {
+            let room = ActiveCall::global(cx).read(cx).room().cloned();
+            if let Some(room) = room {
+                window.defer(cx, move |_window, cx| {
+                    room.update(cx, |room, cx| {
+                        if room.is_screen_sharing() {
+                            room.unshare_screen(cx).ok();
+                        } else {
+                            room.share_screen(cx).detach_and_log_err(cx);
+                        };
+                    });
                 });
             }
         });
@@ -318,16 +379,25 @@ impl CollabPanel {
         workspace: WeakEntity<Workspace>,
         mut cx: AsyncWindowContext,
     ) -> anyhow::Result<Entity<Self>> {
-        let serialized_panel = cx
-            .background_spawn(async move { KEY_VALUE_STORE.read_kvp(COLLABORATION_PANEL_KEY) })
-            .await
-            .map_err(|_| anyhow::anyhow!("Failed to read collaboration panel from key value store"))
-            .log_err()
+        let serialized_panel = match workspace
+            .read_with(&cx, |workspace, _| {
+                CollabPanel::serialization_key(workspace)
+            })
+            .ok()
             .flatten()
-            .map(|panel| serde_json::from_str::<SerializedCollabPanel>(&panel))
-            .transpose()
-            .log_err()
-            .flatten();
+        {
+            Some(serialization_key) => cx
+                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
+                .await
+                .context("reading collaboration panel from key value store")
+                .log_err()
+                .flatten()
+                .map(|panel| serde_json::from_str::<SerializedCollabPanel>(&panel))
+                .transpose()
+                .log_err()
+                .flatten(),
+            None => None,
+        };
 
         workspace.update_in(&mut cx, |workspace, window, cx| {
             let panel = CollabPanel::new(workspace, window, cx);
@@ -347,14 +417,30 @@ impl CollabPanel {
         })
     }
 
+    fn serialization_key(workspace: &Workspace) -> Option<String> {
+        workspace
+            .database_id()
+            .map(|id| i64::from(id).to_string())
+            .or(workspace.session_id())
+            .map(|id| format!("{}-{:?}", COLLABORATION_PANEL_KEY, id))
+    }
+
     fn serialize(&mut self, cx: &mut Context<Self>) {
+        let Some(serialization_key) = self
+            .workspace
+            .read_with(cx, |workspace, _| CollabPanel::serialization_key(workspace))
+            .ok()
+            .flatten()
+        else {
+            return;
+        };
         let width = self.width;
         let collapsed_channels = self.collapsed_channels.clone();
         self.pending_serialization = cx.background_spawn(
             async move {
                 KEY_VALUE_STORE
                     .write_kvp(
-                        COLLABORATION_PANEL_KEY.into(),
+                        serialization_key,
                         serde_json::to_string(&SerializedCollabPanel {
                             width,
                             collapsed_channels: Some(
@@ -1403,7 +1489,9 @@ impl CollabPanel {
     }
 
     fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
-        if self.take_editing_state(window, cx) {
+        if cx.stop_active_drag(window) {
+            return;
+        } else if self.take_editing_state(window, cx) {
             window.focus(&self.filter_editor.focus_handle(cx));
         } else if !self.reset_filter_editor_text(window, cx) {
             self.focus_handle.focus(window);
@@ -2165,6 +2253,7 @@ impl CollabPanel {
                                     client
                                         .authenticate_and_connect(true, &cx)
                                         .await
+                                        .into_response()
                                         .notify_async_err(cx);
                                 })
                                 .detach()
@@ -2936,10 +3025,12 @@ impl Panel for CollabPanel {
             .unwrap_or_else(|| CollaborationPanelSettings::get_global(cx).default_width)
     }
 
-    fn set_size(&mut self, size: Option<Pixels>, _: &mut Window, cx: &mut Context<Self>) {
+    fn set_size(&mut self, size: Option<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         self.width = size;
-        self.serialize(cx);
         cx.notify();
+        cx.defer_in(window, |this, _, cx| {
+            this.serialize(cx);
+        });
     }
 
     fn icon(&self, _window: &Window, cx: &App) -> Option<ui::IconName> {

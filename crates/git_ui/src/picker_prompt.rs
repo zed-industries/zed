@@ -44,10 +44,7 @@ pub fn prompt(
             })
             .ok();
 
-        match rx.await {
-            Ok(selection) => Some(selection),
-            Err(_) => None, // User cancelled
-        }
+        (rx.await).ok()
     })
 }
 
@@ -147,7 +144,7 @@ impl PickerDelegate for PickerPromptDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         cx.spawn_in(window, async move |picker, cx| {
-            let candidates = picker.update(cx, |picker, _| {
+            let candidates = picker.read_with(cx, |picker, _| {
                 picker
                     .delegate
                     .all_options

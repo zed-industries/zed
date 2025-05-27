@@ -317,8 +317,16 @@ where
         ))
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     pub fn insert(&mut self, key: K) {
         self.0.insert(key, ());
+    }
+
+    pub fn remove(&mut self, key: &K) -> bool {
+        self.0.remove(key).is_some()
     }
 
     pub fn extend(&mut self, iter: impl IntoIterator<Item = K>) {

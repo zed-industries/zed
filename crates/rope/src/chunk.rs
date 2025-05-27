@@ -906,7 +906,7 @@ mod tests {
             let first_line = text.split('\n').next().unwrap();
             assert_eq!(chunk.first_line_chars(), first_line.chars().count() as u32);
 
-            let last_line = text.split('\n').last().unwrap();
+            let last_line = text.split('\n').next_back().unwrap();
             assert_eq!(chunk.last_line_chars(), last_line.chars().count() as u32);
             assert_eq!(
                 chunk.last_line_len_utf16(),

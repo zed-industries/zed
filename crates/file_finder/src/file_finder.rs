@@ -11,7 +11,7 @@ use futures::future::join_all;
 pub use open_path_prompt::OpenPathDelegate;
 
 use collections::HashMap;
-use editor::Editor;
+use editor::{Editor, items::entry_git_aware_label_color};
 use file_finder_settings::{FileFinderSettings, FileFinderWidth};
 use file_icons::FileIcons;
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
@@ -468,15 +468,9 @@ impl Matches {
                 path: found_path.clone(),
                 panel_match: None,
             };
-            self.matches
-                .extend(currently_opened.into_iter().map(path_to_entry));
 
-            self.matches.extend(
-                history_items
-                    .into_iter()
-                    .filter(|found_path| Some(*found_path) != currently_opened)
-                    .map(path_to_entry),
-            );
+            self.matches
+                .extend(history_items.into_iter().map(path_to_entry));
             return;
         };
 
@@ -530,17 +524,77 @@ impl Matches {
         match (&a, &b) {
             // bubble currently opened files to the top
             (Match::History { path, .. }, _) if Some(path) == currently_opened => {
-                cmp::Ordering::Greater
+                return cmp::Ordering::Greater;
             }
             (_, Match::History { path, .. }) if Some(path) == currently_opened => {
-                cmp::Ordering::Less
+                return cmp::Ordering::Less;
             }
 
-            (Match::History { .. }, Match::Search(_)) if separate_history => cmp::Ordering::Greater,
-            (Match::Search(_), Match::History { .. }) if separate_history => cmp::Ordering::Less,
-
-            _ => a.panel_match().cmp(&b.panel_match()),
+            _ => {}
         }
+
+        if separate_history {
+            match (a, b) {
+                (Match::History { .. }, Match::Search(_)) => return cmp::Ordering::Greater,
+                (Match::Search(_), Match::History { .. }) => return cmp::Ordering::Less,
+
+                _ => {}
+            }
+        }
+
+        let a_panel_match = match a.panel_match() {
+            Some(pm) => pm,
+            None => {
+                return if b.panel_match().is_some() {
+                    cmp::Ordering::Less
+                } else {
+                    cmp::Ordering::Equal
+                };
+            }
+        };
+
+        let b_panel_match = match b.panel_match() {
+            Some(pm) => pm,
+            None => return cmp::Ordering::Greater,
+        };
+
+        let a_in_filename = Self::is_filename_match(a_panel_match);
+        let b_in_filename = Self::is_filename_match(b_panel_match);
+
+        match (a_in_filename, b_in_filename) {
+            (true, false) => return cmp::Ordering::Greater,
+            (false, true) => return cmp::Ordering::Less,
+            _ => {} // Both are filename matches or both are path matches
+        }
+
+        a_panel_match.cmp(b_panel_match)
+    }
+
+    /// Determines if the match occurred within the filename rather than in the path
+    fn is_filename_match(panel_match: &ProjectPanelOrdMatch) -> bool {
+        if panel_match.0.positions.is_empty() {
+            return false;
+        }
+
+        if let Some(filename) = panel_match.0.path.file_name() {
+            let path_str = panel_match.0.path.to_string_lossy();
+            let filename_str = filename.to_string_lossy();
+
+            if let Some(filename_pos) = path_str.rfind(&*filename_str) {
+                if panel_match.0.positions[0] >= filename_pos {
+                    let mut prev_position = panel_match.0.positions[0];
+                    for p in &panel_match.0.positions[1..] {
+                        if *p != prev_position + 1 {
+                            return false;
+                        }
+                        prev_position = *p;
+                    }
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 }
 
@@ -725,9 +779,7 @@ impl FileFinderDelegate {
                 let worktree = worktree.read(cx);
                 PathMatchCandidateSet {
                     snapshot: worktree.snapshot(),
-                    include_ignored: worktree
-                        .root_entry()
-                        .map_or(false, |entry| entry.is_ignored),
+                    include_ignored: true,
                     include_root_name,
                     candidates: project::Candidates::Files,
                 }
@@ -768,7 +820,6 @@ impl FileFinderDelegate {
         did_cancel: bool,
         query: FileSearchQuery,
         matches: impl IntoIterator<Item = ProjectPanelOrdMatch>,
-
         cx: &mut Context<Picker<Self>>,
     ) {
         if search_id >= self.latest_search_id {
@@ -795,7 +846,7 @@ impl FileFinderDelegate {
             );
 
             self.selected_index = selected_match.map_or_else(
-                || self.calculate_selected_index(),
+                || self.calculate_selected_index(cx),
                 |m| {
                     self.matches
                         .position(&m, self.currently_opened_path.as_ref())
@@ -985,7 +1036,7 @@ impl FileFinderDelegate {
     ) -> Task<()> {
         cx.spawn_in(window, async move |picker, cx| {
             let Some(project) = picker
-                .update(cx, |picker, _| picker.delegate.project.clone())
+                .read_with(cx, |picker, _| picker.delegate.project.clone())
                 .log_err()
             else {
                 return;
@@ -1038,12 +1089,14 @@ impl FileFinderDelegate {
     }
 
     /// Skips first history match (that is displayed topmost) if it's currently opened.
-    fn calculate_selected_index(&self) -> usize {
-        if let Some(Match::History { path, .. }) = self.matches.get(0) {
-            if Some(path) == self.currently_opened_path.as_ref() {
-                let elements_after_first = self.matches.len() - 1;
-                if elements_after_first > 0 {
-                    return 1;
+    fn calculate_selected_index(&self, cx: &mut Context<Picker<Self>>) -> usize {
+        if FileFinderSettings::get_global(cx).skip_focus_for_active_in_search {
+            if let Some(Match::History { path, .. }) = self.matches.get(0) {
+                if Some(path) == self.currently_opened_path.as_ref() {
+                    let elements_after_first = self.matches.len() - 1;
+                    if elements_after_first > 0 {
+                        return 1;
+                    }
                 }
             }
         }
@@ -1117,6 +1170,48 @@ impl PickerDelegate for FileFinderDelegate {
     ) -> Task<()> {
         let raw_query = raw_query.replace(' ', "");
         let raw_query = raw_query.trim();
+
+        let raw_query = match &raw_query.get(0..2) {
+            Some(".\\") | Some("./") => &raw_query[2..],
+            Some("a\\") | Some("a/") => {
+                if self
+                    .workspace
+                    .upgrade()
+                    .into_iter()
+                    .flat_map(|workspace| workspace.read(cx).worktrees(cx))
+                    .all(|worktree| {
+                        worktree
+                            .read(cx)
+                            .entry_for_path(Path::new("a"))
+                            .is_none_or(|entry| !entry.is_dir())
+                    })
+                {
+                    &raw_query[2..]
+                } else {
+                    raw_query
+                }
+            }
+            Some("b\\") | Some("b/") => {
+                if self
+                    .workspace
+                    .upgrade()
+                    .into_iter()
+                    .flat_map(|workspace| workspace.read(cx).worktrees(cx))
+                    .all(|worktree| {
+                        worktree
+                            .read(cx)
+                            .entry_for_path(Path::new("b"))
+                            .is_none_or(|entry| !entry.is_dir())
+                    })
+                {
+                    &raw_query[2..]
+                } else {
+                    raw_query
+                }
+            }
+            _ => raw_query,
+        };
+
         if raw_query.is_empty() {
             // if there was no query before, and we already have some (history) matches
             // there's no need to update anything, since nothing has changed.
@@ -1323,23 +1418,58 @@ impl PickerDelegate for FileFinderDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let settings = FileFinderSettings::get_global(cx);
+        let path_match = self.matches.get(ix)?;
 
-        let path_match = self
-            .matches
-            .get(ix)
-            .expect("Invalid matches state: no element for index {ix}");
+        let git_status_color = if settings.git_status {
+            let (entry, project_path) = match path_match {
+                Match::History { path, .. } => {
+                    let project = self.project.read(cx);
+                    let project_path = path.project.clone();
+                    let entry = project.entry_for_path(&project_path, cx)?;
+                    Some((entry, project_path))
+                }
+                Match::Search(mat) => {
+                    let project = self.project.read(cx);
+                    let project_path = ProjectPath {
+                        worktree_id: WorktreeId::from_usize(mat.0.worktree_id),
+                        path: mat.0.path.clone(),
+                    };
+                    let entry = project.entry_for_path(&project_path, cx)?;
+                    Some((entry, project_path))
+                }
+            }?;
 
-        let history_icon = match &path_match {
+            let git_status = self
+                .project
+                .read(cx)
+                .project_path_git_status(&project_path, cx)
+                .map(|status| status.summary())
+                .unwrap_or_default();
+            Some(entry_git_aware_label_color(
+                git_status,
+                entry.is_ignored,
+                selected,
+            ))
+        } else {
+            None
+        };
+
+        let history_icon = match path_match {
             Match::History { .. } => Icon::new(IconName::HistoryRerun)
-                .color(Color::Muted)
                 .size(IconSize::Small)
+                .color(Color::Muted)
                 .into_any_element(),
             Match::Search(_) => v_flex()
                 .flex_none()
                 .size(IconSize::Small.rems())
                 .into_any_element(),
         };
+
         let (file_name_label, full_path_label) = self.labels_for_match(path_match, window, cx, ix);
+        let file_name_label = match git_status_color {
+            Some(git_status_color) => file_name_label.color(git_status_color),
+            None => file_name_label,
+        };
 
         let file_icon = maybe!({
             if !settings.file_icons {
@@ -1347,7 +1477,7 @@ impl PickerDelegate for FileFinderDelegate {
             }
             let file_name = path_match.path().file_name()?;
             let icon = FileIcons::get_icon(file_name.as_ref(), cx)?;
-            Some(Icon::from_path(icon).color(Color::Muted))
+            Some(Icon::from_path(icon).color(git_status_color.unwrap_or(Color::Muted)))
         });
 
         Some(

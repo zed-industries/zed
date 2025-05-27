@@ -1,4 +1,4 @@
-use anyhow::ensure;
+use anyhow::{Context as _, ensure};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
@@ -23,8 +23,8 @@ use serde_json::{Value, json};
 use smol::lock::OnceCell;
 use std::cmp::Ordering;
 
+use parking_lot::Mutex;
 use std::str::FromStr;
-use std::sync::Mutex;
 use std::{
     any::Any,
     borrow::Cow,
@@ -696,7 +696,6 @@ impl ToolchainLister for PythonToolchainProvider {
         let mut toolchains = reporter
             .environments
             .lock()
-            .ok()
             .map_or(Vec::new(), |mut guard| std::mem::take(&mut guard));
 
         let wr = worktree_root;
@@ -848,7 +847,7 @@ impl pet_core::os_environment::Environment for EnvironmentApi<'_> {
     }
 
     fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
-        if self.global_search_locations.lock().unwrap().is_empty() {
+        if self.global_search_locations.lock().is_empty() {
             let mut paths =
                 std::env::split_paths(&self.get_env_var("PATH".to_string()).unwrap_or_default())
                     .collect::<Vec<PathBuf>>();
@@ -865,12 +864,9 @@ impl pet_core::os_environment::Environment for EnvironmentApi<'_> {
                 .filter(|p| p.exists())
                 .collect::<Vec<PathBuf>>();
 
-            self.global_search_locations
-                .lock()
-                .unwrap()
-                .append(&mut paths);
+            self.global_search_locations.lock().append(&mut paths);
         }
-        self.global_search_locations.lock().unwrap().clone()
+        self.global_search_locations.lock().clone()
     }
 }
 
@@ -887,11 +883,11 @@ impl PyLspAdapter {
     async fn ensure_venv(delegate: &dyn LspAdapterDelegate) -> Result<Arc<Path>> {
         let python_path = Self::find_base_python(delegate)
             .await
-            .ok_or_else(|| anyhow!("Could not find Python installation for PyLSP"))?;
+            .context("Could not find Python installation for PyLSP")?;
         let work_dir = delegate
             .language_server_download_dir(&Self::SERVER_NAME)
             .await
-            .ok_or_else(|| anyhow!("Could not get working directory for PyLSP"))?;
+            .context("Could not get working directory for PyLSP")?;
         let mut path = PathBuf::from(work_dir.as_ref());
         path.push("pylsp-venv");
         if !path.exists() {
@@ -991,6 +987,7 @@ impl LspAdapter for PyLspAdapter {
             util::command::new_smol_command(pip_path.as_path())
                 .arg("install")
                 .arg("python-lsp-server")
+                .arg("-U")
                 .output()
                 .await?
                 .status
@@ -1001,6 +998,7 @@ impl LspAdapter for PyLspAdapter {
             util::command::new_smol_command(pip_path.as_path())
                 .arg("install")
                 .arg("python-lsp-server[all]")
+                .arg("-U")
                 .output()
                 .await?
                 .status
@@ -1011,6 +1009,7 @@ impl LspAdapter for PyLspAdapter {
             util::command::new_smol_command(pip_path)
                 .arg("install")
                 .arg("pylsp-mypy")
+                .arg("-U")
                 .output()
                 .await?
                 .status
@@ -1237,7 +1236,7 @@ mod tests {
                 "def a():\n  \n  if a:\n    b()\n  else:\n    "
             );
 
-            // indent after an open paren. the closing  paren is not indented
+            // indent after an open paren. the closing paren is not indented
             // because there is another token before it on the same line.
             append(&mut buffer, "foo(\n1)", cx);
             assert_eq!(
@@ -1288,7 +1287,7 @@ mod tests {
 
             // dedent "else" on the line after a closing paren
             append(&mut buffer, "\n  else:\n", cx);
-            assert_eq!(buffer.text(), "if a:\n  b(\n  )\nelse:\n  ");
+            assert_eq!(buffer.text(), "if a:\n  b(\n  )\nelse:\n");
 
             buffer
         });

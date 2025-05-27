@@ -7,12 +7,16 @@ use git::{
     parse_git_remote_url,
 };
 use gpui::{
-    AnyElement, App, AppContext as _, Context, Entity, Hsla, Subscription, Task, TextStyle,
-    WeakEntity, Window,
+    AnyElement, App, AppContext as _, Context, Entity, Hsla, ScrollHandle, Subscription, Task,
+    TextStyle, WeakEntity, Window,
 };
 use language::{Bias, Buffer, BufferSnapshot, Edit};
+use markdown::Markdown;
 use multi_buffer::RowInfo;
-use project::{Project, ProjectItem, git_store::Repository};
+use project::{
+    Project, ProjectItem,
+    git_store::{GitStoreEvent, Repository, RepositoryEvent},
+};
 use smallvec::SmallVec;
 use std::{sync::Arc, time::Duration};
 use sum_tree::SumTree;
@@ -95,10 +99,18 @@ pub trait BlameRenderer {
         &self,
         _: &TextStyle,
         _: BlameEntry,
+        _: &mut App,
+    ) -> Option<AnyElement>;
+
+    fn render_blame_entry_popover(
+        &self,
+        _: BlameEntry,
+        _: ScrollHandle,
         _: Option<ParsedCommitMessage>,
+        _: Entity<Markdown>,
         _: Entity<Repository>,
         _: WeakEntity<Workspace>,
-        _: Entity<Editor>,
+        _: &mut Window,
         _: &mut App,
     ) -> Option<AnyElement>;
 
@@ -136,10 +148,20 @@ impl BlameRenderer for () {
         &self,
         _: &TextStyle,
         _: BlameEntry,
+        _: &mut App,
+    ) -> Option<AnyElement> {
+        None
+    }
+
+    fn render_blame_entry_popover(
+        &self,
+        _: BlameEntry,
+        _: ScrollHandle,
         _: Option<ParsedCommitMessage>,
+        _: Entity<Markdown>,
         _: Entity<Repository>,
         _: WeakEntity<Workspace>,
-        _: Entity<Editor>,
+        _: &mut Window,
         _: &mut App,
     ) -> Option<AnyElement> {
         None
@@ -202,13 +224,21 @@ impl GitBlame {
                         this.generate(cx);
                     }
                 }
-                project::Event::GitStateUpdated => {
+                _ => {}
+            }
+        });
+
+        let git_store = project.read(cx).git_store().clone();
+        let git_store_subscription =
+            cx.subscribe(&git_store, move |this, _, event, cx| match event {
+                GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, _)
+                | GitStoreEvent::RepositoryAdded(_)
+                | GitStoreEvent::RepositoryRemoved(_) => {
                     log::debug!("Status of git repositories updated. Regenerating blame data...",);
                     this.generate(cx);
                 }
                 _ => {}
-            }
-        });
+            });
 
         let buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
@@ -226,7 +256,11 @@ impl GitBlame {
             task: Task::ready(Ok(())),
             generated: false,
             regenerate_on_edit_task: Task::ready(Ok(())),
-            _regenerate_subscriptions: vec![buffer_subscriptions, project_subscription],
+            _regenerate_subscriptions: vec![
+                buffer_subscriptions,
+                project_subscription,
+                git_store_subscription,
+            ],
         };
         this.generate(cx);
         this
@@ -421,7 +455,9 @@ impl GitBlame {
         }
         let buffer_edits = self.buffer.update(cx, |buffer, _| buffer.subscribe());
         let snapshot = self.buffer.read(cx).snapshot();
-        let blame = self.project.read(cx).blame_buffer(&self.buffer, None, cx);
+        let blame = self.project.update(cx, |project, cx| {
+            project.blame_buffer(&self.buffer, None, cx)
+        });
         let provider_registry = GitHostingProviderRegistry::default_global(cx);
 
         self.task = cx.spawn(async move |this, cx| {
@@ -470,7 +506,7 @@ impl GitBlame {
                     } else {
                         // If we weren't triggered by a user, we just log errors in the background, instead of sending
                         // notifications.
-                        log::error!("failed to get git blame data: {error:?}");
+                        log::debug!("failed to get git blame data: {error:?}");
                     }
                 }),
             })
@@ -750,7 +786,7 @@ mod tests {
             })
             .await
             .unwrap();
-        let buffer_id = buffer.update(cx, |buffer, _| buffer.remote_id());
+        let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
 
         let git_blame = cx.new(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
 
@@ -860,7 +896,7 @@ mod tests {
             })
             .await
             .unwrap();
-        let buffer_id = buffer.update(cx, |buffer, _| buffer.remote_id());
+        let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
 
         let git_blame = cx.new(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
 

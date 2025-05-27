@@ -4,7 +4,7 @@ use crate::{
     MonochromeSprite, PaintSurface, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch,
     Quad, ScaledPixels, Scene, Shadow, Size, Surface, Underline, point, size,
 };
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result};
 use block::ConcreteBlock;
 use cocoa::{
     base::{NO, YES},
@@ -376,14 +376,14 @@ impl MetalRenderer {
         let command_buffer = command_queue.new_command_buffer();
         let mut instance_offset = 0;
 
-        let Some(path_tiles) = self.rasterize_paths(
-            scene.paths(),
-            instance_buffer,
-            &mut instance_offset,
-            command_buffer,
-        ) else {
-            return Err(anyhow!("failed to rasterize {} paths", scene.paths().len()));
-        };
+        let path_tiles = self
+            .rasterize_paths(
+                scene.paths(),
+                instance_buffer,
+                &mut instance_offset,
+                command_buffer,
+            )
+            .with_context(|| format!("rasterizing {} paths", scene.paths().len()))?;
 
         let render_pass_descriptor = metal::RenderPassDescriptor::new();
         let color_attachment = render_pass_descriptor
@@ -471,7 +471,7 @@ impl MetalRenderer {
 
             if !ok {
                 command_encoder.end_encoding();
-                return Err(anyhow!(
+                anyhow::bail!(
                     "scene too large: {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
                     scene.paths.len(),
                     scene.shadows.len(),
@@ -480,7 +480,7 @@ impl MetalRenderer {
                     scene.monochrome_sprites.len(),
                     scene.polychrome_sprites.len(),
                     scene.surfaces.len(),
-                ));
+                );
             }
         }
 
@@ -1211,7 +1211,7 @@ fn build_path_rasterization_pipeline_state(
 
 // Align to multiples of 256 make Metal happy.
 fn align_offset(offset: &mut usize) {
-    *offset = ((*offset + 255) / 256) * 256;
+    *offset = (*offset).div_ceil(256) * 256;
 }
 
 #[repr(C)]

@@ -1,3 +1,4 @@
+use anyhow::Context as _;
 use chrono::NaiveDateTime;
 
 use super::*;
@@ -59,6 +60,18 @@ impl Database {
             let tx = tx;
             Ok(user::Entity::find()
                 .filter(user::Column::Id.is_in(ids.iter().copied()))
+                .all(&*tx)
+                .await?)
+        })
+        .await
+    }
+
+    /// Returns all users flagged as staff.
+    pub async fn get_staff_users(&self) -> Result<Vec<user::Model>> {
+        self.transaction(|tx| async {
+            let tx = tx;
+            Ok(user::Entity::find()
+                .filter(user::Column::Admin.eq(true))
                 .all(&*tx)
                 .await?)
         })
@@ -235,7 +248,7 @@ impl Database {
                 .into_values::<_, QueryAs>()
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("could not find user"))?;
+                .context("could not find user")?;
             Ok(metrics_id.to_string())
         })
         .await

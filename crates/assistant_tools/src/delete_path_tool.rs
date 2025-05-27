@@ -1,9 +1,9 @@
 use crate::schema::json_schema_for;
-use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool};
+use anyhow::{Context as _, Result, anyhow};
+use assistant_tool::{ActionLog, Tool, ToolResult};
 use futures::{SinkExt, StreamExt, channel::mpsc};
-use gpui::{App, AppContext, Entity, Task};
-use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
+use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::{Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -30,11 +30,11 @@ pub struct DeletePathTool;
 
 impl Tool for DeletePathTool {
     fn name(&self) -> String {
-        "delete-path".into()
+        "delete_path".into()
     }
 
-    fn needs_confirmation(&self) -> bool {
-        true
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+        false
     }
 
     fn description(&self) -> String {
@@ -45,7 +45,7 @@ impl Tool for DeletePathTool {
         IconName::FileDelete
     }
 
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> serde_json::Value {
+    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         json_schema_for::<DeletePathToolInput>(format)
     }
 
@@ -59,19 +59,22 @@ impl Tool for DeletePathTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        _model: Arc<dyn LanguageModel>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> ToolResult {
         let path_str = match serde_json::from_value::<DeletePathToolInput>(input) {
             Ok(input) => input.path,
-            Err(err) => return Task::ready(Err(anyhow!(err))),
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
         let Some(project_path) = project.read(cx).find_project_path(&path_str, cx) else {
             return Task::ready(Err(anyhow!(
                 "Couldn't delete {path_str} because that path isn't in this project."
-            )));
+            )))
+            .into();
         };
 
         let Some(worktree) = project
@@ -80,7 +83,8 @@ impl Tool for DeletePathTool {
         else {
             return Task::ready(Err(anyhow!(
                 "Couldn't delete {path_str} because that path isn't in this project."
-            )));
+            )))
+            .into();
         };
 
         let worktree_snapshot = worktree.read(cx).snapshot();
@@ -118,19 +122,18 @@ impl Tool for DeletePathTool {
                 }
             }
 
-            let delete = project.update(cx, |project, cx| {
-                project.delete_file(project_path, false, cx)
-            })?;
-
-            match delete {
-                Some(deletion_task) => match deletion_task.await {
-                    Ok(()) => Ok(format!("Deleted {path_str}")),
-                    Err(err) => Err(anyhow!("Failed to delete {path_str}: {err}")),
-                },
-                None => Err(anyhow!(
-                    "Couldn't delete {path_str} because that path isn't in this project."
-                )),
-            }
+            let deletion_task = project
+                .update(cx, |project, cx| {
+                    project.delete_file(project_path, false, cx)
+                })?
+                .with_context(|| {
+                    format!("Couldn't delete {path_str} because that path isn't in this project.")
+                })?;
+            deletion_task
+                .await
+                .with_context(|| format!("Deleting {path_str}"))?;
+            Ok(format!("Deleted {path_str}").into())
         })
+        .into()
     }
 }

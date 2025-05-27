@@ -1,5 +1,7 @@
+#[cfg(any(feature = "inspector", debug_assertions))]
+use crate::Inspector;
 use crate::{
-    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
+    Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Context,
     Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener, DispatchNodeId,
     DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter, FileDropEvent, FontId,
@@ -13,7 +15,7 @@ use crate::{
     SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
     TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
     WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, px, size, transparent_black,
+    point, prelude::*, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -412,7 +414,7 @@ pub(crate) struct CursorStyleRequest {
 }
 
 /// An identifier for a [Hitbox].
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub struct HitboxId(usize);
 
 impl HitboxId {
@@ -502,6 +504,10 @@ pub(crate) struct Frame {
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub(crate) inspector_hitboxes: FxHashMap<HitboxId, crate::InspectorElementId>,
 }
 
 #[derive(Clone, Default)]
@@ -542,6 +548,12 @@ impl Frame {
 
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds: FxHashMap::default(),
+
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            next_inspector_instance_ids: FxHashMap::default(),
+
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            inspector_hitboxes: FxHashMap::default(),
         }
     }
 
@@ -557,6 +569,12 @@ impl Frame {
         self.hitboxes.clear();
         self.deferred_draws.clear();
         self.focus = None;
+
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        {
+            self.next_inspector_instance_ids.clear();
+            self.inspector_hitboxes.clear();
+        }
     }
 
     pub(crate) fn hit_test(&self, position: Point<Pixels>) -> HitTest {
@@ -617,6 +635,7 @@ pub struct Window {
     pub(crate) element_opacity: Option<f32>,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
+    pub(crate) image_cache_stack: Vec<AnyImageCache>,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
     pub(crate) next_hitbox_id: HitboxId,
@@ -646,6 +665,9 @@ pub struct Window {
     pending_modifier: ModifierState,
     pub(crate) pending_input_observers: SubscriberSet<(), AnyObserver>,
     prompt: Option<RenderablePromptHandle>,
+    pub(crate) client_inset: Option<Pixels>,
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    inspector: Option<Entity<Inspector>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -845,6 +867,7 @@ impl Window {
                 handle
                     .update(&mut cx, |_, window, cx| {
                         window.active.set(active);
+                        window.modifiers = window.platform_window.modifiers();
                         window
                             .activation_observers
                             .clone()
@@ -930,6 +953,10 @@ impl Window {
             pending_modifier: ModifierState::default(),
             pending_input_observers: SubscriberSet::new(),
             prompt: None,
+            client_inset: None,
+            image_cache_stack: Vec::new(),
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            inspector: None,
         })
     }
 
@@ -952,7 +979,7 @@ pub(crate) struct DispatchEventResult {
 /// to leave room to support more complex shapes in the future.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[repr(C)]
-pub struct ContentMask<P: Clone + Default + Debug> {
+pub struct ContentMask<P: Clone + Debug + Default + PartialEq> {
     /// The bounds
     pub bounds: Bounds<P>,
 }
@@ -1149,6 +1176,7 @@ impl Window {
         &mut self,
         event: &dyn Any,
         action: Option<Box<dyn Action>>,
+        context_stack: Vec<KeyContext>,
         cx: &mut App,
     ) {
         let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() else {
@@ -1160,6 +1188,7 @@ impl Window {
                 &KeystrokeEvent {
                     keystroke: key_down_event.keystroke.clone(),
                     action: action.as_ref().map(|action| action.boxed_clone()),
+                    context_stack: context_stack.clone(),
                 },
                 self,
                 cx,
@@ -1219,7 +1248,7 @@ impl Window {
         Evt: 'static,
     {
         let entity_id = entity.entity_id();
-        let entity = entity.downgrade();
+        let handle = entity.downgrade();
         let window_handle = self.handle;
         cx.new_subscription(
             entity_id,
@@ -1228,9 +1257,9 @@ impl Window {
                 Box::new(move |event, cx| {
                     window_handle
                         .update(cx, |_, window, cx| {
-                            if let Some(handle) = Entity::<Emitter>::upgrade_from(&entity) {
+                            if let Some(entity) = handle.upgrade() {
                                 let event = event.downcast_ref().expect("invalid event type");
-                                on_event(handle, event, window, cx);
+                                on_event(entity, event, window, cx);
                                 true
                             } else {
                                 false
@@ -1386,8 +1415,14 @@ impl Window {
     }
 
     /// When using client side decorations, set this to the width of the invisible decorations (Wayland and X11)
-    pub fn set_client_inset(&self, inset: Pixels) {
+    pub fn set_client_inset(&mut self, inset: Pixels) {
+        self.client_inset = Some(inset);
         self.platform_window.set_client_inset(inset);
+    }
+
+    /// Returns the client_inset value by [`Self::set_client_inset`].
+    pub fn client_inset(&self) -> Option<Pixels> {
+        self.client_inset
     }
 
     /// Returns whether the title bar window controls need to be rendered by the application (Wayland and X11)
@@ -1454,6 +1489,20 @@ impl Window {
     /// UI to scale, just like zooming a web page.
     pub fn set_rem_size(&mut self, rem_size: impl Into<Pixels>) {
         self.rem_size = rem_size.into();
+    }
+
+    /// Acquire a globally unique identifier for the given ElementId.
+    /// Only valid for the duration of the provided closure.
+    pub fn with_global_id<R>(
+        &mut self,
+        element_id: ElementId,
+        f: impl FnOnce(&GlobalElementId, &mut Self) -> R,
+    ) -> R {
+        self.element_id_stack.push(element_id);
+        let global_id = GlobalElementId(self.element_id_stack.clone());
+        let result = f(&global_id, self);
+        self.element_id_stack.pop();
+        result
     }
 
     /// Executes the provided function with the specified rem size.
@@ -1631,9 +1680,30 @@ impl Window {
         self.invalidator.set_phase(DrawPhase::Prepaint);
         self.tooltip_bounds.take();
 
+        let _inspector_width: Pixels = rems(30.0).to_pixels(self.rem_size());
+        let root_size = {
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            {
+                if self.inspector.is_some() {
+                    let mut size = self.viewport_size;
+                    size.width = (size.width - _inspector_width).max(px(0.0));
+                    size
+                } else {
+                    self.viewport_size
+                }
+            }
+            #[cfg(not(any(feature = "inspector", debug_assertions)))]
+            {
+                self.viewport_size
+            }
+        };
+
         // Layout all root elements.
         let mut root_element = self.root.as_ref().unwrap().clone().into_any();
-        root_element.prepaint_as_root(Point::default(), self.viewport_size.into(), self, cx);
+        root_element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
+
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        let inspector_element = self.prepaint_inspector(_inspector_width, cx);
 
         let mut sorted_deferred_draws =
             (0..self.next_frame.deferred_draws.len()).collect::<SmallVec<[_; 8]>>();
@@ -1645,7 +1715,7 @@ impl Window {
         let mut tooltip_element = None;
         if let Some(prompt) = self.prompt.take() {
             let mut element = prompt.view.any_view().into_any();
-            element.prepaint_as_root(Point::default(), self.viewport_size.into(), self, cx);
+            element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
             prompt_element = Some(element);
             self.prompt = Some(prompt);
         } else if let Some(active_drag) = cx.active_drag.take() {
@@ -1664,6 +1734,9 @@ impl Window {
         self.invalidator.set_phase(DrawPhase::Paint);
         root_element.paint(self, cx);
 
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        self.paint_inspector(inspector_element, cx);
+
         self.paint_deferred_draws(&sorted_deferred_draws, cx);
 
         if let Some(mut prompt_element) = prompt_element {
@@ -1673,6 +1746,9 @@ impl Window {
         } else if let Some(mut tooltip_element) = tooltip_element {
             tooltip_element.paint(self, cx);
         }
+
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        self.paint_inspector_hitbox(cx);
     }
 
     fn prepaint_tooltip(&mut self, cx: &mut App) -> Option<AnyElement> {
@@ -2073,14 +2149,14 @@ impl Window {
         let (task, is_first) = cx.fetch_asset::<A>(source);
         task.clone().now_or_never().or_else(|| {
             if is_first {
-                let entity = self.current_view();
+                let entity_id = self.current_view();
                 self.spawn(cx, {
                     let task = task.clone();
                     async move |cx| {
                         task.await;
 
                         cx.on_next_frame(move |_, cx| {
-                            cx.notify(entity);
+                            cx.notify(entity_id);
                         });
                     }
                 })
@@ -2089,6 +2165,16 @@ impl Window {
 
             None
         })
+    }
+
+    /// Asynchronously load an asset, if the asset hasn't finished loading or doesn't exist this will return None.
+    /// Your view will not be re-drawn once the asset has finished loading.
+    ///
+    /// Note that the multiple calls to this method will only result in one `Asset::load` call at a
+    /// time.
+    pub fn get_asset<A: Asset>(&mut self, source: &A::Source, cx: &mut App) -> Option<A::Output> {
+        let (task, _) = cx.fetch_asset::<A>(source);
+        task.clone().now_or_never()
     }
     /// Obtain the current element offset. This method should only be called during the
     /// prepaint phase of element drawing.
@@ -2650,7 +2736,9 @@ impl Window {
             order: 0,
             pad: 0,
             grayscale,
-            bounds,
+            bounds: bounds
+                .map_origin(|origin| origin.floor())
+                .map_size(|size| size.ceil()),
             content_mask,
             corner_radii,
             tile,
@@ -2844,6 +2932,21 @@ impl Window {
         let result = f(self);
         self.rendered_entity_stack.pop();
         result
+    }
+
+    /// Executes the provided function with the specified image cache.
+    pub fn with_image_cache<F, R>(&mut self, image_cache: Option<AnyImageCache>, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        if let Some(image_cache) = image_cache {
+            self.image_cache_stack.push(image_cache);
+            let result = f(self);
+            self.image_cache_stack.pop();
+            result
+        } else {
+            f(self)
+        }
     }
 
     /// Sets an input handler, such as [`ElementInputHandler`][element_input_handler], which interfaces with the
@@ -3092,6 +3195,7 @@ impl Window {
                             value: Arc::new(paths.clone()),
                             view: cx.new(|_| paths).into(),
                             cursor_offset: position,
+                            cursor_style: None,
                         });
                     }
                     PlatformInput::MouseMove(MouseMoveEvent {
@@ -3143,6 +3247,13 @@ impl Window {
         if hit_test != self.mouse_hit_test {
             self.mouse_hit_test = hit_test;
             self.reset_cursor_style(cx);
+        }
+
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        if self.is_inspector_picking(cx) {
+            self.handle_inspector_mouse_event(event, cx);
+            // When inspector is picking, all other mouse handling is skipped.
+            return;
         }
 
         let mut mouse_listeners = mem::take(&mut self.rendered_frame.mouse_listeners);
@@ -3236,7 +3347,7 @@ impl Window {
         }
 
         let Some(keystroke) = keystroke else {
-            self.finish_dispatch_key_event(event, dispatch_path, cx);
+            self.finish_dispatch_key_event(event, dispatch_path, self.context_stack(), cx);
             return;
         };
 
@@ -3290,13 +3401,18 @@ impl Window {
         for binding in match_result.bindings {
             self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
             if !cx.propagate_event {
-                self.dispatch_keystroke_observers(event, Some(binding.action), cx);
+                self.dispatch_keystroke_observers(
+                    event,
+                    Some(binding.action),
+                    match_result.context_stack.clone(),
+                    cx,
+                );
                 self.pending_input_changed(cx);
                 return;
             }
         }
 
-        self.finish_dispatch_key_event(event, dispatch_path, cx);
+        self.finish_dispatch_key_event(event, dispatch_path, match_result.context_stack, cx);
         self.pending_input_changed(cx);
     }
 
@@ -3304,6 +3420,7 @@ impl Window {
         &mut self,
         event: &dyn Any,
         dispatch_path: SmallVec<[DispatchNodeId; 32]>,
+        context_stack: Vec<KeyContext>,
         cx: &mut App,
     ) {
         self.dispatch_key_down_up_event(event, &dispatch_path, cx);
@@ -3316,7 +3433,7 @@ impl Window {
             return;
         }
 
-        self.dispatch_keystroke_observers(event, None, cx);
+        self.dispatch_keystroke_observers(event, None, context_stack, cx);
     }
 
     fn pending_input_changed(&mut self, cx: &mut App) {
@@ -3414,7 +3531,12 @@ impl Window {
             for binding in replay.bindings {
                 self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
                 if !cx.propagate_event {
-                    self.dispatch_keystroke_observers(&event, Some(binding.action), cx);
+                    self.dispatch_keystroke_observers(
+                        &event,
+                        Some(binding.action),
+                        Vec::default(),
+                        cx,
+                    );
                     continue 'replay;
                 }
             }
@@ -3764,6 +3886,197 @@ impl Window {
     pub fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.platform_window.gpu_specs()
     }
+
+    /// Toggles the inspector mode on this window.
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub fn toggle_inspector(&mut self, cx: &mut App) {
+        self.inspector = match self.inspector {
+            None => Some(cx.new(|_| Inspector::new())),
+            Some(_) => None,
+        };
+        self.refresh();
+    }
+
+    /// Returns true if the window is in inspector mode.
+    pub fn is_inspector_picking(&self, _cx: &App) -> bool {
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        {
+            if let Some(inspector) = &self.inspector {
+                return inspector.read(_cx).is_picking();
+            }
+        }
+        false
+    }
+
+    /// Executes the provided function with mutable access to an inspector state.
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub fn with_inspector_state<T: 'static, R>(
+        &mut self,
+        _inspector_id: Option<&crate::InspectorElementId>,
+        cx: &mut App,
+        f: impl FnOnce(&mut Option<T>, &mut Self) -> R,
+    ) -> R {
+        if let Some(inspector_id) = _inspector_id {
+            if let Some(inspector) = &self.inspector {
+                let inspector = inspector.clone();
+                let active_element_id = inspector.read(cx).active_element_id();
+                if Some(inspector_id) == active_element_id {
+                    return inspector.update(cx, |inspector, _cx| {
+                        inspector.with_active_element_state(self, f)
+                    });
+                }
+            }
+        }
+        f(&mut None, self)
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub(crate) fn build_inspector_element_id(
+        &mut self,
+        path: crate::InspectorElementPath,
+    ) -> crate::InspectorElementId {
+        self.invalidator.debug_assert_paint_or_prepaint();
+        let path = Rc::new(path);
+        let next_instance_id = self
+            .next_frame
+            .next_inspector_instance_ids
+            .entry(path.clone())
+            .or_insert(0);
+        let instance_id = *next_instance_id;
+        *next_instance_id += 1;
+        crate::InspectorElementId { path, instance_id }
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    fn prepaint_inspector(&mut self, inspector_width: Pixels, cx: &mut App) -> Option<AnyElement> {
+        if let Some(inspector) = self.inspector.take() {
+            let mut inspector_element = AnyView::from(inspector.clone()).into_any_element();
+            inspector_element.prepaint_as_root(
+                point(self.viewport_size.width - inspector_width, px(0.0)),
+                size(inspector_width, self.viewport_size.height).into(),
+                self,
+                cx,
+            );
+            self.inspector = Some(inspector);
+            Some(inspector_element)
+        } else {
+            None
+        }
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    fn paint_inspector(&mut self, mut inspector_element: Option<AnyElement>, cx: &mut App) {
+        if let Some(mut inspector_element) = inspector_element {
+            inspector_element.paint(self, cx);
+        };
+    }
+
+    /// Registers a hitbox that can be used for inspector picking mode, allowing users to select and
+    /// inspect UI elements by clicking on them.
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub fn insert_inspector_hitbox(
+        &mut self,
+        hitbox_id: HitboxId,
+        inspector_id: Option<&crate::InspectorElementId>,
+        cx: &App,
+    ) {
+        self.invalidator.debug_assert_paint_or_prepaint();
+        if !self.is_inspector_picking(cx) {
+            return;
+        }
+        if let Some(inspector_id) = inspector_id {
+            self.next_frame
+                .inspector_hitboxes
+                .insert(hitbox_id, inspector_id.clone());
+        }
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    fn paint_inspector_hitbox(&mut self, cx: &App) {
+        if let Some(inspector) = self.inspector.as_ref() {
+            let inspector = inspector.read(cx);
+            if let Some((hitbox_id, _)) = self.hovered_inspector_hitbox(inspector, &self.next_frame)
+            {
+                if let Some(hitbox) = self
+                    .next_frame
+                    .hitboxes
+                    .iter()
+                    .find(|hitbox| hitbox.id == hitbox_id)
+                {
+                    self.paint_quad(crate::fill(hitbox.bounds, crate::rgba(0x61afef4d)));
+                }
+            }
+        }
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    fn handle_inspector_mouse_event(&mut self, event: &dyn Any, cx: &mut App) {
+        let Some(inspector) = self.inspector.clone() else {
+            return;
+        };
+        if event.downcast_ref::<MouseMoveEvent>().is_some() {
+            inspector.update(cx, |inspector, _cx| {
+                if let Some((_, inspector_id)) =
+                    self.hovered_inspector_hitbox(inspector, &self.rendered_frame)
+                {
+                    inspector.hover(inspector_id, self);
+                }
+            });
+        } else if event.downcast_ref::<crate::MouseDownEvent>().is_some() {
+            inspector.update(cx, |inspector, _cx| {
+                if let Some((_, inspector_id)) =
+                    self.hovered_inspector_hitbox(inspector, &self.rendered_frame)
+                {
+                    inspector.select(inspector_id, self);
+                }
+            });
+        } else if let Some(event) = event.downcast_ref::<crate::ScrollWheelEvent>() {
+            // This should be kept in sync with SCROLL_LINES in x11 platform.
+            const SCROLL_LINES: f32 = 3.0;
+            const SCROLL_PIXELS_PER_LAYER: f32 = 36.0;
+            let delta_y = event
+                .delta
+                .pixel_delta(px(SCROLL_PIXELS_PER_LAYER / SCROLL_LINES))
+                .y;
+            if let Some(inspector) = self.inspector.clone() {
+                inspector.update(cx, |inspector, _cx| {
+                    if let Some(depth) = inspector.pick_depth.as_mut() {
+                        *depth += delta_y.0 / SCROLL_PIXELS_PER_LAYER;
+                        let max_depth = self.mouse_hit_test.0.len() as f32 - 0.5;
+                        if *depth < 0.0 {
+                            *depth = 0.0;
+                        } else if *depth > max_depth {
+                            *depth = max_depth;
+                        }
+                        if let Some((_, inspector_id)) =
+                            self.hovered_inspector_hitbox(inspector, &self.rendered_frame)
+                        {
+                            inspector.set_active_element_id(inspector_id.clone(), self);
+                        }
+                    }
+                });
+            }
+        }
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    fn hovered_inspector_hitbox(
+        &self,
+        inspector: &Inspector,
+        frame: &Frame,
+    ) -> Option<(HitboxId, crate::InspectorElementId)> {
+        if let Some(pick_depth) = inspector.pick_depth {
+            let depth = (pick_depth as i64).try_into().unwrap_or(0);
+            let max_skipped = self.mouse_hit_test.0.len().saturating_sub(1);
+            let skip_count = (depth as usize).min(max_skipped);
+            for hitbox_id in self.mouse_hit_test.0.iter().skip(skip_count) {
+                if let Some(inspector_id) = frame.inspector_hitboxes.get(hitbox_id) {
+                    return Some((*hitbox_id, inspector_id.clone()));
+                }
+            }
+        }
+        return None;
+    }
 }
 
 // #[derive(Clone, Copy, Eq, PartialEq, Hash)]
@@ -3856,7 +4169,7 @@ impl<V: 'static + Render> WindowHandle<V> {
                     .and_then(|window| window.root.clone())
                     .map(|root_view| root_view.downcast::<V>())
             })
-            .ok_or_else(|| anyhow!("window not found"))?
+            .context("window not found")?
             .map_err(|_| anyhow!("the type of the window's root view has changed"))?;
 
         Ok(x.read(cx))
@@ -3994,7 +4307,7 @@ pub enum ElementId {
     /// The ID of a View element
     View(EntityId),
     /// An integer ID.
-    Integer(usize),
+    Integer(u64),
     /// A string based ID.
     Name(SharedString),
     /// A UUID.
@@ -4002,9 +4315,16 @@ pub enum ElementId {
     /// An ID that's equated with a focus handle.
     FocusHandle(FocusId),
     /// A combination of a name and an integer.
-    NamedInteger(SharedString, usize),
-    /// A path
+    NamedInteger(SharedString, u64),
+    /// A path.
     Path(Arc<std::path::Path>),
+}
+
+impl ElementId {
+    /// Constructs an `ElementId::NamedInteger` from a name and `usize`.
+    pub fn named_usize(name: impl Into<SharedString>, integer: usize) -> ElementId {
+        Self::NamedInteger(name.into(), integer as u64)
+    }
 }
 
 impl Display for ElementId {
@@ -4030,20 +4350,20 @@ impl TryInto<SharedString> for ElementId {
         if let ElementId::Name(name) = self {
             Ok(name)
         } else {
-            Err(anyhow!("element id is not string"))
+            anyhow::bail!("element id is not string")
         }
     }
 }
 
 impl From<usize> for ElementId {
     fn from(id: usize) -> Self {
-        ElementId::Integer(id)
+        ElementId::Integer(id as u64)
     }
 }
 
 impl From<i32> for ElementId {
     fn from(id: i32) -> Self {
-        Self::Integer(id as usize)
+        Self::Integer(id as u64)
     }
 }
 
@@ -4073,25 +4393,25 @@ impl<'a> From<&'a FocusHandle> for ElementId {
 
 impl From<(&'static str, EntityId)> for ElementId {
     fn from((name, id): (&'static str, EntityId)) -> Self {
-        ElementId::NamedInteger(name.into(), id.as_u64() as usize)
+        ElementId::NamedInteger(name.into(), id.as_u64())
     }
 }
 
 impl From<(&'static str, usize)> for ElementId {
     fn from((name, id): (&'static str, usize)) -> Self {
-        ElementId::NamedInteger(name.into(), id)
+        ElementId::NamedInteger(name.into(), id as u64)
     }
 }
 
 impl From<(SharedString, usize)> for ElementId {
     fn from((name, id): (SharedString, usize)) -> Self {
-        ElementId::NamedInteger(name, id)
+        ElementId::NamedInteger(name, id as u64)
     }
 }
 
 impl From<(&'static str, u64)> for ElementId {
     fn from((name, id): (&'static str, u64)) -> Self {
-        ElementId::NamedInteger(name.into(), id as usize)
+        ElementId::NamedInteger(name.into(), id)
     }
 }
 
@@ -4103,7 +4423,7 @@ impl From<Uuid> for ElementId {
 
 impl From<(&'static str, u32)> for ElementId {
     fn from((name, id): (&'static str, u32)) -> Self {
-        ElementId::NamedInteger(name.into(), id as usize)
+        ElementId::NamedInteger(name.into(), id.into())
     }
 }
 

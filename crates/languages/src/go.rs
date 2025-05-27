@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
@@ -107,7 +107,7 @@ impl super::LspAdapter for GoLspAdapter {
                         delegate.show_notification(NOTIFICATION_MESSAGE, cx);
                     })?
                 }
-                return Err(anyhow!("cannot install gopls"));
+                anyhow::bail!("cannot install gopls");
             }
             Ok(())
         }))
@@ -167,10 +167,9 @@ impl super::LspAdapter for GoLspAdapter {
                 String::from_utf8_lossy(&install_output.stdout),
                 String::from_utf8_lossy(&install_output.stderr)
             );
-
-            return Err(anyhow!(
+            anyhow::bail!(
                 "failed to install gopls with `go install`. Is `go` installed and in the PATH? Check logs for more information."
-            ));
+            );
         }
 
         let installed_binary_path = gobin_dir.join(BINARY);
@@ -375,6 +374,12 @@ impl super::LspAdapter for GoLspAdapter {
             filter_range,
         })
     }
+
+    fn diagnostic_message_to_markdown(&self, message: &str) -> Option<String> {
+        static REGEX: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"(?m)\n\s*").expect("Failed to create REGEX"));
+        Some(REGEX.replace_all(message, "\n\n").to_string())
+    }
 }
 
 fn parse_version_output(output: &Output) -> Result<&str> {
@@ -405,15 +410,12 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
             }
         }
 
-        if let Some(path) = last_binary_path {
-            Ok(LanguageServerBinary {
-                path,
-                arguments: server_binary_arguments(),
-                env: None,
-            })
-        } else {
-            Err(anyhow!("no cached binary"))
-        }
+        let path = last_binary_path.context("no cached binary")?;
+        anyhow::Ok(LanguageServerBinary {
+            path,
+            arguments: server_binary_arguments(),
+            env: None,
+        })
     })
     .await
     .log_err()
@@ -528,7 +530,7 @@ impl ContextProvider for GoContextProvider {
                 args: vec![
                     "test".into(),
                     "-run".into(),
-                    format!("^{}\\$", VariableName::Symbol.template_value(),),
+                    format!("\\^{}\\$", VariableName::Symbol.template_value(),),
                 ],
                 tags: vec!["go-test".to_owned()],
                 cwd: package_cwd.clone(),
@@ -561,7 +563,7 @@ impl ContextProvider for GoContextProvider {
                     "-v".into(),
                     "-run".into(),
                     format!(
-                        "^{}\\$/^{}\\$",
+                        "\\^{}\\$/\\^{}\\$",
                         VariableName::Symbol.template_value(),
                         GO_SUBTEST_NAME_TASK_VARIABLE.template_value(),
                     ),
@@ -580,9 +582,9 @@ impl ContextProvider for GoContextProvider {
                 args: vec![
                     "test".into(),
                     "-benchmem".into(),
-                    "-run=^$".into(),
+                    "-run='^$'".into(),
                     "-bench".into(),
-                    format!("^{}\\$", VariableName::Symbol.template_value()),
+                    format!("\\^{}\\$", VariableName::Symbol.template_value()),
                 ],
                 cwd: package_cwd.clone(),
                 tags: vec!["go-benchmark".to_owned()],
@@ -599,7 +601,7 @@ impl ContextProvider for GoContextProvider {
                     "test".into(),
                     "-fuzz=Fuzz".into(),
                     "-run".into(),
-                    format!("^{}\\$", VariableName::Symbol.template_value(),),
+                    format!("\\^{}\\$", VariableName::Symbol.template_value(),),
                 ],
                 tags: vec!["go-fuzz".to_owned()],
                 cwd: package_cwd.clone(),

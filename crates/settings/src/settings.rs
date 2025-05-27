@@ -4,6 +4,7 @@ mod key_equivalents;
 mod keymap_file;
 mod settings_file;
 mod settings_store;
+mod vscode_import;
 
 use gpui::App;
 use rust_embed::RustEmbed;
@@ -19,8 +20,9 @@ pub use keymap_file::{
 pub use settings_file::*;
 pub use settings_store::{
     InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation, SettingsSources,
-    SettingsStore, TaskKind, parse_json_with_comments,
+    SettingsStore, parse_json_with_comments,
 };
+pub use vscode_import::VsCodeSettings;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);

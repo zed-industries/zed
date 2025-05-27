@@ -565,7 +565,7 @@ impl project::ProjectItem for NotebookItem {
         project: &Entity<Project>,
         path: &ProjectPath,
         cx: &mut App,
-    ) -> Option<Task<gpui::Result<Entity<Self>>>> {
+    ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
         let path = path.clone();
         let project = project.clone();
         let fs = project.read(cx).fs().clone();
@@ -575,7 +575,7 @@ impl project::ProjectItem for NotebookItem {
             Some(cx.spawn(async move |cx| {
                 let abs_path = project
                     .read_with(cx, |project, cx| project.absolute_path(&path, cx))?
-                    .ok_or_else(|| anyhow::anyhow!("Failed to find the absolute path"))?;
+                    .with_context(|| format!("finding the absolute path of {path:?}"))?;
 
                 // todo: watch for changes to the file
                 let file_content = fs.load(&abs_path.as_path()).await?;
@@ -731,17 +731,21 @@ impl Item for NotebookEditor {
     }
 
     fn tab_content(&self, params: TabContentParams, window: &Window, cx: &App) -> AnyElement {
+        Label::new(self.tab_content_text(params.detail.unwrap_or(0), cx))
+            .single_line()
+            .color(params.text_color())
+            .when(params.preview, |this| this.italic())
+            .into_any_element()
+    }
+
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
         let path = &self.notebook_item.read(cx).path;
         let title = path
             .file_name()
             .unwrap_or_else(|| path.as_os_str())
             .to_string_lossy()
             .to_string();
-        Label::new(title)
-            .single_line()
-            .color(params.text_color())
-            .when(params.preview, |this| this.italic())
-            .into_any_element()
+        title.into()
     }
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
@@ -825,7 +829,7 @@ impl ProjectItem for NotebookEditor {
 
     fn for_project_item(
         project: Entity<Project>,
-        _: &Pane,
+        _: Option<&Pane>,
         item: Entity<Self::Item>,
         window: &mut Window,
         cx: &mut Context<Self>,

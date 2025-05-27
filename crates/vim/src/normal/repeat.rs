@@ -170,6 +170,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         let mut count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
         self.clear_operator(window, cx);
 
         let globals = Vim::globals(cx);
@@ -201,6 +202,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         let count = Vim::take_count(cx);
+        Vim::take_forced_motion(cx);
 
         let Some((mut actions, selection, mode)) = Vim::update_globals(cx, |globals, _| {
             let actions = globals.recorded_actions.clone();
@@ -477,6 +479,62 @@ mod test {
                 one.second!
                 two.secondˇ!
                 three
+            "},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_repeat_completion_unicode_bug(cx: &mut gpui::TestAppContext) {
+        VimTestContext::init(cx);
+        let cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                    resolve_provider: Some(true),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+        let mut cx = VimTestContext::new_with_lsp(cx, true);
+
+        cx.set_state(
+            indoc! {"
+                ĩлˇк
+                ĩлк
+            "},
+            Mode::Normal,
+        );
+
+        let mut request = cx.set_request_handler::<lsp::request::Completion, _, _>(
+            move |_, params, _| async move {
+                let position = params.text_document_position.position;
+                let mut to_the_left = position;
+                to_the_left.character -= 2;
+                Ok(Some(lsp::CompletionResponse::Array(vec![
+                    lsp::CompletionItem {
+                        label: "oops".to_string(),
+                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                            range: lsp::Range::new(to_the_left, position),
+                            new_text: "к!".to_string(),
+                        })),
+                        ..Default::default()
+                    },
+                ])))
+            },
+        );
+        cx.simulate_keystrokes("i .");
+        request.next().await;
+        cx.condition(|editor, _| editor.context_menu_visible())
+            .await;
+        cx.simulate_keystrokes("enter escape");
+        cx.assert_state(
+            indoc! {"
+                ĩкˇ!к
+                ĩлк
             "},
             Mode::Normal,
         );

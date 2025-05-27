@@ -33,14 +33,15 @@ tempfile.workspace = true
 text.workspace = true
 time.workspace = true
 util.workspace = true
+workspace-hack.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 fsevent.workspace = true
-objc = "0.2"
+objc.workspace = true
 cocoa = "0.26"
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
-notify = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
+notify = "8.0.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true

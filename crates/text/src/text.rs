@@ -11,7 +11,7 @@ mod tests;
 mod undo_map;
 
 pub use anchor::*;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use clock::LOCAL_BRANCH_REPLICA_ID;
 pub use clock::ReplicaId;
 use collections::{HashMap, HashSet};
@@ -128,6 +128,12 @@ pub struct Transaction {
     pub id: TransactionId,
     pub edit_ids: Vec<clock::Lamport>,
     pub start: clock::Global,
+}
+
+impl Transaction {
+    pub fn merge_in(&mut self, other: Transaction) {
+        self.edit_ids.extend(other.edit_ids);
+    }
 }
 
 impl HistoryEntry {
@@ -1423,8 +1429,12 @@ impl Buffer {
             .collect()
     }
 
-    pub fn forget_transaction(&mut self, transaction_id: TransactionId) {
-        self.history.forget(transaction_id);
+    pub fn forget_transaction(&mut self, transaction_id: TransactionId) -> Option<Transaction> {
+        self.history.forget(transaction_id)
+    }
+
+    pub fn get_transaction(&self, transaction_id: TransactionId) -> Option<&Transaction> {
+        self.history.transaction(transaction_id)
     }
 
     pub fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
@@ -1482,7 +1492,6 @@ impl Buffer {
 
     pub fn push_transaction(&mut self, transaction: Transaction, now: Instant) {
         self.history.push_transaction(transaction, now);
-        self.history.finalize_last_transaction();
     }
 
     pub fn edited_ranges_for_transaction_id<D>(
@@ -1577,7 +1586,7 @@ impl Buffer {
         async move {
             for mut future in futures {
                 if future.recv().await.is_none() {
-                    Err(anyhow!("gave up waiting for edits"))?;
+                    anyhow::bail!("gave up waiting for edits");
                 }
             }
             Ok(())
@@ -1606,7 +1615,7 @@ impl Buffer {
         async move {
             for mut future in futures {
                 if future.recv().await.is_none() {
-                    Err(anyhow!("gave up waiting for anchors"))?;
+                    anyhow::bail!("gave up waiting for anchors");
                 }
             }
             Ok(())
@@ -1626,7 +1635,7 @@ impl Buffer {
         async move {
             if let Some(mut rx) = rx {
                 if rx.recv().await.is_none() {
-                    Err(anyhow!("gave up waiting for version"))?;
+                    anyhow::bail!("gave up waiting for version");
                 }
             }
             Ok(())
@@ -2231,6 +2240,7 @@ impl BufferSnapshot {
         } else if *anchor == Anchor::MAX {
             self.visible_text.len()
         } else {
+            debug_assert!(anchor.buffer_id == Some(self.remote_id));
             let anchor_key = InsertionFragmentKey {
                 timestamp: anchor.timestamp,
                 split_offset: anchor.offset,

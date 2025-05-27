@@ -28,10 +28,7 @@ impl Settings for ImageViewerSettings {
 
     type FileContent = Self;
 
-    fn load(
-        sources: SettingsSources<Self::FileContent>,
-        _: &mut App,
-    ) -> Result<Self, anyhow::Error> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
         SettingsSources::<Self::FileContent>::json_merge_with(
             [sources.default]
                 .into_iter()
@@ -39,4 +36,6 @@ impl Settings for ImageViewerSettings {
                 .chain(sources.server),
         )
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }

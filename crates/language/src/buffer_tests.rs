@@ -39,9 +39,7 @@ pub static TRAILING_WHITESPACE_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| 
 #[cfg(test)]
 #[ctor::ctor]
 fn init_logger() {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::init();
-    }
+    zlog::init_test();
 }
 
 #[gpui::test]
@@ -87,6 +85,17 @@ fn test_select_language(cx: &mut App) {
     )));
     registry.add(Arc::new(Language::new(
         LanguageConfig {
+            name: "Rust with longer extension".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["longer.rs".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    )));
+    registry.add(Arc::new(Language::new(
+        LanguageConfig {
             name: LanguageName::new("Make"),
             matcher: LanguageMatcher {
                 path_suffixes: vec!["Makefile".to_string(), "mk".to_string()],
@@ -109,6 +118,14 @@ fn test_select_language(cx: &mut App) {
             .language_for_file(&file("src/lib.mk"), None, cx)
             .map(|l| l.name()),
         Some("Make".into())
+    );
+
+    // matching longer, compound extension, part of which could also match another lang
+    assert_eq!(
+        registry
+            .language_for_file(&file("src/lib.longer.rs"), None, cx)
+            .map(|l| l.name()),
+        Some("Rust with longer extension".into())
     );
 
     // matching filename
@@ -183,7 +200,11 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
         init_settings(cx, |settings| {
             settings.file_types.extend([
                 ("TypeScript".into(), vec!["js".into()]),
-                ("C++".into(), vec!["c".into()]),
+                (
+                    "JavaScript".into(),
+                    vec!["*longer.ts".into(), "ecmascript".into()],
+                ),
+                ("C++".into(), vec!["c".into(), "*.dev".into()]),
                 (
                     "Dockerfile".into(),
                     vec!["Dockerfile".into(), "Dockerfile.*".into()],
@@ -206,7 +227,7 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
         LanguageConfig {
             name: "TypeScript".into(),
             matcher: LanguageMatcher {
-                path_suffixes: vec!["js".to_string()],
+                path_suffixes: vec!["ts".to_string(), "ts.ecmascript".to_string()],
                 ..Default::default()
             },
             ..Default::default()
@@ -239,6 +260,21 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
         languages.add(Arc::new(Language::new(config, None)));
     }
 
+    // matches system-provided lang extension
+    let language = cx
+        .read(|cx| languages.language_for_file(&file("foo.ts"), None, cx))
+        .unwrap();
+    assert_eq!(language.name(), "TypeScript".into());
+    let language = cx
+        .read(|cx| languages.language_for_file(&file("foo.ts.ecmascript"), None, cx))
+        .unwrap();
+    assert_eq!(language.name(), "TypeScript".into());
+    let language = cx
+        .read(|cx| languages.language_for_file(&file("foo.cpp"), None, cx))
+        .unwrap();
+    assert_eq!(language.name(), "C++".into());
+
+    // user configured lang extension, same length as system-provided
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.js"), None, cx))
         .unwrap();
@@ -247,6 +283,25 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
         .read(|cx| languages.language_for_file(&file("foo.c"), None, cx))
         .unwrap();
     assert_eq!(language.name(), "C++".into());
+
+    // user configured lang extension, longer than system-provided
+    let language = cx
+        .read(|cx| languages.language_for_file(&file("foo.longer.ts"), None, cx))
+        .unwrap();
+    assert_eq!(language.name(), "JavaScript".into());
+
+    // user configured lang extension, shorter than system-provided
+    let language = cx
+        .read(|cx| languages.language_for_file(&file("foo.ecmascript"), None, cx))
+        .unwrap();
+    assert_eq!(language.name(), "JavaScript".into());
+
+    // user configured glob matches
+    let language = cx
+        .read(|cx| languages.language_for_file(&file("c-plus-plus.dev"), None, cx))
+        .unwrap();
+    assert_eq!(language.name(), "C++".into());
+    // should match Dockerfile.* => Dockerfile, not *.dev => C++
     let language = cx
         .read(|cx| languages.language_for_file(&file("Dockerfile.dev"), None, cx))
         .unwrap();
@@ -376,7 +431,7 @@ async fn test_apply_diff(cx: &mut TestAppContext) {
 
     let diff = buffer.update(cx, |b, cx| b.diff(text.clone(), cx)).await;
     buffer.update(cx, |buffer, cx| {
-        buffer.apply_diff(diff, true, cx).unwrap();
+        buffer.apply_diff(diff, cx).unwrap();
         assert_eq!(buffer.text(), text);
         let actual_offsets = anchors
             .iter()
@@ -390,7 +445,7 @@ async fn test_apply_diff(cx: &mut TestAppContext) {
 
     let diff = buffer.update(cx, |b, cx| b.diff(text.clone(), cx)).await;
     buffer.update(cx, |buffer, cx| {
-        buffer.apply_diff(diff, true, cx).unwrap();
+        buffer.apply_diff(diff, cx).unwrap();
         assert_eq!(buffer.text(), text);
         let actual_offsets = anchors
             .iter()
@@ -435,7 +490,7 @@ async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
     let format_diff = format.await;
     buffer.update(cx, |buffer, cx| {
         let version_before_format = format_diff.base_version.clone();
-        buffer.apply_diff(format_diff, true, cx);
+        buffer.apply_diff(format_diff, cx);
 
         // The outcome depends on the order of concurrent tasks.
         //
@@ -1713,6 +1768,56 @@ fn test_autoindent_block_mode(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_autoindent_block_mode_with_newline(cx: &mut App) {
+    init_settings(cx, |_| {});
+
+    cx.new(|cx| {
+        let text = r#"
+            fn a() {
+                b();
+            }
+        "#
+        .unindent();
+        let mut buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
+
+        // First line contains just '\n', it's indentation is stored in "original_indent_columns"
+        let original_indent_columns = vec![Some(4)];
+        let inserted_text = r#"
+
+                c();
+                    d();
+                        e();
+        "#
+        .unindent();
+        buffer.edit(
+            [(Point::new(2, 0)..Point::new(2, 0), inserted_text.clone())],
+            Some(AutoindentMode::Block {
+                original_indent_columns: original_indent_columns.clone(),
+            }),
+            cx,
+        );
+
+        // While making edit, we ignore first line as it only contains '\n'
+        // hence second line indent is used to calculate delta
+        assert_eq!(
+            buffer.text(),
+            r#"
+            fn a() {
+                b();
+
+                c();
+                    d();
+                        e();
+            }
+            "#
+            .unindent()
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
 fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut App) {
     init_settings(cx, |_| {});
 
@@ -2168,6 +2273,7 @@ fn test_language_scope_at_with_javascript(cx: &mut App) {
             LanguageConfig {
                 name: "JavaScript".into(),
                 line_comments: vec!["// ".into()],
+                block_comment: Some(("/*".into(), "*/".into())),
                 brackets: BracketPairConfig {
                     pairs: vec![
                         BracketPair {
@@ -2231,6 +2337,10 @@ fn test_language_scope_at_with_javascript(cx: &mut App) {
 
         let config = snapshot.language_scope_at(0).unwrap();
         assert_eq!(config.line_comment_prefixes(), &[Arc::from("// ")]);
+        assert_eq!(
+            config.block_comment_delimiters(),
+            Some((&"/*".into(), &"*/".into()))
+        );
         // Both bracket pairs are enabled
         assert_eq!(
             config.brackets().map(|e| e.1).collect::<Vec<_>>(),
@@ -2249,6 +2359,10 @@ fn test_language_scope_at_with_javascript(cx: &mut App) {
             .language_scope_at(text.find("b\"").unwrap())
             .unwrap();
         assert_eq!(string_config.line_comment_prefixes(), &[Arc::from("// ")]);
+        assert_eq!(
+            string_config.block_comment_delimiters(),
+            Some((&"/*".into(), &"*/".into()))
+        );
         // Second bracket pair is disabled
         assert_eq!(
             string_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
@@ -2277,6 +2391,10 @@ fn test_language_scope_at_with_javascript(cx: &mut App) {
             .unwrap();
         assert_eq!(tag_config.line_comment_prefixes(), &[Arc::from("// ")]);
         assert_eq!(
+            tag_config.block_comment_delimiters(),
+            Some((&"/*".into(), &"*/".into()))
+        );
+        assert_eq!(
             tag_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
             &[true, true]
         );
@@ -2288,6 +2406,10 @@ fn test_language_scope_at_with_javascript(cx: &mut App) {
         assert_eq!(
             expression_in_element_config.line_comment_prefixes(),
             &[Arc::from("// ")]
+        );
+        assert_eq!(
+            expression_in_element_config.block_comment_delimiters(),
+            Some((&"/*".into(), &"*/".into()))
         );
         assert_eq!(
             expression_in_element_config
@@ -2451,6 +2573,59 @@ fn test_language_at_with_hidden_languages(cx: &mut App) {
 
             let language = snapshot.language_at(point).unwrap();
             assert_eq!(language.name().as_ref(), "Markdown");
+        }
+
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_language_at_for_markdown_code_block(cx: &mut App) {
+    init_settings(cx, |_| {});
+
+    cx.new(|cx| {
+        let text = r#"
+            ```rs
+            let a = 2;
+            // let b = 3;
+            ```
+        "#
+        .unindent();
+
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+        language_registry.add(Arc::new(markdown_lang()));
+        language_registry.add(Arc::new(markdown_inline_lang()));
+        language_registry.add(Arc::new(rust_lang()));
+
+        let mut buffer = Buffer::local(text, cx);
+        buffer.set_language_registry(language_registry.clone());
+        buffer.set_language(
+            language_registry
+                .language_for_name("Markdown")
+                .now_or_never()
+                .unwrap()
+                .ok(),
+            cx,
+        );
+
+        let snapshot = buffer.snapshot();
+
+        // Test points in the code line
+        for point in [Point::new(1, 4), Point::new(1, 6)] {
+            let config = snapshot.language_scope_at(point).unwrap();
+            assert_eq!(config.language_name(), "Rust".into());
+
+            let language = snapshot.language_at(point).unwrap();
+            assert_eq!(language.name().as_ref(), "Rust");
+        }
+
+        // Test points in the comment line to verify it's still detected as Rust
+        for point in [Point::new(2, 4), Point::new(2, 6)] {
+            let config = snapshot.language_scope_at(point).unwrap();
+            assert_eq!(config.language_name(), "Rust".into());
+
+            let language = snapshot.language_at(point).unwrap();
+            assert_eq!(language.name().as_ref(), "Rust");
         }
 
         buffer

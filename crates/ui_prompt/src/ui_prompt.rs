@@ -4,7 +4,7 @@ use gpui::{
     Refineable, Render, RenderablePromptHandle, SharedString, Styled, TextStyleRefinement, Window,
     div,
 };
-use markdown::{Markdown, MarkdownStyle};
+use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use settings::{Settings, SettingsStore};
 use theme::ThemeSettings;
 use ui::{
@@ -47,24 +47,9 @@ fn zed_prompt_renderer(
             actions: actions.iter().map(ToString::to_string).collect(),
             focus: cx.focus_handle(),
             active_action_id: 0,
-            detail: detail.filter(|text| !text.is_empty()).map(|text| {
-                cx.new(|cx| {
-                    let settings = ThemeSettings::get_global(cx);
-                    let mut base_text_style = window.text_style();
-                    base_text_style.refine(&TextStyleRefinement {
-                        font_family: Some(settings.ui_font.family.clone()),
-                        font_size: Some(settings.ui_font_size(cx).into()),
-                        color: Some(ui::Color::Muted.color(cx)),
-                        ..Default::default()
-                    });
-                    let markdown_style = MarkdownStyle {
-                        base_text_style,
-                        selection_background_color: { cx.theme().players().local().selection },
-                        ..Default::default()
-                    };
-                    Markdown::new(SharedString::new(text), markdown_style, None, None, cx)
-                })
-            }),
+            detail: detail
+                .filter(|text| !text.is_empty())
+                .map(|text| cx.new(|cx| Markdown::new(SharedString::new(text), None, None, cx))),
         }
     });
 
@@ -127,7 +112,7 @@ impl ZedPromptRenderer {
 }
 
 impl Render for ZedPromptRenderer {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let font_family = settings.ui_font.family.clone();
         let prompt = v_flex()
@@ -153,11 +138,26 @@ impl Render for ZedPromptRenderer {
                     .child(self.message.clone())
                     .text_color(ui::Color::Default.color(cx)),
             )
-            .children(
-                self.detail
-                    .clone()
-                    .map(|detail| div().w_full().text_xs().child(detail)),
-            )
+            .children(self.detail.clone().map(|detail| {
+                div()
+                    .w_full()
+                    .text_xs()
+                    .child(MarkdownElement::new(detail, {
+                        let settings = ThemeSettings::get_global(cx);
+                        let mut base_text_style = window.text_style();
+                        base_text_style.refine(&TextStyleRefinement {
+                            font_family: Some(settings.ui_font.family.clone()),
+                            font_size: Some(settings.ui_font_size(cx).into()),
+                            color: Some(ui::Color::Muted.color(cx)),
+                            ..Default::default()
+                        });
+                        MarkdownStyle {
+                            base_text_style,
+                            selection_background_color: { cx.theme().players().local().selection },
+                            ..Default::default()
+                        }
+                    }))
+            }))
             .child(h_flex().justify_end().gap_2().children(
                 self.actions.iter().enumerate().rev().map(|(ix, action)| {
                     ui::Button::new(ix, action.clone())

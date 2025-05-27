@@ -99,7 +99,7 @@ venvPath = "."
 venv = ".venv"
 ```
 
-You can also configure this option directly in your `settings.json` file ([pyright settings](#settings)), as recommended in [Configuring Your Python Environment](https://microsoft.github.io/pyright/#/import-resolution?id=configuring-your-python-environment).
+You can also configure this option directly in your `settings.json` file ([pyright settings](#pyright-settings)), as recommended in [Configuring Your Python Environment](https://microsoft.github.io/pyright/#/import-resolution?id=configuring-your-python-environment).
 
 ```json
 {

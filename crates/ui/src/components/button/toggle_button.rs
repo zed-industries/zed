@@ -15,8 +15,7 @@ pub enum ToggleButtonPosition {
     Last,
 }
 
-#[derive(IntoElement, IntoComponent)]
-#[component(scope = "Input")]
+#[derive(IntoElement, RegisterComponent)]
 pub struct ToggleButton {
     base: ButtonLike,
     position_in_group: Option<ToggleButtonPosition>,
@@ -67,6 +66,18 @@ impl Toggleable for ToggleButton {
 impl SelectableButton for ToggleButton {
     fn selected_style(mut self, style: ButtonStyle) -> Self {
         self.base.selected_style = Some(style);
+        self
+    }
+}
+
+impl FixedWidth for ToggleButton {
+    fn width(mut self, width: DefiniteLength) -> Self {
+        self.base.width = Some(width);
+        self
+    }
+
+    fn full_width(mut self) -> Self {
+        self.base.width = Some(relative(1.));
         self
     }
 }
@@ -143,129 +154,139 @@ impl RenderOnce for ToggleButton {
     }
 }
 
-impl ComponentPreview for ToggleButton {
-    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
-        v_flex()
-            .gap_6()
-            .children(vec![
-                example_group_with_title(
-                    "Button Styles",
-                    vec![
-                        single_example(
-                            "Off",
-                            ToggleButton::new("off", "Off")
-                                .layer(ElevationIndex::Background)
-                                .style(ButtonStyle::Filled)
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "On",
-                            ToggleButton::new("on", "On")
-                                .layer(ElevationIndex::Background)
-                                .toggle_state(true)
-                                .style(ButtonStyle::Filled)
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "Off – Disabled",
-                            ToggleButton::new("disabled_off", "Disabled Off")
-                                .layer(ElevationIndex::Background)
-                                .disabled(true)
-                                .style(ButtonStyle::Filled)
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "On – Disabled",
-                            ToggleButton::new("disabled_on", "Disabled On")
-                                .layer(ElevationIndex::Background)
-                                .disabled(true)
-                                .toggle_state(true)
-                                .style(ButtonStyle::Filled)
-                                .into_any_element(),
-                        ),
-                    ],
-                ),
-                example_group_with_title(
-                    "Button Group",
-                    vec![
-                        single_example(
-                            "Three Buttons",
-                            h_flex()
-                                .child(
-                                    ToggleButton::new("three_btn_first", "First")
-                                        .layer(ElevationIndex::Background)
-                                        .style(ButtonStyle::Filled)
-                                        .first()
-                                        .into_any_element(),
-                                )
-                                .child(
-                                    ToggleButton::new("three_btn_middle", "Middle")
-                                        .layer(ElevationIndex::Background)
-                                        .style(ButtonStyle::Filled)
-                                        .middle()
-                                        .toggle_state(true)
-                                        .into_any_element(),
-                                )
-                                .child(
-                                    ToggleButton::new("three_btn_last", "Last")
-                                        .layer(ElevationIndex::Background)
-                                        .style(ButtonStyle::Filled)
-                                        .last()
-                                        .into_any_element(),
-                                )
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "Two Buttons",
-                            h_flex()
-                                .child(
-                                    ToggleButton::new("two_btn_first", "First")
-                                        .layer(ElevationIndex::Background)
-                                        .style(ButtonStyle::Filled)
-                                        .first()
-                                        .into_any_element(),
-                                )
-                                .child(
-                                    ToggleButton::new("two_btn_last", "Last")
-                                        .layer(ElevationIndex::Background)
-                                        .style(ButtonStyle::Filled)
-                                        .last()
-                                        .into_any_element(),
-                                )
-                                .into_any_element(),
-                        ),
-                    ],
-                ),
-                example_group_with_title(
-                    "Alternate Sizes",
-                    vec![
-                        single_example(
-                            "None",
-                            ToggleButton::new("none", "None")
-                                .layer(ElevationIndex::Background)
-                                .style(ButtonStyle::Filled)
-                                .size(ButtonSize::None)
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "Compact",
-                            ToggleButton::new("compact", "Compact")
-                                .layer(ElevationIndex::Background)
-                                .style(ButtonStyle::Filled)
-                                .size(ButtonSize::Compact)
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "Large",
-                            ToggleButton::new("large", "Large")
-                                .layer(ElevationIndex::Background)
-                                .style(ButtonStyle::Filled)
-                                .size(ButtonSize::Large)
-                                .into_any_element(),
-                        ),
-                    ],
-                ),
-            ])
-            .into_any_element()
+impl Component for ToggleButton {
+    fn scope() -> ComponentScope {
+        ComponentScope::Input
+    }
+
+    fn sort_name() -> &'static str {
+        "ButtonC"
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        Some(
+            v_flex()
+                .gap_6()
+                .children(vec![
+                    example_group_with_title(
+                        "Button Styles",
+                        vec![
+                            single_example(
+                                "Off",
+                                ToggleButton::new("off", "Off")
+                                    .layer(ElevationIndex::Background)
+                                    .style(ButtonStyle::Filled)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "On",
+                                ToggleButton::new("on", "On")
+                                    .layer(ElevationIndex::Background)
+                                    .toggle_state(true)
+                                    .style(ButtonStyle::Filled)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Off – Disabled",
+                                ToggleButton::new("disabled_off", "Disabled Off")
+                                    .layer(ElevationIndex::Background)
+                                    .disabled(true)
+                                    .style(ButtonStyle::Filled)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "On – Disabled",
+                                ToggleButton::new("disabled_on", "Disabled On")
+                                    .layer(ElevationIndex::Background)
+                                    .disabled(true)
+                                    .toggle_state(true)
+                                    .style(ButtonStyle::Filled)
+                                    .into_any_element(),
+                            ),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "Button Group",
+                        vec![
+                            single_example(
+                                "Three Buttons",
+                                h_flex()
+                                    .child(
+                                        ToggleButton::new("three_btn_first", "First")
+                                            .layer(ElevationIndex::Background)
+                                            .style(ButtonStyle::Filled)
+                                            .first()
+                                            .into_any_element(),
+                                    )
+                                    .child(
+                                        ToggleButton::new("three_btn_middle", "Middle")
+                                            .layer(ElevationIndex::Background)
+                                            .style(ButtonStyle::Filled)
+                                            .middle()
+                                            .toggle_state(true)
+                                            .into_any_element(),
+                                    )
+                                    .child(
+                                        ToggleButton::new("three_btn_last", "Last")
+                                            .layer(ElevationIndex::Background)
+                                            .style(ButtonStyle::Filled)
+                                            .last()
+                                            .into_any_element(),
+                                    )
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Two Buttons",
+                                h_flex()
+                                    .child(
+                                        ToggleButton::new("two_btn_first", "First")
+                                            .layer(ElevationIndex::Background)
+                                            .style(ButtonStyle::Filled)
+                                            .first()
+                                            .into_any_element(),
+                                    )
+                                    .child(
+                                        ToggleButton::new("two_btn_last", "Last")
+                                            .layer(ElevationIndex::Background)
+                                            .style(ButtonStyle::Filled)
+                                            .last()
+                                            .into_any_element(),
+                                    )
+                                    .into_any_element(),
+                            ),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "Alternate Sizes",
+                        vec![
+                            single_example(
+                                "None",
+                                ToggleButton::new("none", "None")
+                                    .layer(ElevationIndex::Background)
+                                    .style(ButtonStyle::Filled)
+                                    .size(ButtonSize::None)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Compact",
+                                ToggleButton::new("compact", "Compact")
+                                    .layer(ElevationIndex::Background)
+                                    .style(ButtonStyle::Filled)
+                                    .size(ButtonSize::Compact)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Large",
+                                ToggleButton::new("large", "Large")
+                                    .layer(ElevationIndex::Background)
+                                    .style(ButtonStyle::Filled)
+                                    .size(ButtonSize::Large)
+                                    .into_any_element(),
+                            ),
+                        ],
+                    ),
+                ])
+                .into_any_element(),
+        )
     }
 }

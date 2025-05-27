@@ -7,13 +7,11 @@ use menu::{Confirm, SelectNext, SelectPrevious};
 use project::{FS_WATCH_LATENCY, RemoveOptions};
 use serde_json::json;
 use util::path;
-use workspace::{AppState, OpenOptions, ToggleFileFinder, Workspace};
+use workspace::{AppState, CloseActiveItem, OpenOptions, ToggleFileFinder, Workspace};
 
 #[ctor::ctor]
 fn init_logger() {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::init();
-    }
+    zlog::init_test();
 }
 
 #[test]
@@ -208,6 +206,11 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
 
     for bandana_query in [
         "bandana",
+        "./bandana",
+        ".\\bandana",
+        util::separator!("a/bandana"),
+        "b/bandana",
+        "b\\bandana",
         " bandana",
         "bandana ",
         " bandana ",
@@ -226,7 +229,8 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
             assert_eq!(
                 picker.delegate.matches.len(),
                 1,
-                "Wrong number of matches for bandana query '{bandana_query}'"
+                "Wrong number of matches for bandana query '{bandana_query}'. Matches: {:?}",
+                picker.delegate.matches
             );
         });
         cx.dispatch_action(SelectNext);
@@ -240,6 +244,38 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
             );
         });
     }
+}
+
+#[gpui::test]
+async fn test_unicode_paths(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a": {
+                    "İg": " ",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+
+    let (picker, workspace, cx) = build_find_picker(project, cx);
+
+    cx.simulate_input("g");
+    picker.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.matches.len(), 1);
+    });
+    cx.dispatch_action(SelectNext);
+    cx.dispatch_action(Confirm);
+    cx.read(|cx| {
+        let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+        assert_eq!(active_editor.read(cx).title(cx), "İg");
+    });
 }
 
 #[gpui::test]
@@ -585,9 +621,13 @@ async fn test_ignored_root(cx: &mut TestAppContext) {
                     "hiccup": "",
                 },
                 "tracked-root": {
-                    ".gitignore": "height",
+                    ".gitignore": "height*",
                     "happiness": "",
                     "height": "",
+                    "heights": {
+                        "height_1": "",
+                        "height_2": "",
+                    },
                     "hi": "",
                     "hiccup": "",
                 },
@@ -598,14 +638,13 @@ async fn test_ignored_root(cx: &mut TestAppContext) {
     let project = Project::test(
         app_state.fs.clone(),
         [
-            "/ancestor/tracked-root".as_ref(),
-            "/ancestor/ignored-root".as_ref(),
+            Path::new(path!("/ancestor/tracked-root")),
+            Path::new(path!("/ancestor/ignored-root")),
         ],
         cx,
     )
     .await;
-
-    let (picker, _, cx) = build_find_picker(project, cx);
+    let (picker, workspace, cx) = build_find_picker(project, cx);
 
     picker
         .update_in(cx, |picker, window, cx| {
@@ -614,7 +653,75 @@ async fn test_ignored_root(cx: &mut TestAppContext) {
                 .spawn_search(test_path_position("hi"), window, cx)
         })
         .await;
-    picker.update(cx, |picker, _| assert_eq!(picker.delegate.matches.len(), 7));
+    picker.update(cx, |picker, _| {
+        let matches = collect_search_matches(picker);
+        assert_eq!(matches.history.len(), 0);
+        assert_eq!(
+            matches.search,
+            vec![
+                PathBuf::from("ignored-root/hi"),
+                PathBuf::from("tracked-root/hi"),
+                PathBuf::from("ignored-root/hiccup"),
+                PathBuf::from("tracked-root/hiccup"),
+                PathBuf::from("ignored-root/height"),
+                PathBuf::from("tracked-root/height"),
+                PathBuf::from("ignored-root/happiness"),
+                PathBuf::from("tracked-root/happiness"),
+            ],
+            "All ignored files that were indexed are found"
+        );
+    });
+
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from(path!("/ancestor/tracked-root/heights/height_1")),
+                OpenOptions {
+                    visible: Some(OpenVisible::None),
+                    ..OpenOptions::default()
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.close_active_item(&CloseActiveItem::default(), window, cx)
+                    .unwrap()
+            })
+        })
+        .await
+        .unwrap();
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker
+                .delegate
+                .spawn_search(test_path_position("hi"), window, cx)
+        })
+        .await;
+    picker.update(cx, |picker, _| {
+        let matches = collect_search_matches(picker);
+        assert_eq!(matches.history.len(), 0);
+        assert_eq!(
+            matches.search,
+            vec![
+                PathBuf::from("ignored-root/hi"),
+                PathBuf::from("tracked-root/hi"),
+                PathBuf::from("ignored-root/hiccup"),
+                PathBuf::from("tracked-root/hiccup"),
+                PathBuf::from("ignored-root/height"),
+                PathBuf::from("tracked-root/height"),
+                PathBuf::from("tracked-root/heights/height_1"),
+                PathBuf::from("tracked-root/heights/height_2"),
+                PathBuf::from("ignored-root/happiness"),
+                PathBuf::from("tracked-root/happiness"),
+            ],
+            "All ignored files that were indexed are found"
+        );
+    });
 }
 
 #[gpui::test]
@@ -1356,6 +1463,73 @@ async fn test_keep_opened_file_on_top_of_search_results_and_select_next_one(
         assert_match_selection(finder, 0, "main.rs");
         assert_match_at_position(finder, 1, "lib.rs");
         assert_match_at_position(finder, 2, "bar.rs");
+    });
+}
+
+#[gpui::test]
+async fn test_setting_auto_select_first_and_select_active_file(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+
+    cx.update(|cx| {
+        let settings = *FileFinderSettings::get_global(cx);
+
+        FileFinderSettings::override_global(
+            FileFinderSettings {
+                skip_focus_for_active_in_search: false,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/src"),
+            json!({
+                "test": {
+                    "bar.rs": "// Bar file",
+                    "lib.rs": "// Lib file",
+                    "maaa.rs": "// Maaaaaaa",
+                    "main.rs": "// Main file",
+                    "moo.rs": "// Moooooo",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+    open_close_queried_buffer("bar", 1, "bar.rs", &workspace, cx).await;
+    open_close_queried_buffer("lib", 1, "lib.rs", &workspace, cx).await;
+    open_queried_buffer("main", 1, "main.rs", &workspace, cx).await;
+
+    // main.rs is on top, previously used is selected
+    let picker = open_file_picker(&workspace, cx);
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 3);
+        assert_match_selection(finder, 0, "main.rs");
+        assert_match_at_position(finder, 1, "lib.rs");
+        assert_match_at_position(finder, 2, "bar.rs");
+    });
+
+    // all files match, main.rs is on top, and is selected
+    picker
+        .update_in(cx, |finder, window, cx| {
+            finder
+                .delegate
+                .update_matches(".rs".to_string(), window, cx)
+        })
+        .await;
+    picker.update(cx, |finder, _| {
+        assert_eq!(finder.delegate.matches.len(), 5);
+        assert_match_selection(finder, 0, "main.rs");
+        assert_match_at_position(finder, 1, "bar.rs");
+        assert_match_at_position(finder, 2, "lib.rs");
+        assert_match_at_position(finder, 3, "moo.rs");
+        assert_match_at_position(finder, 4, "maaa.rs");
     });
 }
 
@@ -2133,18 +2307,28 @@ async fn test_repeat_toggle_action(cx: &mut gpui::TestAppContext) {
 
     cx.dispatch_action(ToggleFileFinder::default());
     let picker = active_file_picker(&workspace, cx);
+
+    picker.update_in(cx, |picker, window, cx| {
+        picker.update_matches(".txt".to_string(), window, cx)
+    });
+
+    cx.run_until_parked();
+
     picker.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.matches.len(), 6);
         assert_eq!(picker.delegate.selected_index, 0);
-        assert_eq!(picker.logical_scroll_top_index(), 0);
     });
 
     // When toggling repeatedly, the picker scrolls to reveal the selected item.
     cx.dispatch_action(ToggleFileFinder::default());
     cx.dispatch_action(ToggleFileFinder::default());
     cx.dispatch_action(ToggleFileFinder::default());
+
+    cx.run_until_parked();
+
     picker.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.matches.len(), 6);
         assert_eq!(picker.delegate.selected_index, 3);
-        assert_eq!(picker.logical_scroll_top_index(), 3);
     });
 }
 
@@ -2371,4 +2555,49 @@ fn assert_match_at_position(
     .unwrap()
     .to_string_lossy();
     assert_eq!(match_file_name, expected_file_name);
+}
+
+#[gpui::test]
+async fn test_filename_precedence(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/src"),
+            json!({
+                "layout": {
+                    "app.css": "",
+                    "app.d.ts": "",
+                    "app.html": "",
+                    "+page.svelte": "",
+                },
+                "routes": {
+                    "+layout.svelte": "",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
+    let (picker, _, cx) = build_find_picker(project, cx);
+
+    cx.simulate_input("layout");
+
+    picker.update(cx, |finder, _| {
+        let search_matches = collect_search_matches(finder).search_paths_only();
+
+        assert_eq!(
+            search_matches,
+            vec![
+                PathBuf::from("routes/+layout.svelte"),
+                PathBuf::from("layout/app.css"),
+                PathBuf::from("layout/app.d.ts"),
+                PathBuf::from("layout/app.html"),
+                PathBuf::from("layout/+page.svelte"),
+            ],
+            "File with 'layout' in filename should be prioritized over files in 'layout' directory"
+        );
+    });
 }

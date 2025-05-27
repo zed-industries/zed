@@ -1,8 +1,8 @@
 use super::{
     Highlights,
-    fold_map::{self, FoldChunks, FoldEdit, FoldPoint, FoldSnapshot},
+    fold_map::{self, Chunk, FoldChunks, FoldEdit, FoldPoint, FoldSnapshot},
 };
-use language::{Chunk, Point};
+use language::Point;
 use multi_buffer::MultiBufferSnapshot;
 use std::{cmp, mem, num::NonZeroU32, ops::Range};
 use sum_tree::Bias;

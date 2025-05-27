@@ -2,12 +2,14 @@ use anyhow::{Context as _, Result};
 use editor::Editor;
 use fs::Fs;
 use migrator::{migrate_keymap, migrate_settings};
-use settings::{KeymapFile, SettingsStore};
+use settings::{KeymapFile, Settings, SettingsStore};
 use util::ResultExt;
 
 use std::sync::Arc;
 
-use gpui::{Entity, EventEmitter, Global};
+use gpui::{Entity, EventEmitter, Global, Task, TextStyle, TextStyleRefinement};
+use markdown::{Markdown, MarkdownElement, MarkdownStyle};
+use theme::ThemeSettings;
 use ui::prelude::*;
 use workspace::item::ItemHandle;
 use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace};
@@ -20,6 +22,8 @@ pub enum MigrationType {
 
 pub struct MigrationBanner {
     migration_type: Option<MigrationType>,
+    should_migrate_task: Option<Task<()>>,
+    markdown: Option<Entity<Markdown>>,
 }
 
 pub enum MigrationEvent {
@@ -61,22 +65,8 @@ impl MigrationBanner {
         }
         Self {
             migration_type: None,
-        }
-    }
-
-    fn backup_file_name(&self) -> String {
-        match self.migration_type {
-            Some(MigrationType::Keymap) => paths::keymap_backup_file()
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned(),
-            Some(MigrationType::Settings) => paths::settings_backup_file()
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned(),
-            None => String::new(),
+            should_migrate_task: None,
+            markdown: None,
         }
     }
 
@@ -86,17 +76,59 @@ impl MigrationBanner {
                 migration_type,
                 migrated,
             } => {
-                if self.migration_type == Some(*migration_type) {
-                    let location = if *migrated {
-                        ToolbarItemLocation::Secondary
-                    } else {
-                        ToolbarItemLocation::Hidden
-                    };
-                    cx.emit(ToolbarItemEvent::ChangeLocation(location));
-                    cx.notify();
-                }
+                if *migrated {
+                    self.migration_type = Some(*migration_type);
+                    self.show(cx);
+                } else {
+                    cx.emit(ToolbarItemEvent::ChangeLocation(
+                        ToolbarItemLocation::Hidden,
+                    ));
+                    self.reset(cx);
+                };
             }
         }
+    }
+
+    fn show(&mut self, cx: &mut Context<Self>) {
+        let (file_type, backup_file_name) = match self.migration_type {
+            Some(MigrationType::Keymap) => (
+                "keymap",
+                paths::keymap_backup_file()
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            Some(MigrationType::Settings) => (
+                "settings",
+                paths::settings_backup_file()
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            None => return,
+        };
+
+        let migration_text = format!(
+            "Your {} file uses deprecated settings which can be \
+            automatically updated. A backup will be saved to `{}`",
+            file_type, backup_file_name
+        );
+
+        self.markdown = Some(cx.new(|cx| Markdown::new(migration_text.into(), None, None, cx)));
+
+        cx.emit(ToolbarItemEvent::ChangeLocation(
+            ToolbarItemLocation::Secondary,
+        ));
+        cx.notify();
+    }
+
+    fn reset(&mut self, cx: &mut Context<Self>) {
+        self.should_migrate_task.take();
+        self.migration_type.take();
+        self.markdown.take();
+        cx.notify();
     }
 }
 
@@ -109,7 +141,8 @@ impl ToolbarItemView for MigrationBanner {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
-        cx.notify();
+        self.reset(cx);
+
         let Some(target) = active_pane_item
             .and_then(|item| item.act_as::<Editor>(cx))
             .and_then(|editor| editor.update(cx, |editor, cx| editor.target_file_abs_path(cx)))
@@ -121,34 +154,26 @@ impl ToolbarItemView for MigrationBanner {
             self.migration_type = Some(MigrationType::Keymap);
             let fs = <dyn Fs>::global(cx);
             let should_migrate = should_migrate_keymap(fs);
-            cx.spawn_in(window, async move |this, cx| {
+            self.should_migrate_task = Some(cx.spawn_in(window, async move |this, cx| {
                 if let Ok(true) = should_migrate.await {
-                    this.update(cx, |_, cx| {
-                        cx.emit(ToolbarItemEvent::ChangeLocation(
-                            ToolbarItemLocation::Secondary,
-                        ));
-                        cx.notify();
+                    this.update(cx, |this, cx| {
+                        this.show(cx);
                     })
                     .log_err();
                 }
-            })
-            .detach();
+            }));
         } else if &target == paths::settings_file() {
             self.migration_type = Some(MigrationType::Settings);
             let fs = <dyn Fs>::global(cx);
             let should_migrate = should_migrate_settings(fs);
-            cx.spawn_in(window, async move |this, cx| {
+            self.should_migrate_task = Some(cx.spawn_in(window, async move |this, cx| {
                 if let Ok(true) = should_migrate.await {
-                    this.update(cx, |_, cx| {
-                        cx.emit(ToolbarItemEvent::ChangeLocation(
-                            ToolbarItemLocation::Secondary,
-                        ));
-                        cx.notify();
+                    this.update(cx, |this, cx| {
+                        this.show(cx);
                     })
                     .log_err();
                 }
-            })
-            .detach();
+            }));
         }
 
         return ToolbarItemLocation::Hidden;
@@ -158,54 +183,54 @@ impl ToolbarItemView for MigrationBanner {
 impl Render for MigrationBanner {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let migration_type = self.migration_type;
-        let file_type = match migration_type {
-            Some(MigrationType::Keymap) => "keymap",
-            Some(MigrationType::Settings) => "settings",
-            None => "",
-        };
-        let backup_file_name = self.backup_file_name();
-
+        let settings = ThemeSettings::get_global(cx);
+        let ui_font_family = settings.ui_font.family.clone();
+        let line_height = settings.ui_font_size(cx) * 1.3;
         h_flex()
             .py_1()
             .pl_2()
             .pr_1()
-            .flex_wrap()
             .justify_between()
             .bg(cx.theme().status().info_background.opacity(0.6))
             .border_1()
             .border_color(cx.theme().colors().border_variant)
             .rounded_sm()
-            .overflow_hidden()
             .child(
                 h_flex()
                     .gap_2()
+                    .overflow_hidden()
                     .child(
                         Icon::new(IconName::Warning)
                             .size(IconSize::XSmall)
                             .color(Color::Warning),
                     )
                     .child(
-                        h_flex()
-                            .gap_0p5()
-                            .child(
-                                Label::new(format!(
-                                    "Your {} file uses deprecated settings which can be \
-                                    automatically updated. A backup will be saved to",
-                                    file_type
-                                ))
-                                .color(Color::Default),
-                            )
-                            .child(
-                                div()
-                                    .px_1()
-                                    .bg(cx.theme().colors().background)
-                                    .rounded_xs()
-                                    .child(
-                                        Label::new(backup_file_name)
-                                            .buffer_font(cx)
-                                            .size(LabelSize::Small),
-                                    ),
-                            ),
+                        div()
+                            .overflow_hidden()
+                            .text_size(TextSize::Default.rems(cx))
+                            .max_h(2 * line_height)
+                            .when_some(self.markdown.as_ref(), |this, markdown| {
+                                this.child(
+                                    MarkdownElement::new(
+                                        markdown.clone(),
+                                        MarkdownStyle {
+                                            base_text_style: TextStyle {
+                                                color: cx.theme().colors().text,
+                                                font_family: ui_font_family,
+                                                ..Default::default()
+                                            },
+                                            inline_code: TextStyleRefinement {
+                                                background_color: Some(
+                                                    cx.theme().colors().background,
+                                                ),
+                                                ..Default::default()
+                                            },
+                                            ..Default::default()
+                                        },
+                                    )
+                                    .into_any_element(),
+                                )
+                            }),
                     ),
             )
             .child(

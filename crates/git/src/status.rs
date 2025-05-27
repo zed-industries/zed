@@ -1,5 +1,5 @@
 use crate::repository::RepoPath;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::{path::Path, str::FromStr, sync::Arc};
 use util::ResultExt;
@@ -241,7 +241,7 @@ impl StatusCode {
             b'R' => Ok(StatusCode::Renamed),
             b'C' => Ok(StatusCode::Copied),
             b' ' => Ok(StatusCode::Unmodified),
-            _ => Err(anyhow!("Invalid status code: {byte}")),
+            _ => anyhow::bail!("Invalid status code: {byte}"),
         }
     }
 
@@ -286,7 +286,7 @@ impl UnmergedStatusCode {
             b'A' => Ok(UnmergedStatusCode::Added),
             b'D' => Ok(UnmergedStatusCode::Deleted),
             b'U' => Ok(UnmergedStatusCode::Updated),
-            _ => Err(anyhow!("Invalid unmerged status code: {byte}")),
+            _ => anyhow::bail!("Invalid unmerged status code: {byte}"),
         }
     }
 }
@@ -462,7 +462,7 @@ impl FromStr for GitStatus {
                 if path.ends_with('/') {
                     return None;
                 }
-                let status = entry[0..2].as_bytes().try_into().unwrap();
+                let status = entry.as_bytes()[0..2].try_into().unwrap();
                 let status = FileStatus::from_bytes(status).log_err()?;
                 let path = RepoPath(Path::new(path).into());
                 Some((path, status))

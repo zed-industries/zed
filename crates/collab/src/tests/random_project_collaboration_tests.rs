@@ -1,6 +1,6 @@
 use super::{RandomizedTest, TestClient, TestError, TestServer, UserTestPlan};
 use crate::{db::UserId, tests::run_randomized_test};
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use call::ActiveCall;
 use collections::{BTreeMap, HashMap};
@@ -782,8 +782,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                 let save =
                     project.update(cx, |project, cx| project.save_buffer(buffer.clone(), cx));
                 let save = cx.spawn(|cx| async move {
-                    save.await
-                        .map_err(|err| anyhow!("save request failed: {:?}", err))?;
+                    save.await.context("save request failed")?;
                     assert!(
                         buffer
                             .read_with(&cx, |buffer, _| { buffer.saved_version().to_owned() })
@@ -882,6 +881,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             false,
                             Default::default(),
                             Default::default(),
+                            false,
                             None,
                         )
                         .unwrap(),
@@ -1181,11 +1181,22 @@ impl RandomizedTest for ProjectCollaborationTest {
                                         (worktree.id(), worktree.snapshot())
                                     })
                                     .collect::<BTreeMap<_, _>>();
+                                let host_repository_snapshots = host_project.read_with(host_cx, |host_project, cx| {
+                                    host_project.git_store().read(cx).repo_snapshots(cx)
+                                });
+                                let guest_repository_snapshots = guest_project.git_store().read(cx).repo_snapshots(cx);
 
                                 assert_eq!(
                                     guest_worktree_snapshots.values().map(|w| w.abs_path()).collect::<Vec<_>>(),
                                     host_worktree_snapshots.values().map(|w| w.abs_path()).collect::<Vec<_>>(),
                                     "{} has different worktrees than the host for project {:?}",
+                                    client.username, guest_project.remote_id(),
+                                );
+
+                                assert_eq!(
+                                    guest_repository_snapshots.values().collect::<Vec<_>>(),
+                                    host_repository_snapshots.values().collect::<Vec<_>>(),
+                                    "{} has different repositories than the host for project {:?}",
                                     client.username, guest_project.remote_id(),
                                 );
 
@@ -1214,12 +1225,6 @@ impl RandomizedTest for ProjectCollaborationTest {
                                         client.username,
                                         host_snapshot.abs_path(),
                                         id,
-                                        guest_project.remote_id(),
-                                    );
-                                    assert_eq!(guest_snapshot.repositories().iter().collect::<Vec<_>>(), host_snapshot.repositories().iter().collect::<Vec<_>>(),
-                                        "{} has different repositories than the host for worktree {:?} and project {:?}",
-                                        client.username,
-                                        host_snapshot.abs_path(),
                                         guest_project.remote_id(),
                                     );
                                     assert_eq!(guest_snapshot.scan_id(), host_snapshot.scan_id(),
