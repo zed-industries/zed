@@ -369,7 +369,6 @@ impl NewSessionModal {
                                                         let row = editor
                                                             .text(cx)
                                                             .lines()
-                                                            .into_iter()
                                                             .enumerate()
                                                             .find_map(|(row, text)| {
                                                                 if text.contains(
