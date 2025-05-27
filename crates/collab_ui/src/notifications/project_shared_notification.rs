@@ -1,12 +1,12 @@
 use crate::notification_window_options;
 use crate::notifications::collab_notification::CollabNotification;
-use call::{room, ActiveCall};
+use call::{ActiveCall, room};
 use client::User;
 use collections::HashMap;
 use gpui::{App, Size};
 use std::sync::{Arc, Weak};
 
-use ui::{prelude::*, Button, Label};
+use ui::{Button, Label, prelude::*};
 use util::ResultExt;
 use workspace::AppState;
 
@@ -109,9 +109,7 @@ impl ProjectSharedNotification {
     }
 
     fn dismiss(&mut self, cx: &mut Context<Self>) {
-        if let Some(active_room) =
-            ActiveCall::global(cx).read_with(cx, |call, _| call.room().cloned())
-        {
+        if let Some(active_room) = ActiveCall::global(cx).read(cx).room().cloned() {
             active_room.update(cx, |_, cx| {
                 cx.emit(room::Event::RemoteProjectInvitationDiscarded {
                     project_id: self.project_id,

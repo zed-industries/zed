@@ -2,13 +2,15 @@ use std::sync::Arc;
 
 use ::serde::{Deserialize, Serialize};
 use gpui::WeakEntity;
-use language::CachedLspAdapter;
+use language::{CachedLspAdapter, Diagnostic};
 use lsp::LanguageServer;
 use util::ResultExt as _;
 
 use crate::LspStore;
 
 pub const CLANGD_SERVER_NAME: &str = "clangd";
+const INACTIVE_REGION_MESSAGE: &str = "inactive region";
+const INACTIVE_DIAGNOSTIC_SEVERITY: lsp::DiagnosticSeverity = lsp::DiagnosticSeverity::INFORMATION;
 
 #[derive(Debug, Eq, PartialEq, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,6 +27,25 @@ impl lsp::notification::Notification for InactiveRegions {
     const METHOD: &'static str = "textDocument/inactiveRegions";
 }
 
+pub fn is_inactive_region(diag: &Diagnostic) -> bool {
+    diag.is_unnecessary
+        && diag.severity == INACTIVE_DIAGNOSTIC_SEVERITY
+        && diag.message == INACTIVE_REGION_MESSAGE
+        && diag
+            .source
+            .as_ref()
+            .is_some_and(|v| v == CLANGD_SERVER_NAME)
+}
+
+pub fn is_lsp_inactive_region(diag: &lsp::Diagnostic) -> bool {
+    diag.severity == Some(INACTIVE_DIAGNOSTIC_SEVERITY)
+        && diag.message == INACTIVE_REGION_MESSAGE
+        && diag
+            .source
+            .as_ref()
+            .is_some_and(|v| v == CLANGD_SERVER_NAME)
+}
+
 pub fn register_notifications(
     lsp_store: WeakEntity<LspStore>,
     language_server: &LanguageServer,
@@ -35,10 +56,6 @@ pub fn register_notifications(
     }
     let server_id = language_server.server_id();
 
-    // TODO: inactiveRegions support needs do add diagnostics, not replace them as `this.update_diagnostics` call below does
-    if true {
-        return;
-    }
     language_server
         .on_notification::<InactiveRegions, _>({
             let adapter = adapter.clone();
@@ -52,11 +69,11 @@ pub fn register_notifications(
                         .into_iter()
                         .map(|range| lsp::Diagnostic {
                             range,
-                            severity: Some(lsp::DiagnosticSeverity::INFORMATION),
+                            severity: Some(INACTIVE_DIAGNOSTIC_SEVERITY),
                             source: Some(CLANGD_SERVER_NAME.to_string()),
-                            message: "inactive region".to_string(),
+                            message: INACTIVE_REGION_MESSAGE.to_string(),
                             tags: Some(vec![lsp::DiagnosticTag::UNNECESSARY]),
-                            ..Default::default()
+                            ..lsp::Diagnostic::default()
                         })
                         .collect();
                     let mapped_diagnostics = lsp::PublishDiagnosticsParams {
@@ -64,10 +81,11 @@ pub fn register_notifications(
                         version: params.text_document.version,
                         diagnostics,
                     };
-                    this.update_diagnostics(
+                    this.merge_diagnostics(
                         server_id,
                         mapped_diagnostics,
                         &adapter.disk_based_diagnostic_sources,
+                        |diag, _| !is_inactive_region(diag),
                         cx,
                     )
                     .log_err();

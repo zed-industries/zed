@@ -1,16 +1,14 @@
-mod cloud;
 mod lmstudio;
 mod ollama;
 mod open_ai;
 
-pub use cloud::*;
 pub use lmstudio::*;
 pub use ollama::*;
 pub use open_ai::*;
 use sha2::{Digest, Sha256};
 
 use anyhow::Result;
-use futures::{future::BoxFuture, FutureExt};
+use futures::{FutureExt, future::BoxFuture};
 use serde::{Deserialize, Serialize};
 use std::{fmt, future};
 

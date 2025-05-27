@@ -1,21 +1,22 @@
 use crate::{
-    db::{tests::TestDb, NewUserParams, UserId},
+    AppState, Config,
+    db::{NewUserParams, UserId, tests::TestDb},
     executor::Executor,
-    rpc::{Principal, Server, ZedVersion, CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
-    AppState, Config, RateLimiter,
+    rpc::{CLEANUP_TIMEOUT, Principal, RECONNECT_TIMEOUT, Server, ZedVersion},
 };
 use anyhow::anyhow;
 use call::ActiveCall;
 use channel::{ChannelBuffer, ChannelStore};
 use client::{
-    self, proto::PeerId, ChannelId, Client, Connection, Credentials, EstablishConnectionError,
-    UserStore,
+    self, ChannelId, Client, Connection, Credentials, EstablishConnectionError, UserStore,
+    proto::PeerId,
 };
 use clock::FakeSystemClock;
 use collab_ui::channel_view::ChannelView;
 use collections::{HashMap, HashSet};
+
 use fs::FakeFs;
-use futures::{channel::oneshot, StreamExt as _};
+use futures::{StreamExt as _, channel::oneshot};
 use git::GitHostingProviderRegistry;
 use gpui::{AppContext as _, BackgroundExecutor, Entity, Task, TestAppContext, VisualTestContext};
 use http_client::FakeHttpClient;
@@ -26,8 +27,8 @@ use parking_lot::Mutex;
 use project::{Project, WorktreeId};
 use remote::SshRemoteClient;
 use rpc::{
-    proto::{self, ChannelRole},
     RECEIVE_TIMEOUT,
+    proto::{self, ChannelRole},
 };
 use semantic_version::SemanticVersion;
 use serde_json::json;
@@ -39,26 +40,23 @@ use std::{
     ops::{Deref, DerefMut},
     path::Path,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
         Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
     },
 };
+use util::path;
 use workspace::{Workspace, WorkspaceStore};
 
-#[cfg(not(target_os = "macos"))]
 use livekit_client::test::TestServer as LivekitTestServer;
-
-#[cfg(target_os = "macos")]
-use livekit_client_macos::TestServer as LivekitTestServer;
 
 pub struct TestServer {
     pub app_state: Arc<AppState>,
     pub test_livekit_server: Arc<LivekitTestServer>,
+    pub test_db: TestDb,
     server: Arc<Server>,
     next_github_user_id: i32,
     connection_killers: Arc<Mutex<HashMap<PeerId, Arc<AtomicBool>>>>,
     forbid_connections: Arc<AtomicBool>,
-    _test_db: TestDb,
 }
 
 pub struct TestClient {
@@ -119,7 +117,7 @@ impl TestServer {
             connection_killers: Default::default(),
             forbid_connections: Default::default(),
             next_github_user_id: 0,
-            _test_db: test_db,
+            test_db,
             test_livekit_server: livekit_server,
         }
     }
@@ -165,6 +163,7 @@ impl TestServer {
         let fs = FakeFs::new(cx.executor());
 
         cx.update(|cx| {
+            gpui_tokio::init(cx);
             if cx.has_global::<SettingsStore>() {
                 panic!("Same cx used to create two test clients")
             }
@@ -242,7 +241,12 @@ impl TestServer {
                         let user = db
                             .get_user_by_id(user_id)
                             .await
-                            .expect("retrieving user failed")
+                            .map_err(|e| {
+                                EstablishConnectionError::Other(anyhow!(
+                                    "retrieving user failed: {}",
+                                    e
+                                ))
+                            })?
                             .unwrap();
                         cx.background_spawn(server.handle_connection(
                             server_conn,
@@ -308,11 +312,13 @@ impl TestServer {
             );
             language_model::LanguageModelRegistry::test(cx);
             assistant_context_editor::init(client.clone(), cx);
+            agent_settings::init(cx);
         });
 
         client
             .authenticate_and_connect(false, &cx.to_async())
             .await
+            .into_response()
             .unwrap();
 
         let client = TestClient {
@@ -518,7 +524,6 @@ impl TestServer {
             blob_store_client: None,
             stripe_client: None,
             stripe_billing: None,
-            rate_limiter: Arc::new(RateLimiter::new(test_db.db().clone())),
             executor,
             kinesis_client: None,
             config: Config {
@@ -711,6 +716,7 @@ impl TestClient {
         worktree
             .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
+        cx.run_until_parked();
         (project, worktree.read_with(cx, |tree, _| tree.id()))
     }
 
@@ -741,7 +747,7 @@ impl TestClient {
     pub async fn build_test_project(&self, cx: &mut TestAppContext) -> Entity<Project> {
         self.fs()
             .insert_tree(
-                "/a",
+                path!("/a"),
                 json!({
                     "1.txt": "one\none\none",
                     "2.js": "function two() { return 2; }",
@@ -749,7 +755,7 @@ impl TestClient {
                 }),
             )
             .await;
-        self.build_local_project("/a", cx).await.0
+        self.build_local_project(path!("/a"), cx).await.0
     }
 
     pub async fn host_workspace(

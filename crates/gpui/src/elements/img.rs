@@ -1,16 +1,16 @@
 use crate::{
-    px, swap_rgba_pa_to_bgra, AbsoluteLength, AnyElement, App, Asset, AssetLogger, Bounds,
-    DefiniteLength, Element, ElementId, GlobalElementId, Hitbox, Image, InteractiveElement,
-    Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
-    SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task, Window,
-    SMOOTH_SVG_SCALE_FACTOR,
+    AbsoluteLength, AnyElement, AnyImageCache, App, Asset, AssetLogger, Bounds, DefiniteLength,
+    Element, ElementId, Entity, GlobalElementId, Hitbox, Image, ImageCache, InspectorElementId,
+    InteractiveElement, Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels,
+    RenderImage, Resource, SMOOTH_SVG_SCALE_FACTOR, SharedString, SharedUri, StyleRefinement,
+    Styled, SvgSize, Task, Window, px, swap_rgba_pa_to_bgra,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Context as _, Result};
 
 use futures::{AsyncReadExt, Future};
 use image::{
-    codecs::{gif::GifDecoder, webp::WebPDecoder},
     AnimationDecoder, DynamicImage, Frame, ImageBuffer, ImageError, ImageFormat, Rgba,
+    codecs::{gif::GifDecoder, webp::WebPDecoder},
 };
 use smallvec::SmallVec;
 use std::{
@@ -190,14 +190,17 @@ pub struct Img {
     interactivity: Interactivity,
     source: ImageSource,
     style: ImageStyle,
+    image_cache: Option<AnyImageCache>,
 }
 
 /// Create a new image element.
+#[track_caller]
 pub fn img(source: impl Into<ImageSource>) -> Img {
     Img {
-        interactivity: Interactivity::default(),
+        interactivity: Interactivity::new(),
         source: source.into(),
         style: ImageStyle::default(),
+        image_cache: None,
     }
 }
 
@@ -209,6 +212,23 @@ impl Img {
             "avif", "jpg", "jpeg", "png", "gif", "webp", "tif", "tiff", "tga", "dds", "bmp", "ico",
             "hdr", "exr", "pbm", "pam", "ppm", "pgm", "ff", "farbfeld", "qoi", "svg",
         ]
+    }
+
+    /// Sets the image cache for the current node.
+    ///
+    /// If the `image_cache` is not explicitly provided, the function will determine the image cache by:
+    ///
+    /// 1. Checking if any ancestor node of the current node contains an `ImageCacheElement`, If such a node exists, the image cache specified by that ancestor will be used.
+    /// 2. If no ancestor node contains an `ImageCacheElement`, the global image cache will be used as a fallback.
+    ///
+    /// This mechanism provides a flexible way to manage image caching, allowing precise control when needed,
+    /// while ensuring a default behavior when no cache is explicitly specified.
+    #[inline]
+    pub fn image_cache<I: ImageCache>(self, image_cache: &Entity<I>) -> Self {
+        Self {
+            image_cache: Some(image_cache.clone().into()),
+            ..self
+        }
     }
 }
 
@@ -247,9 +267,14 @@ impl Element for Img {
         self.interactivity.element_id.clone()
     }
 
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        self.interactivity.source_location()
+    }
+
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -271,12 +296,19 @@ impl Element for Img {
 
             let layout_id = self.interactivity.request_layout(
                 global_id,
+                inspector_id,
                 window,
                 cx,
                 |mut style, window, cx| {
                     let mut replacement_id = None;
 
-                    match self.source.use_data(window, cx) {
+                    match self.source.use_data(
+                        self.image_cache
+                            .clone()
+                            .or_else(|| window.image_cache_stack.last().cloned()),
+                        window,
+                        cx,
+                    ) {
                         Some(Ok(data)) => {
                             if let Some(state) = &mut state {
                                 let frame_count = data.frame_count();
@@ -383,6 +415,7 @@ impl Element for Img {
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -390,6 +423,7 @@ impl Element for Img {
     ) -> Self::PrepaintState {
         self.interactivity.prepaint(
             global_id,
+            inspector_id,
             bounds,
             bounds.size,
             window,
@@ -407,6 +441,7 @@ impl Element for Img {
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         layout_state: &mut Self::RequestLayoutState,
         hitbox: &mut Self::PrepaintState,
@@ -416,18 +451,27 @@ impl Element for Img {
         let source = self.source.clone();
         self.interactivity.paint(
             global_id,
+            inspector_id,
             bounds,
             hitbox.as_ref(),
             window,
             cx,
             |style, window, cx| {
-                let corner_radii = style.corner_radii.to_pixels(bounds.size, window.rem_size());
-
-                if let Some(Ok(data)) = source.use_data(window, cx) {
+                if let Some(Ok(data)) = source.use_data(
+                    self.image_cache
+                        .clone()
+                        .or_else(|| window.image_cache_stack.last().cloned()),
+                    window,
+                    cx,
+                ) {
                     let new_bounds = self
                         .style
                         .object_fit
                         .get_bounds(bounds, data.size(layout_state.frame_index));
+                    let corner_radii = style
+                        .corner_radii
+                        .to_pixels(window.rem_size())
+                        .clamp_radii_for_quad_size(new_bounds.size);
                     window
                         .paint_image(
                             new_bounds,
@@ -472,14 +516,52 @@ impl StatefulInteractiveElement for Img {}
 impl ImageSource {
     pub(crate) fn use_data(
         &self,
+        cache: Option<AnyImageCache>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
         match self {
-            ImageSource::Resource(resource) => window.use_asset::<ImgResourceLoader>(&resource, cx),
+            ImageSource::Resource(resource) => {
+                if let Some(cache) = cache {
+                    cache.load(resource, window, cx)
+                } else {
+                    window.use_asset::<ImgResourceLoader>(resource, cx)
+                }
+            }
             ImageSource::Custom(loading_fn) => loading_fn(window, cx),
             ImageSource::Render(data) => Some(Ok(data.to_owned())),
             ImageSource::Image(data) => window.use_asset::<AssetLogger<ImageDecoder>>(data, cx),
+        }
+    }
+
+    pub(crate) fn get_data(
+        &self,
+        cache: Option<AnyImageCache>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
+        match self {
+            ImageSource::Resource(resource) => {
+                if let Some(cache) = cache {
+                    cache.load(resource, window, cx)
+                } else {
+                    window.get_asset::<ImgResourceLoader>(resource, cx)
+                }
+            }
+            ImageSource::Custom(loading_fn) => loading_fn(window, cx),
+            ImageSource::Render(data) => Some(Ok(data.to_owned())),
+            ImageSource::Image(data) => window.get_asset::<AssetLogger<ImageDecoder>>(data, cx),
+        }
+    }
+
+    /// Remove this image source from the asset system
+    pub fn remove_asset(&self, cx: &mut App) {
+        match self {
+            ImageSource::Resource(resource) => {
+                cx.remove_asset::<ImgResourceLoader>(resource);
+            }
+            ImageSource::Custom(_) | ImageSource::Render(_) => {}
+            ImageSource::Image(data) => cx.remove_asset::<AssetLogger<ImageDecoder>>(data),
         }
     }
 }
@@ -524,7 +606,7 @@ impl Asset for ImageAssetLoader {
                     let mut response = client
                         .get(uri.as_ref(), ().into(), true)
                         .await
-                        .map_err(|e| anyhow!(e))?;
+                        .with_context(|| format!("loading image asset from {uri:?}"))?;
                     let mut body = Vec::new();
                     response.body_mut().read_to_end(&mut body).await?;
                     if !response.status().is_success() {

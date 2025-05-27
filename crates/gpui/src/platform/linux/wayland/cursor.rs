@@ -1,9 +1,9 @@
 use crate::Globals;
 use util::ResultExt;
 
+use wayland_client::Connection;
 use wayland_client::protocol::wl_surface::WlSurface;
 use wayland_client::protocol::{wl_pointer::WlPointer, wl_shm::WlShm};
-use wayland_client::Connection;
 use wayland_cursor::{CursorImageBuffer, CursorTheme};
 
 pub(crate) struct Cursor {

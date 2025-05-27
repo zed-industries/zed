@@ -1,0 +1,11 @@
+{"Put":{"state":"The quick brown\nfox jˇumps over\nthe lazy dog"}}
+{"Key":"ctrl-v"}
+{"Key":"l"}
+{"Key":"l"}
+{"Key":"l"}
+{"Key":"l"}
+{"Key":"j"}
+{"Get":{"state":"The quick brown\nfox j«umps ˇ»over\nthe l«azy dˇ»og","mode":"VisualBlock"}}
+{"Key":"shift-o"}
+{"Key":"k"}
+{"Get":{"state":"The quick brown\nfox j«ˇumps »over\nthe lazy dog","mode":"VisualBlock"}}

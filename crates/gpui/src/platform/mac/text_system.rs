@@ -1,8 +1,8 @@
 use crate::{
-    point, px, size, swap_rgba_pa_to_bgra, Bounds, DevicePixels, Font, FontFallbacks, FontFeatures,
-    FontId, FontMetrics, FontRun, FontStyle, FontWeight, GlyphId, LineLayout, Pixels,
-    PlatformTextSystem, Point, RenderGlyphParams, Result, ShapedGlyph, ShapedRun, SharedString,
-    Size, SUBPIXEL_VARIANTS,
+    Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics, FontRun,
+    FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point,
+    RenderGlyphParams, Result, SUBPIXEL_VARIANTS, ShapedGlyph, ShapedRun, SharedString, Size,
+    point, px, size, swap_rgba_pa_to_bgra,
 };
 use anyhow::anyhow;
 use cocoa::appkit::CGFloat;
@@ -14,7 +14,7 @@ use core_foundation::{
     string::CFString,
 };
 use core_graphics::{
-    base::{kCGImageAlphaPremultipliedLast, CGGlyph},
+    base::{CGGlyph, kCGImageAlphaPremultipliedLast},
     color_space::CGColorSpace,
     context::CGContext,
     display::CGPoint,
@@ -194,7 +194,7 @@ impl MacTextSystemState {
                         core_graphics::data_provider::CGDataProvider::from_slice(embedded_font)
                     };
                     let font = core_graphics::font::CGFont::from_data_provider(data_provider)
-                        .map_err(|_| anyhow!("Could not load an embedded font."))?;
+                        .map_err(|()| anyhow!("Could not load an embedded font."))?;
                     let font = font_kit::loaders::core_text::Font::from_core_graphics_font(font);
                     Ok(Handle::from_native(&font))
                 }
@@ -348,7 +348,7 @@ impl MacTextSystemState {
         glyph_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
         if glyph_bounds.size.width.0 == 0 || glyph_bounds.size.height.0 == 0 {
-            Err(anyhow!("glyph bounds are empty"))
+            anyhow::bail!("glyph bounds are empty");
         } else {
             // Add an extra pixel when the subpixel variant isn't zero to make room for anti-aliasing.
             let mut bitmap_size = glyph_bounds.size;
@@ -480,7 +480,7 @@ impl MacTextSystemState {
             };
             let font_id = self.id_for_native_font(font);
 
-            let mut glyphs = SmallVec::new();
+            let mut glyphs = Vec::with_capacity(run.glyph_count().try_into().unwrap_or(0));
             for ((glyph_id, position), glyph_utf16_ix) in run
                 .glyphs()
                 .iter()
@@ -639,7 +639,7 @@ mod lenient_font_attributes {
         string::{CFString, CFStringRef},
     };
     use core_text::font_descriptor::{
-        kCTFontFamilyNameAttribute, CTFontDescriptor, CTFontDescriptorCopyAttribute,
+        CTFontDescriptor, CTFontDescriptorCopyAttribute, kCTFontFamilyNameAttribute,
     };
 
     pub fn family_name(descriptor: &CTFontDescriptor) -> Option<String> {
@@ -664,15 +664,17 @@ mod lenient_font_attributes {
     }
 
     unsafe fn wrap_under_get_rule(reference: CFStringRef) -> CFString {
-        assert!(!reference.is_null(), "Attempted to create a NULL object.");
-        let reference = CFRetain(reference as *const ::std::os::raw::c_void) as CFStringRef;
-        TCFType::wrap_under_create_rule(reference)
+        unsafe {
+            assert!(!reference.is_null(), "Attempted to create a NULL object.");
+            let reference = CFRetain(reference as *const ::std::os::raw::c_void) as CFStringRef;
+            TCFType::wrap_under_create_rule(reference)
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{font, px, FontRun, GlyphId, MacTextSystem, PlatformTextSystem};
+    use crate::{FontRun, GlyphId, MacTextSystem, PlatformTextSystem, font, px};
 
     #[test]
     fn test_layout_line_bom_char() {
@@ -695,7 +697,7 @@ mod tests {
         assert_eq!(layout.runs.len(), 1);
         assert_eq!(layout.runs[0].glyphs.len(), 2);
         assert_eq!(layout.runs[0].glyphs[0].id, GlyphId(68u32)); // a
-                                                                 // There's no glyph for \u{feff}
+        // There's no glyph for \u{feff}
         assert_eq!(layout.runs[0].glyphs[1].id, GlyphId(69u32)); // b
     }
 }

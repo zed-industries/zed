@@ -20,3 +20,4 @@ paths.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 smol.workspace = true
+workspace-hack.workspace = true

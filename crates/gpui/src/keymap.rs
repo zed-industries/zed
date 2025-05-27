@@ -4,7 +4,7 @@ mod context;
 pub use binding::*;
 pub use context::*;
 
-use crate::{is_no_action, Action, Keystroke};
+use crate::{Action, Keystroke, is_no_action};
 use collections::HashMap;
 use smallvec::SmallVec;
 use std::any::TypeId;
@@ -206,12 +206,15 @@ impl Keymap {
         bindings.pop()
     }
 
-    /// Like `bindings_to_display_from_bindings` but takes a `DoubleEndedIterator` and returns a
-    /// reference.
-    pub fn binding_to_display_from_bindings_iterator<'a>(
-        mut bindings: impl DoubleEndedIterator<Item = &'a KeyBinding>,
+    /// Returns the first binding present in the iterator, which tends to be the
+    /// default binding without any key context. This is useful for cases where no
+    /// key context is available on binding display. Otherwise, bindings with a
+    /// more specific key context would take precedence and result in a
+    /// potentially invalid keybind being returned.
+    pub fn default_binding_from_bindings_iterator<'a>(
+        mut bindings: impl Iterator<Item = &'a KeyBinding>,
     ) -> Option<&'a KeyBinding> {
-        bindings.next_back()
+        bindings.next()
     }
 }
 
@@ -219,7 +222,7 @@ impl Keymap {
 mod tests {
     use super::*;
     use crate as gpui;
-    use gpui::{actions, NoAction};
+    use gpui::{NoAction, actions};
 
     actions!(
         keymap_test,
@@ -265,38 +268,46 @@ mod tests {
         keymap.add_bindings(bindings.clone());
 
         // binding is only enabled in a specific context
-        assert!(keymap
-            .bindings_for_input(
-                &[Keystroke::parse("ctrl-a").unwrap()],
-                &[KeyContext::parse("barf").unwrap()],
-            )
-            .0
-            .is_empty());
-        assert!(!keymap
-            .bindings_for_input(
-                &[Keystroke::parse("ctrl-a").unwrap()],
-                &[KeyContext::parse("editor").unwrap()],
-            )
-            .0
-            .is_empty());
+        assert!(
+            keymap
+                .bindings_for_input(
+                    &[Keystroke::parse("ctrl-a").unwrap()],
+                    &[KeyContext::parse("barf").unwrap()],
+                )
+                .0
+                .is_empty()
+        );
+        assert!(
+            !keymap
+                .bindings_for_input(
+                    &[Keystroke::parse("ctrl-a").unwrap()],
+                    &[KeyContext::parse("editor").unwrap()],
+                )
+                .0
+                .is_empty()
+        );
 
         // binding is disabled in a more specific context
-        assert!(keymap
-            .bindings_for_input(
-                &[Keystroke::parse("ctrl-a").unwrap()],
-                &[KeyContext::parse("editor mode=full").unwrap()],
-            )
-            .0
-            .is_empty());
+        assert!(
+            keymap
+                .bindings_for_input(
+                    &[Keystroke::parse("ctrl-a").unwrap()],
+                    &[KeyContext::parse("editor mode=full").unwrap()],
+                )
+                .0
+                .is_empty()
+        );
 
         // binding is globally disabled
-        assert!(keymap
-            .bindings_for_input(
-                &[Keystroke::parse("ctrl-b").unwrap()],
-                &[KeyContext::parse("barf").unwrap()],
-            )
-            .0
-            .is_empty());
+        assert!(
+            keymap
+                .bindings_for_input(
+                    &[Keystroke::parse("ctrl-b").unwrap()],
+                    &[KeyContext::parse("barf").unwrap()],
+                )
+                .0
+                .is_empty()
+        );
     }
 
     #[test]

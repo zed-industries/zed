@@ -1,5 +1,5 @@
 use crate::db::{ProjectId, Result, RoomId, ServerId, UserId};
-use anyhow::anyhow;
+use anyhow::Context as _;
 use rpc::ConnectionId;
 use sea_orm::entity::prelude::*;
 
@@ -18,10 +18,10 @@ impl Model {
     pub fn host_connection(&self) -> Result<ConnectionId> {
         let host_connection_server_id = self
             .host_connection_server_id
-            .ok_or_else(|| anyhow!("empty host_connection_server_id"))?;
+            .context("empty host_connection_server_id")?;
         let host_connection_id = self
             .host_connection_id
-            .ok_or_else(|| anyhow!("empty host_connection_id"))?;
+            .context("empty host_connection_id")?;
         Ok(ConnectionId {
             owner_id: host_connection_server_id.0 as u32,
             id: host_connection_id as u32,
@@ -45,6 +45,8 @@ pub enum Relation {
     Room,
     #[sea_orm(has_many = "super::worktree::Entity")]
     Worktrees,
+    #[sea_orm(has_many = "super::project_repository::Entity")]
+    Repositories,
     #[sea_orm(has_many = "super::project_collaborator::Entity")]
     Collaborators,
     #[sea_orm(has_many = "super::language_server::Entity")]
@@ -66,6 +68,12 @@ impl Related<super::room::Entity> for Entity {
 impl Related<super::worktree::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Worktrees.def()
+    }
+}
+
+impl Related<super::project_repository::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::Repositories.def()
     }
 }
 

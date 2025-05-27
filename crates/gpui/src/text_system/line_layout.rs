@@ -1,4 +1,4 @@
-use crate::{point, px, FontId, GlyphId, Pixels, PlatformTextSystem, Point, SharedString, Size};
+use crate::{FontId, GlyphId, Pixels, PlatformTextSystem, Point, SharedString, Size, point, px};
 use collections::FxHashMap;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smallvec::SmallVec;
@@ -34,7 +34,7 @@ pub struct ShapedRun {
     /// The font id for this run
     pub font_id: FontId,
     /// The glyphs that make up this run
-    pub glyphs: SmallVec<[ShapedGlyph; 8]>,
+    pub glyphs: Vec<ShapedGlyph>,
 }
 
 /// A single glyph, ready to paint.

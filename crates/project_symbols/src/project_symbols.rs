@@ -1,8 +1,8 @@
-use editor::{scroll::Autoscroll, styled_runs_for_code_label, Bias, Editor};
+use editor::{Bias, Editor, scroll::Autoscroll, styled_runs_for_code_label};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    rems, App, Context, DismissEvent, Entity, FontWeight, ParentElement, StyledText, Task,
-    WeakEntity, Window,
+    App, Context, DismissEvent, Entity, FontWeight, ParentElement, StyledText, Task, WeakEntity,
+    Window, rems,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
@@ -11,8 +11,8 @@ use std::{borrow::Cow, cmp::Reverse, sync::Arc};
 use theme::ActiveTheme;
 use util::ResultExt;
 use workspace::{
-    ui::{v_flex, Color, Label, LabelCommon, LabelLike, ListItem, ListItemSpacing, Toggleable},
     Workspace,
+    ui::{Color, Label, LabelCommon, LabelLike, ListItem, ListItemSpacing, Toggleable, v_flex},
 };
 
 pub fn init(cx: &mut App) {
@@ -139,7 +139,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                         });
                     });
                 })?;
-                Ok::<_, anyhow::Error>(())
+                anyhow::Ok(())
             })
             .detach_and_log_err(cx);
             cx.emit(DismissEvent);
@@ -270,6 +270,7 @@ mod tests {
     use futures::StreamExt;
     use gpui::{SemanticVersion, TestAppContext, VisualContext};
     use language::{FakeLspAdapter, Language, LanguageConfig, LanguageMatcher};
+    use lsp::OneOf;
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
@@ -298,8 +299,16 @@ mod tests {
             },
             None,
         )));
-        let mut fake_servers =
-            language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
+        let mut fake_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    workspace_symbol_provider: Some(OneOf::Left(true)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
 
         let _buffer = project
             .update(cx, |project, cx| {
@@ -316,7 +325,7 @@ mod tests {
             symbol("uno", path!("/dir/test.rs")),
         ];
         let fake_server = fake_servers.next().await.unwrap();
-        fake_server.handle_request::<lsp::WorkspaceSymbolRequest, _, _>(
+        fake_server.set_request_handler::<lsp::WorkspaceSymbolRequest, _, _>(
             move |params: lsp::WorkspaceSymbolParams, cx| {
                 let executor = cx.background_executor().clone();
                 let fake_symbols = fake_symbols.clone();
@@ -372,7 +381,7 @@ mod tests {
         });
 
         cx.run_until_parked();
-        symbols.update(cx, |symbols, _| {
+        symbols.read_with(cx, |symbols, _| {
             assert_eq!(symbols.delegate.matches.len(), 0);
         });
 
@@ -383,7 +392,7 @@ mod tests {
         });
 
         cx.run_until_parked();
-        symbols.update(cx, |symbols, _| {
+        symbols.read_with(cx, |symbols, _| {
             let delegate = &symbols.delegate;
             assert_eq!(delegate.matches.len(), 2);
             assert_eq!(delegate.matches[0].string, "ton");
@@ -397,7 +406,7 @@ mod tests {
         });
 
         cx.run_until_parked();
-        symbols.update(cx, |symbols, _| {
+        symbols.read_with(cx, |symbols, _| {
             assert_eq!(symbols.delegate.matches.len(), 0);
         });
     }

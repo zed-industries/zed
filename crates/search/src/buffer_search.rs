@@ -1,22 +1,22 @@
 mod registrar;
 
 use crate::{
-    search_bar::render_nav_button, FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll,
-    ReplaceNext, SearchOptions, SelectAllMatches, SelectNextMatch, SelectPreviousMatch,
-    ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleSelection, ToggleWholeWord,
+    FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions,
+    SelectAllMatches, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive, ToggleRegex,
+    ToggleReplace, ToggleSelection, ToggleWholeWord, search_bar::render_nav_button,
 };
 use any_vec::AnyVec;
 use anyhow::Context as _;
 use collections::HashMap;
 use editor::{
-    actions::{Backtab, Tab},
     DisplayPoint, Editor, EditorElement, EditorSettings, EditorStyle,
+    actions::{Backtab, Tab},
 };
 use futures::channel::oneshot;
 use gpui::{
-    actions, div, impl_actions, Action, App, ClickEvent, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyContext, ParentElement as _,
-    Render, ScrollHandle, Styled, Subscription, Task, TextStyle, Window,
+    Action, App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle,
+    Styled, Subscription, Task, TextStyle, Window, actions, div, impl_actions,
 };
 use language::{Language, LanguageRegistry};
 use project::{
@@ -31,14 +31,14 @@ use theme::ThemeSettings;
 use zed_actions::outline::ToggleOutline;
 
 use ui::{
-    h_flex, prelude::*, utils::SearchInputWidth, IconButton, IconButtonShape, IconName, Tooltip,
-    BASE_REM_SIZE_IN_PX,
+    BASE_REM_SIZE_IN_PX, IconButton, IconButtonShape, IconName, Tooltip, h_flex, prelude::*,
+    utils::SearchInputWidth,
 };
 use util::ResultExt;
 use workspace::{
+    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     item::ItemHandle,
     searchable::{Direction, SearchEvent, SearchableItemHandle, WeakSearchableItemHandle},
-    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 
 pub use registrar::DivRegistrar;
@@ -143,7 +143,7 @@ impl BufferSearchBar {
         };
 
         let mut editor_style = EditorStyle {
-            background: cx.theme().colors().editor_background,
+            background: cx.theme().colors().toolbar_background,
             local_player: cx.theme().players().local(),
             text: text_style,
             ..EditorStyle::default()
@@ -657,6 +657,16 @@ impl BufferSearchBar {
         registrar.register_handler(ForDeployed(|this, deploy, window, cx| {
             this.deploy(deploy, window, cx);
         }));
+        registrar.register_handler(ForDismissed(|this, deploy, window, cx| {
+            this.deploy(deploy, window, cx);
+        }));
+        registrar.register_handler(ForDeployed(|this, _: &DeployReplace, window, cx| {
+            if this.supported_options(cx).find_in_results {
+                cx.propagate();
+            } else {
+                this.deploy(&Deploy::replace(), window, cx);
+            }
+        }));
         registrar.register_handler(ForDismissed(|this, _: &DeployReplace, window, cx| {
             if this.supported_options(cx).find_in_results {
                 cx.propagate();
@@ -664,9 +674,6 @@ impl BufferSearchBar {
                 this.deploy(&Deploy::replace(), window, cx);
             }
         }));
-        registrar.register_handler(ForDismissed(|this, deploy, window, cx| {
-            this.deploy(deploy, window, cx);
-        }))
     }
 
     pub fn new(
@@ -689,9 +696,9 @@ impl BufferSearchBar {
                 .read(cx)
                 .as_singleton()
                 .expect("query editor should be backed by a singleton buffer");
-            query_buffer.update(cx, |query_buffer, _| {
-                query_buffer.set_language_registry(languages.clone());
-            });
+            query_buffer
+                .read(cx)
+                .set_language_registry(languages.clone());
 
             cx.spawn(async move |buffer_search_bar, cx| {
                 let regex_language = languages
@@ -936,12 +943,12 @@ impl BufferSearchBar {
         self.update_matches(!updated, window, cx)
     }
 
-    fn render_search_option_button(
+    fn render_search_option_button<Action: Fn(&ClickEvent, &mut Window, &mut App) + 'static>(
         &self,
         option: SearchOptions,
         focus_handle: FocusHandle,
-        action: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> impl IntoElement {
+        action: Action,
+    ) -> impl IntoElement + use<Action> {
         let is_active = self.search_options.contains(option);
         option.as_button(is_active, focus_handle, action)
     }
@@ -982,6 +989,16 @@ impl BufferSearchBar {
     }
 
     pub fn set_search_options(&mut self, search_options: SearchOptions, cx: &mut Context<Self>) {
+        self.search_options = search_options;
+        self.adjust_query_regex_language(cx);
+        cx.notify();
+    }
+
+    pub fn clear_search_within_ranges(
+        &mut self,
+        search_options: SearchOptions,
+        cx: &mut Context<Self>,
+    ) {
         self.search_options = search_options;
         self.adjust_query_regex_language(cx);
         cx.notify();
@@ -1231,8 +1248,11 @@ impl BufferSearchBar {
                             self.search_options.contains(SearchOptions::WHOLE_WORD),
                             self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                             false,
+                            self.search_options
+                                .contains(SearchOptions::ONE_MATCH_PER_LINE),
                             Default::default(),
                             Default::default(),
+                            false,
                             None,
                         ) {
                             Ok(query) => query.with_replacement(self.replacement(cx)),
@@ -1251,6 +1271,7 @@ impl BufferSearchBar {
                             false,
                             Default::default(),
                             Default::default(),
+                            false,
                             None,
                         ) {
                             Ok(query) => query.with_replacement(self.replacement(cx)),
@@ -1439,7 +1460,6 @@ impl BufferSearchBar {
                             self.select_next_match(&SelectNextMatch, window, cx);
                         }
                         should_propagate = false;
-                        self.focus_editor(&FocusEditor, window, cx);
                     }
                 }
             }
@@ -1521,7 +1541,7 @@ mod tests {
     use std::ops::Range;
 
     use super::*;
-    use editor::{display_map::DisplayRow, DisplayPoint, Editor, MultiBuffer, SearchSettings};
+    use editor::{DisplayPoint, Editor, MultiBuffer, SearchSettings, display_map::DisplayRow};
     use gpui::{Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
     use language::{Buffer, Point};
     use project::Project;
@@ -1672,7 +1692,7 @@ mod tests {
                 [DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43)]
             );
         });
-        search_bar.update(cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(0));
         });
 
@@ -1683,7 +1703,7 @@ mod tests {
                 [DisplayPoint::new(DisplayRow(3), 11)..DisplayPoint::new(DisplayRow(3), 13)]
             );
         });
-        search_bar.update(cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(1));
         });
 
@@ -1694,7 +1714,7 @@ mod tests {
                 [DisplayPoint::new(DisplayRow(3), 56)..DisplayPoint::new(DisplayRow(3), 58)]
             );
         });
-        search_bar.update(cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(2));
         });
 
@@ -1705,7 +1725,7 @@ mod tests {
                 [DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43)]
             );
         });
-        search_bar.update(cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(0));
         });
 
@@ -1716,7 +1736,7 @@ mod tests {
                 [DisplayPoint::new(DisplayRow(3), 56)..DisplayPoint::new(DisplayRow(3), 58)]
             );
         });
-        search_bar.update(cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(2));
         });
 
@@ -1727,7 +1747,7 @@ mod tests {
                 [DisplayPoint::new(DisplayRow(3), 11)..DisplayPoint::new(DisplayRow(3), 13)]
             );
         });
-        search_bar.update(cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(1));
         });
 
@@ -1738,7 +1758,7 @@ mod tests {
                 [DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43)]
             );
         });
-        search_bar.update(cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(0));
         });
 
@@ -1759,7 +1779,7 @@ mod tests {
                 [DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43)]
             );
         });
-        search_bar.update(cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(0));
         });
 
@@ -1780,7 +1800,7 @@ mod tests {
                 [DisplayPoint::new(DisplayRow(3), 11)..DisplayPoint::new(DisplayRow(3), 13)]
             );
         });
-        search_bar.update(cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(1));
         });
 
@@ -1801,7 +1821,7 @@ mod tests {
                 [DisplayPoint::new(DisplayRow(3), 56)..DisplayPoint::new(DisplayRow(3), 58)]
             );
         });
-        search_bar.update(cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(2));
         });
 
@@ -1822,7 +1842,7 @@ mod tests {
                 [DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43)]
             );
         });
-        search_bar.update(cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(0));
         });
 
@@ -1843,7 +1863,7 @@ mod tests {
                 [DisplayPoint::new(DisplayRow(3), 56)..DisplayPoint::new(DisplayRow(3), 58)]
             );
         });
-        search_bar.update(cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(2));
         });
     }
@@ -2377,7 +2397,7 @@ mod tests {
             search_bar.replace_all(&ReplaceAll, window, cx)
         });
         assert_eq!(
-            editor.update(cx, |this, cx| { this.text(cx) }),
+            editor.read_with(cx, |this, cx| { this.text(cx) }),
             r#"
         A regular expr$1 (shortened as regex or regexp;[1] also referred to as
         rational expr$1[2][3]) is a sequence of characters that specifies a search
@@ -2403,7 +2423,7 @@ mod tests {
         });
         // Notice how the first or in the text (shORtened) is not replaced. Neither are the remaining hits of `or` in the text.
         assert_eq!(
-            editor.update(cx, |this, cx| { this.text(cx) }),
+            editor.read_with(cx, |this, cx| { this.text(cx) }),
             r#"
         A regular expr$1 (shortened as regex banana regexp;[1] also referred to as
         rational expr$1[2][3]) is a sequence of characters that specifies a search
@@ -2426,7 +2446,7 @@ mod tests {
             search_bar.replace_all(&ReplaceAll, window, cx)
         });
         assert_eq!(
-            editor.update(cx, |this, cx| { this.text(cx) }),
+            editor.read_with(cx, |this, cx| { this.text(cx) }),
             r#"
         A regular expr$1 (shortened as regex banana regexp;1number also referred to as
         rational expr$12number3number) is a sequence of characters that specifies a search
@@ -2456,7 +2476,7 @@ mod tests {
         // The only word affected by this edit should be `algorithms`, even though there's a bunch
         // of words in this text that would match this regex if not for WHOLE_WORD.
         assert_eq!(
-            editor.update(cx, |this, cx| { this.text(cx) }),
+            editor.read_with(cx, |this, cx| { this.text(cx) }),
             r#"
         A regular expr$1 (shortened as regex banana regexp;1number also referred to as
         rational expr$12number3number) is a sequence of characters that specifies a search
@@ -2507,7 +2527,7 @@ mod tests {
         assert_eq!(
             options
                 .editor
-                .update(options.cx, |this, cx| { this.text(cx) }),
+                .read_with(options.cx, |this, cx| { this.text(cx) }),
             options.expected_text
         );
     }
@@ -2767,6 +2787,7 @@ mod tests {
         let (_editor, search_bar, cx) = init_test(cx);
         update_search_settings(
             SearchSettings {
+                button: true,
                 whole_word: false,
                 case_sensitive: false,
                 include_ignored: false,
@@ -2832,6 +2853,7 @@ mod tests {
 
         update_search_settings(
             SearchSettings {
+                button: true,
                 whole_word: false,
                 case_sensitive: true,
                 include_ignored: false,

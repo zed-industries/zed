@@ -6,7 +6,7 @@ CARGO_ABOUT_VERSION="0.6"
 OUTPUT_FILE="${1:-$(pwd)/assets/licenses.csv}"
 TEMPLATE_FILE="script/licenses/template.csv.hbs"
 
-if ! cargo about --version | grep "cargo-about $CARGO_ABOUT_VERSION" > /dev/null; then
+if ! cargo about --version | grep "cargo-about $CARGO_ABOUT_VERSION" 2>&1 > /dev/null; then
   echo "Installing cargo-about@^$CARGO_ABOUT_VERSION..."
   cargo install "cargo-about@^$CARGO_ABOUT_VERSION"
 else

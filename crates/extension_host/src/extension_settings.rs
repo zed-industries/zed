@@ -12,6 +12,8 @@ pub struct ExtensionSettings {
     ///
     /// This is used to make functionality provided by extensions (e.g., language support)
     /// available out-of-the-box.
+    ///
+    /// Default: { "html": true }
     #[serde(default)]
     pub auto_install_extensions: HashMap<Arc<str>, bool>,
     #[serde(default)]
@@ -47,5 +49,11 @@ impl Settings for ExtensionSettings {
                 .chain(sources.user)
                 .chain(sources.server),
         )
+    }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {
+        // settingsSync.ignoredExtensions controls autoupdate for vscode extensions, but we
+        // don't have a mapping to zed-extensions. there's also extensions.autoCheckUpdates
+        // and extensions.autoUpdate which are global switches, we don't support those yet
     }
 }

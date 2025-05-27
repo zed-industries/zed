@@ -1,17 +1,17 @@
-use anthropic::{AnthropicError, ANTHROPIC_API_URL};
-use anyhow::{anyhow, Context as _, Result};
+use anthropic::{ANTHROPIC_API_URL, AnthropicError};
+use anyhow::{Context as _, Result, anyhow};
 use client::telemetry::Telemetry;
 use gpui::BackgroundExecutor;
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use std::env;
 use std::sync::Arc;
-use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
+use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
 use util::ResultExt;
 
 pub const ANTHROPIC_PROVIDER_ID: &str = "anthropic";
 
 pub fn report_assistant_event(
-    event: AssistantEvent,
+    event: AssistantEventData,
     telemetry: Option<Arc<Telemetry>>,
     client: Arc<dyn HttpClient>,
     model_api_key: Option<String>,
@@ -32,7 +32,7 @@ pub fn report_assistant_event(
 }
 
 async fn report_anthropic_event(
-    event: AssistantEvent,
+    event: AssistantEventData,
     client: Arc<dyn HttpClient>,
     model_api_key: Option<String>,
 ) -> Result<(), AnthropicError> {

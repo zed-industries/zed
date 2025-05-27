@@ -1,42 +1,32 @@
 use crate::{
+    ProjectItem as _, ProjectPath,
     lsp_store::OpenLspBufferHandle,
     search::SearchQuery,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
-    ProjectItem as _, ProjectPath,
 };
-use ::git::{parse_git_remote_url, BuildPermalinkParams, GitHostingProviderRegistry};
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use client::Client;
-use collections::{hash_map, HashMap, HashSet};
+use collections::{HashMap, HashSet, hash_map};
 use fs::Fs;
-use futures::{channel::oneshot, future::Shared, Future, FutureExt as _, StreamExt};
-use git::{blame::Blame, repository::RepoPath};
+use futures::{Future, FutureExt as _, StreamExt, channel::oneshot, future::Shared};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
 };
 use language::{
+    Buffer, BufferEvent, Capability, DiskState, File as _, Language, Operation,
     proto::{
         deserialize_line_ending, deserialize_version, serialize_line_ending, serialize_version,
         split_operations,
     },
-    Buffer, BufferEvent, Capability, DiskState, File as _, Language, Operation,
 };
 use rpc::{
-    proto::{self, ToProto},
     AnyProtoClient, ErrorExt as _, TypedEnvelope,
+    proto::{self, ToProto},
 };
-use serde::Deserialize;
 use smol::channel::Receiver;
-use std::{
-    io,
-    ops::Range,
-    path::{Path, PathBuf},
-    pin::pin,
-    sync::Arc,
-    time::Instant,
-};
+use std::{io, path::Path, pin::pin, sync::Arc, time::Instant};
 use text::BufferId;
-use util::{debug_panic, maybe, ResultExt as _, TryFutureExt};
+use util::{ResultExt as _, TryFutureExt, debug_panic, maybe};
 use worktree::{File, PathChange, ProjectEntryId, Worktree, WorktreeId};
 
 /// A set of open buffers.
@@ -46,6 +36,7 @@ pub struct BufferStore {
     loading_buffers: HashMap<ProjectPath, Shared<Task<Result<Entity<Buffer>, Arc<anyhow::Error>>>>>,
     worktree_store: Entity<WorktreeStore>,
     opened_buffers: HashMap<BufferId, OpenBuffer>,
+    path_to_buffer_id: HashMap<ProjectPath, BufferId>,
     downstream_client: Option<(AnyProtoClient, u64)>,
     shared_buffers: HashMap<proto::PeerId, HashMap<BufferId, SharedBuffer>>,
 }
@@ -67,12 +58,11 @@ struct RemoteBufferStore {
     project_id: u64,
     loading_remote_buffers_by_id: HashMap<BufferId, Entity<Buffer>>,
     remote_buffer_listeners:
-        HashMap<BufferId, Vec<oneshot::Sender<Result<Entity<Buffer>, anyhow::Error>>>>,
+        HashMap<BufferId, Vec<oneshot::Sender<anyhow::Result<Entity<Buffer>>>>>,
     worktree_store: Entity<WorktreeStore>,
 }
 
 struct LocalBufferStore {
-    local_buffer_ids_by_path: HashMap<ProjectPath, BufferId>,
     local_buffer_ids_by_entry_id: HashMap<ProjectEntryId, BufferId>,
     worktree_store: Entity<WorktreeStore>,
     _subscription: Subscription,
@@ -162,11 +152,7 @@ impl RemoteBufferStore {
         capability: Capability,
         cx: &mut Context<BufferStore>,
     ) -> Result<Option<Entity<Buffer>>> {
-        match envelope
-            .payload
-            .variant
-            .ok_or_else(|| anyhow!("missing variant"))?
-        {
+        match envelope.payload.variant.context("missing variant")? {
             proto::create_buffer_for_peer::Variant::State(mut state) => {
                 let buffer_id = BufferId::new(state.id)?;
 
@@ -178,8 +164,8 @@ impl RemoteBufferStore {
                             .worktree_store
                             .read(cx)
                             .worktree_for_id(worktree_id, cx)
-                            .ok_or_else(|| {
-                                anyhow!("no worktree found for id {}", file.worktree_id)
+                            .with_context(|| {
+                                format!("no worktree found for id {}", file.worktree_id)
                             })?;
                         buffer_file = Some(Arc::new(File::from_proto(file, worktree.clone(), cx)?)
                             as Arc<dyn language::File>);
@@ -207,8 +193,8 @@ impl RemoteBufferStore {
                     .loading_remote_buffers_by_id
                     .get(&buffer_id)
                     .cloned()
-                    .ok_or_else(|| {
-                        anyhow!(
+                    .with_context(|| {
+                        format!(
                             "received chunk for buffer {} without initial state",
                             chunk.buffer_id
                         )
@@ -285,6 +271,7 @@ impl RemoteBufferStore {
                 if push_to_history {
                     buffer.update(cx, |buffer, _| {
                         buffer.push_transaction(transaction.clone(), Instant::now());
+                        buffer.finalize_last_transaction();
                     })?;
                 }
             }
@@ -350,10 +337,7 @@ impl RemoteBufferStore {
         });
 
         cx.spawn(async move |this, cx| {
-            let response = request
-                .await?
-                .transaction
-                .ok_or_else(|| anyhow!("missing transaction"))?;
+            let response = request.await?.transaction.context("missing transaction")?;
             this.update(cx, |this, cx| {
                 this.deserialize_project_transaction(response, push_to_history, cx)
             })?
@@ -377,8 +361,9 @@ impl LocalBufferStore {
         let line_ending = buffer.line_ending();
         let version = buffer.version();
         let buffer_id = buffer.remote_id();
-        if buffer
-            .file()
+        let file = buffer.file().cloned();
+        if file
+            .as_ref()
             .is_some_and(|file| file.disk_state() == DiskState::New)
         {
             has_changed_file = true;
@@ -471,13 +456,11 @@ impl LocalBufferStore {
             path: path.clone(),
         };
 
-        let buffer_id = {
-            let local = this.as_local_mut()?;
-            match local.local_buffer_ids_by_entry_id.get(&entry_id) {
-                Some(&buffer_id) => buffer_id,
-                None => local.local_buffer_ids_by_path.get(&project_path).copied()?,
-            }
-        };
+        let buffer_id = this
+            .as_local_mut()
+            .and_then(|local| local.local_buffer_ids_by_entry_id.get(&entry_id))
+            .copied()
+            .or_else(|| this.path_to_buffer_id.get(&project_path).copied())?;
 
         let buffer = if let Some(buffer) = this.get(buffer_id) {
             Some(buffer)
@@ -489,14 +472,13 @@ impl LocalBufferStore {
         let buffer = if let Some(buffer) = buffer {
             buffer
         } else {
+            this.path_to_buffer_id.remove(&project_path);
             let this = this.as_local_mut()?;
-            this.local_buffer_ids_by_path.remove(&project_path);
             this.local_buffer_ids_by_entry_id.remove(&entry_id);
             return None;
         };
 
         let events = buffer.update(cx, |buffer, cx| {
-            let local = this.as_local_mut()?;
             let file = buffer.file()?;
             let old_file = File::from_dyn(Some(file))?;
             if old_file.worktree != *worktree {
@@ -537,11 +519,11 @@ impl LocalBufferStore {
 
             let mut events = Vec::new();
             if new_file.path != old_file.path {
-                local.local_buffer_ids_by_path.remove(&ProjectPath {
+                this.path_to_buffer_id.remove(&ProjectPath {
                     path: old_file.path.clone(),
                     worktree_id: old_file.worktree_id(cx),
                 });
-                local.local_buffer_ids_by_path.insert(
+                this.path_to_buffer_id.insert(
                     ProjectPath {
                         worktree_id: new_file.worktree_id(cx),
                         path: new_file.path.clone(),
@@ -553,7 +535,7 @@ impl LocalBufferStore {
                     old_file: buffer.file().cloned(),
                 });
             }
-
+            let local = this.as_local_mut()?;
             if new_file.entry_id != old_file.entry_id {
                 if let Some(entry_id) = old_file.entry_id {
                     local.local_buffer_ids_by_entry_id.remove(&entry_id);
@@ -584,32 +566,6 @@ impl LocalBufferStore {
         }
 
         None
-    }
-
-    fn buffer_changed_file(&mut self, buffer: Entity<Buffer>, cx: &mut App) -> Option<()> {
-        let file = File::from_dyn(buffer.read(cx).file())?;
-
-        let remote_id = buffer.read(cx).remote_id();
-        if let Some(entry_id) = file.entry_id {
-            match self.local_buffer_ids_by_entry_id.get(&entry_id) {
-                Some(_) => {
-                    return None;
-                }
-                None => {
-                    self.local_buffer_ids_by_entry_id
-                        .insert(entry_id, remote_id);
-                }
-            }
-        };
-        self.local_buffer_ids_by_path.insert(
-            ProjectPath {
-                worktree_id: file.worktree_id(cx),
-                path: file.path.clone(),
-            },
-            remote_id,
-        );
-
-        Some(())
     }
 
     fn save_buffer(
@@ -686,15 +642,14 @@ impl LocalBufferStore {
                 this.add_buffer(buffer.clone(), cx)?;
                 let buffer_id = buffer.read(cx).remote_id();
                 if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
-                    let this = this.as_local_mut().unwrap();
-                    this.local_buffer_ids_by_path.insert(
+                    this.path_to_buffer_id.insert(
                         ProjectPath {
                             worktree_id: file.worktree_id(cx),
                             path: file.path.clone(),
                         },
                         buffer_id,
                     );
-
+                    let this = this.as_local_mut().unwrap();
                     if let Some(entry_id) = file.entry_id {
                         this.local_buffer_ids_by_entry_id
                             .insert(entry_id, buffer_id);
@@ -750,16 +705,13 @@ impl BufferStore {
         client.add_entity_message_handler(Self::handle_buffer_saved);
         client.add_entity_message_handler(Self::handle_update_buffer_file);
         client.add_entity_request_handler(Self::handle_save_buffer);
-        client.add_entity_request_handler(Self::handle_blame_buffer);
         client.add_entity_request_handler(Self::handle_reload_buffers);
-        client.add_entity_request_handler(Self::handle_get_permalink_to_line);
     }
 
     /// Creates a buffer store, optionally retaining its buffers.
     pub fn local(worktree_store: Entity<WorktreeStore>, cx: &mut Context<Self>) -> Self {
         Self {
             state: BufferStoreState::Local(LocalBufferStore {
-                local_buffer_ids_by_path: Default::default(),
                 local_buffer_ids_by_entry_id: Default::default(),
                 worktree_store: worktree_store.clone(),
                 _subscription: cx.subscribe(&worktree_store, |this, _, event, cx| {
@@ -771,6 +723,7 @@ impl BufferStore {
             }),
             downstream_client: None,
             opened_buffers: Default::default(),
+            path_to_buffer_id: Default::default(),
             shared_buffers: Default::default(),
             loading_buffers: Default::default(),
             worktree_store,
@@ -794,16 +747,10 @@ impl BufferStore {
             }),
             downstream_client: None,
             opened_buffers: Default::default(),
+            path_to_buffer_id: Default::default(),
             loading_buffers: Default::default(),
             shared_buffers: Default::default(),
             worktree_store,
-        }
-    }
-
-    fn as_local(&self) -> Option<&LocalBufferStore> {
-        match &self.state {
-            BufferStoreState::Local(state) => Some(state),
-            _ => None,
         }
     }
 
@@ -884,21 +831,6 @@ impl BufferStore {
         cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
-    pub(crate) fn worktree_for_buffer(
-        &self,
-        buffer: &Entity<Buffer>,
-        cx: &App,
-    ) -> Option<(Entity<Worktree>, Arc<Path>)> {
-        let file = buffer.read(cx).file()?;
-        let worktree_id = file.worktree_id(cx);
-        let path = file.path().clone();
-        let worktree = self
-            .worktree_store
-            .read(cx)
-            .worktree_for_id(worktree_id, cx)?;
-        Some((worktree, path))
-    }
-
     pub fn create_buffer(&mut self, cx: &mut Context<Self>) -> Task<Result<Entity<Buffer>>> {
         match &self.state {
             BufferStoreState::Local(this) => this.create_buffer(cx),
@@ -938,175 +870,13 @@ impl BufferStore {
         })
     }
 
-    pub fn blame_buffer(
-        &self,
-        buffer: &Entity<Buffer>,
-        version: Option<clock::Global>,
-        cx: &App,
-    ) -> Task<Result<Option<Blame>>> {
-        let buffer = buffer.read(cx);
-        let Some(file) = File::from_dyn(buffer.file()) else {
-            return Task::ready(Err(anyhow!("buffer has no file")));
-        };
-
-        match file.worktree.clone().read(cx) {
-            Worktree::Local(worktree) => {
-                let worktree = worktree.snapshot();
-                let blame_params = maybe!({
-                    let local_repo = match worktree.local_repo_for_path(&file.path) {
-                        Some(repo_for_path) => repo_for_path,
-                        None => return Ok(None),
-                    };
-
-                    let relative_path = local_repo
-                        .relativize(&file.path)
-                        .context("failed to relativize buffer path")?;
-
-                    let repo = local_repo.repo().clone();
-
-                    let content = match version {
-                        Some(version) => buffer.rope_for_version(&version).clone(),
-                        None => buffer.as_rope().clone(),
-                    };
-
-                    anyhow::Ok(Some((repo, relative_path, content)))
-                });
-
-                cx.spawn(async move |cx| {
-                    let Some((repo, relative_path, content)) = blame_params? else {
-                        return Ok(None);
-                    };
-                    repo.blame(relative_path.clone(), content, cx)
-                        .await
-                        .with_context(|| format!("Failed to blame {:?}", relative_path.0))
-                        .map(Some)
-                })
-            }
-            Worktree::Remote(worktree) => {
-                let buffer_id = buffer.remote_id();
-                let version = buffer.version();
-                let project_id = worktree.project_id();
-                let client = worktree.client();
-                cx.spawn(async move |_| {
-                    let response = client
-                        .request(proto::BlameBuffer {
-                            project_id,
-                            buffer_id: buffer_id.into(),
-                            version: serialize_version(&version),
-                        })
-                        .await?;
-                    Ok(deserialize_blame_buffer_response(response))
-                })
-            }
-        }
-    }
-
-    pub fn get_permalink_to_line(
-        &self,
-        buffer: &Entity<Buffer>,
-        selection: Range<u32>,
-        cx: &App,
-    ) -> Task<Result<url::Url>> {
-        let buffer = buffer.read(cx);
-        let Some(file) = File::from_dyn(buffer.file()) else {
-            return Task::ready(Err(anyhow!("buffer has no file")));
-        };
-
-        match file.worktree.read(cx) {
-            Worktree::Local(worktree) => {
-                let worktree_path = worktree.abs_path().clone();
-                let Some((repo_entry, repo)) =
-                    worktree.repository_for_path(file.path()).and_then(|entry| {
-                        let repo = worktree.get_local_repo(&entry)?.repo().clone();
-                        Some((entry, repo))
-                    })
-                else {
-                    // If we're not in a Git repo, check whether this is a Rust source
-                    // file in the Cargo registry (presumably opened with go-to-definition
-                    // from a normal Rust file). If so, we can put together a permalink
-                    // using crate metadata.
-                    if buffer
-                        .language()
-                        .is_none_or(|lang| lang.name() != "Rust".into())
-                    {
-                        return Task::ready(Err(anyhow!("no permalink available")));
-                    }
-                    let file_path = worktree_path.join(file.path());
-                    return cx.spawn(async move |cx| {
-                        let provider_registry =
-                            cx.update(GitHostingProviderRegistry::default_global)?;
-                        get_permalink_in_rust_registry_src(provider_registry, file_path, selection)
-                            .map_err(|_| anyhow!("no permalink available"))
-                    });
-                };
-
-                let path = match repo_entry.relativize(file.path()) {
-                    Ok(RepoPath(path)) => path,
-                    Err(e) => return Task::ready(Err(e)),
-                };
-
-                let remote = repo_entry
-                    .branch()
-                    .and_then(|b| b.upstream.as_ref())
-                    .and_then(|b| b.remote_name())
-                    .unwrap_or("origin")
-                    .to_string();
-
-                cx.spawn(async move |cx| {
-                    let origin_url = repo
-                        .remote_url(&remote)
-                        .ok_or_else(|| anyhow!("remote \"{remote}\" not found"))?;
-
-                    let sha = repo
-                        .head_sha()
-                        .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
-
-                    let provider_registry =
-                        cx.update(GitHostingProviderRegistry::default_global)?;
-
-                    let (provider, remote) =
-                        parse_git_remote_url(provider_registry, &origin_url)
-                            .ok_or_else(|| anyhow!("failed to parse Git remote URL"))?;
-
-                    let path = path
-                        .to_str()
-                        .ok_or_else(|| anyhow!("failed to convert path to string"))?;
-
-                    Ok(provider.build_permalink(
-                        remote,
-                        BuildPermalinkParams {
-                            sha: &sha,
-                            path,
-                            selection: Some(selection),
-                        },
-                    ))
-                })
-            }
-            Worktree::Remote(worktree) => {
-                let buffer_id = buffer.remote_id();
-                let project_id = worktree.project_id();
-                let client = worktree.client();
-                cx.spawn(async move |_| {
-                    let response = client
-                        .request(proto::GetPermalinkToLine {
-                            project_id,
-                            buffer_id: buffer_id.into(),
-                            selection: Some(proto::Range {
-                                start: selection.start as u64,
-                                end: selection.end as u64,
-                            }),
-                        })
-                        .await?;
-
-                    url::Url::parse(&response.permalink).context("failed to parse permalink")
-                })
-            }
-        }
-    }
-
     fn add_buffer(&mut self, buffer_entity: Entity<Buffer>, cx: &mut Context<Self>) -> Result<()> {
         let buffer = buffer_entity.read(cx);
         let remote_id = buffer.remote_id();
+        let path = File::from_dyn(buffer.file()).map(|file| ProjectPath {
+            path: file.path.clone(),
+            worktree_id: file.worktree_id(cx),
+        });
         let is_remote = buffer.replica_id() != 0;
         let open_buffer = OpenBuffer::Complete {
             buffer: buffer_entity.downgrade(),
@@ -1123,10 +893,11 @@ impl BufferStore {
             })
             .detach()
         });
-
+        let _expect_path_to_exist;
         match self.opened_buffers.entry(remote_id) {
             hash_map::Entry::Vacant(entry) => {
                 entry.insert(open_buffer);
+                _expect_path_to_exist = false;
             }
             hash_map::Entry::Occupied(mut entry) => {
                 if let OpenBuffer::Operations(operations) = entry.get_mut() {
@@ -1135,12 +906,17 @@ impl BufferStore {
                     if is_remote {
                         return Ok(());
                     } else {
-                        debug_panic!("buffer {} was already registered", remote_id);
-                        Err(anyhow!("buffer {} was already registered", remote_id))?;
+                        debug_panic!("buffer {remote_id} was already registered");
+                        anyhow::bail!("buffer {remote_id} was already registered");
                     }
                 }
                 entry.insert(open_buffer);
+                _expect_path_to_exist = true;
             }
+        }
+
+        if let Some(path) = path {
+            self.path_to_buffer_id.insert(path, remote_id);
         }
 
         cx.subscribe(&buffer_entity, Self::on_buffer_event).detach();
@@ -1164,18 +940,13 @@ impl BufferStore {
     }
 
     pub fn buffer_id_for_project_path(&self, project_path: &ProjectPath) -> Option<&BufferId> {
-        self.as_local()
-            .and_then(|state| state.local_buffer_ids_by_path.get(project_path))
+        self.path_to_buffer_id.get(project_path)
     }
 
-    pub fn get_by_path(&self, path: &ProjectPath, cx: &App) -> Option<Entity<Buffer>> {
-        self.buffers().find_map(|buffer| {
-            let file = File::from_dyn(buffer.read(cx).file())?;
-            if file.worktree_id(cx) == path.worktree_id && file.path == path.path {
-                Some(buffer)
-            } else {
-                None
-            }
+    pub fn get_by_path(&self, path: &ProjectPath, _cx: &App) -> Option<Entity<Buffer>> {
+        self.path_to_buffer_id.get(path).and_then(|buffer_id| {
+            let buffer = self.get(*buffer_id);
+            buffer
         })
     }
 
@@ -1185,7 +956,7 @@ impl BufferStore {
 
     pub fn get_existing(&self, buffer_id: BufferId) -> Result<Entity<Buffer>> {
         self.get(buffer_id)
-            .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))
+            .with_context(|| format!("unknown buffer id {buffer_id}"))
     }
 
     pub fn get_possibly_incomplete(&self, buffer_id: BufferId) -> Option<Entity<Buffer>> {
@@ -1245,6 +1016,35 @@ impl BufferStore {
     pub fn discard_incomplete(&mut self) {
         self.opened_buffers
             .retain(|_, buffer| !matches!(buffer, OpenBuffer::Operations(_)));
+    }
+
+    fn buffer_changed_file(&mut self, buffer: Entity<Buffer>, cx: &mut App) -> Option<()> {
+        let file = File::from_dyn(buffer.read(cx).file())?;
+
+        let remote_id = buffer.read(cx).remote_id();
+        if let Some(entry_id) = file.entry_id {
+            if let Some(local) = self.as_local_mut() {
+                match local.local_buffer_ids_by_entry_id.get(&entry_id) {
+                    Some(_) => {
+                        return None;
+                    }
+                    None => {
+                        local
+                            .local_buffer_ids_by_entry_id
+                            .insert(entry_id, remote_id);
+                    }
+                }
+            }
+            self.path_to_buffer_id.insert(
+                ProjectPath {
+                    worktree_id: file.worktree_id(cx),
+                    path: file.path.clone(),
+                },
+                remote_id,
+            );
+        };
+
+        Some(())
     }
 
     pub fn find_search_candidates(
@@ -1310,9 +1110,7 @@ impl BufferStore {
     ) {
         match event {
             BufferEvent::FileHandleChanged => {
-                if let Some(local) = self.as_local_mut() {
-                    local.buffer_changed_file(buffer, cx);
-                }
+                self.buffer_changed_file(buffer, cx);
             }
             BufferEvent::Reloaded => {
                 let Some((downstream_client, project_id)) = self.downstream_client.as_ref() else {
@@ -1474,9 +1272,9 @@ impl BufferStore {
         capability: Capability,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        let Some(remote) = self.as_remote_mut() else {
-            return Err(anyhow!("buffer store is not a remote"));
-        };
+        let remote = self
+            .as_remote_mut()
+            .context("buffer store is not a remote")?;
 
         if let Some(buffer) =
             remote.handle_create_buffer_for_peer(envelope, replica_id, capability, cx)?
@@ -1498,16 +1296,17 @@ impl BufferStore {
         this.update(&mut cx, |this, cx| {
             let payload = envelope.payload.clone();
             if let Some(buffer) = this.get_possibly_incomplete(buffer_id) {
-                let file = payload.file.ok_or_else(|| anyhow!("invalid file"))?;
+                let file = payload.file.context("invalid file")?;
                 let worktree = this
                     .worktree_store
                     .read(cx)
                     .worktree_for_id(WorktreeId::from_proto(file.worktree_id), cx)
-                    .ok_or_else(|| anyhow!("no such worktree"))?;
+                    .context("no such worktree")?;
                 let file = File::from_proto(file, worktree, cx)?;
                 let old_file = buffer.update(cx, |buffer, cx| {
                     let old_file = buffer.file().cloned();
                     let new_path = file.path.clone();
+
                     buffer.file_updated(Arc::new(file), cx);
                     if old_file
                         .as_ref()
@@ -1541,7 +1340,7 @@ impl BufferStore {
         mut cx: AsyncApp,
     ) -> Result<proto::BufferSaved> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-        let (buffer, project_id) = this.update(&mut cx, |this, _| {
+        let (buffer, project_id) = this.read_with(&mut cx, |this, _| {
             anyhow::Ok((
                 this.get_existing(buffer_id)?,
                 this.downstream_client
@@ -1555,7 +1354,7 @@ impl BufferStore {
                 buffer.wait_for_version(deserialize_version(&envelope.payload.version))
             })?
             .await?;
-        let buffer_id = buffer.update(&mut cx, |buffer, _| buffer.remote_id())?;
+        let buffer_id = buffer.read_with(&mut cx, |buffer, _| buffer.remote_id())?;
 
         if let Some(new_path) = envelope.payload.new_path {
             let new_path = ProjectPath::from_proto(new_path);
@@ -1568,7 +1367,7 @@ impl BufferStore {
                 .await?;
         }
 
-        buffer.update(&mut cx, |buffer, _| proto::BufferSaved {
+        buffer.read_with(&mut cx, |buffer, _| proto::BufferSaved {
             project_id,
             buffer_id: buffer_id.into(),
             version: serialize_version(buffer.saved_version()),
@@ -1639,7 +1438,7 @@ impl BufferStore {
         let mtime = envelope.payload.mtime.clone().map(|time| time.into());
         let line_ending = deserialize_line_ending(
             proto::LineEnding::from_i32(envelope.payload.line_ending)
-                .ok_or_else(|| anyhow!("missing line ending"))?,
+                .context("missing line ending")?,
         );
         this.update(&mut cx, |this, cx| {
             if let Some(buffer) = this.get_possibly_incomplete(buffer_id) {
@@ -1659,52 +1458,6 @@ impl BufferStore {
                     })
                     .log_err();
             }
-        })
-    }
-
-    pub async fn handle_blame_buffer(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::BlameBuffer>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::BlameBufferResponse> {
-        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-        let version = deserialize_version(&envelope.payload.version);
-        let buffer = this.read_with(&cx, |this, _| this.get_existing(buffer_id))??;
-        buffer
-            .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(version.clone())
-            })?
-            .await?;
-        let blame = this
-            .update(&mut cx, |this, cx| {
-                this.blame_buffer(&buffer, Some(version), cx)
-            })?
-            .await?;
-        Ok(serialize_blame_buffer_response(blame))
-    }
-
-    pub async fn handle_get_permalink_to_line(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::GetPermalinkToLine>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::GetPermalinkToLineResponse> {
-        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-        // let version = deserialize_version(&envelope.payload.version);
-        let selection = {
-            let proto_selection = envelope
-                .payload
-                .selection
-                .context("no selection to get permalink for defined")?;
-            proto_selection.start as u32..proto_selection.end as u32
-        };
-        let buffer = this.read_with(&cx, |this, _| this.get_existing(buffer_id))??;
-        let permalink = this
-            .update(&mut cx, |this, cx| {
-                this.get_permalink_to_line(&buffer, selection, cx)
-            })?
-            .await?;
-        Ok(proto::GetPermalinkToLineResponse {
-            permalink: permalink.to_string(),
         })
     }
 
@@ -1735,7 +1488,7 @@ impl BufferStore {
                 let buffer_id = BufferId::new(*buffer_id)?;
                 buffers.insert(this.get_existing(buffer_id)?);
             }
-            Ok::<_, anyhow::Error>(this.reload_buffers(buffers, false, cx))
+            anyhow::Ok(this.reload_buffers(buffers, false, cx))
         })??;
 
         let project_transaction = reload.await?;
@@ -1771,7 +1524,7 @@ impl BufferStore {
         };
 
         cx.spawn(async move |this, cx| {
-            let Some(buffer) = this.update(cx, |this, _| this.get(buffer_id))? else {
+            let Some(buffer) = this.read_with(cx, |this, _| this.get(buffer_id))? else {
                 return anyhow::Ok(());
             };
 
@@ -1844,18 +1597,17 @@ impl BufferStore {
         self.add_buffer(buffer.clone(), cx).log_err();
         let buffer_id = buffer.read(cx).remote_id();
 
-        let this = self
-            .as_local_mut()
-            .expect("local-only method called in a non-local context");
         if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
-            this.local_buffer_ids_by_path.insert(
+            self.path_to_buffer_id.insert(
                 ProjectPath {
                     worktree_id: file.worktree_id(cx),
                     path: file.path.clone(),
                 },
                 buffer_id,
             );
-
+            let this = self
+                .as_local_mut()
+                .expect("local-only method called in a non-local context");
             if let Some(entry_id) = file.entry_id {
                 this.local_buffer_ids_by_entry_id
                     .insert(entry_id, buffer_id);
@@ -1929,140 +1681,4 @@ fn is_not_found_error(error: &anyhow::Error) -> bool {
         .root_cause()
         .downcast_ref::<io::Error>()
         .is_some_and(|err| err.kind() == io::ErrorKind::NotFound)
-}
-
-fn serialize_blame_buffer_response(blame: Option<git::blame::Blame>) -> proto::BlameBufferResponse {
-    let Some(blame) = blame else {
-        return proto::BlameBufferResponse {
-            blame_response: None,
-        };
-    };
-
-    let entries = blame
-        .entries
-        .into_iter()
-        .map(|entry| proto::BlameEntry {
-            sha: entry.sha.as_bytes().into(),
-            start_line: entry.range.start,
-            end_line: entry.range.end,
-            original_line_number: entry.original_line_number,
-            author: entry.author.clone(),
-            author_mail: entry.author_mail.clone(),
-            author_time: entry.author_time,
-            author_tz: entry.author_tz.clone(),
-            committer: entry.committer_name.clone(),
-            committer_mail: entry.committer_email.clone(),
-            committer_time: entry.committer_time,
-            committer_tz: entry.committer_tz.clone(),
-            summary: entry.summary.clone(),
-            previous: entry.previous.clone(),
-            filename: entry.filename.clone(),
-        })
-        .collect::<Vec<_>>();
-
-    let messages = blame
-        .messages
-        .into_iter()
-        .map(|(oid, message)| proto::CommitMessage {
-            oid: oid.as_bytes().into(),
-            message,
-        })
-        .collect::<Vec<_>>();
-
-    proto::BlameBufferResponse {
-        blame_response: Some(proto::blame_buffer_response::BlameResponse {
-            entries,
-            messages,
-            remote_url: blame.remote_url,
-        }),
-    }
-}
-
-fn deserialize_blame_buffer_response(
-    response: proto::BlameBufferResponse,
-) -> Option<git::blame::Blame> {
-    let response = response.blame_response?;
-    let entries = response
-        .entries
-        .into_iter()
-        .filter_map(|entry| {
-            Some(git::blame::BlameEntry {
-                sha: git::Oid::from_bytes(&entry.sha).ok()?,
-                range: entry.start_line..entry.end_line,
-                original_line_number: entry.original_line_number,
-                committer_name: entry.committer,
-                committer_time: entry.committer_time,
-                committer_tz: entry.committer_tz,
-                committer_email: entry.committer_mail,
-                author: entry.author,
-                author_mail: entry.author_mail,
-                author_time: entry.author_time,
-                author_tz: entry.author_tz,
-                summary: entry.summary,
-                previous: entry.previous,
-                filename: entry.filename,
-            })
-        })
-        .collect::<Vec<_>>();
-
-    let messages = response
-        .messages
-        .into_iter()
-        .filter_map(|message| Some((git::Oid::from_bytes(&message.oid).ok()?, message.message)))
-        .collect::<HashMap<_, _>>();
-
-    Some(Blame {
-        entries,
-        messages,
-        remote_url: response.remote_url,
-    })
-}
-
-fn get_permalink_in_rust_registry_src(
-    provider_registry: Arc<GitHostingProviderRegistry>,
-    path: PathBuf,
-    selection: Range<u32>,
-) -> Result<url::Url> {
-    #[derive(Deserialize)]
-    struct CargoVcsGit {
-        sha1: String,
-    }
-
-    #[derive(Deserialize)]
-    struct CargoVcsInfo {
-        git: CargoVcsGit,
-        path_in_vcs: String,
-    }
-
-    #[derive(Deserialize)]
-    struct CargoPackage {
-        repository: String,
-    }
-
-    #[derive(Deserialize)]
-    struct CargoToml {
-        package: CargoPackage,
-    }
-
-    let Some((dir, cargo_vcs_info_json)) = path.ancestors().skip(1).find_map(|dir| {
-        let json = std::fs::read_to_string(dir.join(".cargo_vcs_info.json")).ok()?;
-        Some((dir, json))
-    }) else {
-        bail!("No .cargo_vcs_info.json found in parent directories")
-    };
-    let cargo_vcs_info = serde_json::from_str::<CargoVcsInfo>(&cargo_vcs_info_json)?;
-    let cargo_toml = std::fs::read_to_string(dir.join("Cargo.toml"))?;
-    let manifest = toml::from_str::<CargoToml>(&cargo_toml)?;
-    let (provider, remote) = parse_git_remote_url(provider_registry, &manifest.package.repository)
-        .ok_or_else(|| anyhow!("Failed to parse package.repository field of manifest"))?;
-    let path = PathBuf::from(cargo_vcs_info.path_in_vcs).join(path.strip_prefix(dir).unwrap());
-    let permalink = provider.build_permalink(
-        remote,
-        BuildPermalinkParams {
-            sha: &cargo_vcs_info.git.sha1,
-            path: &path.to_string_lossy(),
-            selection: Some(selection),
-        },
-    );
-    Ok(permalink)
 }

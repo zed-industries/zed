@@ -224,6 +224,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
         &[
             "bash",
             "bash_aliases",
+            "bash_login",
             "bash_logout",
             "bash_profile",
             "bashrc",
@@ -233,10 +234,12 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
             "ps1",
             "sh",
             "zlogin",
+            "zlogout",
+            "zprofile",
             "zsh",
             "zsh_aliases",
             "zsh_histfile",
-            "zsh_profile",
+            "zsh_history",
             "zshenv",
             "zshrc",
         ],
@@ -264,6 +267,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
     ("vs_sln", &["sln"]),
     ("vs_suo", &["suo"]),
     ("vue", &["vue"]),
+    ("vyper", &["vy", "vyi"]),
     ("wgsl", &["wgsl"]),
     ("zig", &["zig"]),
 ];
@@ -349,6 +353,7 @@ const FILE_ICONS: &[(&str, &str)] = &[
     ("vs_sln", "icons/file_icons/file.svg"),
     ("vs_suo", "icons/file_icons/file.svg"),
     ("vue", "icons/file_icons/vue.svg"),
+    ("vyper", "icons/file_icons/vyper.svg"),
     ("wgsl", "icons/file_icons/wgsl.svg"),
     ("zig", "icons/file_icons/zig.svg"),
 ];

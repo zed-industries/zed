@@ -6,17 +6,19 @@ pub use crate::extension_slash_command::*;
 pub use crate::slash_command_registry::*;
 pub use crate::slash_command_working_set::*;
 use anyhow::Result;
-use futures::stream::{self, BoxStream};
 use futures::StreamExt;
+use futures::stream::{self, BoxStream};
 use gpui::{App, SharedString, Task, WeakEntity, Window};
+use language::HighlightId;
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate, OffsetRangeExt};
 pub use language_model::Role;
 use serde::{Deserialize, Serialize};
 use std::{
     ops::Range,
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
 };
-use workspace::{ui::IconName, Workspace};
+use ui::ActiveTheme;
+use workspace::{Workspace, ui::IconName};
 
 pub fn init(cx: &mut App) {
     SlashCommandRegistry::default_global(cx);
@@ -323,6 +325,18 @@ impl SlashCommandLine {
         }
         call
     }
+}
+
+pub fn create_label_for_command(command_name: &str, arguments: &[&str], cx: &App) -> CodeLabel {
+    let mut label = CodeLabel::default();
+    label.push_str(command_name, None);
+    label.push_str(" ", None);
+    label.push_str(
+        &arguments.join(" "),
+        cx.theme().syntax().highlight_id("comment").map(HighlightId),
+    );
+    label.filter_range = 0..command_name.len();
+    label
 }
 
 #[cfg(test)]

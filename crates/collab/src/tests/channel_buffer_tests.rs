@@ -1,6 +1,6 @@
 use crate::{
     rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
-    tests::{test_server::open_channel_notes, TestServer},
+    tests::{TestServer, test_server::open_channel_notes},
 };
 use call::ActiveCall;
 use channel::ACKNOWLEDGE_DEBOUNCE_INTERVAL;
@@ -10,9 +10,10 @@ use collections::HashMap;
 use editor::{Anchor, Editor, ToOffset};
 use futures::future;
 use gpui::{BackgroundExecutor, Context, Entity, TestAppContext, Window};
-use rpc::{proto::PeerId, RECEIVE_TIMEOUT};
+use rpc::{RECEIVE_TIMEOUT, proto::PeerId};
 use serde_json::json;
 use std::ops::Range;
+use workspace::CollaboratorId;
 
 #[gpui::test]
 async fn test_core_channel_buffers(
@@ -300,13 +301,20 @@ fn assert_remote_selections(
     cx: &mut Context<Editor>,
 ) {
     let snapshot = editor.snapshot(window, cx);
+    let hub = editor.collaboration_hub().unwrap();
+    let collaborators = hub.collaborators(cx);
     let range = Anchor::min()..Anchor::max();
     let remote_selections = snapshot
-        .remote_selections_in_range(&range, editor.collaboration_hub().unwrap(), cx)
+        .remote_selections_in_range(&range, hub, cx)
         .map(|s| {
+            let CollaboratorId::PeerId(peer_id) = s.collaborator_id else {
+                panic!("unexpected collaborator id");
+            };
             let start = s.selection.start.to_offset(&snapshot.buffer_snapshot);
             let end = s.selection.end.to_offset(&snapshot.buffer_snapshot);
-            (s.participant_index, start..end)
+            let user_id = collaborators.get(&peer_id).unwrap().user_id;
+            let participant_index = hub.user_participant_indices(cx).get(&user_id).copied();
+            (participant_index, start..end)
         })
         .collect::<Vec<_>>();
     assert_eq!(

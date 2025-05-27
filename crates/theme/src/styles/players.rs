@@ -4,7 +4,7 @@ use gpui::Hsla;
 use serde_derive::Deserialize;
 
 use crate::{
-    amber, blue, jade, lime, orange, pink, purple, red, try_parse_color, PlayerColorContent,
+    PlayerColorContent, amber, blue, jade, lime, orange, pink, purple, red, try_parse_color,
 };
 
 #[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq)]
@@ -127,6 +127,10 @@ impl PlayerColors {
 impl PlayerColors {
     pub fn local(&self) -> PlayerColor {
         *self.0.first().unwrap()
+    }
+
+    pub fn agent(&self) -> PlayerColor {
+        *self.0.last().unwrap()
     }
 
     pub fn absent(&self) -> PlayerColor {

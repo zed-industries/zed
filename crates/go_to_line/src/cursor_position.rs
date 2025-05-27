@@ -6,11 +6,11 @@ use settings::{Settings, SettingsSources};
 use std::{fmt::Write, num::NonZeroU32, time::Duration};
 use text::{Point, Selection};
 use ui::{
-    div, Button, ButtonCommon, Clickable, Context, FluentBuilder, IntoElement, LabelSize,
-    ParentElement, Render, Tooltip, Window,
+    Button, ButtonCommon, Clickable, Context, FluentBuilder, IntoElement, LabelSize, ParentElement,
+    Render, Tooltip, Window, div,
 };
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
-use workspace::{item::ItemHandle, StatusItemView, Workspace};
+use workspace::{StatusItemView, Workspace, item::ItemHandle};
 
 #[derive(Copy, Clone, Debug, Default, PartialOrd, PartialEq)]
 pub(crate) struct SelectionStats {
@@ -91,15 +91,16 @@ impl CursorPosition {
                         cursor_position.selected_count.selections = editor.selections.count();
                         match editor.mode() {
                             editor::EditorMode::AutoHeight { .. }
-                            | editor::EditorMode::SingleLine { .. } => {
+                            | editor::EditorMode::SingleLine { .. }
+                            | editor::EditorMode::Minimap { .. } => {
                                 cursor_position.position = None;
                                 cursor_position.context = None;
                             }
-                            editor::EditorMode::Full => {
+                            editor::EditorMode::Full { .. } => {
                                 let mut last_selection = None::<Selection<Point>>;
                                 let snapshot = editor.buffer().read(cx).snapshot(cx);
                                 if snapshot.excerpts().count() > 0 {
-                                    for selection in editor.selections.all::<Point>(cx) {
+                                    for selection in editor.selections.all_adjusted(cx) {
                                         let selection_summary = snapshot
                                             .text_summary_for_range::<text::TextSummary, _>(
                                                 selection.start..selection.end,
@@ -280,10 +281,6 @@ pub(crate) enum LineIndicatorFormat {
     Long,
 }
 
-/// Whether or not to automatically check for updates.
-///
-/// Values: short, long
-/// Default: short
 #[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize)]
 #[serde(transparent)]
 pub(crate) struct LineIndicatorFormatContent(LineIndicatorFormat);
@@ -301,4 +298,6 @@ impl Settings for LineIndicatorFormat {
 
         Ok(format.0)
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }

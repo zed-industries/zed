@@ -2,7 +2,7 @@ use crate::{Completion, Copilot};
 use anyhow::Result;
 use gpui::{App, Context, Entity, EntityId, Task};
 use inline_completion::{Direction, EditPredictionProvider, InlineCompletion};
-use language::{language_settings::AllLanguageSettings, Buffer, OffsetRangeExt, ToOffset};
+use language::{Buffer, OffsetRangeExt, ToOffset, language_settings::AllLanguageSettings};
 use project::Project;
 use settings::Settings;
 use std::{path::Path, time::Duration};
@@ -264,18 +264,18 @@ fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b:
 mod tests {
     use super::*;
     use editor::{
-        test::editor_lsp_test_context::EditorLspTestContext, Editor, ExcerptRange, MultiBuffer,
+        Editor, ExcerptRange, MultiBuffer, test::editor_lsp_test_context::EditorLspTestContext,
     };
     use fs::FakeFs;
     use futures::StreamExt;
     use gpui::{AppContext as _, BackgroundExecutor, TestAppContext, UpdateGlobal};
     use indoc::indoc;
     use language::{
+        Point,
         language_settings::{
-            AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings,
+            AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings, LspInsertMode,
             WordsCompletionMode,
         },
-        Point,
     };
     use project::Project;
     use serde_json::json;
@@ -283,7 +283,7 @@ mod tests {
     use std::future::Future;
     use util::{
         path,
-        test::{marked_text_ranges_by, TextRangeMarker},
+        test::{TextRangeMarker, marked_text_ranges_by},
     };
 
     #[gpui::test(iterations = 10)]
@@ -294,6 +294,7 @@ mod tests {
                 words: WordsCompletionMode::Disabled,
                 lsp: true,
                 lsp_fetch_timeout_ms: 0,
+                lsp_insert_mode: LspInsertMode::Insert,
             });
         });
 
@@ -525,6 +526,7 @@ mod tests {
                 words: WordsCompletionMode::Disabled,
                 lsp: true,
                 lsp_fetch_timeout_ms: 0,
+                lsp_insert_mode: LspInsertMode::Insert,
             });
         });
 
@@ -729,18 +731,12 @@ mod tests {
             let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
             multibuffer.push_excerpts(
                 buffer_1.clone(),
-                [ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(2, 0),
-                    primary: None,
-                }],
+                [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))],
                 cx,
             );
             multibuffer.push_excerpts(
                 buffer_2.clone(),
-                [ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(2, 0),
-                    primary: None,
-                }],
+                [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))],
                 cx,
             );
             multibuffer
@@ -981,18 +977,12 @@ mod tests {
             let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
             multibuffer.push_excerpts(
                 private_buffer.clone(),
-                [ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(1, 0),
-                    primary: None,
-                }],
+                [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 0))],
                 cx,
             );
             multibuffer.push_excerpts(
                 public_buffer.clone(),
-                [ExcerptRange {
-                    context: Point::new(0, 0)..Point::new(6, 0),
-                    primary: None,
-                }],
+                [ExcerptRange::new(Point::new(0, 0)..Point::new(6, 0))],
                 cx,
             );
             multibuffer
@@ -1013,7 +1003,7 @@ mod tests {
             .unwrap();
 
         let mut copilot_requests = copilot_lsp
-            .handle_request::<crate::request::GetCompletions, _, _>(
+            .set_request_handler::<crate::request::GetCompletions, _, _>(
                 move |_params, _cx| async move {
                     Ok(crate::request::GetCompletionsResult {
                         completions: vec![crate::request::Completion {
@@ -1054,7 +1044,7 @@ mod tests {
         completions: Vec<crate::request::Completion>,
         completions_cycling: Vec<crate::request::Completion>,
     ) {
-        lsp.handle_request::<crate::request::GetCompletions, _, _>(move |_params, _cx| {
+        lsp.set_request_handler::<crate::request::GetCompletions, _, _>(move |_params, _cx| {
             let completions = completions.clone();
             async move {
                 Ok(crate::request::GetCompletionsResult {
@@ -1062,14 +1052,16 @@ mod tests {
                 })
             }
         });
-        lsp.handle_request::<crate::request::GetCompletionsCycling, _, _>(move |_params, _cx| {
-            let completions_cycling = completions_cycling.clone();
-            async move {
-                Ok(crate::request::GetCompletionsResult {
-                    completions: completions_cycling.clone(),
-                })
-            }
-        });
+        lsp.set_request_handler::<crate::request::GetCompletionsCycling, _, _>(
+            move |_params, _cx| {
+                let completions_cycling = completions_cycling.clone();
+                async move {
+                    Ok(crate::request::GetCompletionsResult {
+                        completions: completions_cycling.clone(),
+                    })
+                }
+            },
+        );
     }
 
     fn handle_completion_request(
@@ -1090,7 +1082,7 @@ mod tests {
             cx.to_lsp_range(marked_ranges.remove(&replace_range_marker).unwrap()[0].clone());
 
         let mut request =
-            cx.handle_request::<lsp::request::Completion, _, _>(move |url, params, _| {
+            cx.set_request_handler::<lsp::request::Completion, _, _>(move |url, params, _| {
                 let completions = completions.clone();
                 async move {
                     assert_eq!(params.text_document_position.text_document.uri, url.clone());

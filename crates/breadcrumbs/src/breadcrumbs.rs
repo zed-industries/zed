@@ -6,10 +6,10 @@ use gpui::{
 use itertools::Itertools;
 use std::cmp;
 use theme::ActiveTheme;
-use ui::{prelude::*, ButtonLike, ButtonStyle, Label, Tooltip};
+use ui::{ButtonLike, ButtonStyle, Label, Tooltip, prelude::*};
 use workspace::{
-    item::{BreadcrumbText, ItemEvent, ItemHandle},
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+    item::{BreadcrumbText, ItemEvent, ItemHandle},
 };
 
 pub struct Breadcrumbs {
@@ -131,8 +131,9 @@ impl Render for Breadcrumbs {
                     }),
             ),
             None => element
-                // Match the height of the `ButtonLike` in the other arm.
+                // Match the height and padding of the `ButtonLike` in the other arm.
                 .h(rems_from_px(22.))
+                .pl_1()
                 .child(breadcrumbs_stack),
         }
     }

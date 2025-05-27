@@ -1,6 +1,6 @@
+use crate::KERNEL_DOCS_URL;
 use crate::kernels::KernelSpecification;
 use crate::repl_store::ReplStore;
-use crate::KERNEL_DOCS_URL;
 
 use gpui::AnyView;
 use gpui::DismissEvent;
@@ -15,7 +15,7 @@ use ui::ListItemSpacing;
 
 use gpui::SharedString;
 use gpui::Task;
-use ui::{prelude::*, ListItem, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
+use ui::{ListItem, PopoverMenu, PopoverMenuHandle, PopoverTrigger, prelude::*};
 
 type OnSelect = Box<dyn Fn(KernelSpecification, &mut Window, &mut App)>;
 

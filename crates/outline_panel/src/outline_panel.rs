@@ -5,62 +5,62 @@ use std::{
     collections::BTreeMap,
     hash::Hash,
     ops::Range,
-    path::{Path, PathBuf, MAIN_SEPARATOR_STR},
+    path::{MAIN_SEPARATOR_STR, Path, PathBuf},
     sync::{
-        atomic::{self, AtomicBool},
         Arc, OnceLock,
+        atomic::{self, AtomicBool},
     },
     time::Duration,
     u32,
 };
 
 use anyhow::Context as _;
-use collections::{hash_map, BTreeSet, HashMap, HashSet};
+use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
+    AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, EditorSettings, ExcerptId,
+    ExcerptRange, MultiBufferSnapshot, RangeToAnchorExt, ShowScrollbar,
     display_map::ToDisplayPoint,
     items::{entry_git_aware_label_color, entry_label_color},
     scroll::{Autoscroll, AutoscrollStrategy, ScrollAnchor, ScrollbarAutoHide},
-    AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, EditorMode, EditorSettings, ExcerptId,
-    ExcerptRange, MultiBufferSnapshot, RangeToAnchorExt, ShowScrollbar,
 };
 use file_icons::FileIcons;
-use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
+use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    actions, anchored, deferred, div, point, px, size, uniform_list, Action, AnyElement, App,
-    AppContext as _, AsyncWindowContext, Bounds, ClipboardItem, Context, DismissEvent, Div,
-    ElementId, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle, InteractiveElement,
-    IntoElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton,
-    MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy, SharedString, Stateful,
-    StatefulInteractiveElement as _, Styled, Subscription, Task, UniformListScrollHandle,
-    WeakEntity, Window,
+    Action, AnyElement, App, AppContext as _, AsyncWindowContext, Bounds, ClipboardItem, Context,
+    DismissEvent, Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
+    InteractiveElement, IntoElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
+    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy,
+    SharedString, Stateful, StatefulInteractiveElement as _, Styled, Subscription, Task,
+    UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, point, px, size,
+    uniform_list,
 };
 use itertools::Itertools;
 use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 
 use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings, ShowIndentGuides};
-use project::{File, Fs, Project, ProjectItem};
+use project::{File, Fs, GitEntry, GitTraversal, Project, ProjectItem};
 use search::{BufferSearchBar, ProjectSearchView};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use smol::channel;
 use theme::{SyntaxTheme, ThemeSettings};
 use ui::{DynamicSpacing, IndentGuideColors, IndentGuideLayout};
-use util::{debug_panic, RangeExt, ResultExt, TryFutureExt};
+use util::{RangeExt, ResultExt, TryFutureExt, debug_panic};
 use workspace::{
+    OpenInTerminal, WeakItemHandle, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     item::ItemHandle,
     searchable::{SearchEvent, SearchableItem},
     ui::{
-        h_flex, v_flex, ActiveTheme, ButtonCommon, Clickable, Color, ContextMenu, FluentBuilder,
-        HighlightedLabel, Icon, IconButton, IconButtonShape, IconName, IconSize, Label,
-        LabelCommon, ListItem, Scrollbar, ScrollbarState, StyledExt, StyledTypography, Toggleable,
-        Tooltip,
+        ActiveTheme, ButtonCommon, Clickable, Color, ContextMenu, FluentBuilder, HighlightedLabel,
+        Icon, IconButton, IconButtonShape, IconName, IconSize, Label, LabelCommon, ListItem,
+        Scrollbar, ScrollbarState, StyledExt, StyledTypography, Toggleable, Tooltip, h_flex,
+        v_flex,
     },
-    OpenInTerminal, WeakItemHandle, Workspace,
 };
-use worktree::{Entry, GitEntry, ProjectEntryId, WorktreeId};
+use worktree::{Entry, ProjectEntryId, WorktreeId};
 
 actions!(
     outline_panel,
@@ -70,7 +70,7 @@ actions!(
         ExpandAllEntries,
         ExpandSelectedEntry,
         FoldDirectory,
-        Open,
+        OpenSelectedEntry,
         RevealInFileManager,
         SelectParent,
         ToggleActiveEditorPin,
@@ -646,7 +646,7 @@ struct ActiveItem {
     item_handle: Box<dyn WeakItemHandle>,
     active_editor: WeakEntity<Editor>,
     _buffer_search_subscription: Subscription,
-    _editor_subscrpiption: Subscription,
+    _editor_subscription: Subscription,
 }
 
 #[derive(Debug)]
@@ -680,16 +680,25 @@ impl OutlinePanel {
         workspace: WeakEntity<Workspace>,
         mut cx: AsyncWindowContext,
     ) -> anyhow::Result<Entity<Self>> {
-        let serialized_panel = cx
-            .background_spawn(async move { KEY_VALUE_STORE.read_kvp(OUTLINE_PANEL_KEY) })
-            .await
-            .context("loading outline panel")
-            .log_err()
+        let serialized_panel = match workspace
+            .read_with(&cx, |workspace, _| {
+                OutlinePanel::serialization_key(workspace)
+            })
+            .ok()
             .flatten()
-            .map(|panel| serde_json::from_str::<SerializedOutlinePanel>(&panel))
-            .transpose()
-            .log_err()
-            .flatten();
+        {
+            Some(serialization_key) => cx
+                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
+                .await
+                .context("loading outline panel")
+                .log_err()
+                .flatten()
+                .map(|panel| serde_json::from_str::<SerializedOutlinePanel>(&panel))
+                .transpose()
+                .log_err()
+                .flatten(),
+            None => None,
+        };
 
         workspace.update_in(&mut cx, |workspace, window, cx| {
             let panel = Self::new(workspace, window, cx);
@@ -845,14 +854,32 @@ impl OutlinePanel {
         outline_panel
     }
 
+    fn serialization_key(workspace: &Workspace) -> Option<String> {
+        workspace
+            .database_id()
+            .map(|id| i64::from(id).to_string())
+            .or(workspace.session_id())
+            .map(|id| format!("{}-{:?}", OUTLINE_PANEL_KEY, id))
+    }
+
     fn serialize(&mut self, cx: &mut Context<Self>) {
+        let Some(serialization_key) = self
+            .workspace
+            .read_with(cx, |workspace, _| {
+                OutlinePanel::serialization_key(workspace)
+            })
+            .ok()
+            .flatten()
+        else {
+            return;
+        };
         let width = self.width;
         let active = Some(self.active);
         self.pending_serialization = cx.background_spawn(
             async move {
                 KEY_VALUE_STORE
                     .write_kvp(
-                        OUTLINE_PANEL_KEY.into(),
+                        serialization_key,
                         serde_json::to_string(&SerializedOutlinePanel { width, active })?,
                     )
                     .await?;
@@ -922,7 +949,12 @@ impl OutlinePanel {
         self.update_cached_entries(None, window, cx);
     }
 
-    fn open(&mut self, _: &Open, window: &mut Window, cx: &mut Context<Self>) {
+    fn open_selected_entry(
+        &mut self,
+        _: &OpenSelectedEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.filter_editor.focus_handle(cx).is_focused(window) {
             cx.propagate()
         } else if let Some(selected_entry) = self.selected_entry().cloned() {
@@ -1067,7 +1099,7 @@ impl OutlinePanel {
                 if change_selection {
                     active_editor.update(cx, |editor, cx| {
                         editor.change_selections(
-                            Some(Autoscroll::Strategy(AutoscrollStrategy::Center)),
+                            Some(Autoscroll::Strategy(AutoscrollStrategy::Center, None)),
                             window,
                             cx,
                             |s| s.select_ranges(Some(anchor..anchor)),
@@ -1588,7 +1620,7 @@ impl OutlinePanel {
                                     .get(&external_file.buffer_id)
                                     .into_iter()
                                     .flat_map(|excerpts| {
-                                        excerpts.iter().map(|(excerpt_id, _)| {
+                                        excerpts.keys().map(|excerpt_id| {
                                             CollapsedEntry::Excerpt(
                                                 external_file.buffer_id,
                                                 *excerpt_id,
@@ -1609,7 +1641,7 @@ impl OutlinePanel {
                             entries.extend(
                                 self.excerpts.get(&file.buffer_id).into_iter().flat_map(
                                     |excerpts| {
-                                        excerpts.iter().map(|(excerpt_id, _)| {
+                                        excerpts.keys().map(|excerpt_id| {
                                             CollapsedEntry::Excerpt(file.buffer_id, *excerpt_id)
                                         })
                                     },
@@ -1767,11 +1799,7 @@ impl OutlinePanel {
         active_editor.update(cx, |editor, cx| {
             buffers_to_toggle.retain(|buffer_id| {
                 let folded = editor.is_buffer_folded(*buffer_id, cx);
-                if fold {
-                    !folded
-                } else {
-                    folded
-                }
+                if fold { !folded } else { folded }
             });
         });
 
@@ -2555,6 +2583,9 @@ impl OutlinePanel {
         let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
         let active_multi_buffer = active_editor.read(cx).buffer().clone();
         let new_entries = self.new_entries_for_fs_update.clone();
+        let repo_snapshots = self.project.update(cx, |project, cx| {
+            project.git_store().read(cx).repo_snapshots(cx)
+        });
         self.updating_fs_entries = true;
         self.fs_entries_update_task = cx.spawn_in(window, async move |outline_panel, cx| {
             if let Some(debounce) = debounce {
@@ -2566,6 +2597,7 @@ impl OutlinePanel {
             let mut root_entries = HashSet::default();
             let mut new_excerpts = HashMap::<BufferId, HashMap<ExcerptId, Excerpt>>::default();
             let Ok(buffer_excerpts) = outline_panel.update(cx, |outline_panel, cx| {
+                let git_store = outline_panel.project.read(cx).git_store().clone();
                 new_collapsed_entries = outline_panel.collapsed_entries.clone();
                 new_unfolded_dirs = outline_panel.unfolded_dirs.clone();
                 let multi_buffer_snapshot = active_multi_buffer.read(cx).snapshot(cx);
@@ -2579,9 +2611,17 @@ impl OutlinePanel {
                         let is_new = new_entries.contains(&excerpt_id)
                             || !outline_panel.excerpts.contains_key(&buffer_id);
                         let is_folded = active_editor.read(cx).is_buffer_folded(buffer_id, cx);
+                        let status = git_store
+                            .read(cx)
+                            .repository_and_path_for_buffer_id(buffer_id, cx)
+                            .and_then(|(repo, path)| {
+                                Some(repo.read(cx).status_for_path(&path)?.status)
+                            });
                         buffer_excerpts
                             .entry(buffer_id)
-                            .or_insert_with(|| (is_new, is_folded, Vec::new(), entry_id, worktree))
+                            .or_insert_with(|| {
+                                (is_new, is_folded, Vec::new(), entry_id, worktree, status)
+                            })
                             .2
                             .push(excerpt_id);
 
@@ -2631,7 +2671,7 @@ impl OutlinePanel {
                     >::default();
                     let mut external_excerpts = HashMap::default();
 
-                    for (buffer_id, (is_new, is_folded, excerpts, entry_id, worktree)) in
+                    for (buffer_id, (is_new, is_folded, excerpts, entry_id, worktree, status)) in
                         buffer_excerpts
                     {
                         if is_folded {
@@ -2665,15 +2705,20 @@ impl OutlinePanel {
                             match entry_id.and_then(|id| worktree.entry_for_id(id)).cloned() {
                                 Some(entry) => {
                                     let entry = GitEntry {
-                                        git_summary: worktree
-                                            .status_for_file(&entry.path)
+                                        git_summary: status
                                             .map(|status| status.summary())
                                             .unwrap_or_default(),
                                         entry,
                                     };
-                                    let mut traversal = worktree
-                                        .traverse_from_path(true, true, true, entry.path.as_ref())
-                                        .with_git_statuses();
+                                    let mut traversal = GitTraversal::new(
+                                        &repo_snapshots,
+                                        worktree.traverse_from_path(
+                                            true,
+                                            true,
+                                            true,
+                                            entry.path.as_ref(),
+                                        ),
+                                    );
 
                                     let mut entries_to_add = HashMap::default();
                                     worktree_excerpts
@@ -2944,7 +2989,7 @@ impl OutlinePanel {
         );
         self.active_item = Some(ActiveItem {
             _buffer_search_subscription: buffer_search_subscription,
-            _editor_subscrpiption: subscribe_for_editor_events(&new_active_editor, window, cx),
+            _editor_subscription: subscribe_for_editor_events(&new_active_editor, window, cx),
             item_handle: new_active_item.downgrade_item(),
             active_editor: new_active_editor.downgrade(),
         });
@@ -4290,19 +4335,7 @@ impl OutlinePanel {
         {
             return None;
         }
-
-        let scroll_handle = self.scroll_handle.0.borrow();
-        let longest_item_width = scroll_handle
-            .last_item_size
-            .filter(|size| size.contents.width > size.item.width)?
-            .contents
-            .width
-            .0 as f64;
-        if longest_item_width < scroll_handle.base_handle.bounds().size.width.0 as f64 {
-            return None;
-        }
-
-        Some(
+        Scrollbar::horizontal(self.horizontal_scrollbar_state.clone()).map(|scrollbar| {
             div()
                 .occlude()
                 .id("project-panel-horizontal-scroll")
@@ -4339,12 +4372,8 @@ impl OutlinePanel {
                 .bottom_0()
                 .h(px(12.))
                 .cursor_default()
-                .when(self.width.is_some(), |this| {
-                    this.children(Scrollbar::horizontal(
-                        self.horizontal_scrollbar_state.clone(),
-                    ))
-                }),
-        )
+                .child(scrollbar)
+        })
     }
 
     fn should_show_scrollbar(cx: &App) -> bool {
@@ -4574,7 +4603,7 @@ impl OutlinePanel {
                         .with_render_fn(
                             cx.entity().clone(),
                             move |outline_panel, params, _, _| {
-                                const LEFT_OFFSET: f32 = 14.;
+                                const LEFT_OFFSET: Pixels = px(14.);
 
                                 let indent_size = params.indent_size;
                                 let item_height = params.item_height;
@@ -4590,11 +4619,10 @@ impl OutlinePanel {
                                     .map(|(ix, layout)| {
                                         let bounds = Bounds::new(
                                             point(
-                                                px(layout.offset.x as f32) * indent_size
-                                                    + px(LEFT_OFFSET),
-                                                px(layout.offset.y as f32) * item_height,
+                                                layout.offset.x * indent_size + LEFT_OFFSET,
+                                                layout.offset.y * item_height,
                                             ),
-                                            size(px(1.), px(layout.length as f32) * item_height),
+                                            size(px(1.), layout.length * item_height),
                                         );
                                         ui::RenderedIndentGuide {
                                             bounds,
@@ -4713,7 +4741,7 @@ fn workspace_active_editor(
     let active_item = workspace.active_item(cx)?;
     let active_editor = active_item
         .act_as::<Editor>(cx)
-        .filter(|editor| editor.read(cx).mode() == EditorMode::Full)?;
+        .filter(|editor| editor.read(cx).mode().is_full())?;
     Some((active_item, active_editor))
 }
 
@@ -4786,10 +4814,12 @@ impl Panel for OutlinePanel {
             .unwrap_or_else(|| OutlinePanelSettings::get_global(cx).default_width)
     }
 
-    fn set_size(&mut self, size: Option<Pixels>, _: &mut Window, cx: &mut Context<Self>) {
+    fn set_size(&mut self, size: Option<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         self.width = size;
-        self.serialize(cx);
         cx.notify();
+        cx.defer_in(window, |this, _, cx| {
+            this.serialize(cx);
+        });
     }
 
     fn icon(&self, _: &Window, cx: &App) -> Option<IconName> {
@@ -4894,7 +4924,7 @@ impl Render for OutlinePanel {
                 }
             }))
             .key_context(self.dispatch_context(window, cx))
-            .on_action(cx.listener(Self::open))
+            .on_action(cx.listener(Self::open_selected_entry))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
@@ -4945,7 +4975,7 @@ impl Render for OutlinePanel {
                         .border_color(cx.theme().colors().border)
                         .gap_0p5()
                         .child(Label::new("Searching:").color(Color::Muted))
-                        .child(Label::new(format!("'{}'", search_state.query))),
+                        .child(Label::new(search_state.query.to_string())),
                 )
             })
             .child(self.render_main_contents(query, show_indent_guides, indent_size, window, cx))
@@ -5011,7 +5041,7 @@ fn subscribe_for_editor_events(
                         .extend(excerpts.iter().map(|&(excerpt_id, _)| excerpt_id));
                     outline_panel.update_fs_entries(editor.clone(), debounce, window, cx);
                 }
-                EditorEvent::ExcerptsRemoved { ids } => {
+                EditorEvent::ExcerptsRemoved { ids, .. } => {
                     let mut ids = ids.iter().collect::<HashSet<_>>();
                     for excerpts in outline_panel.excerpts.values_mut() {
                         excerpts.retain(|excerpt_id, _| !ids.remove(excerpt_id));
@@ -5149,7 +5179,7 @@ impl GenerationState {
 mod tests {
     use db::indoc;
     use gpui::{TestAppContext, VisualTestContext, WindowHandle};
-    use language::{tree_sitter_rust, Language, LanguageConfig, LanguageMatcher};
+    use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use search::project_search::{self, perform_project_search};
@@ -5612,7 +5642,7 @@ mod tests {
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
 
-        let active_editor = outline_panel.update(cx, |outline_panel, _| {
+        let active_editor = outline_panel.read_with(cx, |outline_panel, _| {
             outline_panel
                 .active_editor()
                 .expect("should have an active editor open")
@@ -5665,7 +5695,7 @@ mod tests {
         });
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.open(&Open, window, cx);
+            outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
         });
         outline_panel.update(cx, |_outline_panel, cx| {
             assert_eq!(
@@ -5678,8 +5708,7 @@ mod tests {
         outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.select_next(&SelectNext, window, cx);
         });
-        let next_navigated_outline_selection =
-            "search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },";
+        let next_navigated_outline_selection = "search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },";
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
@@ -5708,7 +5737,7 @@ mod tests {
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
-        let new_active_editor = outline_panel.update(cx, |outline_panel, _| {
+        let new_active_editor = outline_panel.read_with(cx, |outline_panel, _| {
             outline_panel
                 .active_editor()
                 .expect("should have an active editor open")
@@ -5841,7 +5870,7 @@ mod tests {
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.select_previous(&SelectPrevious, window, cx);
-            outline_panel.open(&Open, window, cx);
+            outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
@@ -5865,7 +5894,7 @@ mod tests {
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
             outline_panel.select_next(&SelectNext, window, cx);
-            outline_panel.open(&Open, window, cx);
+            outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
@@ -5886,7 +5915,7 @@ mod tests {
         });
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.open(&Open, window, cx);
+            outline_panel.open_selected_entry(&OpenSelectedEntry, window, cx);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));

@@ -6,7 +6,7 @@
 
 use std::ffi::CString;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result};
 use indoc::{formatdoc, indoc};
 use libsqlite3_sys::sqlite3_exec;
 
@@ -69,14 +69,14 @@ impl Connection {
                         // Migration already run. Continue
                         continue;
                     } else {
-                        return Err(anyhow!(formatdoc! {"
-                            Migration changed for {} at step {}
+                        anyhow::bail!(formatdoc! {"
+                            Migration changed for {domain} at step {index}
 
                             Stored migration:
-                            {}
+                            {completed_migration}
 
                             Proposed migration:
-                            {}", domain, index, completed_migration, migration}));
+                            {migration}"});
                     }
                 }
 

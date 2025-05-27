@@ -1,20 +1,25 @@
-use crate::ui::InstructionListItem;
 use crate::AllLanguageModelSettings;
-use anthropic::{AnthropicError, ContentDelta, Event, ResponseContent, Usage};
-use anyhow::{anyhow, Context as _, Result};
+use crate::ui::InstructionListItem;
+use anthropic::{
+    AnthropicError, AnthropicModelMode, ContentDelta, Event, ResponseContent, ToolResultContent,
+    ToolResultPart, Usage,
+};
+use anyhow::{Context as _, Result, anyhow};
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::Stream;
-use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryStreamExt as _};
+use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
 };
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCacheConfiguration, LanguageModelId,
-    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, MessageContent, RateLimiter, Role,
+    AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
+    LanguageModelCompletionError, LanguageModelId, LanguageModelKnownError, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolResultContent, MessageContent, RateLimiter, Role, WrappedTextContent,
 };
 use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use schemars::JsonSchema;
@@ -25,8 +30,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
-use ui::{prelude::*, Icon, IconName, List, Tooltip};
-use util::{maybe, ResultExt};
+use ui::{Icon, IconName, List, Tooltip, prelude::*};
+use util::ResultExt;
 
 const PROVIDER_ID: &str = language_model::ANTHROPIC_PROVIDER_ID;
 const PROVIDER_NAME: &str = "Anthropic";
@@ -55,6 +60,37 @@ pub struct AvailableModel {
     pub default_temperature: Option<f32>,
     #[serde(default)]
     pub extra_beta_headers: Vec<String>,
+    /// The model's mode (e.g. thinking)
+    pub mode: Option<ModelMode>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ModelMode {
+    #[default]
+    Default,
+    Thinking {
+        /// The maximum number of tokens to use for reasoning. Must be lower than the model's `max_output_tokens`.
+        budget_tokens: Option<u32>,
+    },
+}
+
+impl From<ModelMode> for AnthropicModelMode {
+    fn from(value: ModelMode) -> Self {
+        match value {
+            ModelMode::Default => AnthropicModelMode::Default,
+            ModelMode::Thinking { budget_tokens } => AnthropicModelMode::Thinking { budget_tokens },
+        }
+    }
+}
+
+impl From<AnthropicModelMode> for ModelMode {
+    fn from(value: AnthropicModelMode) -> Self {
+        match value {
+            AnthropicModelMode::Default => ModelMode::Default,
+            AnthropicModelMode::Thinking { budget_tokens } => ModelMode::Thinking { budget_tokens },
+        }
+    }
 }
 
 pub struct AnthropicLanguageModelProvider {
@@ -161,6 +197,16 @@ impl AnthropicLanguageModelProvider {
 
         Self { http_client, state }
     }
+
+    fn create_language_model(&self, model: anthropic::Model) -> Arc<dyn LanguageModel> {
+        Arc::new(AnthropicModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            state: self.state.clone(),
+            http_client: self.http_client.clone(),
+            request_limiter: RateLimiter::new(4),
+        })
+    }
 }
 
 impl LanguageModelProviderState for AnthropicLanguageModelProvider {
@@ -185,14 +231,21 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        let model = anthropic::Model::default();
-        Some(Arc::new(AnthropicModel {
-            id: LanguageModelId::from(model.id().to_string()),
-            model,
-            state: self.state.clone(),
-            http_client: self.http_client.clone(),
-            request_limiter: RateLimiter::new(4),
-        }))
+        Some(self.create_language_model(anthropic::Model::default()))
+    }
+
+    fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        Some(self.create_language_model(anthropic::Model::default_fast()))
+    }
+
+    fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+        [
+            anthropic::Model::ClaudeSonnet4,
+            anthropic::Model::ClaudeSonnet4Thinking,
+        ]
+        .into_iter()
+        .map(|model| self.create_language_model(model))
+        .collect()
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -228,21 +281,14 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
                     max_output_tokens: model.max_output_tokens,
                     default_temperature: model.default_temperature,
                     extra_beta_headers: model.extra_beta_headers.clone(),
+                    mode: model.mode.clone().unwrap_or_default().into(),
                 },
             );
         }
 
         models
             .into_values()
-            .map(|model| {
-                Arc::new(AnthropicModel {
-                    id: LanguageModelId::from(model.id().to_string()),
-                    model,
-                    state: self.state.clone(),
-                    http_client: self.http_client.clone(),
-                    request_limiter: RateLimiter::new(4),
-                }) as Arc<dyn LanguageModel>
-            })
+            .map(|model| self.create_language_model(model))
             .collect()
     }
 
@@ -291,15 +337,30 @@ pub fn count_anthropic_tokens(
                     MessageContent::Text(text) => {
                         string_contents.push_str(&text);
                     }
+                    MessageContent::Thinking { .. } => {
+                        // Thinking blocks are not included in the input token count.
+                    }
+                    MessageContent::RedactedThinking(_) => {
+                        // Thinking blocks are not included in the input token count.
+                    }
                     MessageContent::Image(image) => {
                         tokens_from_images += image.estimate_tokens();
                     }
                     MessageContent::ToolUse(_tool_use) => {
                         // TODO: Estimate token usage from tool uses.
                     }
-                    MessageContent::ToolResult(tool_result) => {
-                        string_contents.push_str(&tool_result.content);
-                    }
+                    MessageContent::ToolResult(tool_result) => match &tool_result.content {
+                        LanguageModelToolResultContent::Text(text)
+                        | LanguageModelToolResultContent::WrappedText(WrappedTextContent {
+                            text,
+                            ..
+                        }) => {
+                            string_contents.push_str(text);
+                        }
+                        LanguageModelToolResultContent::Image(image) => {
+                            tokens_from_images += image.estimate_tokens();
+                        }
+                    },
                 }
             }
 
@@ -342,7 +403,7 @@ impl AnthropicModel {
         };
 
         async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("Missing Anthropic API Key"))?;
+            let api_key = api_key.context("Missing Anthropic API Key")?;
             let request =
                 anthropic::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
             request.await.context("failed to stream completion")
@@ -366,6 +427,22 @@ impl LanguageModel for AnthropicModel {
 
     fn provider_name(&self) -> LanguageModelProviderName {
         LanguageModelProviderName(PROVIDER_NAME.into())
+    }
+
+    fn supports_tools(&self) -> bool {
+        true
+    }
+
+    fn supports_images(&self) -> bool {
+        true
+    }
+
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        match choice {
+            LanguageModelToolChoice::Auto
+            | LanguageModelToolChoice::Any
+            | LanguageModelToolChoice::None => true,
+        }
     }
 
     fn telemetry_id(&self) -> String {
@@ -396,17 +473,28 @@ impl LanguageModel for AnthropicModel {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+        >,
+    > {
         let request = into_anthropic(
             request,
-            self.model.id().into(),
+            self.model.request_id().into(),
             self.model.default_temperature(),
             self.model.max_output_tokens(),
+            self.model.mode(),
         );
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
-            let response = request.await.map_err(|err| anyhow!(err))?;
-            Ok(map_to_language_model_completion_events(response))
+            let response = request
+                .await
+                .map_err(|err| match err.downcast::<AnthropicError>() {
+                    Ok(anthropic_err) => anthropic_err_to_anyhow(anthropic_err),
+                    Err(err) => anyhow!(err),
+                })?;
+            Ok(AnthropicEventMapper::new().map_stream(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
     }
@@ -420,43 +508,6 @@ impl LanguageModel for AnthropicModel {
                 min_total_token: config.min_total_token,
             })
     }
-
-    fn use_any_tool(
-        &self,
-        request: LanguageModelRequest,
-        tool_name: String,
-        tool_description: String,
-        input_schema: serde_json::Value,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        let mut request = into_anthropic(
-            request,
-            self.model.tool_model_id().into(),
-            self.model.default_temperature(),
-            self.model.max_output_tokens(),
-        );
-        request.tool_choice = Some(anthropic::ToolChoice::Tool {
-            name: tool_name.clone(),
-        });
-        request.tools = vec![anthropic::Tool {
-            name: tool_name.clone(),
-            description: tool_description,
-            input_schema,
-        }];
-
-        let response = self.stream_completion(request, cx);
-        self.request_limiter
-            .run(async move {
-                let response = response.await?;
-                Ok(anthropic::extract_tool_args_from_events(
-                    tool_name,
-                    Box::pin(response.map_err(|e| anyhow!(e))),
-                )
-                .await?
-                .boxed())
-            })
-            .boxed()
-    }
 }
 
 pub fn into_anthropic(
@@ -464,6 +515,7 @@ pub fn into_anthropic(
     model: String,
     default_temperature: f32,
     max_output_tokens: u32,
+    mode: AnthropicModelMode,
 ) -> anthropic::Request {
     let mut new_messages: Vec<anthropic::Message> = Vec::new();
     let mut system_message = String::new();
@@ -496,6 +548,29 @@ pub fn into_anthropic(
                                 None
                             }
                         }
+                        MessageContent::Thinking {
+                            text: thinking,
+                            signature,
+                        } => {
+                            if !thinking.is_empty() {
+                                Some(anthropic::RequestContent::Thinking {
+                                    thinking,
+                                    signature: signature.unwrap_or_default(),
+                                    cache_control,
+                                })
+                            } else {
+                                None
+                            }
+                        }
+                        MessageContent::RedactedThinking(data) => {
+                            if !data.is_empty() {
+                                Some(anthropic::RequestContent::RedactedThinking {
+                                    data: String::from_utf8(data).ok()?,
+                                })
+                            } else {
+                                None
+                            }
+                        }
                         MessageContent::Image(image) => Some(anthropic::RequestContent::Image {
                             source: anthropic::ImageSource {
                                 source_type: "base64".to_string(),
@@ -516,7 +591,21 @@ pub fn into_anthropic(
                             Some(anthropic::RequestContent::ToolResult {
                                 tool_use_id: tool_result.tool_use_id.to_string(),
                                 is_error: tool_result.is_error,
-                                content: tool_result.content.to_string(),
+                                content: match tool_result.content {
+                                    LanguageModelToolResultContent::Text(text)
+                                    | LanguageModelToolResultContent::WrappedText(
+                                        WrappedTextContent { text, .. },
+                                    ) => ToolResultContent::Plain(text.to_string()),
+                                    LanguageModelToolResultContent::Image(image) => {
+                                        ToolResultContent::Multipart(vec![ToolResultPart::Image {
+                                            source: anthropic::ImageSource {
+                                                source_type: "base64".to_string(),
+                                                media_type: "image/png".to_string(),
+                                                data: image.source.to_string(),
+                                            },
+                                        }])
+                                    }
+                                },
                                 cache_control,
                             })
                         }
@@ -551,7 +640,16 @@ pub fn into_anthropic(
         model,
         messages: new_messages,
         max_tokens: max_output_tokens,
-        system: Some(system_message),
+        system: if system_message.is_empty() {
+            None
+        } else {
+            Some(anthropic::StringOrContents::String(system_message))
+        },
+        thinking: if let AnthropicModelMode::Thinking { budget_tokens } = mode {
+            Some(anthropic::Thinking::Enabled { budget_tokens })
+        } else {
+            None
+        },
         tools: request
             .tools
             .into_iter()
@@ -561,7 +659,11 @@ pub fn into_anthropic(
                 input_schema: tool.input_schema,
             })
             .collect(),
-        tool_choice: None,
+        tool_choice: request.tool_choice.map(|choice| match choice {
+            LanguageModelToolChoice::Auto => anthropic::ToolChoice::Auto,
+            LanguageModelToolChoice::Any => anthropic::ToolChoice::Any,
+            LanguageModelToolChoice::None => anthropic::ToolChoice::None,
+        }),
         metadata: None,
         stop_sequences: Vec::new(),
         temperature: request.temperature.or(Some(default_temperature)),
@@ -570,152 +672,197 @@ pub fn into_anthropic(
     }
 }
 
-pub fn map_to_language_model_completion_events(
-    events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>,
-) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
-    struct RawToolUse {
-        id: String,
-        name: String,
-        input_json: String,
-    }
+pub struct AnthropicEventMapper {
+    tool_uses_by_index: HashMap<usize, RawToolUse>,
+    usage: Usage,
+    stop_reason: StopReason,
+}
 
-    struct State {
-        events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>,
-        tool_uses_by_index: HashMap<usize, RawToolUse>,
-        usage: Usage,
-        stop_reason: StopReason,
-    }
-
-    futures::stream::unfold(
-        State {
-            events,
+impl AnthropicEventMapper {
+    pub fn new() -> Self {
+        Self {
             tool_uses_by_index: HashMap::default(),
             usage: Usage::default(),
             stop_reason: StopReason::EndTurn,
-        },
-        |mut state| async move {
-            while let Some(event) = state.events.next().await {
-                match event {
-                    Ok(event) => match event {
-                        Event::ContentBlockStart {
-                            index,
-                            content_block,
-                        } => match content_block {
-                            ResponseContent::Text { text } => {
-                                return Some((
-                                    vec![Ok(LanguageModelCompletionEvent::Text(text))],
-                                    state,
-                                ));
-                            }
-                            ResponseContent::ToolUse { id, name, .. } => {
-                                state.tool_uses_by_index.insert(
-                                    index,
-                                    RawToolUse {
-                                        id,
-                                        name,
-                                        input_json: String::new(),
-                                    },
-                                );
-                            }
+        }
+    }
+
+    pub fn map_stream(
+        mut self,
+        events: Pin<Box<dyn Send + Stream<Item = Result<Event, AnthropicError>>>>,
+    ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
+    {
+        events.flat_map(move |event| {
+            futures::stream::iter(match event {
+                Ok(event) => self.map_event(event),
+                Err(error) => vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))],
+            })
+        })
+    }
+
+    pub fn map_event(
+        &mut self,
+        event: Event,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        match event {
+            Event::ContentBlockStart {
+                index,
+                content_block,
+            } => match content_block {
+                ResponseContent::Text { text } => {
+                    vec![Ok(LanguageModelCompletionEvent::Text(text))]
+                }
+                ResponseContent::Thinking { thinking } => {
+                    vec![Ok(LanguageModelCompletionEvent::Thinking {
+                        text: thinking,
+                        signature: None,
+                    })]
+                }
+                ResponseContent::RedactedThinking { .. } => {
+                    // Redacted thinking is encrypted and not accessible to the user, see:
+                    // https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#suggestions-for-handling-redacted-thinking-in-production
+                    Vec::new()
+                }
+                ResponseContent::ToolUse { id, name, .. } => {
+                    self.tool_uses_by_index.insert(
+                        index,
+                        RawToolUse {
+                            id,
+                            name,
+                            input_json: String::new(),
                         },
-                        Event::ContentBlockDelta { index, delta } => match delta {
-                            ContentDelta::TextDelta { text } => {
-                                return Some((
-                                    vec![Ok(LanguageModelCompletionEvent::Text(text))],
-                                    state,
-                                ));
-                            }
-                            ContentDelta::InputJsonDelta { partial_json } => {
-                                if let Some(tool_use) = state.tool_uses_by_index.get_mut(&index) {
-                                    tool_use.input_json.push_str(&partial_json);
-                                }
-                            }
-                        },
-                        Event::ContentBlockStop { index } => {
-                            if let Some(tool_use) = state.tool_uses_by_index.remove(&index) {
-                                return Some((
-                                    vec![maybe!({
-                                        Ok(LanguageModelCompletionEvent::ToolUse(
-                                            LanguageModelToolUse {
-                                                id: tool_use.id.into(),
-                                                name: tool_use.name.into(),
-                                                input: if tool_use.input_json.is_empty() {
-                                                    serde_json::Value::Object(
-                                                        serde_json::Map::default(),
-                                                    )
-                                                } else {
-                                                    serde_json::Value::from_str(
-                                                        &tool_use.input_json,
-                                                    )
-                                                    .map_err(|err| anyhow!(err))?
-                                                },
-                                            },
-                                        ))
-                                    })],
-                                    state,
-                                ));
-                            }
+                    );
+                    Vec::new()
+                }
+            },
+            Event::ContentBlockDelta { index, delta } => match delta {
+                ContentDelta::TextDelta { text } => {
+                    vec![Ok(LanguageModelCompletionEvent::Text(text))]
+                }
+                ContentDelta::ThinkingDelta { thinking } => {
+                    vec![Ok(LanguageModelCompletionEvent::Thinking {
+                        text: thinking,
+                        signature: None,
+                    })]
+                }
+                ContentDelta::SignatureDelta { signature } => {
+                    vec![Ok(LanguageModelCompletionEvent::Thinking {
+                        text: "".to_string(),
+                        signature: Some(signature),
+                    })]
+                }
+                ContentDelta::InputJsonDelta { partial_json } => {
+                    if let Some(tool_use) = self.tool_uses_by_index.get_mut(&index) {
+                        tool_use.input_json.push_str(&partial_json);
+
+                        // Try to convert invalid (incomplete) JSON into
+                        // valid JSON that serde can accept, e.g. by closing
+                        // unclosed delimiters. This way, we can update the
+                        // UI with whatever has been streamed back so far.
+                        if let Ok(input) = serde_json::Value::from_str(
+                            &partial_json_fixer::fix_json(&tool_use.input_json),
+                        ) {
+                            return vec![Ok(LanguageModelCompletionEvent::ToolUse(
+                                LanguageModelToolUse {
+                                    id: tool_use.id.clone().into(),
+                                    name: tool_use.name.clone().into(),
+                                    is_input_complete: false,
+                                    raw_input: tool_use.input_json.clone(),
+                                    input,
+                                },
+                            ))];
                         }
-                        Event::MessageStart { message } => {
-                            update_usage(&mut state.usage, &message.usage);
-                            return Some((
-                                vec![
-                                    Ok(LanguageModelCompletionEvent::StartMessage {
-                                        message_id: message.id,
-                                    }),
-                                    Ok(LanguageModelCompletionEvent::UsageUpdate(convert_usage(
-                                        &state.usage,
-                                    ))),
-                                ],
-                                state,
-                            ));
-                        }
-                        Event::MessageDelta { delta, usage } => {
-                            update_usage(&mut state.usage, &usage);
-                            if let Some(stop_reason) = delta.stop_reason.as_deref() {
-                                state.stop_reason = match stop_reason {
-                                    "end_turn" => StopReason::EndTurn,
-                                    "max_tokens" => StopReason::MaxTokens,
-                                    "tool_use" => StopReason::ToolUse,
-                                    _ => {
-                                        log::error!(
-                                            "Unexpected anthropic stop_reason: {stop_reason}"
-                                        );
-                                        StopReason::EndTurn
-                                    }
-                                };
-                            }
-                            return Some((
-                                vec![Ok(LanguageModelCompletionEvent::UsageUpdate(
-                                    convert_usage(&state.usage),
-                                ))],
-                                state,
-                            ));
-                        }
-                        Event::MessageStop => {
-                            return Some((
-                                vec![Ok(LanguageModelCompletionEvent::Stop(state.stop_reason))],
-                                state,
-                            ));
-                        }
-                        Event::Error { error } => {
-                            return Some((
-                                vec![Err(anyhow!(AnthropicError::ApiError(error)))],
-                                state,
-                            ));
-                        }
-                        _ => {}
-                    },
-                    Err(err) => {
-                        return Some((vec![Err(anyhow!(err))], state));
                     }
+                    return vec![];
+                }
+            },
+            Event::ContentBlockStop { index } => {
+                if let Some(tool_use) = self.tool_uses_by_index.remove(&index) {
+                    let input_json = tool_use.input_json.trim();
+                    let input_value = if input_json.is_empty() {
+                        Ok(serde_json::Value::Object(serde_json::Map::default()))
+                    } else {
+                        serde_json::Value::from_str(input_json)
+                    };
+                    let event_result = match input_value {
+                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
+                            LanguageModelToolUse {
+                                id: tool_use.id.into(),
+                                name: tool_use.name.into(),
+                                is_input_complete: true,
+                                input,
+                                raw_input: tool_use.input_json.clone(),
+                            },
+                        )),
+                        Err(json_parse_err) => Err(LanguageModelCompletionError::BadInputJson {
+                            id: tool_use.id.into(),
+                            tool_name: tool_use.name.into(),
+                            raw_input: input_json.into(),
+                            json_parse_error: json_parse_err.to_string(),
+                        }),
+                    };
+
+                    vec![event_result]
+                } else {
+                    Vec::new()
                 }
             }
+            Event::MessageStart { message } => {
+                update_usage(&mut self.usage, &message.usage);
+                vec![
+                    Ok(LanguageModelCompletionEvent::UsageUpdate(convert_usage(
+                        &self.usage,
+                    ))),
+                    Ok(LanguageModelCompletionEvent::StartMessage {
+                        message_id: message.id,
+                    }),
+                ]
+            }
+            Event::MessageDelta { delta, usage } => {
+                update_usage(&mut self.usage, &usage);
+                if let Some(stop_reason) = delta.stop_reason.as_deref() {
+                    self.stop_reason = match stop_reason {
+                        "end_turn" => StopReason::EndTurn,
+                        "max_tokens" => StopReason::MaxTokens,
+                        "tool_use" => StopReason::ToolUse,
+                        "refusal" => StopReason::Refusal,
+                        _ => {
+                            log::error!("Unexpected anthropic stop_reason: {stop_reason}");
+                            StopReason::EndTurn
+                        }
+                    };
+                }
+                vec![Ok(LanguageModelCompletionEvent::UsageUpdate(
+                    convert_usage(&self.usage),
+                ))]
+            }
+            Event::MessageStop => {
+                vec![Ok(LanguageModelCompletionEvent::Stop(self.stop_reason))]
+            }
+            Event::Error { error } => {
+                vec![Err(LanguageModelCompletionError::Other(anyhow!(
+                    AnthropicError::ApiError(error)
+                )))]
+            }
+            _ => Vec::new(),
+        }
+    }
+}
 
-            None
-        },
-    )
-    .flat_map(futures::stream::iter)
+struct RawToolUse {
+    id: String,
+    name: String,
+    input_json: String,
+}
+
+pub fn anthropic_err_to_anyhow(err: AnthropicError) -> anyhow::Error {
+    if let AnthropicError::ApiError(api_err) = &err {
+        if let Some(tokens) = api_err.match_window_exceeded() {
+            return anyhow!(LanguageModelKnownError::ContextWindowLimitExceeded { tokens });
+        }
+    }
+
+    anyhow!(err)
 }
 
 /// Updates usage data by preferring counts from `new`.
@@ -879,7 +1026,7 @@ impl Render for ConfigurationView {
                         .py_1()
                         .bg(cx.theme().colors().editor_background)
                         .border_1()
-                        .border_color(cx.theme().colors().border_variant)
+                        .border_color(cx.theme().colors().border)
                         .rounded_sm()
                         .child(self.render_api_key_editor(cx)),
                 )
@@ -893,8 +1040,13 @@ impl Render for ConfigurationView {
                 .into_any()
         } else {
             h_flex()
-                .size_full()
+                .mt_1()
+                .p_1()
                 .justify_between()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().background)
                 .child(
                     h_flex()
                         .gap_1()
@@ -906,7 +1058,8 @@ impl Render for ConfigurationView {
                         })),
                 )
                 .child(
-                    Button::new("reset-key", "Reset key")
+                    Button::new("reset-key", "Reset Key")
+                        .label_size(LabelSize::Small)
                         .icon(Some(IconName::Trash))
                         .icon_size(IconSize::Small)
                         .icon_position(IconPosition::Start)

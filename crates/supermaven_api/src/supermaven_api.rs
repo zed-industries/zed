@@ -1,6 +1,6 @@
-use anyhow::{anyhow, Context as _, Result};
-use futures::io::BufReader;
+use anyhow::{Context as _, Result, anyhow};
 use futures::AsyncReadExt;
+use futures::io::BufReader;
 use http_client::{AsyncBody, HttpClient, Request as HttpRequest};
 use paths::supermaven_dir;
 use serde::{Deserialize, Serialize};
@@ -91,7 +91,7 @@ impl SupermavenAdminApi {
             if error.message == "User not found" {
                 return Ok(None);
             } else {
-                return Err(anyhow!("Supermaven API error: {}", error.message));
+                anyhow::bail!("Supermaven API error: {}", error.message);
             }
         } else if response.status().is_server_error() {
             let error: SupermavenApiError = serde_json::from_slice(&body)?;
@@ -155,7 +155,7 @@ impl SupermavenAdminApi {
             if error.message == "User not found" {
                 return Ok(());
             } else {
-                return Err(anyhow!("Supermaven API error: {}", error.message));
+                anyhow::bail!("Supermaven API error: {}", error.message);
             }
         } else if response.status().is_server_error() {
             let error: SupermavenApiError = serde_json::from_slice(&body)?;
@@ -204,7 +204,7 @@ pub async fn latest_release(
     if response.status().is_client_error() || response.status().is_server_error() {
         let body_str = std::str::from_utf8(&body)?;
         let error: SupermavenApiError = serde_json::from_str(body_str)?;
-        return Err(anyhow!("Supermaven API error: {}", error.message));
+        anyhow::bail!("Supermaven API error: {}", error.message);
     }
 
     serde_json::from_slice::<SupermavenDownloadResponse>(&body)
@@ -239,13 +239,13 @@ pub async fn get_supermaven_agent_path(client: Arc<dyn HttpClient>) -> Result<Pa
         "macos" => "darwin",
         "windows" => "windows",
         "linux" => "linux",
-        _ => return Err(anyhow!("unsupported platform")),
+        unsupported => anyhow::bail!("unsupported platform {unsupported}"),
     };
 
     let arch = match std::env::consts::ARCH {
         "x86_64" => "amd64",
         "aarch64" => "arm64",
-        _ => return Err(anyhow!("unsupported architecture")),
+        unsupported => anyhow::bail!("unsupported architecture {unsupported}"),
     };
 
     let download_info = latest_release(client.clone(), platform, arch).await?;
@@ -270,14 +270,6 @@ pub async fn get_supermaven_agent_path(client: Arc<dyn HttpClient>) -> Result<Pa
     futures::io::copy(BufReader::new(response.body_mut()), &mut file)
         .await
         .with_context(|| format!("Unable to write binary to file at {:?}", binary_path))?;
-
-    #[cfg(not(windows))]
-    {
-        file.set_permissions(<fs::Permissions as fs::unix::PermissionsExt>::from_mode(
-            0o755,
-        ))
-        .await?;
-    }
 
     let mut old_binary_paths = fs::read_dir(supermaven_dir()).await?;
     while let Some(old_binary_path) = old_binary_paths.next().await {

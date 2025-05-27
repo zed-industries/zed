@@ -10,15 +10,14 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/livekit_client.rs"
+path = "src/lib.rs"
 doctest = false
 
 [[example]]
 name = "test_app"
 
 [features]
-no-webrtc = []
-test-support = ["collections/test-support", "gpui/test-support", "nanoid"]
+test-support = ["collections/test-support", "gpui/test-support"]
 
 [dependencies]
 anyhow.workspace = true
@@ -26,30 +25,38 @@ async-trait.workspace = true
 collections.workspace = true
 cpal = "0.15"
 futures.workspace = true
-gpui.workspace = true
-http_2 = { package = "http", version = "0.2.1" }
+gpui = { workspace = true, features = ["x11", "wayland"] }
+gpui_tokio.workspace = true
+http_client_tls.workspace = true
+image.workspace = true
 livekit_api.workspace = true
 log.workspace = true
-media.workspace = true
-nanoid = { workspace = true, optional = true }
+nanoid.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
-util.workspace = true
-http_client.workspace = true
 smallvec.workspace = true
-image.workspace = true
+tokio-tungstenite.workspace = true
+util.workspace = true
+workspace-hack.workspace = true
 
 [target.'cfg(not(all(target_os = "windows", target_env = "gnu")))'.dependencies]
-livekit.workspace = true
+libwebrtc = { rev = "80bb8f4c9112789f7c24cc98d8423010977806a6", git = "https://github.com/zed-industries/livekit-rust-sdks" }
+livekit = { rev = "80bb8f4c9112789f7c24cc98d8423010977806a6", git = "https://github.com/zed-industries/livekit-rust-sdks", features = [
+    "__rustls-tls"
+] }
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+scap.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true
+core-video.workspace = true
 coreaudio-rs = "0.12.1"
+objc.workspace = true
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
-nanoid.workspace = true
 sha2.workspace = true
 simplelog.workspace = true
 

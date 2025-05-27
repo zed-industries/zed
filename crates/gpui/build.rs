@@ -77,8 +77,6 @@ mod macos {
 
     fn generate_dispatch_bindings() {
         println!("cargo:rustc-link-lib=framework=System");
-        println!("cargo:rustc-link-lib=framework=ScreenCaptureKit");
-        println!("cargo:rerun-if-changed=src/platform/mac/dispatch.h");
 
         let bindings = bindgen::Builder::default()
             .header("src/platform/mac/dispatch.h")
@@ -136,6 +134,7 @@ mod macos {
             "Underline".into(),
             "UnderlineInputIndex".into(),
             "Quad".into(),
+            "BorderStyle".into(),
             "SpriteInputIndex".into(),
             "MonochromeSprite".into(),
             "PolychromeSprite".into(),

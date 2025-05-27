@@ -32,11 +32,12 @@ test-support = [
 aho-corasick.workspace = true
 anyhow.workspace = true
 assets.workspace = true
-chrono.workspace = true
 client.workspace = true
 clock.workspace = true
 collections.workspace = true
+command_palette_hooks.workspace = true
 convert_case.workspace = true
+dap.workspace = true
 db.workspace = true
 buffer_diff.workspace = true
 emojis.workspace = true
@@ -47,7 +48,6 @@ fuzzy.workspace = true
 fs.workspace = true
 git.workspace = true
 gpui.workspace = true
-http_client.workspace = true
 indoc.workspace = true
 inline_completion.workspace = true
 itertools.workspace = true
@@ -76,13 +76,12 @@ task.workspace = true
 telemetry.workspace = true
 text.workspace = true
 time.workspace = true
-time_format.workspace = true
 theme.workspace = true
 tree-sitter-html = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
+tree-sitter-python = { workspace = true, optional = true }
 unicode-segmentation.workspace = true
-unicode-script.workspace = true
 unindent = { workspace = true, optional = true }
 ui.workspace = true
 url.workspace = true
@@ -90,10 +89,10 @@ util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
-env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 languages = {workspace = true, features = ["test-support"] }
@@ -113,3 +112,4 @@ unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
+zlog.workspace = true

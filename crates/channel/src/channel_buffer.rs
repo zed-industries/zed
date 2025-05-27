@@ -5,8 +5,8 @@ use collections::HashMap;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task};
 use language::proto::serialize_version;
 use rpc::{
-    proto::{self, PeerId},
     AnyProtoClient, TypedEnvelope,
+    proto::{self, PeerId},
 };
 use std::{sync::Arc, time::Duration};
 use text::BufferId;
@@ -201,7 +201,7 @@ impl ChannelBuffer {
         }
     }
 
-    pub fn acknowledge_buffer_version(&mut self, cx: &mut Context<'_, ChannelBuffer>) {
+    pub fn acknowledge_buffer_version(&mut self, cx: &mut Context<ChannelBuffer>) {
         let buffer = self.buffer.read(cx);
         let version = buffer.version();
         let buffer_id = buffer.remote_id().into();

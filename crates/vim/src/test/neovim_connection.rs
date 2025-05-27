@@ -17,7 +17,7 @@ use language::Point;
 
 #[cfg(feature = "neovim")]
 use nvim_rs::{
-    create::tokio::new_child_cmd, error::LoopError, Handler, Neovim, UiAttachOptions, Value,
+    Handler, Neovim, UiAttachOptions, Value, create::tokio::new_child_cmd, error::LoopError,
 };
 #[cfg(feature = "neovim")]
 use parking_lot::ReentrantMutex;

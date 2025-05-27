@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result};
 use base64::prelude::*;
-use rand::{thread_rng, Rng as _};
+use rand::{Rng as _, thread_rng};
 use rsa::pkcs1::{DecodeRsaPublicKey, EncodeRsaPublicKey};
 use rsa::traits::PaddingScheme;
 use rsa::{Oaep, Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey};
@@ -43,7 +43,7 @@ pub fn random_token() -> String {
     let mut rng = thread_rng();
     let mut token_bytes = [0; 48];
     for byte in token_bytes.iter_mut() {
-        *byte = rng.gen();
+        *byte = rng.r#gen();
     }
     BASE64_URL_SAFE.encode(token_bytes)
 }

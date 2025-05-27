@@ -1,20 +1,20 @@
 use crate::{
+    AppState, Error, Result,
     db::{self, AccessTokenId, Database, UserId},
     rpc::Principal,
-    AppState, Error, Result,
 };
-use anyhow::{anyhow, Context as _};
+use anyhow::Context as _;
 use axum::{
     http::{self, Request, StatusCode},
     middleware::Next,
     response::IntoResponse,
 };
 use base64::prelude::*;
-use prometheus::{exponential_buckets, register_histogram, Histogram};
+use prometheus::{Histogram, exponential_buckets, register_histogram};
 pub use rpc::auth::random_token;
 use scrypt::{
-    password_hash::{PasswordHash, PasswordVerifier},
     Scrypt,
+    password_hash::{PasswordHash, PasswordVerifier},
 };
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
@@ -85,14 +85,14 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
                 .db
                 .get_user_by_id(user_id)
                 .await?
-                .ok_or_else(|| anyhow!("user {} not found", user_id))?;
+                .with_context(|| format!("user {user_id} not found"))?;
 
             if let Some(impersonator_id) = validate_result.impersonator_id {
                 let admin = state
                     .db
                     .get_user_by_id(impersonator_id)
                     .await?
-                    .ok_or_else(|| anyhow!("user {} not found", impersonator_id))?;
+                    .with_context(|| format!("user {impersonator_id} not found"))?;
                 req.extensions_mut()
                     .insert(Principal::Impersonated { user, admin });
             } else {
@@ -156,13 +156,7 @@ pub fn encrypt_access_token(access_token: &str, public_key: String) -> Result<St
     use rpc::auth::EncryptionFormat;
 
     /// The encryption format to use for the access token.
-    ///
-    /// Currently we're using the original encryption format to avoid
-    /// breaking compatibility with older clients.
-    ///
-    /// Once enough clients are capable of decrypting the newer encryption
-    /// format we can start encrypting with `EncryptionFormat::V1`.
-    const ENCRYPTION_FORMAT: EncryptionFormat = EncryptionFormat::V0;
+    const ENCRYPTION_FORMAT: EncryptionFormat = EncryptionFormat::V1;
 
     let native_app_public_key =
         rpc::auth::PublicKey::try_from(public_key).context("failed to parse app public key")?;
@@ -198,7 +192,7 @@ pub async fn verify_access_token(
     let db_token = db.get_access_token(token.id).await?;
     let token_user_id = db_token.impersonated_user_id.unwrap_or(db_token.user_id);
     if token_user_id != user_id {
-        return Err(anyhow!("no such access token"))?;
+        return Err(anyhow::anyhow!("no such access token"))?;
     }
     let t0 = Instant::now();
 
@@ -238,7 +232,7 @@ mod test {
     use sea_orm::EntityTrait;
 
     use super::*;
-    use crate::db::{access_token, NewUserParams};
+    use crate::db::{NewUserParams, access_token};
 
     #[gpui::test]
     async fn test_verify_access_token(cx: &mut gpui::TestAppContext) {

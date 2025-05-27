@@ -1,8 +1,8 @@
-use std::ffi::{c_int, CStr, CString};
+use std::ffi::{CStr, CString, c_int};
 use std::marker::PhantomData;
 use std::{ptr, slice, str};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context as _, Result, bail};
 use libsqlite3_sys::*;
 
 use crate::bindable::{Bind, Column};
@@ -11,7 +11,7 @@ use crate::connection::Connection;
 pub struct Statement<'a> {
     /// vector of pointers to the raw SQLite statement objects.
     /// it holds the actual prepared statements that will be executed.
-    raw_statements: Vec<*mut sqlite3_stmt>,
+    pub raw_statements: Vec<*mut sqlite3_stmt>,
     /// Index of the current statement being executed from the `raw_statements` vector.
     current_statement: usize,
     /// A reference to the database connection.
@@ -76,7 +76,8 @@ impl<'a> Statement<'a> {
 
                     bail!(
                         "Write statement prepared with connection that is not write capable. SQL:\n{} ",
-                        sql.to_str()?)
+                        sql.to_str()?
+                    )
                 }
             }
         }
@@ -125,7 +126,7 @@ impl<'a> Statement<'a> {
         if any_succeed {
             Ok(())
         } else {
-            Err(anyhow!("Failed to bind parameters"))
+            anyhow::bail!("Failed to bind parameters")
         }
     }
 
@@ -260,7 +261,7 @@ impl<'a> Statement<'a> {
             SQLITE_TEXT => Ok(SqlType::Text),
             SQLITE_BLOB => Ok(SqlType::Blob),
             SQLITE_NULL => Ok(SqlType::Null),
-            _ => Err(anyhow!("Column type returned was incorrect ")),
+            _ => anyhow::bail!("Column type returned was incorrect"),
         }
     }
 
@@ -281,7 +282,7 @@ impl<'a> Statement<'a> {
                         self.step()
                     }
                 }
-                SQLITE_MISUSE => Err(anyhow!("Statement step returned SQLITE_MISUSE")),
+                SQLITE_MISUSE => anyhow::bail!("Statement step returned SQLITE_MISUSE"),
                 _other_error => {
                     self.connection.last_error()?;
                     unreachable!("Step returned error code and last error failed to catch it");
@@ -327,16 +328,16 @@ impl<'a> Statement<'a> {
             callback: impl FnOnce(&mut Statement) -> Result<R>,
         ) -> Result<R> {
             println!("{:?}", std::any::type_name::<R>());
-            if this.step()? != StepResult::Row {
-                return Err(anyhow!("single called with query that returns no rows."));
-            }
+            anyhow::ensure!(
+                this.step()? == StepResult::Row,
+                "single called with query that returns no rows."
+            );
             let result = callback(this)?;
 
-            if this.step()? != StepResult::Done {
-                return Err(anyhow!(
-                    "single called with a query that returns more than one row."
-                ));
-            }
+            anyhow::ensure!(
+                this.step()? == StepResult::Done,
+                "single called with a query that returns more than one row."
+            );
 
             Ok(result)
         }
@@ -365,11 +366,10 @@ impl<'a> Statement<'a> {
                 .map(|r| Some(r))
                 .context("Failed to parse row result")?;
 
-            if this.step().context("Second step call")? != StepResult::Done {
-                return Err(anyhow!(
-                    "maybe called with a query that returns more than one row."
-                ));
-            }
+            anyhow::ensure!(
+                this.step().context("Second step call")? == StepResult::Done,
+                "maybe called with a query that returns more than one row."
+            );
 
             Ok(result)
         }
@@ -476,11 +476,13 @@ mod test {
             .unwrap()()
         .unwrap();
 
-        assert!(connection
-            .select_row::<String>("SELECT text FROM texts")
-            .unwrap()()
-        .unwrap()
-        .is_none());
+        assert!(
+            connection
+                .select_row::<String>("SELECT text FROM texts")
+                .unwrap()()
+            .unwrap()
+            .is_none()
+        );
 
         let text_to_insert = "This is a test";
 

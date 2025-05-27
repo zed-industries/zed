@@ -1,13 +1,19 @@
+use anyhow::Context as _;
+
 use super::*;
 
 #[derive(Debug)]
 pub struct CreateBillingPreferencesParams {
     pub max_monthly_llm_usage_spending_in_cents: i32,
+    pub model_request_overages_enabled: bool,
+    pub model_request_overages_spend_limit_in_cents: i32,
 }
 
 #[derive(Debug, Default)]
 pub struct UpdateBillingPreferencesParams {
     pub max_monthly_llm_usage_spending_in_cents: ActiveValue<i32>,
+    pub model_request_overages_enabled: ActiveValue<bool>,
+    pub model_request_overages_spend_limit_in_cents: ActiveValue<i32>,
 }
 
 impl Database {
@@ -37,6 +43,12 @@ impl Database {
                 max_monthly_llm_usage_spending_in_cents: ActiveValue::set(
                     params.max_monthly_llm_usage_spending_in_cents,
                 ),
+                model_request_overages_enabled: ActiveValue::set(
+                    params.model_request_overages_enabled,
+                ),
+                model_request_overages_spend_limit_in_cents: ActiveValue::set(
+                    params.model_request_overages_spend_limit_in_cents,
+                ),
                 ..Default::default()
             })
             .exec_with_returning(&*tx)
@@ -59,6 +71,10 @@ impl Database {
                     max_monthly_llm_usage_spending_in_cents: params
                         .max_monthly_llm_usage_spending_in_cents
                         .clone(),
+                    model_request_overages_enabled: params.model_request_overages_enabled.clone(),
+                    model_request_overages_spend_limit_in_cents: params
+                        .model_request_overages_spend_limit_in_cents
+                        .clone(),
                     ..Default::default()
                 })
                 .filter(billing_preference::Column::UserId.eq(user_id))
@@ -68,7 +84,7 @@ impl Database {
             Ok(preferences
                 .into_iter()
                 .next()
-                .ok_or_else(|| anyhow!("billing preferences not found"))?)
+                .context("billing preferences not found")?)
         })
         .await
     }

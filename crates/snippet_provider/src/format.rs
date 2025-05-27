@@ -1,19 +1,19 @@
 use collections::HashMap;
 use schemars::{
-    gen::SchemaSettings,
-    schema::{ObjectValidation, Schema, SchemaObject},
     JsonSchema,
+    r#gen::SchemaSettings,
+    schema::{ObjectValidation, Schema, SchemaObject},
 };
 use serde::Deserialize;
 use serde_json_lenient::Value;
 
 #[derive(Deserialize)]
-pub struct VSSnippetsFile {
+pub struct VsSnippetsFile {
     #[serde(flatten)]
-    pub(crate) snippets: HashMap<String, VSCodeSnippet>,
+    pub(crate) snippets: HashMap<String, VsCodeSnippet>,
 }
 
-impl VSSnippetsFile {
+impl VsSnippetsFile {
     pub fn generate_json_schema() -> Value {
         let schema = SchemaSettings::draft07()
             .with(|settings| settings.option_add_null_type = false)
@@ -24,15 +24,15 @@ impl VSSnippetsFile {
     }
 }
 
-impl JsonSchema for VSSnippetsFile {
+impl JsonSchema for VsSnippetsFile {
     fn schema_name() -> String {
-        "VSSnippetsFile".into()
+        "VsSnippetsFile".into()
     }
 
-    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> Schema {
+    fn json_schema(r#gen: &mut schemars::r#gen::SchemaGenerator) -> Schema {
         SchemaObject {
             object: Some(Box::new(ObjectValidation {
-                additional_properties: Some(Box::new(gen.subschema_for::<VSCodeSnippet>())),
+                additional_properties: Some(Box::new(r#gen.subschema_for::<VsCodeSnippet>())),
                 ..Default::default()
             })),
             ..Default::default()
@@ -71,7 +71,7 @@ impl std::fmt::Display for ListOrDirect {
 }
 
 #[derive(Deserialize, JsonSchema)]
-pub(crate) struct VSCodeSnippet {
+pub(crate) struct VsCodeSnippet {
     /// The snippet prefix used to decide whether a completion menu should be shown.
     pub(crate) prefix: Option<ListOrDirect>,
 

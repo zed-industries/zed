@@ -30,7 +30,6 @@ fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 git.workspace = true
-git_hosting_providers.workspace = true
 gpui.workspace = true
 ignore.workspace = true
 language.workspace = true
@@ -48,11 +47,11 @@ smol.workspace = true
 sum_tree.workspace = true
 text.workspace = true
 util.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
-env_logger.workspace = true
 git2.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 http_client.workspace = true
@@ -61,3 +60,4 @@ rand.workspace = true
 rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
+zlog.workspace = true

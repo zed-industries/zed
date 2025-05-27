@@ -30,11 +30,12 @@ tree-sitter.workspace = true
 ui.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true
-env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
+zlog.workspace = true

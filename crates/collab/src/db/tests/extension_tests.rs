@@ -6,7 +6,7 @@ use rpc::ExtensionProvides;
 use super::Database;
 use crate::db::ExtensionVersionConstraints;
 use crate::{
-    db::{queries::extensions::convert_time_to_chrono, ExtensionMetadata, NewExtensionVersion},
+    db::{ExtensionMetadata, NewExtensionVersion, queries::extensions::convert_time_to_chrono},
     test_both_dbs,
 };
 
@@ -162,10 +162,11 @@ async fn test_extensions(db: &Arc<Database>) {
     }
 
     // Record download returns false if the extension does not exist.
-    assert!(!db
-        .record_extension_download("no-such-extension", "0.0.2")
-        .await
-        .unwrap());
+    assert!(
+        !db.record_extension_download("no-such-extension", "0.0.2")
+            .await
+            .unwrap()
+    );
 
     // Extensions are returned in descending order of total downloads.
     let extensions = db.get_extensions(None, None, 1, 5).await.unwrap();

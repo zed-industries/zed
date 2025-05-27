@@ -14,7 +14,6 @@ doctest = false
 
 [features]
 default = []
-schemars = ["dep:schemars"]
 test-support = [
     "collections/test-support",
     "gpui/test-support",
@@ -26,8 +25,6 @@ test-support = [
 
 [dependencies]
 anyhow.workspace = true
-async-compression.workspace = true
-async-tar.workspace = true
 chrono.workspace = true
 client.workspace = true
 collections.workspace = true
@@ -45,16 +42,15 @@ node_runtime.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 project.workspace = true
-schemars = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
-smol.workspace = true
-strum.workspace = true
 task.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
+workspace-hack.workspace = true
+itertools.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 async-std = { version = "1.12.0", features = ["unstable"] }
@@ -65,7 +61,6 @@ clock = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
 editor = { workspace = true, features = ["test-support"] }
-env_logger.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
@@ -80,3 +75,4 @@ settings = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
+zlog.workspace = true

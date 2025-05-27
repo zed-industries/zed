@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Context as _, Result};
 use client::proto::{
     self, DapChecksum, DapChecksumAlgorithm, DapEvaluateContext, DapModule, DapScope,
     DapScopePresentationHint, DapSource, DapSourcePresentationHint, DapStackFrame, DapVariable,
@@ -311,9 +311,9 @@ impl ProtoConversion for dap_types::Module {
     fn from_proto(payload: Self::ProtoType) -> Result<Self> {
         let id = match payload
             .id
-            .ok_or(anyhow!("All DapModule proto messages must have an id"))?
+            .context("All DapModule proto messages must have an id")?
             .id
-            .ok_or(anyhow!("All DapModuleID proto messages must have an id"))?
+            .context("All DapModuleID proto messages must have an id")?
         {
             proto::dap_module_id::Id::String(string) => dap_types::ModuleId::String(string),
             proto::dap_module_id::Id::Number(num) => dap_types::ModuleId::Number(num),

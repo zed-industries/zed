@@ -1,14 +1,14 @@
 use anyhow::{Context as _, Result};
 use futures::{
+    AsyncBufReadExt as _, SinkExt as _,
     channel::mpsc::{self},
     io::BufReader,
     stream::{SelectAll, StreamExt},
-    AsyncBufReadExt as _, SinkExt as _,
 };
 use gpui::{App, AppContext as _, Entity, EntityId, Task, Window};
 use jupyter_protocol::{
-    connection_info::{ConnectionInfo, Transport},
     ExecutionState, JupyterKernelspec, JupyterMessage, JupyterMessageContent, KernelInfoReply,
+    connection_info::{ConnectionInfo, Transport},
 };
 use project::Fs;
 use runtimelib::dirs;
@@ -351,14 +351,7 @@ impl RunningKernel for NativeRunningKernel {
     fn force_shutdown(&mut self, _window: &mut Window, _cx: &mut App) -> Task<anyhow::Result<()>> {
         self._process_status_task.take();
         self.request_tx.close_channel();
-
-        Task::ready(match self.process.kill() {
-            Ok(_) => Ok(()),
-            Err(error) => Err(anyhow::anyhow!(
-                "Failed to kill the kernel process: {}",
-                error
-            )),
-        })
+        Task::ready(self.process.kill().context("killing the kernel process"))
     }
 }
 

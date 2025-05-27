@@ -1,5 +1,5 @@
 use gpui::{App, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, Render, Window};
-use ui::{prelude::*, IconPosition};
+use ui::{IconPosition, prelude::*};
 use workspace::{ModalView, Workspace};
 use zed_actions::feedback::GiveFeedback;
 

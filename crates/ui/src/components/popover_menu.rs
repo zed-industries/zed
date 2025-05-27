@@ -1,10 +1,10 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    anchored, deferred, div, point, prelude::FluentBuilder, px, size, AnyElement, AnyView, App,
-    Bounds, Corner, DismissEvent, DispatchPhase, Element, ElementId, Entity, Focusable as _,
-    GlobalElementId, HitboxId, InteractiveElement, IntoElement, LayoutId, Length, ManagedView,
-    MouseDownEvent, ParentElement, Pixels, Point, Style, Window,
+    AnyElement, AnyView, App, Bounds, Corner, DismissEvent, DispatchPhase, Element, ElementId,
+    Entity, Focusable as _, GlobalElementId, HitboxId, InteractiveElement, IntoElement, LayoutId,
+    Length, ManagedView, MouseDownEvent, ParentElement, Pixels, Point, Style, Window, anchored,
+    deferred, div, point, prelude::FluentBuilder, px, size,
 };
 
 use crate::prelude::*;
@@ -316,9 +316,14 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
         Some(self.id.clone())
     }
 
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
@@ -394,6 +399,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
         _bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -422,6 +428,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
         _: Bounds<gpui::Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         child_hitbox: &mut Option<HitboxId>,

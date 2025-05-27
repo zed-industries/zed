@@ -56,6 +56,7 @@ impl Keystroke {
     /// This method assumes that `self` was typed and `target' is in the keymap, and checks
     /// both possibilities for self against the target.
     pub(crate) fn should_match(&self, target: &Keystroke) -> bool {
+        #[cfg(not(target_os = "windows"))]
         if let Some(key_char) = self
             .key_char
             .as_ref()
@@ -72,6 +73,18 @@ impl Keystroke {
             }
         }
 
+        #[cfg(target_os = "windows")]
+        if let Some(key_char) = self
+            .key_char
+            .as_ref()
+            .filter(|key_char| key_char != &&self.key)
+        {
+            // On Windows, if key_char is set, then the typed keystroke produced the key_char
+            if &target.key == key_char && target.modifiers == Modifiers::none() {
+                return true;
+            }
+        }
+
         target.modifiers == self.modifiers && target.key == self.key
     }
 
@@ -81,85 +94,104 @@ impl Keystroke {
     /// secondary means "cmd" on macOS and "ctrl" on other platforms
     /// when matching a key with an key_char set will be matched without it.
     pub fn parse(source: &str) -> std::result::Result<Self, InvalidKeystrokeError> {
-        let mut control = false;
-        let mut alt = false;
-        let mut shift = false;
-        let mut platform = false;
-        let mut function = false;
+        let mut modifiers = Modifiers::none();
         let mut key = None;
         let mut key_char = None;
 
         let mut components = source.split('-').peekable();
         while let Some(component) = components.next() {
-            match component {
-                "ctrl" => control = true,
-                "alt" => alt = true,
-                "shift" => shift = true,
-                "fn" => function = true,
-                "secondary" => {
-                    if cfg!(target_os = "macos") {
-                        platform = true
-                    } else {
-                        control = true
-                    };
-                }
-                "cmd" | "super" | "win" => platform = true,
-                _ => {
-                    if let Some(next) = components.peek() {
-                        if next.is_empty() && source.ends_with('-') {
-                            key = Some(String::from("-"));
-                            break;
-                        } else if next.len() > 1 && next.starts_with('>') {
-                            key = Some(String::from(component));
-                            key_char = Some(String::from(&next[1..]));
-                            components.next();
-                        } else {
-                            return Err(InvalidKeystrokeError {
-                                keystroke: source.to_owned(),
-                            });
-                        }
-                    } else {
-                        key = Some(String::from(component));
-                    }
-                }
+            if component.eq_ignore_ascii_case("ctrl") {
+                modifiers.control = true;
+                continue;
             }
+            if component.eq_ignore_ascii_case("alt") {
+                modifiers.alt = true;
+                continue;
+            }
+            if component.eq_ignore_ascii_case("shift") {
+                modifiers.shift = true;
+                continue;
+            }
+            if component.eq_ignore_ascii_case("fn") {
+                modifiers.function = true;
+                continue;
+            }
+            if component.eq_ignore_ascii_case("secondary") {
+                if cfg!(target_os = "macos") {
+                    modifiers.platform = true;
+                } else {
+                    modifiers.control = true;
+                };
+                continue;
+            }
+
+            let is_platform = component.eq_ignore_ascii_case("cmd")
+                || component.eq_ignore_ascii_case("super")
+                || component.eq_ignore_ascii_case("win");
+
+            if is_platform {
+                modifiers.platform = true;
+                continue;
+            }
+
+            let mut key_str = component.to_string();
+
+            if let Some(next) = components.peek() {
+                if next.is_empty() && source.ends_with('-') {
+                    key = Some(String::from("-"));
+                    break;
+                } else if next.len() > 1 && next.starts_with('>') {
+                    key = Some(key_str);
+                    key_char = Some(String::from(&next[1..]));
+                    components.next();
+                } else {
+                    return Err(InvalidKeystrokeError {
+                        keystroke: source.to_owned(),
+                    });
+                }
+                continue;
+            }
+
+            if component.len() == 1 && component.as_bytes()[0].is_ascii_uppercase() {
+                // Convert to shift + lowercase char
+                modifiers.shift = true;
+                key_str.make_ascii_lowercase();
+            } else {
+                // convert ascii chars to lowercase so that named keys like "tab" and "enter"
+                // are accepted case insensitively and stored how we expect so they are matched properly
+                key_str.make_ascii_lowercase()
+            }
+            key = Some(key_str);
         }
 
         // Allow for the user to specify a keystroke modifier as the key itself
         // This sets the `key` to the modifier, and disables the modifier
-        if key.is_none() {
-            if shift {
-                key = Some("shift".to_string());
-                shift = false;
-            } else if control {
-                key = Some("control".to_string());
-                control = false;
-            } else if alt {
-                key = Some("alt".to_string());
-                alt = false;
-            } else if platform {
-                key = Some("platform".to_string());
-                platform = false;
-            } else if function {
-                key = Some("function".to_string());
-                function = false;
+        key = key.or_else(|| {
+            use std::mem;
+            // std::mem::take clears bool incase its true
+            if mem::take(&mut modifiers.shift) {
+                Some("shift".to_string())
+            } else if mem::take(&mut modifiers.control) {
+                Some("control".to_string())
+            } else if mem::take(&mut modifiers.alt) {
+                Some("alt".to_string())
+            } else if mem::take(&mut modifiers.platform) {
+                Some("platform".to_string())
+            } else if mem::take(&mut modifiers.function) {
+                Some("function".to_string())
+            } else {
+                None
             }
-        }
+        });
 
         let key = key.ok_or_else(|| InvalidKeystrokeError {
             keystroke: source.to_owned(),
         })?;
 
         Ok(Keystroke {
-            modifiers: Modifiers {
-                control,
-                alt,
-                shift,
-                platform,
-                function,
-            },
+            modifiers,
             key,
-            key_char: key_char,
+            key_char,
         })
     }
 
@@ -288,10 +320,18 @@ fn is_printable_key(key: &str) -> bool {
 impl std::fmt::Display for Keystroke {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.modifiers.control {
+            #[cfg(target_os = "macos")]
             f.write_char('^')?;
+
+            #[cfg(not(target_os = "macos"))]
+            write!(f, "ctrl-")?;
         }
         if self.modifiers.alt {
+            #[cfg(target_os = "macos")]
             f.write_char('⌥')?;
+
+            #[cfg(not(target_os = "macos"))]
+            write!(f, "alt-")?;
         }
         if self.modifiers.platform {
             #[cfg(target_os = "macos")]
@@ -304,27 +344,38 @@ impl std::fmt::Display for Keystroke {
             f.write_char('⊞')?;
         }
         if self.modifiers.shift {
+            #[cfg(target_os = "macos")]
             f.write_char('⇧')?;
+
+            #[cfg(not(target_os = "macos"))]
+            write!(f, "shift-")?;
         }
         let key = match self.key.as_str() {
+            #[cfg(target_os = "macos")]
             "backspace" => '⌫',
+            #[cfg(target_os = "macos")]
             "up" => '↑',
+            #[cfg(target_os = "macos")]
             "down" => '↓',
+            #[cfg(target_os = "macos")]
             "left" => '←',
+            #[cfg(target_os = "macos")]
             "right" => '→',
+            #[cfg(target_os = "macos")]
             "tab" => '⇥',
+            #[cfg(target_os = "macos")]
             "escape" => '⎋',
+            #[cfg(target_os = "macos")]
             "shift" => '⇧',
+            #[cfg(target_os = "macos")]
             "control" => '⌃',
+            #[cfg(target_os = "macos")]
             "alt" => '⌥',
+            #[cfg(target_os = "macos")]
             "platform" => '⌘',
-            key => {
-                if key.len() == 1 {
-                    key.chars().next().unwrap().to_ascii_uppercase()
-                } else {
-                    return f.write_str(key);
-                }
-            }
+
+            key if key.len() == 1 => key.chars().next().unwrap().to_ascii_uppercase(),
+            key => return f.write_str(key),
         };
         f.write_char(key)
     }

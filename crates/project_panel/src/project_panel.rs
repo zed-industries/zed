@@ -1,42 +1,44 @@
 mod project_panel_settings;
 mod utils;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result};
 use client::{ErrorCode, ErrorExt};
-use collections::{hash_map, BTreeSet, HashMap};
+use collections::{BTreeSet, HashMap, hash_map};
 use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
+    Editor, EditorEvent, EditorSettings, ShowScrollbar,
     items::{
         entry_diagnostic_aware_icon_decoration_and_color,
         entry_diagnostic_aware_icon_name_and_color, entry_git_aware_label_color,
     },
     scroll::{Autoscroll, ScrollbarAutoHide},
-    Editor, EditorEvent, EditorSettings, ShowScrollbar,
 };
 use file_icons::FileIcons;
 use git::status::GitSummary;
 use gpui::{
-    actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
-    AnyElement, App, ArcCow, AsyncWindowContext, Bounds, ClipboardItem, Context, DismissEvent, Div,
-    DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, Hsla,
-    InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton,
-    MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful,
-    Styled, Subscription, Task, UniformListScrollHandle, WeakEntity, Window,
+    Action, AnyElement, App, ArcCow, AsyncWindowContext, Bounds, ClipboardItem, Context,
+    DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable,
+    Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
+    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy,
+    Stateful, Styled, Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions,
+    anchored, deferred, div, impl_actions, point, px, size, uniform_list,
 };
 use indexmap::IndexMap;
 use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::{
-    relativize_path, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree,
-    WorktreeId,
+    Entry, EntryKind, Fs, GitEntry, GitEntryRef, GitTraversal, Project, ProjectEntryId,
+    ProjectPath, Worktree, WorktreeId,
+    git_store::{GitStoreEvent, git_traversal::ChildEntriesGitIter},
+    relativize_path,
 };
 use project_panel_settings::{
     ProjectPanelDockPosition, ProjectPanelSettings, ShowDiagnostics, ShowIndentGuides,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::{Settings, SettingsStore, update_settings_file};
 use smallvec::SmallVec;
 use std::any::TypeId;
 use std::{
@@ -51,18 +53,19 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, v_flex, ContextMenu, DecoratedIcon, Icon, IconDecoration, IconDecorationKind,
-    IndentGuideColors, IndentGuideLayout, KeyBinding, Label, ListItem, ListItemSpacing, Scrollbar,
-    ScrollbarState, Tooltip,
+    Color, ContextMenu, DecoratedIcon, Icon, IconDecoration, IconDecorationKind, IndentGuideColors,
+    IndentGuideLayout, KeyBinding, Label, LabelSize, ListItem, ListItemSpacing, Scrollbar,
+    ScrollbarState, Tooltip, prelude::*, v_flex,
 };
-use util::{maybe, paths::compare_paths, ResultExt, TakeUntilExt, TryFutureExt};
+use util::{ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths};
 use workspace::{
-    dock::{DockPosition, Panel, PanelEvent},
-    notifications::{DetachAndPromptErr, NotifyTaskExt},
     DraggedSelection, OpenInTerminal, OpenOptions, OpenVisible, PreviewTabsSettings, SelectedEntry,
     Workspace,
+    dock::{DockPosition, Panel, PanelEvent},
+    notifications::{DetachAndPromptErr, NotifyTaskExt},
 };
-use worktree::{CreatedEntry, GitEntry, GitEntryRef};
+use worktree::CreatedEntry;
+use zed_actions::OpenRecent;
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
@@ -118,6 +121,13 @@ struct FoldedDirectoryDragTarget {
 }
 
 #[derive(Clone, Debug)]
+enum ValidationState {
+    None,
+    Warning(String),
+    Error(String),
+}
+
+#[derive(Clone, Debug)]
 struct EditState {
     worktree_id: WorktreeId,
     entry_id: ProjectEntryId,
@@ -126,6 +136,7 @@ struct EditState {
     depth: usize,
     processing_filename: Option<String>,
     previously_focused: Option<SelectedEntry>,
+    validation_state: ValidationState,
 }
 
 impl EditState {
@@ -197,6 +208,7 @@ actions!(
         Open,
         OpenPermanent,
         ToggleFocus,
+        ToggleHideGitIgnore,
         NewSearchInDirectory,
         UnfoldDirectory,
         FoldDirectory,
@@ -232,6 +244,13 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<ProjectPanel>(window, cx);
+        });
+
+        workspace.register_action(|workspace, _: &ToggleHideGitIgnore, _, cx| {
+            let fs = workspace.app_state().fs.clone();
+            update_settings_file::<ProjectPanelSettings>(fs, cx, move |setting, _| {
+                setting.hide_gitignore = Some(!setting.hide_gitignore.unwrap_or(false));
+            })
         });
     })
     .detach();
@@ -289,6 +308,7 @@ impl ProjectPanel {
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         let project = workspace.project().clone();
+        let git_store = project.read(cx).git_store().clone();
         let project_panel = cx.new(|cx| {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, window, Self::focus_in).detach();
@@ -297,18 +317,34 @@ impl ProjectPanel {
                 this.hide_scrollbar(window, cx);
             })
             .detach();
+
+            cx.subscribe(&git_store, |this, _, event, cx| match event {
+                GitStoreEvent::RepositoryUpdated(_, _, _)
+                | GitStoreEvent::RepositoryAdded(_)
+                | GitStoreEvent::RepositoryRemoved(_) => {
+                    this.update_visible_entries(None, cx);
+                    cx.notify();
+                }
+                _ => {}
+            })
+            .detach();
+
             cx.subscribe(&project, |this, project, event, cx| match event {
                 project::Event::ActiveEntryChanged(Some(entry_id)) => {
                     if ProjectPanelSettings::get_global(cx).auto_reveal_entries {
-                        this.reveal_entry(project.clone(), *entry_id, true, cx);
+                        this.reveal_entry(project.clone(), *entry_id, true, cx).ok();
                     }
                 }
                 project::Event::ActiveEntryChanged(None) => {
                     this.marked_entries.clear();
                 }
                 project::Event::RevealInProjectPanel(entry_id) => {
-                    this.reveal_entry(project.clone(), *entry_id, false, cx);
-                    cx.emit(PanelEvent::Activate);
+                    if let Some(()) = this
+                        .reveal_entry(project.clone(), *entry_id, false, cx)
+                        .log_err()
+                    {
+                        cx.emit(PanelEvent::Activate);
+                    }
                 }
                 project::Event::ActivateProjectPanel => {
                     cx.emit(PanelEvent::Activate);
@@ -326,8 +362,7 @@ impl ProjectPanel {
                     this.update_visible_entries(None, cx);
                     cx.notify();
                 }
-                project::Event::WorktreeUpdatedGitRepositories(_)
-                | project::Event::WorktreeUpdatedEntries(_, _)
+                project::Event::WorktreeUpdatedEntries(_, _)
                 | project::Event::WorktreeAdded(_)
                 | project::Event::WorktreeOrderChanged => {
                     this.update_visible_entries(None, cx);
@@ -386,7 +421,11 @@ impl ProjectPanel {
             cx.subscribe(
                 &filename_editor,
                 |project_panel, _, editor_event, cx| match editor_event {
-                    EditorEvent::BufferEdited | EditorEvent::SelectionsChanged { .. } => {
+                    EditorEvent::BufferEdited => {
+                        project_panel.populate_validation_error(cx);
+                        project_panel.autoscroll(cx);
+                    }
+                    EditorEvent::SelectionsChanged { .. } => {
                         project_panel.autoscroll(cx);
                     }
                     EditorEvent::Blurred => {
@@ -414,6 +453,9 @@ impl ProjectPanel {
             cx.observe_global::<SettingsStore>(move |this, cx| {
                 let new_settings = *ProjectPanelSettings::get_global(cx);
                 if project_panel_settings != new_settings {
+                    if project_panel_settings.hide_gitignore != new_settings.hide_gitignore {
+                        this.update_visible_entries(None, cx);
+                    }
                     project_panel_settings = new_settings;
                     this.update_diagnostics(cx);
                     cx.notify();
@@ -500,6 +542,9 @@ impl ProjectPanel {
                                             "{} is not shared by the host. This could be because it has been marked as `private`",
                                             file_path.display()
                                         )),
+                                        // See note in worktree.rs where this error originates. Returning Some in this case prevents
+                                        // the error popup from saying "Try Again", which is a red herring in this case
+                                        ErrorCode::Internal if e.to_string().contains("File is too large to load") => Some(e.to_string()),
                                         _ => None,
                                     }
                                 });
@@ -548,16 +593,25 @@ impl ProjectPanel {
         workspace: WeakEntity<Workspace>,
         mut cx: AsyncWindowContext,
     ) -> Result<Entity<Self>> {
-        let serialized_panel = cx
-            .background_spawn(async move { KEY_VALUE_STORE.read_kvp(PROJECT_PANEL_KEY) })
-            .await
-            .map_err(|e| anyhow!("Failed to load project panel: {}", e))
-            .log_err()
+        let serialized_panel = match workspace
+            .read_with(&cx, |workspace, _| {
+                ProjectPanel::serialization_key(workspace)
+            })
+            .ok()
             .flatten()
-            .map(|panel| serde_json::from_str::<SerializedProjectPanel>(&panel))
-            .transpose()
-            .log_err()
-            .flatten();
+        {
+            Some(serialization_key) => cx
+                .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
+                .await
+                .context("loading project panel")
+                .log_err()
+                .flatten()
+                .map(|panel| serde_json::from_str::<SerializedProjectPanel>(&panel))
+                .transpose()
+                .log_err()
+                .flatten(),
+            None => None,
+        };
 
         workspace.update_in(&mut cx, |workspace, window, cx| {
             let panel = ProjectPanel::new(workspace, window, cx);
@@ -629,13 +683,31 @@ impl ProjectPanel {
             .or_insert(diagnostic_severity);
     }
 
+    fn serialization_key(workspace: &Workspace) -> Option<String> {
+        workspace
+            .database_id()
+            .map(|id| i64::from(id).to_string())
+            .or(workspace.session_id())
+            .map(|id| format!("{}-{:?}", PROJECT_PANEL_KEY, id))
+    }
+
     fn serialize(&mut self, cx: &mut Context<Self>) {
+        let Some(serialization_key) = self
+            .workspace
+            .read_with(cx, |workspace, _| {
+                ProjectPanel::serialization_key(workspace)
+            })
+            .ok()
+            .flatten()
+        else {
+            return;
+        };
         let width = self.width;
         self.pending_serialization = cx.background_spawn(
             async move {
                 KEY_VALUE_STORE
                     .write_kvp(
-                        PROJECT_PANEL_KEY.into(),
+                        serialization_key,
                         serde_json::to_string(&SerializedProjectPanel { width })?,
                     )
                     .await?;
@@ -1105,17 +1177,83 @@ impl ProjectPanel {
         }
     }
 
+    fn populate_validation_error(&mut self, cx: &mut Context<Self>) {
+        let edit_state = match self.edit_state.as_mut() {
+            Some(state) => state,
+            None => return,
+        };
+        let filename = self.filename_editor.read(cx).text(cx);
+        if !filename.is_empty() {
+            if let Some(worktree) = self
+                .project
+                .read(cx)
+                .worktree_for_id(edit_state.worktree_id, cx)
+            {
+                if let Some(entry) = worktree.read(cx).entry_for_id(edit_state.entry_id) {
+                    let mut already_exists = false;
+                    if edit_state.is_new_entry() {
+                        let new_path = entry.path.join(filename.trim_start_matches('/'));
+                        if worktree
+                            .read(cx)
+                            .entry_for_path(new_path.as_path())
+                            .is_some()
+                        {
+                            already_exists = true;
+                        }
+                    } else {
+                        let new_path = if let Some(parent) = entry.path.clone().parent() {
+                            parent.join(&filename)
+                        } else {
+                            filename.clone().into()
+                        };
+                        if let Some(existing) = worktree.read(cx).entry_for_path(new_path.as_path())
+                        {
+                            if existing.id != entry.id {
+                                already_exists = true;
+                            }
+                        }
+                    };
+                    if already_exists {
+                        edit_state.validation_state = ValidationState::Error(format!(
+                            "File or directory '{}' already exists at location. Please choose a different name.",
+                            filename
+                        ));
+                        cx.notify();
+                        return;
+                    }
+                }
+            }
+            let trimmed_filename = filename.trim();
+            if trimmed_filename.is_empty() {
+                edit_state.validation_state =
+                    ValidationState::Error("File or directory name cannot be empty.".to_string());
+                cx.notify();
+                return;
+            }
+            if trimmed_filename != filename {
+                edit_state.validation_state = ValidationState::Warning(
+                    "File or directory name contains leading or trailing whitespace.".to_string(),
+                );
+                cx.notify();
+                return;
+            }
+        }
+        edit_state.validation_state = ValidationState::None;
+        cx.notify();
+    }
+
     fn confirm_edit(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         let edit_state = self.edit_state.as_mut()?;
-        window.focus(&self.focus_handle);
-
         let worktree_id = edit_state.worktree_id;
         let is_new_entry = edit_state.is_new_entry();
         let filename = self.filename_editor.read(cx).text(cx);
+        if filename.trim().is_empty() {
+            return None;
+        }
         #[cfg(not(target_os = "windows"))]
         let filename_indicates_dir = filename.ends_with("/");
         // On Windows, path separator could be either `/` or `\`.
@@ -1127,7 +1265,6 @@ impl ProjectPanel {
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
         let entry = worktree.read(cx).entry_for_id(edit_state.entry_id)?.clone();
 
-        let path_already_exists = |path| worktree.read(cx).entry_for_path(path).is_some();
         let edit_task;
         let edited_entry_id;
         if is_new_entry {
@@ -1136,7 +1273,11 @@ impl ProjectPanel {
                 entry_id: NEW_ENTRY_ID,
             });
             let new_path = entry.path.join(filename.trim_start_matches('/'));
-            if path_already_exists(new_path.as_path()) {
+            if worktree
+                .read(cx)
+                .entry_for_path(new_path.as_path())
+                .is_some()
+            {
                 return None;
             }
 
@@ -1150,7 +1291,10 @@ impl ProjectPanel {
             } else {
                 filename.clone().into()
             };
-            if path_already_exists(new_path.as_path()) {
+            if let Some(existing) = worktree.read(cx).entry_for_path(new_path.as_path()) {
+                if existing.id == entry.id {
+                    window.focus(&self.focus_handle);
+                }
                 return None;
             }
             edited_entry_id = entry.id;
@@ -1159,6 +1303,7 @@ impl ProjectPanel {
             });
         };
 
+        window.focus(&self.focus_handle);
         edit_state.processing_filename = Some(filename);
         cx.notify();
 
@@ -1229,6 +1374,10 @@ impl ProjectPanel {
     }
 
     fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        if cx.stop_active_drag(window) {
+            return;
+        }
+
         let previous_edit_state = self.edit_state.take();
         self.update_visible_entries(None, cx);
         self.marked_entries.clear();
@@ -1272,62 +1421,81 @@ impl ProjectPanel {
     }
 
     fn add_entry(&mut self, is_dir: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(SelectedEntry {
-            worktree_id,
-            entry_id,
-        }) = self.selection
+        let Some((worktree_id, entry_id)) = self
+            .selection
+            .map(|entry| (entry.worktree_id, entry.entry_id))
+            .or_else(|| {
+                let entry_id = self.last_worktree_root_id?;
+                let worktree_id = self
+                    .project
+                    .read(cx)
+                    .worktree_for_entry(entry_id, cx)?
+                    .read(cx)
+                    .id();
+
+                self.selection = Some(SelectedEntry {
+                    worktree_id,
+                    entry_id,
+                });
+
+                Some((worktree_id, entry_id))
+            })
+        else {
+            return;
+        };
+
+        let directory_id;
+        let new_entry_id = self.resolve_entry(entry_id);
+        if let Some((worktree, expanded_dir_ids)) = self
+            .project
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+            .zip(self.expanded_dir_ids.get_mut(&worktree_id))
         {
-            let directory_id;
-            let new_entry_id = self.resolve_entry(entry_id);
-            if let Some((worktree, expanded_dir_ids)) = self
-                .project
-                .read(cx)
-                .worktree_for_id(worktree_id, cx)
-                .zip(self.expanded_dir_ids.get_mut(&worktree_id))
-            {
-                let worktree = worktree.read(cx);
-                if let Some(mut entry) = worktree.entry_for_id(new_entry_id) {
-                    loop {
-                        if entry.is_dir() {
-                            if let Err(ix) = expanded_dir_ids.binary_search(&entry.id) {
-                                expanded_dir_ids.insert(ix, entry.id);
-                            }
-                            directory_id = entry.id;
-                            break;
-                        } else {
-                            if let Some(parent_path) = entry.path.parent() {
-                                if let Some(parent_entry) = worktree.entry_for_path(parent_path) {
-                                    entry = parent_entry;
-                                    continue;
-                                }
-                            }
-                            return;
+            let worktree = worktree.read(cx);
+            if let Some(mut entry) = worktree.entry_for_id(new_entry_id) {
+                loop {
+                    if entry.is_dir() {
+                        if let Err(ix) = expanded_dir_ids.binary_search(&entry.id) {
+                            expanded_dir_ids.insert(ix, entry.id);
                         }
+                        directory_id = entry.id;
+                        break;
+                    } else {
+                        if let Some(parent_path) = entry.path.parent() {
+                            if let Some(parent_entry) = worktree.entry_for_path(parent_path) {
+                                entry = parent_entry;
+                                continue;
+                            }
+                        }
+                        return;
                     }
-                } else {
-                    return;
-                };
+                }
             } else {
                 return;
             };
-            self.marked_entries.clear();
-            self.edit_state = Some(EditState {
-                worktree_id,
-                entry_id: directory_id,
-                leaf_entry_id: None,
-                is_dir,
-                processing_filename: None,
-                previously_focused: self.selection,
-                depth: 0,
-            });
-            self.filename_editor.update(cx, |editor, cx| {
-                editor.clear(window, cx);
-                window.focus(&editor.focus_handle(cx));
-            });
-            self.update_visible_entries(Some((worktree_id, NEW_ENTRY_ID)), cx);
-            self.autoscroll(cx);
-            cx.notify();
-        }
+        } else {
+            return;
+        };
+
+        self.marked_entries.clear();
+        self.edit_state = Some(EditState {
+            worktree_id,
+            entry_id: directory_id,
+            leaf_entry_id: None,
+            is_dir,
+            processing_filename: None,
+            previously_focused: self.selection,
+            depth: 0,
+            validation_state: ValidationState::None,
+        });
+        self.filename_editor.update(cx, |editor, cx| {
+            editor.clear(window, cx);
+            window.focus(&editor.focus_handle(cx));
+        });
+        self.update_visible_entries(Some((worktree_id, NEW_ENTRY_ID)), cx);
+        self.autoscroll(cx);
+        cx.notify();
     }
 
     fn unflatten_entry_id(&self, leaf_entry_id: ProjectEntryId) -> ProjectEntryId {
@@ -1368,6 +1536,7 @@ impl ProjectPanel {
                         processing_filename: None,
                         previously_focused: None,
                         depth: 0,
+                        validation_state: ValidationState::None,
                     });
                     let file_name = entry
                         .path
@@ -1478,7 +1647,9 @@ impl ProjectPanel {
                         } else if dirty_buffers == 1 {
                             "\n\n1 of these has unsaved changes, which will be lost.".to_string()
                         } else {
-                            format!("\n\n{dirty_buffers} of these have unsaved changes, which will be lost.")
+                            format!(
+                                "\n\n{dirty_buffers} of these have unsaved changes, which will be lost."
+                            )
                         };
 
                         format!(
@@ -1533,13 +1704,13 @@ impl ProjectPanel {
         if sanitized_entries.is_empty() {
             return None;
         }
-
         let project = self.project.read(cx);
         let (worktree_id, worktree) = sanitized_entries
             .iter()
             .map(|entry| entry.worktree_id)
             .filter_map(|id| project.worktree_for_id(id, cx).map(|w| (id, w.read(cx))))
             .max_by(|(_, a), (_, b)| a.root_name().cmp(b.root_name()))?;
+        let git_store = project.git_store().read(cx);
 
         let marked_entries_in_worktree = sanitized_entries
             .iter()
@@ -1564,19 +1735,20 @@ impl ProjectPanel {
         let parent_entry = worktree.entry_for_path(parent_path)?;
 
         // Remove all siblings that are being deleted except the last marked entry
-        let mut siblings: Vec<_> = worktree
-            .snapshot()
-            .child_entries(parent_path)
-            .with_git_statuses()
-            .filter(|sibling| {
-                sibling.id == latest_entry.id
-                    || !marked_entries_in_worktree.contains(&&SelectedEntry {
-                        worktree_id,
-                        entry_id: sibling.id,
-                    })
-            })
-            .map(|entry| entry.to_owned())
-            .collect();
+        let repo_snapshots = git_store.repo_snapshots(cx);
+        let worktree_snapshot = worktree.snapshot();
+        let hide_gitignore = ProjectPanelSettings::get_global(cx).hide_gitignore;
+        let mut siblings: Vec<_> =
+            ChildEntriesGitIter::new(&repo_snapshots, &worktree_snapshot, parent_path)
+                .filter(|sibling| {
+                    (sibling.id == latest_entry.id)
+                        || (!marked_entries_in_worktree.contains(&&SelectedEntry {
+                            worktree_id,
+                            entry_id: sibling.id,
+                        }) && (!hide_gitignore || !sibling.is_ignored))
+                })
+                .map(|entry| entry.to_owned())
+                .collect();
 
         project::sort_worktree_entries(&mut siblings);
         let sibling_entry_index = siblings
@@ -2132,7 +2304,7 @@ impl ProjectPanel {
                             project_panel
                                 .project
                                 .update(cx, |project, cx| project.delete_entry(entry_id, true, cx))
-                                .ok_or_else(|| anyhow!("no such entry"))
+                                .context("no such entry")
                         })??
                         .await?;
                 }
@@ -2589,8 +2761,11 @@ impl ProjectPanel {
         new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
         cx: &mut Context<Self>,
     ) {
-        let auto_collapse_dirs = ProjectPanelSettings::get_global(cx).auto_fold_dirs;
+        let settings = ProjectPanelSettings::get_global(cx);
+        let auto_collapse_dirs = settings.auto_fold_dirs;
+        let hide_gitignore = settings.hide_gitignore;
         let project = self.project.read(cx);
+        let repo_snapshots = project.git_store().read(cx).repo_snapshots(cx);
         self.last_worktree_root_id = project
             .visible_worktrees(cx)
             .next_back()
@@ -2601,15 +2776,15 @@ impl ProjectPanel {
         self.visible_entries.clear();
         let mut max_width_item = None;
         for worktree in project.visible_worktrees(cx) {
-            let snapshot = worktree.read(cx).snapshot();
-            let worktree_id = snapshot.id();
+            let worktree_snapshot = worktree.read(cx).snapshot();
+            let worktree_id = worktree_snapshot.id();
 
             let expanded_dir_ids = match self.expanded_dir_ids.entry(worktree_id) {
                 hash_map::Entry::Occupied(e) => e.into_mut(),
                 hash_map::Entry::Vacant(e) => {
                     // The first time a worktree's root entry becomes available,
                     // mark that root entry as expanded.
-                    if let Some(entry) = snapshot.root_entry() {
+                    if let Some(entry) = worktree_snapshot.root_entry() {
                         e.insert(vec![entry.id]).as_slice()
                     } else {
                         &[]
@@ -2631,14 +2806,15 @@ impl ProjectPanel {
             }
 
             let mut visible_worktree_entries = Vec::new();
-            let mut entry_iter = snapshot.entries(true, 0).with_git_statuses();
+            let mut entry_iter =
+                GitTraversal::new(&repo_snapshots, worktree_snapshot.entries(true, 0));
             let mut auto_folded_ancestors = vec![];
             while let Some(entry) = entry_iter.entry() {
                 if auto_collapse_dirs && entry.kind.is_dir() {
                     auto_folded_ancestors.push(entry.id);
                     if !self.unfolded_dir_ids.contains(&entry.id) {
-                        if let Some(root_path) = snapshot.root_entry() {
-                            let mut child_entries = snapshot.child_entries(&entry.path);
+                        if let Some(root_path) = worktree_snapshot.root_entry() {
+                            let mut child_entries = worktree_snapshot.child_entries(&entry.path);
                             if let Some(child) = child_entries.next() {
                                 if entry.path != root_path.path
                                     && child_entries.next().is_none()
@@ -2674,20 +2850,19 @@ impl ProjectPanel {
                     }
                 }
                 auto_folded_ancestors.clear();
-                visible_worktree_entries.push(entry.to_owned());
+                if !hide_gitignore || !entry.is_ignored {
+                    visible_worktree_entries.push(entry.to_owned());
+                }
                 let precedes_new_entry = if let Some(new_entry_id) = new_entry_parent_id {
                     entry.id == new_entry_id || {
-                        self.ancestors.get(&entry.id).map_or(false, |entries| {
-                            entries
-                                .ancestors
-                                .iter()
-                                .any(|entry_id| *entry_id == new_entry_id)
-                        })
+                        self.ancestors
+                            .get(&entry.id)
+                            .map_or(false, |entries| entries.ancestors.contains(&new_entry_id))
                     }
                 } else {
                     false
                 };
-                if precedes_new_entry {
+                if precedes_new_entry && (!hide_gitignore || !entry.is_ignored) {
                     visible_worktree_entries.push(GitEntry {
                         entry: Entry {
                             id: NEW_ENTRY_ID,
@@ -2709,13 +2884,7 @@ impl ProjectPanel {
                 }
                 let worktree_abs_path = worktree.read(cx).abs_path();
                 let (depth, path) = if Some(entry.entry) == worktree.read(cx).root_entry() {
-                    let Some(path_name) = worktree_abs_path
-                        .file_name()
-                        .with_context(|| {
-                            format!("Worktree abs path has no file name, root entry: {entry:?}")
-                        })
-                        .log_err()
-                    else {
+                    let Some(path_name) = worktree_abs_path.file_name() else {
                         continue;
                     };
                     let path = ArcCow::Borrowed(Path::new(path_name));
@@ -2859,16 +3028,18 @@ impl ProjectPanel {
 
         let open_file_after_drop = paths.len() == 1 && paths[0].is_file();
 
-        let Some((target_directory, worktree)) = maybe!({
-            let worktree = self.project.read(cx).worktree_for_entry(entry_id, cx)?;
+        let Some((target_directory, worktree, fs)) = maybe!({
+            let project = self.project.read(cx);
+            let fs = project.fs().clone();
+            let worktree = project.worktree_for_entry(entry_id, cx)?;
             let entry = worktree.read(cx).entry_for_id(entry_id)?;
-            let path = worktree.read(cx).absolutize(&entry.path).ok()?;
-            let target_directory = if path.is_dir() {
-                path
+            let path = entry.path.clone();
+            let target_directory = if entry.is_dir() {
+                path.to_path_buf()
             } else {
                 path.parent()?.to_path_buf()
             };
-            Some((target_directory, worktree))
+            Some((target_directory, worktree, fs))
         }) else {
             return;
         };
@@ -2910,10 +3081,10 @@ impl ProjectPanel {
                 }
 
                 let task = worktree.update( cx, |worktree, cx| {
-                    worktree.copy_external_entries(target_directory, paths, true, cx)
+                    worktree.copy_external_entries(target_directory.into(), paths, fs, cx)
                 })?;
 
-                let opened_entries = task.await?;
+                let opened_entries = task.await.with_context(|| "failed to copy external paths")?;
                 this.update(cx, |this, cx| {
                     if open_file_after_drop && !opened_entries.is_empty() {
                         this.open_entry(opened_entries[0], true, false, cx);
@@ -2933,7 +3104,8 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let should_copy = window.modifiers().alt;
+        let should_copy = cfg!(target_os = "macos") && window.modifiers().alt
+            || cfg!(not(target_os = "macos")) && window.modifiers().control;
         if should_copy {
             let _ = maybe!({
                 let project = self.project.read(cx);
@@ -3196,10 +3368,7 @@ impl ProjectPanel {
                                     .ancestors
                                     .get(&entry.id)
                                     .is_some_and(|auto_folded_dirs| {
-                                        auto_folded_dirs
-                                            .ancestors
-                                            .iter()
-                                            .any(|entry_id| *entry_id == edit_state.entry_id)
+                                        auto_folded_dirs.ancestors.contains(&edit_state.entry_id)
                                     })
                         };
 
@@ -3222,7 +3391,7 @@ impl ProjectPanel {
                                         .take(prefix_components)
                                         .collect::<PathBuf>();
                                     if let Some(last_component) =
-                                        Path::new(processing_filename).components().last()
+                                        Path::new(processing_filename).components().next_back()
                                     {
                                         new_path.push(last_component);
                                         previous_components.next();
@@ -3281,10 +3450,16 @@ impl ProjectPanel {
                 .cloned();
         }
 
+        let repo_snapshots = self
+            .project
+            .read(cx)
+            .git_store()
+            .read(cx)
+            .repo_snapshots(cx);
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
-        worktree.update(cx, |tree, _| {
+        worktree.read_with(cx, |tree, _| {
             utils::ReversibleIterable::new(
-                tree.entries(true, 0usize).with_git_statuses(),
+                GitTraversal::new(&repo_snapshots, tree.entries(true, 0usize)),
                 reverse_search,
             )
             .find_single_ended(|ele| predicate(*ele, worktree_id))
@@ -3304,6 +3479,12 @@ impl ProjectPanel {
             .iter()
             .map(|(worktree_id, _, _)| *worktree_id)
             .collect();
+        let repo_snapshots = self
+            .project
+            .read(cx)
+            .git_store()
+            .read(cx)
+            .repo_snapshots(cx);
 
         let mut last_found: Option<SelectedEntry> = None;
 
@@ -3311,16 +3492,18 @@ impl ProjectPanel {
             let worktree = self
                 .project
                 .read(cx)
-                .worktree_for_id(start.worktree_id, cx)?;
+                .worktree_for_id(start.worktree_id, cx)?
+                .read(cx);
 
-            let search = worktree.update(cx, |tree, _| {
-                let entry = tree.entry_for_id(start.entry_id)?;
-                let root_entry = tree.root_entry()?;
-                let tree_id = tree.id();
+            let search = {
+                let entry = worktree.entry_for_id(start.entry_id)?;
+                let root_entry = worktree.root_entry()?;
+                let tree_id = worktree.id();
 
-                let mut first_iter = tree
-                    .traverse_from_path(true, true, true, entry.path.as_ref())
-                    .with_git_statuses();
+                let mut first_iter = GitTraversal::new(
+                    &repo_snapshots,
+                    worktree.traverse_from_path(true, true, true, entry.path.as_ref()),
+                );
 
                 if reverse_search {
                     first_iter.next();
@@ -3333,7 +3516,8 @@ impl ProjectPanel {
                     .find(|ele| predicate(*ele, tree_id))
                     .map(|ele| ele.to_owned());
 
-                let second_iter = tree.entries(true, 0usize).with_git_statuses();
+                let second_iter =
+                    GitTraversal::new(&repo_snapshots, worktree.entries(true, 0usize));
 
                 let second = if reverse_search {
                     second_iter
@@ -3354,7 +3538,7 @@ impl ProjectPanel {
                 } else {
                     Some((first, second))
                 }
-            });
+            };
 
             if let Some((first, second)) = search {
                 let first = first.map(|entry| SelectedEntry {
@@ -3560,7 +3744,6 @@ impl ProjectPanel {
         let depth = details.depth;
         let worktree_id = details.worktree_id;
         let selections = Arc::new(self.marked_entries.clone());
-        let is_local = self.project.read(cx).is_local();
 
         let dragged_selection = DraggedSelection {
             active_selection: selection,
@@ -3579,16 +3762,36 @@ impl ProjectPanel {
             item_colors.hover
         };
 
+        let validation_color_and_message = if show_editor {
+            match self
+                .edit_state
+                .as_ref()
+                .map_or(ValidationState::None, |e| e.validation_state.clone())
+            {
+                ValidationState::Error(msg) => Some((Color::Error.color(cx), msg.clone())),
+                ValidationState::Warning(msg) => Some((Color::Warning.color(cx), msg.clone())),
+                ValidationState::None => None,
+            }
+        } else {
+            None
+        };
+
         let border_color =
             if !self.mouse_down && is_active && self.focus_handle.contains_focused(window, cx) {
-                item_colors.focused
+                match validation_color_and_message {
+                    Some((color, _)) => color,
+                    None => item_colors.focused,
+                }
             } else {
                 bg_color
             };
 
         let border_hover_color =
             if !self.mouse_down && is_active && self.focus_handle.contains_focused(window, cx) {
-                item_colors.focused
+                match validation_color_and_message {
+                    Some((color, _)) => color,
+                    None => item_colors.focused,
+                }
             } else {
                 bg_hover_color
             };
@@ -3605,60 +3808,57 @@ impl ProjectPanel {
             .border_r_2()
             .border_color(border_color)
             .hover(|style| style.bg(bg_hover_color).border_color(border_hover_color))
-            .when(is_local, |div| {
-                div.on_drag_move::<ExternalPaths>(cx.listener(
-                    move |this, event: &DragMoveEvent<ExternalPaths>, _, cx| {
-                        if event.bounds.contains(&event.event.position) {
-                            if this.last_external_paths_drag_over_entry == Some(entry_id) {
-                                return;
-                            }
-                            this.last_external_paths_drag_over_entry = Some(entry_id);
-                            this.marked_entries.clear();
+            .on_drag_move::<ExternalPaths>(cx.listener(
+                move |this, event: &DragMoveEvent<ExternalPaths>, _, cx| {
+                    if event.bounds.contains(&event.event.position) {
+                        if this.last_external_paths_drag_over_entry == Some(entry_id) {
+                            return;
+                        }
+                        this.last_external_paths_drag_over_entry = Some(entry_id);
+                        this.marked_entries.clear();
 
-                            let Some((worktree, path, entry)) = maybe!({
-                                let worktree = this
-                                    .project
-                                    .read(cx)
-                                    .worktree_for_id(selection.worktree_id, cx)?;
-                                let worktree = worktree.read(cx);
-                                let abs_path = worktree.absolutize(&path).log_err()?;
-                                let path = if abs_path.is_dir() {
-                                    path.as_ref()
-                                } else {
-                                    path.parent()?
-                                };
-                                let entry = worktree.entry_for_path(path)?;
-                                Some((worktree, path, entry))
-                            }) else {
-                                return;
+                        let Some((worktree, path, entry)) = maybe!({
+                            let worktree = this
+                                .project
+                                .read(cx)
+                                .worktree_for_id(selection.worktree_id, cx)?;
+                            let worktree = worktree.read(cx);
+                            let entry = worktree.entry_for_path(&path)?;
+                            let path = if entry.is_dir() {
+                                path.as_ref()
+                            } else {
+                                path.parent()?
                             };
+                            Some((worktree, path, entry))
+                        }) else {
+                            return;
+                        };
 
+                        this.marked_entries.insert(SelectedEntry {
+                            entry_id: entry.id,
+                            worktree_id: worktree.id(),
+                        });
+
+                        for entry in worktree.child_entries(path) {
                             this.marked_entries.insert(SelectedEntry {
                                 entry_id: entry.id,
                                 worktree_id: worktree.id(),
                             });
-
-                            for entry in worktree.child_entries(path) {
-                                this.marked_entries.insert(SelectedEntry {
-                                    entry_id: entry.id,
-                                    worktree_id: worktree.id(),
-                                });
-                            }
-
-                            cx.notify();
                         }
-                    },
-                ))
-                .on_drop(cx.listener(
-                    move |this, external_paths: &ExternalPaths, window, cx| {
-                        this.hover_scroll_task.take();
-                        this.last_external_paths_drag_over_entry = None;
-                        this.marked_entries.clear();
-                        this.drop_external_files(external_paths.paths(), entry_id, window, cx);
-                        cx.stop_propagation();
-                    },
-                ))
-            })
+
+                        cx.notify();
+                    }
+                },
+            ))
+            .on_drop(cx.listener(
+                move |this, external_paths: &ExternalPaths, window, cx| {
+                    this.hover_scroll_task.take();
+                    this.last_external_paths_drag_over_entry = None;
+                    this.marked_entries.clear();
+                    this.drop_external_files(external_paths.paths(), entry_id, window, cx);
+                    cx.stop_propagation();
+                },
+            ))
             .on_drag_move::<DraggedSelection>(cx.listener(
                 move |this, event: &DragMoveEvent<DraggedSelection>, window, cx| {
                     if event.bounds.contains(&event.event.position) {
@@ -4058,6 +4258,33 @@ impl ProjectPanel {
                     ))
                     .overflow_x(),
             )
+            .when_some(
+                validation_color_and_message,
+                |this, (color, message)| {
+                    this
+                    .relative()
+                    .child(
+                        deferred(
+                            div()
+                            .occlude()
+                            .absolute()
+                            .top_full()
+                            .left(px(-1.)) // Used px over rem so that it doesn't change with font size
+                            .right(px(-0.5))
+                            .py_1()
+                            .px_2()
+                            .border_1()
+                            .border_color(color)
+                            .bg(cx.theme().colors().background)
+                            .child(
+                                Label::new(message)
+                                .color(Color::from(color))
+                                .size(LabelSize::Small)
+                            )
+                        )
+                    )
+                }
+            )
     }
 
     fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
@@ -4116,19 +4343,7 @@ impl ProjectPanel {
         {
             return None;
         }
-
-        let scroll_handle = self.scroll_handle.0.borrow();
-        let longest_item_width = scroll_handle
-            .last_item_size
-            .filter(|size| size.contents.width > size.item.width)?
-            .contents
-            .width
-            .0 as f64;
-        if longest_item_width < scroll_handle.base_handle.bounds().size.width.0 as f64 {
-            return None;
-        }
-
-        Some(
+        Scrollbar::horizontal(self.horizontal_scrollbar_state.clone()).map(|scrollbar| {
             div()
                 .occlude()
                 .id("project-panel-horizontal-scroll")
@@ -4165,12 +4380,8 @@ impl ProjectPanel {
                 .bottom_1()
                 .h(px(12.))
                 .cursor_default()
-                .when(self.width.is_some(), |this| {
-                    this.children(Scrollbar::horizontal(
-                        self.horizontal_scrollbar_state.clone(),
-                    ))
-                }),
-        )
+                .child(scrollbar)
+        })
     }
 
     fn dispatch_context(&self, window: &Window, cx: &Context<Self>) -> KeyContext {
@@ -4240,28 +4451,31 @@ impl ProjectPanel {
         entry_id: ProjectEntryId,
         skip_ignored: bool,
         cx: &mut Context<Self>,
-    ) {
-        if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
-            let worktree = worktree.read(cx);
-            if skip_ignored
-                && worktree
-                    .entry_for_id(entry_id)
-                    .map_or(true, |entry| entry.is_ignored && !entry.is_always_included)
-            {
-                return;
-            }
-
-            let worktree_id = worktree.id();
-            self.expand_entry(worktree_id, entry_id, cx);
-            self.update_visible_entries(Some((worktree_id, entry_id)), cx);
-            self.marked_entries.clear();
-            self.marked_entries.insert(SelectedEntry {
-                worktree_id,
-                entry_id,
-            });
-            self.autoscroll(cx);
-            cx.notify();
+    ) -> Result<()> {
+        let worktree = project
+            .read(cx)
+            .worktree_for_entry(entry_id, cx)
+            .context("can't reveal a non-existent entry in the project panel")?;
+        let worktree = worktree.read(cx);
+        if skip_ignored
+            && worktree
+                .entry_for_id(entry_id)
+                .map_or(true, |entry| entry.is_ignored && !entry.is_always_included)
+        {
+            anyhow::bail!("can't reveal an ignored entry in the project panel");
         }
+
+        let worktree_id = worktree.id();
+        self.expand_entry(worktree_id, entry_id, cx);
+        self.update_visible_entries(Some((worktree_id, entry_id)), cx);
+        self.marked_entries.clear();
+        self.marked_entries.insert(SelectedEntry {
+            worktree_id,
+            entry_id,
+        });
+        self.autoscroll(cx);
+        cx.notify();
+        Ok(())
     }
 
     fn find_active_indent_guide(
@@ -4387,26 +4601,28 @@ impl Render for ProjectPanel {
                     return;
                 };
                 let adjustment = point(px(0.), px(vertical_scroll_offset));
-                this.hover_scroll_task = Some(cx.spawn_in(window, async move |this, cx| loop {
-                    let should_stop_scrolling = this
-                        .update(cx, |this, cx| {
-                            this.hover_scroll_task.as_ref()?;
-                            let handle = this.scroll_handle.0.borrow_mut();
-                            let offset = handle.base_handle.offset();
+                this.hover_scroll_task = Some(cx.spawn_in(window, async move |this, cx| {
+                    loop {
+                        let should_stop_scrolling = this
+                            .update(cx, |this, cx| {
+                                this.hover_scroll_task.as_ref()?;
+                                let handle = this.scroll_handle.0.borrow_mut();
+                                let offset = handle.base_handle.offset();
 
-                            handle.base_handle.set_offset(offset + adjustment);
-                            cx.notify();
-                            Some(())
-                        })
-                        .ok()
-                        .flatten()
-                        .is_some();
-                    if should_stop_scrolling {
-                        return;
+                                handle.base_handle.set_offset(offset + adjustment);
+                                cx.notify();
+                                Some(())
+                            })
+                            .ok()
+                            .flatten()
+                            .is_some();
+                        if should_stop_scrolling {
+                            return;
+                        }
+                        cx.background_executor()
+                            .timer(Duration::from_millis(16))
+                            .await;
                     }
-                    cx.background_executor()
-                        .timer(Duration::from_millis(16))
-                        .await;
                 }));
             }
             h_flex()
@@ -4570,9 +4786,9 @@ impl Render for ProjectPanel {
                             .with_render_fn(
                                 cx.entity().clone(),
                                 move |this, params, _, cx| {
-                                    const LEFT_OFFSET: f32 = 14.;
-                                    const PADDING_Y: f32 = 4.;
-                                    const HITBOX_OVERDRAW: f32 = 3.;
+                                    const LEFT_OFFSET: Pixels = px(14.);
+                                    const PADDING_Y: Pixels = px(4.);
+                                    const HITBOX_OVERDRAW: Pixels = px(3.);
 
                                     let active_indent_guide_index =
                                         this.find_active_indent_guide(&params.indent_guides, cx);
@@ -4588,19 +4804,16 @@ impl Render for ProjectPanel {
                                             let offset = if layout.continues_offscreen {
                                                 px(0.)
                                             } else {
-                                                px(PADDING_Y)
+                                                PADDING_Y
                                             };
                                             let bounds = Bounds::new(
                                                 point(
-                                                    px(layout.offset.x as f32) * indent_size
-                                                        + px(LEFT_OFFSET),
-                                                    px(layout.offset.y as f32) * item_height
-                                                        + offset,
+                                                    layout.offset.x * indent_size + LEFT_OFFSET,
+                                                    layout.offset.y * item_height + offset,
                                                 ),
                                                 size(
                                                     px(1.),
-                                                    px(layout.length as f32) * item_height
-                                                        - px(offset.0 * 2.),
+                                                    layout.length * item_height - offset * 2.,
                                                 ),
                                             );
                                             ui::RenderedIndentGuide {
@@ -4609,12 +4822,11 @@ impl Render for ProjectPanel {
                                                 is_active: Some(idx) == active_indent_guide_index,
                                                 hitbox: Some(Bounds::new(
                                                     point(
-                                                        bounds.origin.x - px(HITBOX_OVERDRAW),
+                                                        bounds.origin.x - HITBOX_OVERDRAW,
                                                         bounds.origin.y,
                                                     ),
                                                     size(
-                                                        bounds.size.width
-                                                            + px(2. * HITBOX_OVERDRAW),
+                                                        bounds.size.width + HITBOX_OVERDRAW * 2.,
                                                         bounds.size.height,
                                                     ),
                                                 )),
@@ -4653,11 +4865,16 @@ impl Render for ProjectPanel {
                 .child(
                     Button::new("open_project", "Open a project")
                         .full_width()
-                        .key_binding(KeyBinding::for_action(&workspace::Open, window, cx))
+                        .key_binding(KeyBinding::for_action_in(
+                            &OpenRecent::default(),
+                            &self.focus_handle,
+                            window,
+                            cx,
+                        ))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.workspace
                                 .update(cx, |_, cx| {
-                                    window.dispatch_action(Box::new(workspace::Open), cx)
+                                    window.dispatch_action(OpenRecent::default().boxed_clone(), cx);
                                 })
                                 .log_err();
                         })),
@@ -4760,10 +4977,12 @@ impl Panel for ProjectPanel {
             .unwrap_or_else(|| ProjectPanelSettings::get_global(cx).default_width)
     }
 
-    fn set_size(&mut self, size: Option<Pixels>, _: &mut Window, cx: &mut Context<Self>) {
+    fn set_size(&mut self, size: Option<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         self.width = size;
-        self.serialize(cx);
         cx.notify();
+        cx.defer_in(window, |this, _, cx| {
+            this.serialize(cx);
+        });
     }
 
     fn icon(&self, _: &Window, cx: &App) -> Option<IconName> {
@@ -4817,5042 +5036,4 @@ impl ClipboardEntry {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use collections::HashSet;
-    use gpui::{Empty, Entity, TestAppContext, VisualTestContext, WindowHandle};
-    use pretty_assertions::assert_eq;
-    use project::{FakeFs, WorktreeSettings};
-    use serde_json::json;
-    use settings::SettingsStore;
-    use std::path::{Path, PathBuf};
-    use util::{path, separator};
-    use workspace::{
-        item::{Item, ProjectItem},
-        register_project_item, AppState,
-    };
-
-    #[gpui::test]
-    async fn test_visible_list(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/root1",
-            json!({
-                ".dockerignore": "",
-                ".git": {
-                    "HEAD": "",
-                },
-                "a": {
-                    "0": { "q": "", "r": "", "s": "" },
-                    "1": { "t": "", "u": "" },
-                    "2": { "v": "", "w": "", "x": "", "y": "" },
-                },
-                "b": {
-                    "3": { "Q": "" },
-                    "4": { "R": "", "S": "", "T": "", "U": "" },
-                },
-                "C": {
-                    "5": {},
-                    "6": { "V": "", "W": "" },
-                    "7": { "X": "" },
-                    "8": { "Y": {}, "Z": "" }
-                }
-            }),
-        )
-        .await;
-        fs.insert_tree(
-            "/root2",
-            json!({
-                "d": {
-                    "9": ""
-                },
-                "e": {}
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..50, cx),
-            &[
-                "v root1",
-                "    > .git",
-                "    > a",
-                "    > b",
-                "    > C",
-                "      .dockerignore",
-                "v root2",
-                "    > d",
-                "    > e",
-            ]
-        );
-
-        toggle_expand_dir(&panel, "root1/b", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..50, cx),
-            &[
-                "v root1",
-                "    > .git",
-                "    > a",
-                "    v b  <== selected",
-                "        > 3",
-                "        > 4",
-                "    > C",
-                "      .dockerignore",
-                "v root2",
-                "    > d",
-                "    > e",
-            ]
-        );
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 6..9, cx),
-            &[
-                //
-                "    > C",
-                "      .dockerignore",
-                "v root2",
-            ]
-        );
-    }
-
-    #[gpui::test]
-    async fn test_opening_file(cx: &mut gpui::TestAppContext) {
-        init_test_with_editor(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            path!("/src"),
-            json!({
-                "test": {
-                    "first.rs": "// First Rust file",
-                    "second.rs": "// Second Rust file",
-                    "third.rs": "// Third Rust file",
-                }
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), [path!("/src").as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        toggle_expand_dir(&panel, "src/test", cx);
-        select_path(&panel, "src/test/first.rs", cx);
-        panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
-        cx.executor().run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v src",
-                "    v test",
-                "          first.rs  <== selected  <== marked",
-                "          second.rs",
-                "          third.rs"
-            ]
-        );
-        ensure_single_file_is_opened(&workspace, "test/first.rs", cx);
-
-        select_path(&panel, "src/test/second.rs", cx);
-        panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
-        cx.executor().run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v src",
-                "    v test",
-                "          first.rs",
-                "          second.rs  <== selected  <== marked",
-                "          third.rs"
-            ]
-        );
-        ensure_single_file_is_opened(&workspace, "test/second.rs", cx);
-    }
-
-    #[gpui::test]
-    async fn test_exclusions_in_visible_list(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-        cx.update(|cx| {
-            cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
-                    worktree_settings.file_scan_exclusions =
-                        Some(vec!["**/.git".to_string(), "**/4/**".to_string()]);
-                });
-            });
-        });
-
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            "/root1",
-            json!({
-                ".dockerignore": "",
-                ".git": {
-                    "HEAD": "",
-                },
-                "a": {
-                    "0": { "q": "", "r": "", "s": "" },
-                    "1": { "t": "", "u": "" },
-                    "2": { "v": "", "w": "", "x": "", "y": "" },
-                },
-                "b": {
-                    "3": { "Q": "" },
-                    "4": { "R": "", "S": "", "T": "", "U": "" },
-                },
-                "C": {
-                    "5": {},
-                    "6": { "V": "", "W": "" },
-                    "7": { "X": "" },
-                    "8": { "Y": {}, "Z": "" }
-                }
-            }),
-        )
-        .await;
-        fs.insert_tree(
-            "/root2",
-            json!({
-                "d": {
-                    "4": ""
-                },
-                "e": {}
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..50, cx),
-            &[
-                "v root1",
-                "    > a",
-                "    > b",
-                "    > C",
-                "      .dockerignore",
-                "v root2",
-                "    > d",
-                "    > e",
-            ]
-        );
-
-        toggle_expand_dir(&panel, "root1/b", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..50, cx),
-            &[
-                "v root1",
-                "    > a",
-                "    v b  <== selected",
-                "        > 3",
-                "    > C",
-                "      .dockerignore",
-                "v root2",
-                "    > d",
-                "    > e",
-            ]
-        );
-
-        toggle_expand_dir(&panel, "root2/d", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..50, cx),
-            &[
-                "v root1",
-                "    > a",
-                "    v b",
-                "        > 3",
-                "    > C",
-                "      .dockerignore",
-                "v root2",
-                "    v d  <== selected",
-                "    > e",
-            ]
-        );
-
-        toggle_expand_dir(&panel, "root2/e", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..50, cx),
-            &[
-                "v root1",
-                "    > a",
-                "    v b",
-                "        > 3",
-                "    > C",
-                "      .dockerignore",
-                "v root2",
-                "    v d",
-                "    v e  <== selected",
-            ]
-        );
-    }
-
-    #[gpui::test]
-    async fn test_auto_collapse_dir_paths(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            path!("/root1"),
-            json!({
-                "dir_1": {
-                    "nested_dir_1": {
-                        "nested_dir_2": {
-                            "nested_dir_3": {
-                                "file_a.java": "// File contents",
-                                "file_b.java": "// File contents",
-                                "file_c.java": "// File contents",
-                                "nested_dir_4": {
-                                    "nested_dir_5": {
-                                        "file_d.java": "// File contents",
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }),
-        )
-        .await;
-        fs.insert_tree(
-            path!("/root2"),
-            json!({
-                "dir_2": {
-                    "file_1.java": "// File contents",
-                }
-            }),
-        )
-        .await;
-
-        let project = Project::test(
-            fs.clone(),
-            [path!("/root1").as_ref(), path!("/root2").as_ref()],
-            cx,
-        )
-        .await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        cx.update(|_, cx| {
-            let settings = *ProjectPanelSettings::get_global(cx);
-            ProjectPanelSettings::override_global(
-                ProjectPanelSettings {
-                    auto_fold_dirs: true,
-                    ..settings
-                },
-                cx,
-            );
-        });
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                separator!("v root1"),
-                separator!("    > dir_1/nested_dir_1/nested_dir_2/nested_dir_3"),
-                separator!("v root2"),
-                separator!("    > dir_2"),
-            ]
-        );
-
-        toggle_expand_dir(
-            &panel,
-            "root1/dir_1/nested_dir_1/nested_dir_2/nested_dir_3",
-            cx,
-        );
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                separator!("v root1"),
-                separator!("    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3  <== selected"),
-                separator!("        > nested_dir_4/nested_dir_5"),
-                separator!("          file_a.java"),
-                separator!("          file_b.java"),
-                separator!("          file_c.java"),
-                separator!("v root2"),
-                separator!("    > dir_2"),
-            ]
-        );
-
-        toggle_expand_dir(
-            &panel,
-            "root1/dir_1/nested_dir_1/nested_dir_2/nested_dir_3/nested_dir_4/nested_dir_5",
-            cx,
-        );
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                separator!("v root1"),
-                separator!("    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3"),
-                separator!("        v nested_dir_4/nested_dir_5  <== selected"),
-                separator!("              file_d.java"),
-                separator!("          file_a.java"),
-                separator!("          file_b.java"),
-                separator!("          file_c.java"),
-                separator!("v root2"),
-                separator!("    > dir_2"),
-            ]
-        );
-        toggle_expand_dir(&panel, "root2/dir_2", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                separator!("v root1"),
-                separator!("    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3"),
-                separator!("        v nested_dir_4/nested_dir_5"),
-                separator!("              file_d.java"),
-                separator!("          file_a.java"),
-                separator!("          file_b.java"),
-                separator!("          file_c.java"),
-                separator!("v root2"),
-                separator!("    v dir_2  <== selected"),
-                separator!("          file_1.java"),
-            ]
-        );
-    }
-
-    #[gpui::test(iterations = 30)]
-    async fn test_editing_files(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/root1",
-            json!({
-                ".dockerignore": "",
-                ".git": {
-                    "HEAD": "",
-                },
-                "a": {
-                    "0": { "q": "", "r": "", "s": "" },
-                    "1": { "t": "", "u": "" },
-                    "2": { "v": "", "w": "", "x": "", "y": "" },
-                },
-                "b": {
-                    "3": { "Q": "" },
-                    "4": { "R": "", "S": "", "T": "", "U": "" },
-                },
-                "C": {
-                    "5": {},
-                    "6": { "V": "", "W": "" },
-                    "7": { "X": "" },
-                    "8": { "Y": {}, "Z": "" }
-                }
-            }),
-        )
-        .await;
-        fs.insert_tree(
-            "/root2",
-            json!({
-                "d": {
-                    "9": ""
-                },
-                "e": {}
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace
-            .update(cx, |workspace, window, cx| {
-                let panel = ProjectPanel::new(workspace, window, cx);
-                workspace.add_panel(panel.clone(), window, cx);
-                panel
-            })
-            .unwrap();
-
-        select_path(&panel, "root1", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v root1  <== selected",
-                "    > .git",
-                "    > a",
-                "    > b",
-                "    > C",
-                "      .dockerignore",
-                "v root2",
-                "    > d",
-                "    > e",
-            ]
-        );
-
-        // Add a file with the root folder selected. The filename editor is placed
-        // before the first file in the root folder.
-        panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
-        panel.update_in(cx, |panel, window, cx| {
-            assert!(panel.filename_editor.read(cx).is_focused(window));
-        });
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v root1",
-                "    > .git",
-                "    > a",
-                "    > b",
-                "    > C",
-                "      [EDITOR: '']  <== selected",
-                "      .dockerignore",
-                "v root2",
-                "    > d",
-                "    > e",
-            ]
-        );
-
-        let confirm = panel.update_in(cx, |panel, window, cx| {
-            panel.filename_editor.update(cx, |editor, cx| {
-                editor.set_text("the-new-filename", window, cx)
-            });
-            panel.confirm_edit(window, cx).unwrap()
-        });
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v root1",
-                "    > .git",
-                "    > a",
-                "    > b",
-                "    > C",
-                "      [PROCESSING: 'the-new-filename']  <== selected",
-                "      .dockerignore",
-                "v root2",
-                "    > d",
-                "    > e",
-            ]
-        );
-
-        confirm.await.unwrap();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v root1",
-                "    > .git",
-                "    > a",
-                "    > b",
-                "    > C",
-                "      .dockerignore",
-                "      the-new-filename  <== selected  <== marked",
-                "v root2",
-                "    > d",
-                "    > e",
-            ]
-        );
-
-        select_path(&panel, "root1/b", cx);
-        panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v root1",
-                "    > .git",
-                "    > a",
-                "    v b",
-                "        > 3",
-                "        > 4",
-                "          [EDITOR: '']  <== selected",
-                "    > C",
-                "      .dockerignore",
-                "      the-new-filename",
-            ]
-        );
-
-        panel
-            .update_in(cx, |panel, window, cx| {
-                panel.filename_editor.update(cx, |editor, cx| {
-                    editor.set_text("another-filename.txt", window, cx)
-                });
-                panel.confirm_edit(window, cx).unwrap()
-            })
-            .await
-            .unwrap();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v root1",
-                "    > .git",
-                "    > a",
-                "    v b",
-                "        > 3",
-                "        > 4",
-                "          another-filename.txt  <== selected  <== marked",
-                "    > C",
-                "      .dockerignore",
-                "      the-new-filename",
-            ]
-        );
-
-        select_path(&panel, "root1/b/another-filename.txt", cx);
-        panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v root1",
-                "    > .git",
-                "    > a",
-                "    v b",
-                "        > 3",
-                "        > 4",
-                "          [EDITOR: 'another-filename.txt']  <== selected  <== marked",
-                "    > C",
-                "      .dockerignore",
-                "      the-new-filename",
-            ]
-        );
-
-        let confirm = panel.update_in(cx, |panel, window, cx| {
-            panel.filename_editor.update(cx, |editor, cx| {
-                let file_name_selections = editor.selections.all::<usize>(cx);
-                assert_eq!(file_name_selections.len(), 1, "File editing should have a single selection, but got: {file_name_selections:?}");
-                let file_name_selection = &file_name_selections[0];
-                assert_eq!(file_name_selection.start, 0, "Should select the file name from the start");
-                assert_eq!(file_name_selection.end, "another-filename".len(), "Should not select file extension");
-
-                editor.set_text("a-different-filename.tar.gz", window, cx)
-            });
-            panel.confirm_edit(window, cx).unwrap()
-        });
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v root1",
-                "    > .git",
-                "    > a",
-                "    v b",
-                "        > 3",
-                "        > 4",
-                "          [PROCESSING: 'a-different-filename.tar.gz']  <== selected  <== marked",
-                "    > C",
-                "      .dockerignore",
-                "      the-new-filename",
-            ]
-        );
-
-        confirm.await.unwrap();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v root1",
-                "    > .git",
-                "    > a",
-                "    v b",
-                "        > 3",
-                "        > 4",
-                "          a-different-filename.tar.gz  <== selected",
-                "    > C",
-                "      .dockerignore",
-                "      the-new-filename",
-            ]
-        );
-
-        panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v root1",
-                "    > .git",
-                "    > a",
-                "    v b",
-                "        > 3",
-                "        > 4",
-                "          [EDITOR: 'a-different-filename.tar.gz']  <== selected",
-                "    > C",
-                "      .dockerignore",
-                "      the-new-filename",
-            ]
-        );
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.filename_editor.update(cx, |editor, cx| {
-                let file_name_selections = editor.selections.all::<usize>(cx);
-                assert_eq!(file_name_selections.len(), 1, "File editing should have a single selection, but got: {file_name_selections:?}");
-                let file_name_selection = &file_name_selections[0];
-                assert_eq!(file_name_selection.start, 0, "Should select the file name from the start");
-                assert_eq!(file_name_selection.end, "a-different-filename.tar".len(), "Should not select file extension, but still may select anything up to the last dot..");
-
-            });
-            panel.cancel(&menu::Cancel, window, cx)
-        });
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.new_directory(&NewDirectory, window, cx)
-        });
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v root1",
-                "    > .git",
-                "    > a",
-                "    v b",
-                "        > 3",
-                "        > 4",
-                "        > [EDITOR: '']  <== selected",
-                "          a-different-filename.tar.gz",
-                "    > C",
-                "      .dockerignore",
-            ]
-        );
-
-        let confirm = panel.update_in(cx, |panel, window, cx| {
-            panel
-                .filename_editor
-                .update(cx, |editor, cx| editor.set_text("new-dir", window, cx));
-            panel.confirm_edit(window, cx).unwrap()
-        });
-        panel.update_in(cx, |panel, window, cx| {
-            panel.select_next(&Default::default(), window, cx)
-        });
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v root1",
-                "    > .git",
-                "    > a",
-                "    v b",
-                "        > 3",
-                "        > 4",
-                "        > [PROCESSING: 'new-dir']",
-                "          a-different-filename.tar.gz  <== selected",
-                "    > C",
-                "      .dockerignore",
-            ]
-        );
-
-        confirm.await.unwrap();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v root1",
-                "    > .git",
-                "    > a",
-                "    v b",
-                "        > 3",
-                "        > 4",
-                "        > new-dir",
-                "          a-different-filename.tar.gz  <== selected",
-                "    > C",
-                "      .dockerignore",
-            ]
-        );
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.rename(&Default::default(), window, cx)
-        });
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v root1",
-                "    > .git",
-                "    > a",
-                "    v b",
-                "        > 3",
-                "        > 4",
-                "        > new-dir",
-                "          [EDITOR: 'a-different-filename.tar.gz']  <== selected",
-                "    > C",
-                "      .dockerignore",
-            ]
-        );
-
-        // Dismiss the rename editor when it loses focus.
-        workspace.update(cx, |_, window, _| window.blur()).unwrap();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v root1",
-                "    > .git",
-                "    > a",
-                "    v b",
-                "        > 3",
-                "        > 4",
-                "        > new-dir",
-                "          a-different-filename.tar.gz  <== selected",
-                "    > C",
-                "      .dockerignore",
-            ]
-        );
-    }
-
-    #[gpui::test(iterations = 10)]
-    async fn test_adding_directories_via_file(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/root1",
-            json!({
-                ".dockerignore": "",
-                ".git": {
-                    "HEAD": "",
-                },
-                "a": {
-                    "0": { "q": "", "r": "", "s": "" },
-                    "1": { "t": "", "u": "" },
-                    "2": { "v": "", "w": "", "x": "", "y": "" },
-                },
-                "b": {
-                    "3": { "Q": "" },
-                    "4": { "R": "", "S": "", "T": "", "U": "" },
-                },
-                "C": {
-                    "5": {},
-                    "6": { "V": "", "W": "" },
-                    "7": { "X": "" },
-                    "8": { "Y": {}, "Z": "" }
-                }
-            }),
-        )
-        .await;
-        fs.insert_tree(
-            "/root2",
-            json!({
-                "d": {
-                    "9": ""
-                },
-                "e": {}
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace
-            .update(cx, |workspace, window, cx| {
-                let panel = ProjectPanel::new(workspace, window, cx);
-                workspace.add_panel(panel.clone(), window, cx);
-                panel
-            })
-            .unwrap();
-
-        select_path(&panel, "root1", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v root1  <== selected",
-                "    > .git",
-                "    > a",
-                "    > b",
-                "    > C",
-                "      .dockerignore",
-                "v root2",
-                "    > d",
-                "    > e",
-            ]
-        );
-
-        // Add a file with the root folder selected. The filename editor is placed
-        // before the first file in the root folder.
-        panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
-        panel.update_in(cx, |panel, window, cx| {
-            assert!(panel.filename_editor.read(cx).is_focused(window));
-        });
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v root1",
-                "    > .git",
-                "    > a",
-                "    > b",
-                "    > C",
-                "      [EDITOR: '']  <== selected",
-                "      .dockerignore",
-                "v root2",
-                "    > d",
-                "    > e",
-            ]
-        );
-
-        let confirm = panel.update_in(cx, |panel, window, cx| {
-            panel.filename_editor.update(cx, |editor, cx| {
-                editor.set_text("/bdir1/dir2/the-new-filename", window, cx)
-            });
-            panel.confirm_edit(window, cx).unwrap()
-        });
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v root1",
-                "    > .git",
-                "    > a",
-                "    > b",
-                "    > C",
-                "      [PROCESSING: '/bdir1/dir2/the-new-filename']  <== selected",
-                "      .dockerignore",
-                "v root2",
-                "    > d",
-                "    > e",
-            ]
-        );
-
-        confirm.await.unwrap();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..13, cx),
-            &[
-                "v root1",
-                "    > .git",
-                "    > a",
-                "    > b",
-                "    v bdir1",
-                "        v dir2",
-                "              the-new-filename  <== selected  <== marked",
-                "    > C",
-                "      .dockerignore",
-                "v root2",
-                "    > d",
-                "    > e",
-            ]
-        );
-    }
-
-    #[gpui::test]
-    async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            path!("/root1"),
-            json!({
-                ".dockerignore": "",
-                ".git": {
-                    "HEAD": "",
-                },
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), [path!("/root1").as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace
-            .update(cx, |workspace, window, cx| {
-                let panel = ProjectPanel::new(workspace, window, cx);
-                workspace.add_panel(panel.clone(), window, cx);
-                panel
-            })
-            .unwrap();
-
-        select_path(&panel, "root1", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &["v root1  <== selected", "    > .git", "      .dockerignore",]
-        );
-
-        // Add a file with the root folder selected. The filename editor is placed
-        // before the first file in the root folder.
-        panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
-        panel.update_in(cx, |panel, window, cx| {
-            assert!(panel.filename_editor.read(cx).is_focused(window));
-        });
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v root1",
-                "    > .git",
-                "      [EDITOR: '']  <== selected",
-                "      .dockerignore",
-            ]
-        );
-
-        let confirm = panel.update_in(cx, |panel, window, cx| {
-            // If we want to create a subdirectory, there should be no prefix slash.
-            panel
-                .filename_editor
-                .update(cx, |editor, cx| editor.set_text("new_dir/", window, cx));
-            panel.confirm_edit(window, cx).unwrap()
-        });
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v root1",
-                "    > .git",
-                "      [PROCESSING: 'new_dir/']  <== selected",
-                "      .dockerignore",
-            ]
-        );
-
-        confirm.await.unwrap();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v root1",
-                "    > .git",
-                "    v new_dir  <== selected",
-                "      .dockerignore",
-            ]
-        );
-
-        // Test filename with whitespace
-        select_path(&panel, "root1", cx);
-        panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
-        let confirm = panel.update_in(cx, |panel, window, cx| {
-            // If we want to create a subdirectory, there should be no prefix slash.
-            panel
-                .filename_editor
-                .update(cx, |editor, cx| editor.set_text("new dir 2/", window, cx));
-            panel.confirm_edit(window, cx).unwrap()
-        });
-        confirm.await.unwrap();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v root1",
-                "    > .git",
-                "    v new dir 2  <== selected",
-                "    v new_dir",
-                "      .dockerignore",
-            ]
-        );
-
-        // Test filename ends with "\"
-        #[cfg(target_os = "windows")]
-        {
-            select_path(&panel, "root1", cx);
-            panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
-            let confirm = panel.update_in(cx, |panel, window, cx| {
-                // If we want to create a subdirectory, there should be no prefix slash.
-                panel
-                    .filename_editor
-                    .update(cx, |editor, cx| editor.set_text("new_dir_3\\", window, cx));
-                panel.confirm_edit(window, cx).unwrap()
-            });
-            confirm.await.unwrap();
-            assert_eq!(
-                visible_entries_as_strings(&panel, 0..10, cx),
-                &[
-                    "v root1",
-                    "    > .git",
-                    "    v new dir 2",
-                    "    v new_dir",
-                    "    v new_dir_3  <== selected",
-                    "      .dockerignore",
-                ]
-            );
-        }
-    }
-
-    #[gpui::test]
-    async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/root1",
-            json!({
-                "one.two.txt": "",
-                "one.txt": ""
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.select_next(&Default::default(), window, cx);
-            panel.select_next(&Default::default(), window, cx);
-        });
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..50, cx),
-            &[
-                //
-                "v root1",
-                "      one.txt  <== selected",
-                "      one.two.txt",
-            ]
-        );
-
-        // Regression test - file name is created correctly when
-        // the copied file's name contains multiple dots.
-        panel.update_in(cx, |panel, window, cx| {
-            panel.copy(&Default::default(), window, cx);
-            panel.paste(&Default::default(), window, cx);
-        });
-        cx.executor().run_until_parked();
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..50, cx),
-            &[
-                //
-                "v root1",
-                "      one.txt",
-                "      [EDITOR: 'one copy.txt']  <== selected  <== marked",
-                "      one.two.txt",
-            ]
-        );
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.filename_editor.update(cx, |editor, cx| {
-                let file_name_selections = editor.selections.all::<usize>(cx);
-                assert_eq!(file_name_selections.len(), 1, "File editing should have a single selection, but got: {file_name_selections:?}");
-                let file_name_selection = &file_name_selections[0];
-                assert_eq!(file_name_selection.start, "one".len(), "Should select the file name disambiguation after the original file name");
-                assert_eq!(file_name_selection.end, "one copy".len(), "Should select the file name disambiguation until the extension");
-            });
-            assert!(panel.confirm_edit(window, cx).is_none());
-        });
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.paste(&Default::default(), window, cx);
-        });
-        cx.executor().run_until_parked();
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..50, cx),
-            &[
-                //
-                "v root1",
-                "      one.txt",
-                "      one copy.txt",
-                "      [EDITOR: 'one copy 1.txt']  <== selected  <== marked",
-                "      one.two.txt",
-            ]
-        );
-
-        panel.update_in(cx, |panel, window, cx| {
-            assert!(panel.confirm_edit(window, cx).is_none())
-        });
-    }
-
-    #[gpui::test]
-    async fn test_cut_paste_between_different_worktrees(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/root1",
-            json!({
-                "one.txt": "",
-                "two.txt": "",
-                "three.txt": "",
-                "a": {
-                    "0": { "q": "", "r": "", "s": "" },
-                    "1": { "t": "", "u": "" },
-                    "2": { "v": "", "w": "", "x": "", "y": "" },
-                },
-            }),
-        )
-        .await;
-
-        fs.insert_tree(
-            "/root2",
-            json!({
-                "one.txt": "",
-                "two.txt": "",
-                "four.txt": "",
-                "b": {
-                    "3": { "Q": "" },
-                    "4": { "R": "", "S": "", "T": "", "U": "" },
-                },
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        select_path(&panel, "root1/three.txt", cx);
-        panel.update_in(cx, |panel, window, cx| {
-            panel.cut(&Default::default(), window, cx);
-        });
-
-        select_path(&panel, "root2/one.txt", cx);
-        panel.update_in(cx, |panel, window, cx| {
-            panel.select_next(&Default::default(), window, cx);
-            panel.paste(&Default::default(), window, cx);
-        });
-        cx.executor().run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..50, cx),
-            &[
-                //
-                "v root1",
-                "    > a",
-                "      one.txt",
-                "      two.txt",
-                "v root2",
-                "    > b",
-                "      four.txt",
-                "      one.txt",
-                "      three.txt  <== selected  <== marked",
-                "      two.txt",
-            ]
-        );
-
-        select_path(&panel, "root1/a", cx);
-        panel.update_in(cx, |panel, window, cx| {
-            panel.cut(&Default::default(), window, cx);
-        });
-        select_path(&panel, "root2/two.txt", cx);
-        panel.update_in(cx, |panel, window, cx| {
-            panel.select_next(&Default::default(), window, cx);
-            panel.paste(&Default::default(), window, cx);
-        });
-
-        cx.executor().run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..50, cx),
-            &[
-                //
-                "v root1",
-                "      one.txt",
-                "      two.txt",
-                "v root2",
-                "    > a  <== selected",
-                "    > b",
-                "      four.txt",
-                "      one.txt",
-                "      three.txt  <== marked",
-                "      two.txt",
-            ]
-        );
-    }
-
-    #[gpui::test]
-    async fn test_copy_paste_between_different_worktrees(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/root1",
-            json!({
-                "one.txt": "",
-                "two.txt": "",
-                "three.txt": "",
-                "a": {
-                    "0": { "q": "", "r": "", "s": "" },
-                    "1": { "t": "", "u": "" },
-                    "2": { "v": "", "w": "", "x": "", "y": "" },
-                },
-            }),
-        )
-        .await;
-
-        fs.insert_tree(
-            "/root2",
-            json!({
-                "one.txt": "",
-                "two.txt": "",
-                "four.txt": "",
-                "b": {
-                    "3": { "Q": "" },
-                    "4": { "R": "", "S": "", "T": "", "U": "" },
-                },
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        select_path(&panel, "root1/three.txt", cx);
-        panel.update_in(cx, |panel, window, cx| {
-            panel.copy(&Default::default(), window, cx);
-        });
-
-        select_path(&panel, "root2/one.txt", cx);
-        panel.update_in(cx, |panel, window, cx| {
-            panel.select_next(&Default::default(), window, cx);
-            panel.paste(&Default::default(), window, cx);
-        });
-        cx.executor().run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..50, cx),
-            &[
-                //
-                "v root1",
-                "    > a",
-                "      one.txt",
-                "      three.txt",
-                "      two.txt",
-                "v root2",
-                "    > b",
-                "      four.txt",
-                "      one.txt",
-                "      three.txt  <== selected  <== marked",
-                "      two.txt",
-            ]
-        );
-
-        select_path(&panel, "root1/three.txt", cx);
-        panel.update_in(cx, |panel, window, cx| {
-            panel.copy(&Default::default(), window, cx);
-        });
-        select_path(&panel, "root2/two.txt", cx);
-        panel.update_in(cx, |panel, window, cx| {
-            panel.select_next(&Default::default(), window, cx);
-            panel.paste(&Default::default(), window, cx);
-        });
-
-        cx.executor().run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..50, cx),
-            &[
-                //
-                "v root1",
-                "    > a",
-                "      one.txt",
-                "      three.txt",
-                "      two.txt",
-                "v root2",
-                "    > b",
-                "      four.txt",
-                "      one.txt",
-                "      three.txt",
-                "      [EDITOR: 'three copy.txt']  <== selected  <== marked",
-                "      two.txt",
-            ]
-        );
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.cancel(&menu::Cancel {}, window, cx)
-        });
-        cx.executor().run_until_parked();
-
-        select_path(&panel, "root1/a", cx);
-        panel.update_in(cx, |panel, window, cx| {
-            panel.copy(&Default::default(), window, cx);
-        });
-        select_path(&panel, "root2/two.txt", cx);
-        panel.update_in(cx, |panel, window, cx| {
-            panel.select_next(&Default::default(), window, cx);
-            panel.paste(&Default::default(), window, cx);
-        });
-
-        cx.executor().run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..50, cx),
-            &[
-                //
-                "v root1",
-                "    > a",
-                "      one.txt",
-                "      three.txt",
-                "      two.txt",
-                "v root2",
-                "    > a  <== selected",
-                "    > b",
-                "      four.txt",
-                "      one.txt",
-                "      three.txt",
-                "      three copy.txt",
-                "      two.txt",
-            ]
-        );
-    }
-
-    #[gpui::test]
-    async fn test_copy_paste_directory(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/root",
-            json!({
-                "a": {
-                    "one.txt": "",
-                    "two.txt": "",
-                    "inner_dir": {
-                        "three.txt": "",
-                        "four.txt": "",
-                    }
-                },
-                "b": {}
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        select_path(&panel, "root/a", cx);
-        panel.update_in(cx, |panel, window, cx| {
-            panel.copy(&Default::default(), window, cx);
-            panel.select_next(&Default::default(), window, cx);
-            panel.paste(&Default::default(), window, cx);
-        });
-        cx.executor().run_until_parked();
-
-        let pasted_dir = find_project_entry(&panel, "root/b/a", cx);
-        assert_ne!(pasted_dir, None, "Pasted directory should have an entry");
-
-        let pasted_dir_file = find_project_entry(&panel, "root/b/a/one.txt", cx);
-        assert_ne!(
-            pasted_dir_file, None,
-            "Pasted directory file should have an entry"
-        );
-
-        let pasted_dir_inner_dir = find_project_entry(&panel, "root/b/a/inner_dir", cx);
-        assert_ne!(
-            pasted_dir_inner_dir, None,
-            "Directories inside pasted directory should have an entry"
-        );
-
-        toggle_expand_dir(&panel, "root/b/a", cx);
-        toggle_expand_dir(&panel, "root/b/a/inner_dir", cx);
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..50, cx),
-            &[
-                //
-                "v root",
-                "    > a",
-                "    v b",
-                "        v a",
-                "            v inner_dir  <== selected",
-                "                  four.txt",
-                "                  three.txt",
-                "              one.txt",
-                "              two.txt",
-            ]
-        );
-
-        select_path(&panel, "root", cx);
-        panel.update_in(cx, |panel, window, cx| {
-            panel.paste(&Default::default(), window, cx)
-        });
-        cx.executor().run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..50, cx),
-            &[
-                //
-                "v root",
-                "    > a",
-                "    > [EDITOR: 'a copy']  <== selected",
-                "    v b",
-                "        v a",
-                "            v inner_dir",
-                "                  four.txt",
-                "                  three.txt",
-                "              one.txt",
-                "              two.txt"
-            ]
-        );
-
-        let confirm = panel.update_in(cx, |panel, window, cx| {
-            panel
-                .filename_editor
-                .update(cx, |editor, cx| editor.set_text("c", window, cx));
-            panel.confirm_edit(window, cx).unwrap()
-        });
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..50, cx),
-            &[
-                //
-                "v root",
-                "    > a",
-                "    > [PROCESSING: 'c']  <== selected",
-                "    v b",
-                "        v a",
-                "            v inner_dir",
-                "                  four.txt",
-                "                  three.txt",
-                "              one.txt",
-                "              two.txt"
-            ]
-        );
-
-        confirm.await.unwrap();
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.paste(&Default::default(), window, cx)
-        });
-        cx.executor().run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..50, cx),
-            &[
-                //
-                "v root",
-                "    > a",
-                "    v b",
-                "        v a",
-                "            v inner_dir",
-                "                  four.txt",
-                "                  three.txt",
-                "              one.txt",
-                "              two.txt",
-                "    v c",
-                "        > a  <== selected",
-                "        > inner_dir",
-                "          one.txt",
-                "          two.txt",
-            ]
-        );
-    }
-
-    #[gpui::test]
-    async fn test_copy_paste_directory_with_sibling_file(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/test",
-            json!({
-                "dir1": {
-                    "a.txt": "",
-                    "b.txt": "",
-                },
-                "dir2": {},
-                "c.txt": "",
-                "d.txt": "",
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        toggle_expand_dir(&panel, "test/dir1", cx);
-
-        cx.simulate_modifiers_change(gpui::Modifiers {
-            control: true,
-            ..Default::default()
-        });
-
-        select_path_with_mark(&panel, "test/dir1", cx);
-        select_path_with_mark(&panel, "test/c.txt", cx);
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..15, cx),
-            &[
-                "v test",
-                "    v dir1  <== marked",
-                "          a.txt",
-                "          b.txt",
-                "    > dir2",
-                "      c.txt  <== selected  <== marked",
-                "      d.txt",
-            ],
-            "Initial state before copying dir1 and c.txt"
-        );
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.copy(&Default::default(), window, cx);
-        });
-        select_path(&panel, "test/dir2", cx);
-        panel.update_in(cx, |panel, window, cx| {
-            panel.paste(&Default::default(), window, cx);
-        });
-        cx.executor().run_until_parked();
-
-        toggle_expand_dir(&panel, "test/dir2/dir1", cx);
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..15, cx),
-            &[
-                "v test",
-                "    v dir1  <== marked",
-                "          a.txt",
-                "          b.txt",
-                "    v dir2",
-                "        v dir1  <== selected",
-                "              a.txt",
-                "              b.txt",
-                "          c.txt",
-                "      c.txt  <== marked",
-                "      d.txt",
-            ],
-            "Should copy dir1 as well as c.txt into dir2"
-        );
-
-        // Disambiguating multiple files should not open the rename editor.
-        select_path(&panel, "test/dir2", cx);
-        panel.update_in(cx, |panel, window, cx| {
-            panel.paste(&Default::default(), window, cx);
-        });
-        cx.executor().run_until_parked();
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..15, cx),
-            &[
-                "v test",
-                "    v dir1  <== marked",
-                "          a.txt",
-                "          b.txt",
-                "    v dir2",
-                "        v dir1",
-                "              a.txt",
-                "              b.txt",
-                "        > dir1 copy  <== selected",
-                "          c.txt",
-                "          c copy.txt",
-                "      c.txt  <== marked",
-                "      d.txt",
-            ],
-            "Should copy dir1 as well as c.txt into dir2 and disambiguate them without opening the rename editor"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_copy_paste_nested_and_root_entries(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/test",
-            json!({
-                "dir1": {
-                    "a.txt": "",
-                    "b.txt": "",
-                },
-                "dir2": {},
-                "c.txt": "",
-                "d.txt": "",
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        toggle_expand_dir(&panel, "test/dir1", cx);
-
-        cx.simulate_modifiers_change(gpui::Modifiers {
-            control: true,
-            ..Default::default()
-        });
-
-        select_path_with_mark(&panel, "test/dir1/a.txt", cx);
-        select_path_with_mark(&panel, "test/dir1", cx);
-        select_path_with_mark(&panel, "test/c.txt", cx);
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..15, cx),
-            &[
-                "v test",
-                "    v dir1  <== marked",
-                "          a.txt  <== marked",
-                "          b.txt",
-                "    > dir2",
-                "      c.txt  <== selected  <== marked",
-                "      d.txt",
-            ],
-            "Initial state before copying a.txt, dir1 and c.txt"
-        );
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.copy(&Default::default(), window, cx);
-        });
-        select_path(&panel, "test/dir2", cx);
-        panel.update_in(cx, |panel, window, cx| {
-            panel.paste(&Default::default(), window, cx);
-        });
-        cx.executor().run_until_parked();
-
-        toggle_expand_dir(&panel, "test/dir2/dir1", cx);
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v test",
-                "    v dir1  <== marked",
-                "          a.txt  <== marked",
-                "          b.txt",
-                "    v dir2",
-                "        v dir1  <== selected",
-                "              a.txt",
-                "              b.txt",
-                "          c.txt",
-                "      c.txt  <== marked",
-                "      d.txt",
-            ],
-            "Should copy dir1 and c.txt into dir2. a.txt is already present in copied dir1."
-        );
-    }
-
-    #[gpui::test]
-    async fn test_remove_opened_file(cx: &mut gpui::TestAppContext) {
-        init_test_with_editor(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            path!("/src"),
-            json!({
-                "test": {
-                    "first.rs": "// First Rust file",
-                    "second.rs": "// Second Rust file",
-                    "third.rs": "// Third Rust file",
-                }
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), [path!("/src").as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        toggle_expand_dir(&panel, "src/test", cx);
-        select_path(&panel, "src/test/first.rs", cx);
-        panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
-        cx.executor().run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v src",
-                "    v test",
-                "          first.rs  <== selected  <== marked",
-                "          second.rs",
-                "          third.rs"
-            ]
-        );
-        ensure_single_file_is_opened(&workspace, "test/first.rs", cx);
-
-        submit_deletion(&panel, cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v src",
-                "    v test",
-                "          second.rs  <== selected",
-                "          third.rs"
-            ],
-            "Project panel should have no deleted file, no other file is selected in it"
-        );
-        ensure_no_open_items_and_panes(&workspace, cx);
-
-        panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
-        cx.executor().run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v src",
-                "    v test",
-                "          second.rs  <== selected  <== marked",
-                "          third.rs"
-            ]
-        );
-        ensure_single_file_is_opened(&workspace, "test/second.rs", cx);
-
-        workspace
-            .update(cx, |workspace, window, cx| {
-                let active_items = workspace
-                    .panes()
-                    .iter()
-                    .filter_map(|pane| pane.read(cx).active_item())
-                    .collect::<Vec<_>>();
-                assert_eq!(active_items.len(), 1);
-                let open_editor = active_items
-                    .into_iter()
-                    .next()
-                    .unwrap()
-                    .downcast::<Editor>()
-                    .expect("Open item should be an editor");
-                open_editor.update(cx, |editor, cx| {
-                    editor.set_text("Another text!", window, cx)
-                });
-            })
-            .unwrap();
-        submit_deletion_skipping_prompt(&panel, cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &["v src", "    v test", "          third.rs  <== selected"],
-            "Project panel should have no deleted file, with one last file remaining"
-        );
-        ensure_no_open_items_and_panes(&workspace, cx);
-    }
-
-    #[gpui::test]
-    async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
-        init_test_with_editor(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/src",
-            json!({
-                "test": {
-                    "first.rs": "// First Rust file",
-                    "second.rs": "// Second Rust file",
-                    "third.rs": "// Third Rust file",
-                }
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace
-            .update(cx, |workspace, window, cx| {
-                let panel = ProjectPanel::new(workspace, window, cx);
-                workspace.add_panel(panel.clone(), window, cx);
-                panel
-            })
-            .unwrap();
-
-        select_path(&panel, "src/", cx);
-        panel.update_in(cx, |panel, window, cx| panel.confirm(&Confirm, window, cx));
-        cx.executor().run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                //
-                "v src  <== selected",
-                "    > test"
-            ]
-        );
-        panel.update_in(cx, |panel, window, cx| {
-            panel.new_directory(&NewDirectory, window, cx)
-        });
-        panel.update_in(cx, |panel, window, cx| {
-            assert!(panel.filename_editor.read(cx).is_focused(window));
-        });
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                //
-                "v src",
-                "    > [EDITOR: '']  <== selected",
-                "    > test"
-            ]
-        );
-        panel.update_in(cx, |panel, window, cx| {
-            panel
-                .filename_editor
-                .update(cx, |editor, cx| editor.set_text("test", window, cx));
-            assert!(
-                panel.confirm_edit(window, cx).is_none(),
-                "Should not allow to confirm on conflicting new directory name"
-            )
-        });
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                //
-                "v src",
-                "    > test"
-            ],
-            "File list should be unchanged after failed folder create confirmation"
-        );
-
-        select_path(&panel, "src/test/", cx);
-        panel.update_in(cx, |panel, window, cx| panel.confirm(&Confirm, window, cx));
-        cx.executor().run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                //
-                "v src",
-                "    > test  <== selected"
-            ]
-        );
-        panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
-        panel.update_in(cx, |panel, window, cx| {
-            assert!(panel.filename_editor.read(cx).is_focused(window));
-        });
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v src",
-                "    v test",
-                "          [EDITOR: '']  <== selected",
-                "          first.rs",
-                "          second.rs",
-                "          third.rs"
-            ]
-        );
-        panel.update_in(cx, |panel, window, cx| {
-            panel
-                .filename_editor
-                .update(cx, |editor, cx| editor.set_text("first.rs", window, cx));
-            assert!(
-                panel.confirm_edit(window, cx).is_none(),
-                "Should not allow to confirm on conflicting new file name"
-            )
-        });
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v src",
-                "    v test",
-                "          first.rs",
-                "          second.rs",
-                "          third.rs"
-            ],
-            "File list should be unchanged after failed file create confirmation"
-        );
-
-        select_path(&panel, "src/test/first.rs", cx);
-        panel.update_in(cx, |panel, window, cx| panel.confirm(&Confirm, window, cx));
-        cx.executor().run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v src",
-                "    v test",
-                "          first.rs  <== selected",
-                "          second.rs",
-                "          third.rs"
-            ],
-        );
-        panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
-        panel.update_in(cx, |panel, window, cx| {
-            assert!(panel.filename_editor.read(cx).is_focused(window));
-        });
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v src",
-                "    v test",
-                "          [EDITOR: 'first.rs']  <== selected",
-                "          second.rs",
-                "          third.rs"
-            ]
-        );
-        panel.update_in(cx, |panel, window, cx| {
-            panel
-                .filename_editor
-                .update(cx, |editor, cx| editor.set_text("second.rs", window, cx));
-            assert!(
-                panel.confirm_edit(window, cx).is_none(),
-                "Should not allow to confirm on conflicting file rename"
-            )
-        });
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v src",
-                "    v test",
-                "          first.rs  <== selected",
-                "          second.rs",
-                "          third.rs"
-            ],
-            "File list should be unchanged after failed rename confirmation"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
-        init_test_with_editor(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            path!("/root"),
-            json!({
-                "tree1": {
-                    ".git": {},
-                    "dir1": {
-                        "modified1.txt": "1",
-                        "unmodified1.txt": "1",
-                        "modified2.txt": "1",
-                    },
-                    "dir2": {
-                        "modified3.txt": "1",
-                        "unmodified2.txt": "1",
-                    },
-                    "modified4.txt": "1",
-                    "unmodified3.txt": "1",
-                },
-                "tree2": {
-                    ".git": {},
-                    "dir3": {
-                        "modified5.txt": "1",
-                        "unmodified4.txt": "1",
-                    },
-                    "modified6.txt": "1",
-                    "unmodified5.txt": "1",
-                }
-            }),
-        )
-        .await;
-
-        // Mark files as git modified
-        fs.set_git_content_for_repo(
-            path!("/root/tree1/.git").as_ref(),
-            &[
-                ("dir1/modified1.txt".into(), "modified".into(), None),
-                ("dir1/modified2.txt".into(), "modified".into(), None),
-                ("modified4.txt".into(), "modified".into(), None),
-                ("dir2/modified3.txt".into(), "modified".into(), None),
-            ],
-        );
-        fs.set_git_content_for_repo(
-            path!("/root/tree2/.git").as_ref(),
-            &[
-                ("dir3/modified5.txt".into(), "modified".into(), None),
-                ("modified6.txt".into(), "modified".into(), None),
-            ],
-        );
-
-        let project = Project::test(
-            fs.clone(),
-            [path!("/root/tree1").as_ref(), path!("/root/tree2").as_ref()],
-            cx,
-        )
-        .await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        // Check initial state
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..15, cx),
-            &[
-                "v tree1",
-                "    > .git",
-                "    > dir1",
-                "    > dir2",
-                "      modified4.txt",
-                "      unmodified3.txt",
-                "v tree2",
-                "    > .git",
-                "    > dir3",
-                "      modified6.txt",
-                "      unmodified5.txt"
-            ],
-        );
-
-        // Test selecting next modified entry
-        panel.update_in(cx, |panel, window, cx| {
-            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
-        });
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..6, cx),
-            &[
-                "v tree1",
-                "    > .git",
-                "    v dir1",
-                "          modified1.txt  <== selected",
-                "          modified2.txt",
-                "          unmodified1.txt",
-            ],
-        );
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
-        });
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..6, cx),
-            &[
-                "v tree1",
-                "    > .git",
-                "    v dir1",
-                "          modified1.txt",
-                "          modified2.txt  <== selected",
-                "          unmodified1.txt",
-            ],
-        );
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
-        });
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 6..9, cx),
-            &[
-                "    v dir2",
-                "          modified3.txt  <== selected",
-                "          unmodified2.txt",
-            ],
-        );
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
-        });
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 9..11, cx),
-            &["      modified4.txt  <== selected", "      unmodified3.txt",],
-        );
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
-        });
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 13..16, cx),
-            &[
-                "    v dir3",
-                "          modified5.txt  <== selected",
-                "          unmodified4.txt",
-            ],
-        );
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
-        });
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 16..18, cx),
-            &["      modified6.txt  <== selected", "      unmodified5.txt",],
-        );
-
-        // Wraps around to first modified file
-        panel.update_in(cx, |panel, window, cx| {
-            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
-        });
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..18, cx),
-            &[
-                "v tree1",
-                "    > .git",
-                "    v dir1",
-                "          modified1.txt  <== selected",
-                "          modified2.txt",
-                "          unmodified1.txt",
-                "    v dir2",
-                "          modified3.txt",
-                "          unmodified2.txt",
-                "      modified4.txt",
-                "      unmodified3.txt",
-                "v tree2",
-                "    > .git",
-                "    v dir3",
-                "          modified5.txt",
-                "          unmodified4.txt",
-                "      modified6.txt",
-                "      unmodified5.txt",
-            ],
-        );
-
-        // Wraps around again to last modified file
-        panel.update_in(cx, |panel, window, cx| {
-            panel.select_prev_git_entry(&SelectPrevGitEntry, window, cx);
-        });
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 16..18, cx),
-            &["      modified6.txt  <== selected", "      unmodified5.txt",],
-        );
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.select_prev_git_entry(&SelectPrevGitEntry, window, cx);
-        });
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 13..16, cx),
-            &[
-                "    v dir3",
-                "          modified5.txt  <== selected",
-                "          unmodified4.txt",
-            ],
-        );
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.select_prev_git_entry(&SelectPrevGitEntry, window, cx);
-        });
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 9..11, cx),
-            &["      modified4.txt  <== selected", "      unmodified3.txt",],
-        );
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.select_prev_git_entry(&SelectPrevGitEntry, window, cx);
-        });
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 6..9, cx),
-            &[
-                "    v dir2",
-                "          modified3.txt  <== selected",
-                "          unmodified2.txt",
-            ],
-        );
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.select_prev_git_entry(&SelectPrevGitEntry, window, cx);
-        });
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..6, cx),
-            &[
-                "v tree1",
-                "    > .git",
-                "    v dir1",
-                "          modified1.txt",
-                "          modified2.txt  <== selected",
-                "          unmodified1.txt",
-            ],
-        );
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.select_prev_git_entry(&SelectPrevGitEntry, window, cx);
-        });
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..6, cx),
-            &[
-                "v tree1",
-                "    > .git",
-                "    v dir1",
-                "          modified1.txt  <== selected",
-                "          modified2.txt",
-                "          unmodified1.txt",
-            ],
-        );
-    }
-
-    #[gpui::test]
-    async fn test_select_directory(cx: &mut gpui::TestAppContext) {
-        init_test_with_editor(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/project_root",
-            json!({
-                "dir_1": {
-                    "nested_dir": {
-                        "file_a.py": "# File contents",
-                    }
-                },
-                "file_1.py": "# File contents",
-                "dir_2": {
-
-                },
-                "dir_3": {
-
-                },
-                "file_2.py": "# File contents",
-                "dir_4": {
-
-                },
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
-        cx.executor().run_until_parked();
-        select_path(&panel, "project_root/dir_1", cx);
-        cx.executor().run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v project_root",
-                "    > dir_1  <== selected",
-                "    > dir_2",
-                "    > dir_3",
-                "    > dir_4",
-                "      file_1.py",
-                "      file_2.py",
-            ]
-        );
-        panel.update_in(cx, |panel, window, cx| {
-            panel.select_prev_directory(&SelectPrevDirectory, window, cx)
-        });
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v project_root  <== selected",
-                "    > dir_1",
-                "    > dir_2",
-                "    > dir_3",
-                "    > dir_4",
-                "      file_1.py",
-                "      file_2.py",
-            ]
-        );
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.select_prev_directory(&SelectPrevDirectory, window, cx)
-        });
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v project_root",
-                "    > dir_1",
-                "    > dir_2",
-                "    > dir_3",
-                "    > dir_4  <== selected",
-                "      file_1.py",
-                "      file_2.py",
-            ]
-        );
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.select_next_directory(&SelectNextDirectory, window, cx)
-        });
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v project_root  <== selected",
-                "    > dir_1",
-                "    > dir_2",
-                "    > dir_3",
-                "    > dir_4",
-                "      file_1.py",
-                "      file_2.py",
-            ]
-        );
-    }
-    #[gpui::test]
-    async fn test_select_first_last(cx: &mut gpui::TestAppContext) {
-        init_test_with_editor(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/project_root",
-            json!({
-                "dir_1": {
-                    "nested_dir": {
-                        "file_a.py": "# File contents",
-                    }
-                },
-                "file_1.py": "# File contents",
-                "file_2.py": "# File contents",
-                "zdir_2": {
-                    "nested_dir2": {
-                        "file_b.py": "# File contents",
-                    }
-                },
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v project_root",
-                "    > dir_1",
-                "    > zdir_2",
-                "      file_1.py",
-                "      file_2.py",
-            ]
-        );
-        panel.update_in(cx, |panel, window, cx| {
-            panel.select_first(&SelectFirst, window, cx)
-        });
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v project_root  <== selected",
-                "    > dir_1",
-                "    > zdir_2",
-                "      file_1.py",
-                "      file_2.py",
-            ]
-        );
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.select_last(&SelectLast, window, cx)
-        });
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v project_root",
-                "    > dir_1",
-                "    > zdir_2",
-                "      file_1.py",
-                "      file_2.py  <== selected",
-            ]
-        );
-    }
-
-    #[gpui::test]
-    async fn test_dir_toggle_collapse(cx: &mut gpui::TestAppContext) {
-        init_test_with_editor(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/project_root",
-            json!({
-                "dir_1": {
-                    "nested_dir": {
-                        "file_a.py": "# File contents",
-                    }
-                },
-                "file_1.py": "# File contents",
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
-        cx.executor().run_until_parked();
-        select_path(&panel, "project_root/dir_1", cx);
-        panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
-        select_path(&panel, "project_root/dir_1/nested_dir", cx);
-        panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
-        panel.update_in(cx, |panel, window, cx| panel.open(&Open, window, cx));
-        cx.executor().run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v project_root",
-                "    v dir_1",
-                "        > nested_dir  <== selected",
-                "      file_1.py",
-            ]
-        );
-    }
-
-    #[gpui::test]
-    async fn test_collapse_all_entries(cx: &mut gpui::TestAppContext) {
-        init_test_with_editor(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/project_root",
-            json!({
-                "dir_1": {
-                    "nested_dir": {
-                        "file_a.py": "# File contents",
-                        "file_b.py": "# File contents",
-                        "file_c.py": "# File contents",
-                    },
-                    "file_1.py": "# File contents",
-                    "file_2.py": "# File contents",
-                    "file_3.py": "# File contents",
-                },
-                "dir_2": {
-                    "file_1.py": "# File contents",
-                    "file_2.py": "# File contents",
-                    "file_3.py": "# File contents",
-                }
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.collapse_all_entries(&CollapseAllEntries, window, cx)
-        });
-        cx.executor().run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &["v project_root", "    > dir_1", "    > dir_2",]
-        );
-
-        // Open dir_1 and make sure nested_dir was collapsed when running collapse_all_entries
-        toggle_expand_dir(&panel, "project_root/dir_1", cx);
-        cx.executor().run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v project_root",
-                "    v dir_1  <== selected",
-                "        > nested_dir",
-                "          file_1.py",
-                "          file_2.py",
-                "          file_3.py",
-                "    > dir_2",
-            ]
-        );
-    }
-
-    #[gpui::test]
-    async fn test_new_file_move(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.as_fake().insert_tree(path!("/root"), json!({})).await;
-        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        // Make a new buffer with no backing file
-        workspace
-            .update(cx, |workspace, window, cx| {
-                Editor::new_file(workspace, &Default::default(), window, cx)
-            })
-            .unwrap();
-
-        cx.executor().run_until_parked();
-
-        // "Save as" the buffer, creating a new backing file for it
-        let save_task = workspace
-            .update(cx, |workspace, window, cx| {
-                workspace.save_active_item(workspace::SaveIntent::Save, window, cx)
-            })
-            .unwrap();
-
-        cx.executor().run_until_parked();
-        cx.simulate_new_path_selection(|_| Some(PathBuf::from(path!("/root/new"))));
-        save_task.await.unwrap();
-
-        // Rename the file
-        select_path(&panel, "root/new", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &["v root", "      new  <== selected  <== marked"]
-        );
-        panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
-        panel.update_in(cx, |panel, window, cx| {
-            panel
-                .filename_editor
-                .update(cx, |editor, cx| editor.set_text("newer", window, cx));
-        });
-        panel.update_in(cx, |panel, window, cx| panel.confirm(&Confirm, window, cx));
-
-        cx.executor().run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &["v root", "      newer  <== selected"]
-        );
-
-        workspace
-            .update(cx, |workspace, window, cx| {
-                workspace.save_active_item(workspace::SaveIntent::Save, window, cx)
-            })
-            .unwrap()
-            .await
-            .unwrap();
-
-        cx.executor().run_until_parked();
-        // assert that saving the file doesn't restore "new"
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &["v root", "      newer  <== selected"]
-        );
-    }
-
-    #[gpui::test]
-    #[cfg_attr(target_os = "windows", ignore)]
-    async fn test_rename_root_of_worktree(cx: &mut gpui::TestAppContext) {
-        init_test_with_editor(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/root1",
-            json!({
-                "dir1": {
-                    "file1.txt": "content 1",
-                },
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        toggle_expand_dir(&panel, "root1/dir1", cx);
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &["v root1", "    v dir1  <== selected", "          file1.txt",],
-            "Initial state with worktrees"
-        );
-
-        select_path(&panel, "root1", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &["v root1  <== selected", "    v dir1", "          file1.txt",],
-        );
-
-        // Rename root1 to new_root1
-        panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v [EDITOR: 'root1']  <== selected",
-                "    v dir1",
-                "          file1.txt",
-            ],
-        );
-
-        let confirm = panel.update_in(cx, |panel, window, cx| {
-            panel
-                .filename_editor
-                .update(cx, |editor, cx| editor.set_text("new_root1", window, cx));
-            panel.confirm_edit(window, cx).unwrap()
-        });
-        confirm.await.unwrap();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v new_root1  <== selected",
-                "    v dir1",
-                "          file1.txt",
-            ],
-            "Should update worktree name"
-        );
-
-        // Ensure internal paths have been updated
-        select_path(&panel, "new_root1/dir1/file1.txt", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v new_root1",
-                "    v dir1",
-                "          file1.txt  <== selected",
-            ],
-            "Files in renamed worktree are selectable"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
-        init_test_with_editor(cx);
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/project_root",
-            json!({
-                "dir_1": {
-                    "nested_dir": {
-                        "file_a.py": "# File contents",
-                    }
-                },
-                "file_1.py": "# File contents",
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
-        let worktree_id =
-            cx.update(|cx| project.read(cx).worktrees(cx).next().unwrap().read(cx).id());
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-        cx.update(|window, cx| {
-            panel.update(cx, |this, cx| {
-                this.select_next(&Default::default(), window, cx);
-                this.expand_selected_entry(&Default::default(), window, cx);
-                this.expand_selected_entry(&Default::default(), window, cx);
-                this.select_next(&Default::default(), window, cx);
-                this.expand_selected_entry(&Default::default(), window, cx);
-                this.select_next(&Default::default(), window, cx);
-            })
-        });
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v project_root",
-                "    v dir_1",
-                "        v nested_dir",
-                "              file_a.py  <== selected",
-                "      file_1.py",
-            ]
-        );
-        let modifiers_with_shift = gpui::Modifiers {
-            shift: true,
-            ..Default::default()
-        };
-        cx.simulate_modifiers_change(modifiers_with_shift);
-        cx.update(|window, cx| {
-            panel.update(cx, |this, cx| {
-                this.select_next(&Default::default(), window, cx);
-            })
-        });
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v project_root",
-                "    v dir_1",
-                "        v nested_dir",
-                "              file_a.py",
-                "      file_1.py  <== selected  <== marked",
-            ]
-        );
-        cx.update(|window, cx| {
-            panel.update(cx, |this, cx| {
-                this.select_previous(&Default::default(), window, cx);
-            })
-        });
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v project_root",
-                "    v dir_1",
-                "        v nested_dir",
-                "              file_a.py  <== selected  <== marked",
-                "      file_1.py  <== marked",
-            ]
-        );
-        cx.update(|window, cx| {
-            panel.update(cx, |this, cx| {
-                let drag = DraggedSelection {
-                    active_selection: this.selection.unwrap(),
-                    marked_selections: Arc::new(this.marked_entries.clone()),
-                };
-                let target_entry = this
-                    .project
-                    .read(cx)
-                    .entry_for_path(&(worktree_id, "").into(), cx)
-                    .unwrap();
-                this.drag_onto(&drag, target_entry.id, false, window, cx);
-            });
-        });
-        cx.run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v project_root",
-                "    v dir_1",
-                "        v nested_dir",
-                "      file_1.py  <== marked",
-                "      file_a.py  <== selected  <== marked",
-            ]
-        );
-        // ESC clears out all marks
-        cx.update(|window, cx| {
-            panel.update(cx, |this, cx| {
-                this.cancel(&menu::Cancel, window, cx);
-            })
-        });
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v project_root",
-                "    v dir_1",
-                "        v nested_dir",
-                "      file_1.py",
-                "      file_a.py  <== selected",
-            ]
-        );
-        // ESC clears out all marks
-        cx.update(|window, cx| {
-            panel.update(cx, |this, cx| {
-                this.select_previous(&SelectPrevious, window, cx);
-                this.select_next(&SelectNext, window, cx);
-            })
-        });
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v project_root",
-                "    v dir_1",
-                "        v nested_dir",
-                "      file_1.py  <== marked",
-                "      file_a.py  <== selected  <== marked",
-            ]
-        );
-        cx.simulate_modifiers_change(Default::default());
-        cx.update(|window, cx| {
-            panel.update(cx, |this, cx| {
-                this.cut(&Cut, window, cx);
-                this.select_previous(&SelectPrevious, window, cx);
-                this.select_previous(&SelectPrevious, window, cx);
-
-                this.paste(&Paste, window, cx);
-                // this.expand_selected_entry(&ExpandSelectedEntry, cx);
-            })
-        });
-        cx.run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v project_root",
-                "    v dir_1",
-                "        v nested_dir",
-                "              file_1.py  <== marked",
-                "              file_a.py  <== selected  <== marked",
-            ]
-        );
-        cx.simulate_modifiers_change(modifiers_with_shift);
-        cx.update(|window, cx| {
-            panel.update(cx, |this, cx| {
-                this.expand_selected_entry(&Default::default(), window, cx);
-                this.select_next(&SelectNext, window, cx);
-                this.select_next(&SelectNext, window, cx);
-            })
-        });
-        submit_deletion(&panel, cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v project_root",
-                "    v dir_1",
-                "        v nested_dir  <== selected",
-            ]
-        );
-    }
-    #[gpui::test]
-    async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
-        init_test_with_editor(cx);
-        cx.update(|cx| {
-            cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
-                    worktree_settings.file_scan_exclusions = Some(Vec::new());
-                });
-                store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                    project_panel_settings.auto_reveal_entries = Some(false)
-                });
-            })
-        });
-
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            "/project_root",
-            json!({
-                ".git": {},
-                ".gitignore": "**/gitignored_dir",
-                "dir_1": {
-                    "file_1.py": "# File 1_1 contents",
-                    "file_2.py": "# File 1_2 contents",
-                    "file_3.py": "# File 1_3 contents",
-                    "gitignored_dir": {
-                        "file_a.py": "# File contents",
-                        "file_b.py": "# File contents",
-                        "file_c.py": "# File contents",
-                    },
-                },
-                "dir_2": {
-                    "file_1.py": "# File 2_1 contents",
-                    "file_2.py": "# File 2_2 contents",
-                    "file_3.py": "# File 2_3 contents",
-                }
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v project_root",
-                "    > .git",
-                "    > dir_1",
-                "    > dir_2",
-                "      .gitignore",
-            ]
-        );
-
-        let dir_1_file = find_project_entry(&panel, "project_root/dir_1/file_1.py", cx)
-            .expect("dir 1 file is not ignored and should have an entry");
-        let dir_2_file = find_project_entry(&panel, "project_root/dir_2/file_1.py", cx)
-            .expect("dir 2 file is not ignored and should have an entry");
-        let gitignored_dir_file =
-            find_project_entry(&panel, "project_root/dir_1/gitignored_dir/file_a.py", cx);
-        assert_eq!(
-            gitignored_dir_file, None,
-            "File in the gitignored dir should not have an entry before its dir is toggled"
-        );
-
-        toggle_expand_dir(&panel, "project_root/dir_1", cx);
-        toggle_expand_dir(&panel, "project_root/dir_1/gitignored_dir", cx);
-        cx.executor().run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v project_root",
-                "    > .git",
-                "    v dir_1",
-                "        v gitignored_dir  <== selected",
-                "              file_a.py",
-                "              file_b.py",
-                "              file_c.py",
-                "          file_1.py",
-                "          file_2.py",
-                "          file_3.py",
-                "    > dir_2",
-                "      .gitignore",
-            ],
-            "Should show gitignored dir file list in the project panel"
-        );
-        let gitignored_dir_file =
-            find_project_entry(&panel, "project_root/dir_1/gitignored_dir/file_a.py", cx)
-                .expect("after gitignored dir got opened, a file entry should be present");
-
-        toggle_expand_dir(&panel, "project_root/dir_1/gitignored_dir", cx);
-        toggle_expand_dir(&panel, "project_root/dir_1", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v project_root",
-                "    > .git",
-                "    > dir_1  <== selected",
-                "    > dir_2",
-                "      .gitignore",
-            ],
-            "Should hide all dir contents again and prepare for the auto reveal test"
-        );
-
-        for file_entry in [dir_1_file, dir_2_file, gitignored_dir_file] {
-            panel.update(cx, |panel, cx| {
-                panel.project.update(cx, |_, cx| {
-                    cx.emit(project::Event::ActiveEntryChanged(Some(file_entry)))
-                })
-            });
-            cx.run_until_parked();
-            assert_eq!(
-                visible_entries_as_strings(&panel, 0..20, cx),
-                &[
-                    "v project_root",
-                    "    > .git",
-                    "    > dir_1  <== selected",
-                    "    > dir_2",
-                    "      .gitignore",
-                ],
-                "When no auto reveal is enabled, the selected entry should not be revealed in the project panel"
-            );
-        }
-
-        cx.update(|_, cx| {
-            cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                    project_panel_settings.auto_reveal_entries = Some(true)
-                });
-            })
-        });
-
-        panel.update(cx, |panel, cx| {
-            panel.project.update(cx, |_, cx| {
-                cx.emit(project::Event::ActiveEntryChanged(Some(dir_1_file)))
-            })
-        });
-        cx.run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v project_root",
-                "    > .git",
-                "    v dir_1",
-                "        > gitignored_dir",
-                "          file_1.py  <== selected  <== marked",
-                "          file_2.py",
-                "          file_3.py",
-                "    > dir_2",
-                "      .gitignore",
-            ],
-            "When auto reveal is enabled, not ignored dir_1 entry should be revealed"
-        );
-
-        panel.update(cx, |panel, cx| {
-            panel.project.update(cx, |_, cx| {
-                cx.emit(project::Event::ActiveEntryChanged(Some(dir_2_file)))
-            })
-        });
-        cx.run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v project_root",
-                "    > .git",
-                "    v dir_1",
-                "        > gitignored_dir",
-                "          file_1.py",
-                "          file_2.py",
-                "          file_3.py",
-                "    v dir_2",
-                "          file_1.py  <== selected  <== marked",
-                "          file_2.py",
-                "          file_3.py",
-                "      .gitignore",
-            ],
-            "When auto reveal is enabled, not ignored dir_2 entry should be revealed"
-        );
-
-        panel.update(cx, |panel, cx| {
-            panel.project.update(cx, |_, cx| {
-                cx.emit(project::Event::ActiveEntryChanged(Some(
-                    gitignored_dir_file,
-                )))
-            })
-        });
-        cx.run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v project_root",
-                "    > .git",
-                "    v dir_1",
-                "        > gitignored_dir",
-                "          file_1.py",
-                "          file_2.py",
-                "          file_3.py",
-                "    v dir_2",
-                "          file_1.py  <== selected  <== marked",
-                "          file_2.py",
-                "          file_3.py",
-                "      .gitignore",
-            ],
-            "When auto reveal is enabled, a gitignored selected entry should not be revealed in the project panel"
-        );
-
-        panel.update(cx, |panel, cx| {
-            panel.project.update(cx, |_, cx| {
-                cx.emit(project::Event::RevealInProjectPanel(gitignored_dir_file))
-            })
-        });
-        cx.run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v project_root",
-                "    > .git",
-                "    v dir_1",
-                "        v gitignored_dir",
-                "              file_a.py  <== selected  <== marked",
-                "              file_b.py",
-                "              file_c.py",
-                "          file_1.py",
-                "          file_2.py",
-                "          file_3.py",
-                "    v dir_2",
-                "          file_1.py",
-                "          file_2.py",
-                "          file_3.py",
-                "      .gitignore",
-            ],
-            "When a gitignored entry is explicitly revealed, it should be shown in the project tree"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_gitignored_and_always_included(cx: &mut gpui::TestAppContext) {
-        init_test_with_editor(cx);
-        cx.update(|cx| {
-            cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
-                    worktree_settings.file_scan_exclusions = Some(Vec::new());
-                    worktree_settings.file_scan_inclusions =
-                        Some(vec!["always_included_but_ignored_dir/*".to_string()]);
-                });
-                store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                    project_panel_settings.auto_reveal_entries = Some(false)
-                });
-            })
-        });
-
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            "/project_root",
-            json!({
-                ".git": {},
-                ".gitignore": "**/gitignored_dir\n/always_included_but_ignored_dir",
-                "dir_1": {
-                    "file_1.py": "# File 1_1 contents",
-                    "file_2.py": "# File 1_2 contents",
-                    "file_3.py": "# File 1_3 contents",
-                    "gitignored_dir": {
-                        "file_a.py": "# File contents",
-                        "file_b.py": "# File contents",
-                        "file_c.py": "# File contents",
-                    },
-                },
-                "dir_2": {
-                    "file_1.py": "# File 2_1 contents",
-                    "file_2.py": "# File 2_2 contents",
-                    "file_3.py": "# File 2_3 contents",
-                },
-                "always_included_but_ignored_dir": {
-                    "file_a.py": "# File contents",
-                    "file_b.py": "# File contents",
-                    "file_c.py": "# File contents",
-                },
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v project_root",
-                "    > .git",
-                "    > always_included_but_ignored_dir",
-                "    > dir_1",
-                "    > dir_2",
-                "      .gitignore",
-            ]
-        );
-
-        let gitignored_dir_file =
-            find_project_entry(&panel, "project_root/dir_1/gitignored_dir/file_a.py", cx);
-        let always_included_but_ignored_dir_file = find_project_entry(
-            &panel,
-            "project_root/always_included_but_ignored_dir/file_a.py",
-            cx,
-        )
-        .expect("file that is .gitignored but set to always be included should have an entry");
-        assert_eq!(
-            gitignored_dir_file, None,
-            "File in the gitignored dir should not have an entry unless its directory is toggled"
-        );
-
-        toggle_expand_dir(&panel, "project_root/dir_1", cx);
-        cx.run_until_parked();
-        cx.update(|_, cx| {
-            cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                    project_panel_settings.auto_reveal_entries = Some(true)
-                });
-            })
-        });
-
-        panel.update(cx, |panel, cx| {
-            panel.project.update(cx, |_, cx| {
-                cx.emit(project::Event::ActiveEntryChanged(Some(
-                    always_included_but_ignored_dir_file,
-                )))
-            })
-        });
-        cx.run_until_parked();
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v project_root",
-                "    > .git",
-                "    v always_included_but_ignored_dir",
-                "          file_a.py  <== selected  <== marked",
-                "          file_b.py",
-                "          file_c.py",
-                "    v dir_1",
-                "        > gitignored_dir",
-                "          file_1.py",
-                "          file_2.py",
-                "          file_3.py",
-                "    > dir_2",
-                "      .gitignore",
-            ],
-            "When auto reveal is enabled, a gitignored but always included selected entry should be revealed in the project panel"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_explicit_reveal(cx: &mut gpui::TestAppContext) {
-        init_test_with_editor(cx);
-        cx.update(|cx| {
-            cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
-                    worktree_settings.file_scan_exclusions = Some(Vec::new());
-                });
-                store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                    project_panel_settings.auto_reveal_entries = Some(false)
-                });
-            })
-        });
-
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            "/project_root",
-            json!({
-                ".git": {},
-                ".gitignore": "**/gitignored_dir",
-                "dir_1": {
-                    "file_1.py": "# File 1_1 contents",
-                    "file_2.py": "# File 1_2 contents",
-                    "file_3.py": "# File 1_3 contents",
-                    "gitignored_dir": {
-                        "file_a.py": "# File contents",
-                        "file_b.py": "# File contents",
-                        "file_c.py": "# File contents",
-                    },
-                },
-                "dir_2": {
-                    "file_1.py": "# File 2_1 contents",
-                    "file_2.py": "# File 2_2 contents",
-                    "file_3.py": "# File 2_3 contents",
-                }
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v project_root",
-                "    > .git",
-                "    > dir_1",
-                "    > dir_2",
-                "      .gitignore",
-            ]
-        );
-
-        let dir_1_file = find_project_entry(&panel, "project_root/dir_1/file_1.py", cx)
-            .expect("dir 1 file is not ignored and should have an entry");
-        let dir_2_file = find_project_entry(&panel, "project_root/dir_2/file_1.py", cx)
-            .expect("dir 2 file is not ignored and should have an entry");
-        let gitignored_dir_file =
-            find_project_entry(&panel, "project_root/dir_1/gitignored_dir/file_a.py", cx);
-        assert_eq!(
-            gitignored_dir_file, None,
-            "File in the gitignored dir should not have an entry before its dir is toggled"
-        );
-
-        toggle_expand_dir(&panel, "project_root/dir_1", cx);
-        toggle_expand_dir(&panel, "project_root/dir_1/gitignored_dir", cx);
-        cx.run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v project_root",
-                "    > .git",
-                "    v dir_1",
-                "        v gitignored_dir  <== selected",
-                "              file_a.py",
-                "              file_b.py",
-                "              file_c.py",
-                "          file_1.py",
-                "          file_2.py",
-                "          file_3.py",
-                "    > dir_2",
-                "      .gitignore",
-            ],
-            "Should show gitignored dir file list in the project panel"
-        );
-        let gitignored_dir_file =
-            find_project_entry(&panel, "project_root/dir_1/gitignored_dir/file_a.py", cx)
-                .expect("after gitignored dir got opened, a file entry should be present");
-
-        toggle_expand_dir(&panel, "project_root/dir_1/gitignored_dir", cx);
-        toggle_expand_dir(&panel, "project_root/dir_1", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v project_root",
-                "    > .git",
-                "    > dir_1  <== selected",
-                "    > dir_2",
-                "      .gitignore",
-            ],
-            "Should hide all dir contents again and prepare for the explicit reveal test"
-        );
-
-        for file_entry in [dir_1_file, dir_2_file, gitignored_dir_file] {
-            panel.update(cx, |panel, cx| {
-                panel.project.update(cx, |_, cx| {
-                    cx.emit(project::Event::ActiveEntryChanged(Some(file_entry)))
-                })
-            });
-            cx.run_until_parked();
-            assert_eq!(
-                visible_entries_as_strings(&panel, 0..20, cx),
-                &[
-                    "v project_root",
-                    "    > .git",
-                    "    > dir_1  <== selected",
-                    "    > dir_2",
-                    "      .gitignore",
-                ],
-                "When no auto reveal is enabled, the selected entry should not be revealed in the project panel"
-            );
-        }
-
-        panel.update(cx, |panel, cx| {
-            panel.project.update(cx, |_, cx| {
-                cx.emit(project::Event::RevealInProjectPanel(dir_1_file))
-            })
-        });
-        cx.run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v project_root",
-                "    > .git",
-                "    v dir_1",
-                "        > gitignored_dir",
-                "          file_1.py  <== selected  <== marked",
-                "          file_2.py",
-                "          file_3.py",
-                "    > dir_2",
-                "      .gitignore",
-            ],
-            "With no auto reveal, explicit reveal should show the dir_1 entry in the project panel"
-        );
-
-        panel.update(cx, |panel, cx| {
-            panel.project.update(cx, |_, cx| {
-                cx.emit(project::Event::RevealInProjectPanel(dir_2_file))
-            })
-        });
-        cx.run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v project_root",
-                "    > .git",
-                "    v dir_1",
-                "        > gitignored_dir",
-                "          file_1.py",
-                "          file_2.py",
-                "          file_3.py",
-                "    v dir_2",
-                "          file_1.py  <== selected  <== marked",
-                "          file_2.py",
-                "          file_3.py",
-                "      .gitignore",
-            ],
-            "With no auto reveal, explicit reveal should show the dir_2 entry in the project panel"
-        );
-
-        panel.update(cx, |panel, cx| {
-            panel.project.update(cx, |_, cx| {
-                cx.emit(project::Event::RevealInProjectPanel(gitignored_dir_file))
-            })
-        });
-        cx.run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v project_root",
-                "    > .git",
-                "    v dir_1",
-                "        v gitignored_dir",
-                "              file_a.py  <== selected  <== marked",
-                "              file_b.py",
-                "              file_c.py",
-                "          file_1.py",
-                "          file_2.py",
-                "          file_3.py",
-                "    v dir_2",
-                "          file_1.py",
-                "          file_2.py",
-                "          file_3.py",
-                "      .gitignore",
-            ],
-            "With no auto reveal, explicit reveal should show the gitignored entry in the project panel"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-        cx.update(|cx| {
-            cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
-                    project_settings.file_scan_exclusions =
-                        Some(vec!["excluded_dir".to_string(), "**/.git".to_string()]);
-                });
-            });
-        });
-
-        cx.update(|cx| {
-            register_project_item::<TestProjectItemView>(cx);
-        });
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/root1",
-            json!({
-                ".dockerignore": "",
-                ".git": {
-                    "HEAD": "",
-                },
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace
-            .update(cx, |workspace, window, cx| {
-                let panel = ProjectPanel::new(workspace, window, cx);
-                workspace.add_panel(panel.clone(), window, cx);
-                panel
-            })
-            .unwrap();
-
-        select_path(&panel, "root1", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &["v root1  <== selected", "      .dockerignore",]
-        );
-        workspace
-            .update(cx, |workspace, _, cx| {
-                assert!(
-                    workspace.active_item(cx).is_none(),
-                    "Should have no active items in the beginning"
-                );
-            })
-            .unwrap();
-
-        let excluded_file_path = ".git/COMMIT_EDITMSG";
-        let excluded_dir_path = "excluded_dir";
-
-        panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
-        panel.update_in(cx, |panel, window, cx| {
-            assert!(panel.filename_editor.read(cx).is_focused(window));
-        });
-        panel
-            .update_in(cx, |panel, window, cx| {
-                panel.filename_editor.update(cx, |editor, cx| {
-                    editor.set_text(excluded_file_path, window, cx)
-                });
-                panel.confirm_edit(window, cx).unwrap()
-            })
-            .await
-            .unwrap();
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..13, cx),
-            &["v root1", "      .dockerignore"],
-            "Excluded dir should not be shown after opening a file in it"
-        );
-        panel.update_in(cx, |panel, window, cx| {
-            assert!(
-                !panel.filename_editor.read(cx).is_focused(window),
-                "Should have closed the file name editor"
-            );
-        });
-        workspace
-            .update(cx, |workspace, _, cx| {
-                let active_entry_path = workspace
-                    .active_item(cx)
-                    .expect("should have opened and activated the excluded item")
-                    .act_as::<TestProjectItemView>(cx)
-                    .expect(
-                        "should have opened the corresponding project item for the excluded item",
-                    )
-                    .read(cx)
-                    .path
-                    .clone();
-                assert_eq!(
-                    active_entry_path.path.as_ref(),
-                    Path::new(excluded_file_path),
-                    "Should open the excluded file"
-                );
-
-                assert!(
-                    workspace.notification_ids().is_empty(),
-                    "Should have no notifications after opening an excluded file"
-                );
-            })
-            .unwrap();
-        assert!(
-            fs.is_file(Path::new("/root1/.git/COMMIT_EDITMSG")).await,
-            "Should have created the excluded file"
-        );
-
-        select_path(&panel, "root1", cx);
-        panel.update_in(cx, |panel, window, cx| {
-            panel.new_directory(&NewDirectory, window, cx)
-        });
-        panel.update_in(cx, |panel, window, cx| {
-            assert!(panel.filename_editor.read(cx).is_focused(window));
-        });
-        panel
-            .update_in(cx, |panel, window, cx| {
-                panel.filename_editor.update(cx, |editor, cx| {
-                    editor.set_text(excluded_file_path, window, cx)
-                });
-                panel.confirm_edit(window, cx).unwrap()
-            })
-            .await
-            .unwrap();
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..13, cx),
-            &["v root1", "      .dockerignore"],
-            "Should not change the project panel after trying to create an excluded directorya directory with the same name as the excluded file"
-        );
-        panel.update_in(cx, |panel, window, cx| {
-            assert!(
-                !panel.filename_editor.read(cx).is_focused(window),
-                "Should have closed the file name editor"
-            );
-        });
-        workspace
-            .update(cx, |workspace, _, cx| {
-                let notifications = workspace.notification_ids();
-                assert_eq!(
-                    notifications.len(),
-                    1,
-                    "Should receive one notification with the error message"
-                );
-                workspace.dismiss_notification(notifications.first().unwrap(), cx);
-                assert!(workspace.notification_ids().is_empty());
-            })
-            .unwrap();
-
-        select_path(&panel, "root1", cx);
-        panel.update_in(cx, |panel, window, cx| {
-            panel.new_directory(&NewDirectory, window, cx)
-        });
-        panel.update_in(cx, |panel, window, cx| {
-            assert!(panel.filename_editor.read(cx).is_focused(window));
-        });
-        panel
-            .update_in(cx, |panel, window, cx| {
-                panel.filename_editor.update(cx, |editor, cx| {
-                    editor.set_text(excluded_dir_path, window, cx)
-                });
-                panel.confirm_edit(window, cx).unwrap()
-            })
-            .await
-            .unwrap();
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..13, cx),
-            &["v root1", "      .dockerignore"],
-            "Should not change the project panel after trying to create an excluded directory"
-        );
-        panel.update_in(cx, |panel, window, cx| {
-            assert!(
-                !panel.filename_editor.read(cx).is_focused(window),
-                "Should have closed the file name editor"
-            );
-        });
-        workspace
-            .update(cx, |workspace, _, cx| {
-                let notifications = workspace.notification_ids();
-                assert_eq!(
-                    notifications.len(),
-                    1,
-                    "Should receive one notification explaining that no directory is actually shown"
-                );
-                workspace.dismiss_notification(notifications.first().unwrap(), cx);
-                assert!(workspace.notification_ids().is_empty());
-            })
-            .unwrap();
-        assert!(
-            fs.is_dir(Path::new("/root1/excluded_dir")).await,
-            "Should have created the excluded directory"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_selection_restored_when_creation_cancelled(cx: &mut gpui::TestAppContext) {
-        init_test_with_editor(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/src",
-            json!({
-                "test": {
-                    "first.rs": "// First Rust file",
-                    "second.rs": "// Second Rust file",
-                    "third.rs": "// Third Rust file",
-                }
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace
-            .update(cx, |workspace, window, cx| {
-                let panel = ProjectPanel::new(workspace, window, cx);
-                workspace.add_panel(panel.clone(), window, cx);
-                panel
-            })
-            .unwrap();
-
-        select_path(&panel, "src/", cx);
-        panel.update_in(cx, |panel, window, cx| panel.confirm(&Confirm, window, cx));
-        cx.executor().run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                //
-                "v src  <== selected",
-                "    > test"
-            ]
-        );
-        panel.update_in(cx, |panel, window, cx| {
-            panel.new_directory(&NewDirectory, window, cx)
-        });
-        panel.update_in(cx, |panel, window, cx| {
-            assert!(panel.filename_editor.read(cx).is_focused(window));
-        });
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                //
-                "v src",
-                "    > [EDITOR: '']  <== selected",
-                "    > test"
-            ]
-        );
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.cancel(&menu::Cancel, window, cx)
-        });
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                //
-                "v src  <== selected",
-                "    > test"
-            ]
-        );
-    }
-
-    #[gpui::test]
-    async fn test_basic_file_deletion_scenarios(cx: &mut gpui::TestAppContext) {
-        init_test_with_editor(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/root",
-            json!({
-                "dir1": {
-                    "subdir1": {},
-                    "file1.txt": "",
-                    "file2.txt": "",
-                },
-                "dir2": {
-                    "subdir2": {},
-                    "file3.txt": "",
-                    "file4.txt": "",
-                },
-                "file5.txt": "",
-                "file6.txt": "",
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        toggle_expand_dir(&panel, "root/dir1", cx);
-        toggle_expand_dir(&panel, "root/dir2", cx);
-
-        // Test Case 1: Delete middle file in directory
-        select_path(&panel, "root/dir1/file1.txt", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..15, cx),
-            &[
-                "v root",
-                "    v dir1",
-                "        > subdir1",
-                "          file1.txt  <== selected",
-                "          file2.txt",
-                "    v dir2",
-                "        > subdir2",
-                "          file3.txt",
-                "          file4.txt",
-                "      file5.txt",
-                "      file6.txt",
-            ],
-            "Initial state before deleting middle file"
-        );
-
-        submit_deletion(&panel, cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..15, cx),
-            &[
-                "v root",
-                "    v dir1",
-                "        > subdir1",
-                "          file2.txt  <== selected",
-                "    v dir2",
-                "        > subdir2",
-                "          file3.txt",
-                "          file4.txt",
-                "      file5.txt",
-                "      file6.txt",
-            ],
-            "Should select next file after deleting middle file"
-        );
-
-        // Test Case 2: Delete last file in directory
-        submit_deletion(&panel, cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..15, cx),
-            &[
-                "v root",
-                "    v dir1",
-                "        > subdir1  <== selected",
-                "    v dir2",
-                "        > subdir2",
-                "          file3.txt",
-                "          file4.txt",
-                "      file5.txt",
-                "      file6.txt",
-            ],
-            "Should select next directory when last file is deleted"
-        );
-
-        // Test Case 3: Delete root level file
-        select_path(&panel, "root/file6.txt", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..15, cx),
-            &[
-                "v root",
-                "    v dir1",
-                "        > subdir1",
-                "    v dir2",
-                "        > subdir2",
-                "          file3.txt",
-                "          file4.txt",
-                "      file5.txt",
-                "      file6.txt  <== selected",
-            ],
-            "Initial state before deleting root level file"
-        );
-
-        submit_deletion(&panel, cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..15, cx),
-            &[
-                "v root",
-                "    v dir1",
-                "        > subdir1",
-                "    v dir2",
-                "        > subdir2",
-                "          file3.txt",
-                "          file4.txt",
-                "      file5.txt  <== selected",
-            ],
-            "Should select prev entry at root level"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_complex_selection_scenarios(cx: &mut gpui::TestAppContext) {
-        init_test_with_editor(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/root",
-            json!({
-                "dir1": {
-                    "subdir1": {
-                        "a.txt": "",
-                        "b.txt": ""
-                    },
-                    "file1.txt": "",
-                },
-                "dir2": {
-                    "subdir2": {
-                        "c.txt": "",
-                        "d.txt": ""
-                    },
-                    "file2.txt": "",
-                },
-                "file3.txt": "",
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        toggle_expand_dir(&panel, "root/dir1", cx);
-        toggle_expand_dir(&panel, "root/dir1/subdir1", cx);
-        toggle_expand_dir(&panel, "root/dir2", cx);
-        toggle_expand_dir(&panel, "root/dir2/subdir2", cx);
-
-        // Test Case 1: Select and delete nested directory with parent
-        cx.simulate_modifiers_change(gpui::Modifiers {
-            control: true,
-            ..Default::default()
-        });
-        select_path_with_mark(&panel, "root/dir1/subdir1", cx);
-        select_path_with_mark(&panel, "root/dir1", cx);
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..15, cx),
-            &[
-                "v root",
-                "    v dir1  <== selected  <== marked",
-                "        v subdir1  <== marked",
-                "              a.txt",
-                "              b.txt",
-                "          file1.txt",
-                "    v dir2",
-                "        v subdir2",
-                "              c.txt",
-                "              d.txt",
-                "          file2.txt",
-                "      file3.txt",
-            ],
-            "Initial state before deleting nested directory with parent"
-        );
-
-        submit_deletion(&panel, cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..15, cx),
-            &[
-                "v root",
-                "    v dir2  <== selected",
-                "        v subdir2",
-                "              c.txt",
-                "              d.txt",
-                "          file2.txt",
-                "      file3.txt",
-            ],
-            "Should select next directory after deleting directory with parent"
-        );
-
-        // Test Case 2: Select mixed files and directories across levels
-        select_path_with_mark(&panel, "root/dir2/subdir2/c.txt", cx);
-        select_path_with_mark(&panel, "root/dir2/file2.txt", cx);
-        select_path_with_mark(&panel, "root/file3.txt", cx);
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..15, cx),
-            &[
-                "v root",
-                "    v dir2",
-                "        v subdir2",
-                "              c.txt  <== marked",
-                "              d.txt",
-                "          file2.txt  <== marked",
-                "      file3.txt  <== selected  <== marked",
-            ],
-            "Initial state before deleting"
-        );
-
-        submit_deletion(&panel, cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..15, cx),
-            &[
-                "v root",
-                "    v dir2  <== selected",
-                "        v subdir2",
-                "              d.txt",
-            ],
-            "Should select sibling directory"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_delete_all_files_and_directories(cx: &mut gpui::TestAppContext) {
-        init_test_with_editor(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/root",
-            json!({
-                "dir1": {
-                    "subdir1": {
-                        "a.txt": "",
-                        "b.txt": ""
-                    },
-                    "file1.txt": "",
-                },
-                "dir2": {
-                    "subdir2": {
-                        "c.txt": "",
-                        "d.txt": ""
-                    },
-                    "file2.txt": "",
-                },
-                "file3.txt": "",
-                "file4.txt": "",
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        toggle_expand_dir(&panel, "root/dir1", cx);
-        toggle_expand_dir(&panel, "root/dir1/subdir1", cx);
-        toggle_expand_dir(&panel, "root/dir2", cx);
-        toggle_expand_dir(&panel, "root/dir2/subdir2", cx);
-
-        // Test Case 1: Select all root files and directories
-        cx.simulate_modifiers_change(gpui::Modifiers {
-            control: true,
-            ..Default::default()
-        });
-        select_path_with_mark(&panel, "root/dir1", cx);
-        select_path_with_mark(&panel, "root/dir2", cx);
-        select_path_with_mark(&panel, "root/file3.txt", cx);
-        select_path_with_mark(&panel, "root/file4.txt", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v root",
-                "    v dir1  <== marked",
-                "        v subdir1",
-                "              a.txt",
-                "              b.txt",
-                "          file1.txt",
-                "    v dir2  <== marked",
-                "        v subdir2",
-                "              c.txt",
-                "              d.txt",
-                "          file2.txt",
-                "      file3.txt  <== marked",
-                "      file4.txt  <== selected  <== marked",
-            ],
-            "State before deleting all contents"
-        );
-
-        submit_deletion(&panel, cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &["v root  <== selected"],
-            "Only empty root directory should remain after deleting all contents"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_nested_selection_deletion(cx: &mut gpui::TestAppContext) {
-        init_test_with_editor(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/root",
-            json!({
-                "dir1": {
-                    "subdir1": {
-                        "file_a.txt": "content a",
-                        "file_b.txt": "content b",
-                    },
-                    "subdir2": {
-                        "file_c.txt": "content c",
-                    },
-                    "file1.txt": "content 1",
-                },
-                "dir2": {
-                    "file2.txt": "content 2",
-                },
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        toggle_expand_dir(&panel, "root/dir1", cx);
-        toggle_expand_dir(&panel, "root/dir1/subdir1", cx);
-        toggle_expand_dir(&panel, "root/dir2", cx);
-        cx.simulate_modifiers_change(gpui::Modifiers {
-            control: true,
-            ..Default::default()
-        });
-
-        // Test Case 1: Select parent directory, subdirectory, and a file inside the subdirectory
-        select_path_with_mark(&panel, "root/dir1", cx);
-        select_path_with_mark(&panel, "root/dir1/subdir1", cx);
-        select_path_with_mark(&panel, "root/dir1/subdir1/file_a.txt", cx);
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v root",
-                "    v dir1  <== marked",
-                "        v subdir1  <== marked",
-                "              file_a.txt  <== selected  <== marked",
-                "              file_b.txt",
-                "        > subdir2",
-                "          file1.txt",
-                "    v dir2",
-                "          file2.txt",
-            ],
-            "State with parent dir, subdir, and file selected"
-        );
-        submit_deletion(&panel, cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &["v root", "    v dir2  <== selected", "          file2.txt",],
-            "Only dir2 should remain after deletion"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_multiple_worktrees_deletion(cx: &mut gpui::TestAppContext) {
-        init_test_with_editor(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        // First worktree
-        fs.insert_tree(
-            "/root1",
-            json!({
-                "dir1": {
-                    "file1.txt": "content 1",
-                    "file2.txt": "content 2",
-                },
-                "dir2": {
-                    "file3.txt": "content 3",
-                },
-            }),
-        )
-        .await;
-
-        // Second worktree
-        fs.insert_tree(
-            "/root2",
-            json!({
-                "dir3": {
-                    "file4.txt": "content 4",
-                    "file5.txt": "content 5",
-                },
-                "file6.txt": "content 6",
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        // Expand all directories for testing
-        toggle_expand_dir(&panel, "root1/dir1", cx);
-        toggle_expand_dir(&panel, "root1/dir2", cx);
-        toggle_expand_dir(&panel, "root2/dir3", cx);
-
-        // Test Case 1: Delete files across different worktrees
-        cx.simulate_modifiers_change(gpui::Modifiers {
-            control: true,
-            ..Default::default()
-        });
-        select_path_with_mark(&panel, "root1/dir1/file1.txt", cx);
-        select_path_with_mark(&panel, "root2/dir3/file4.txt", cx);
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v root1",
-                "    v dir1",
-                "          file1.txt  <== marked",
-                "          file2.txt",
-                "    v dir2",
-                "          file3.txt",
-                "v root2",
-                "    v dir3",
-                "          file4.txt  <== selected  <== marked",
-                "          file5.txt",
-                "      file6.txt",
-            ],
-            "Initial state with files selected from different worktrees"
-        );
-
-        submit_deletion(&panel, cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v root1",
-                "    v dir1",
-                "          file2.txt",
-                "    v dir2",
-                "          file3.txt",
-                "v root2",
-                "    v dir3",
-                "          file5.txt  <== selected",
-                "      file6.txt",
-            ],
-            "Should select next file in the last worktree after deletion"
-        );
-
-        // Test Case 2: Delete directories from different worktrees
-        select_path_with_mark(&panel, "root1/dir1", cx);
-        select_path_with_mark(&panel, "root2/dir3", cx);
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v root1",
-                "    v dir1  <== marked",
-                "          file2.txt",
-                "    v dir2",
-                "          file3.txt",
-                "v root2",
-                "    v dir3  <== selected  <== marked",
-                "          file5.txt",
-                "      file6.txt",
-            ],
-            "State with directories marked from different worktrees"
-        );
-
-        submit_deletion(&panel, cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v root1",
-                "    v dir2",
-                "          file3.txt",
-                "v root2",
-                "      file6.txt  <== selected",
-            ],
-            "Should select remaining file in last worktree after directory deletion"
-        );
-
-        // Test Case 4: Delete all remaining files except roots
-        select_path_with_mark(&panel, "root1/dir2/file3.txt", cx);
-        select_path_with_mark(&panel, "root2/file6.txt", cx);
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v root1",
-                "    v dir2",
-                "          file3.txt  <== marked",
-                "v root2",
-                "      file6.txt  <== selected  <== marked",
-            ],
-            "State with all remaining files marked"
-        );
-
-        submit_deletion(&panel, cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &["v root1", "    v dir2", "v root2  <== selected"],
-            "Second parent root should be selected after deleting"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_selection_vs_marked_entries_priority(cx: &mut gpui::TestAppContext) {
-        init_test_with_editor(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/root",
-            json!({
-                "dir1": {
-                    "file1.txt": "",
-                    "file2.txt": "",
-                    "file3.txt": "",
-                },
-                "dir2": {
-                    "file4.txt": "",
-                    "file5.txt": "",
-                },
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        toggle_expand_dir(&panel, "root/dir1", cx);
-        toggle_expand_dir(&panel, "root/dir2", cx);
-
-        cx.simulate_modifiers_change(gpui::Modifiers {
-            control: true,
-            ..Default::default()
-        });
-
-        select_path_with_mark(&panel, "root/dir1/file2.txt", cx);
-        select_path(&panel, "root/dir1/file1.txt", cx);
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..15, cx),
-            &[
-                "v root",
-                "    v dir1",
-                "          file1.txt  <== selected",
-                "          file2.txt  <== marked",
-                "          file3.txt",
-                "    v dir2",
-                "          file4.txt",
-                "          file5.txt",
-            ],
-            "Initial state with one marked entry and different selection"
-        );
-
-        // Delete should operate on the selected entry (file1.txt)
-        submit_deletion(&panel, cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..15, cx),
-            &[
-                "v root",
-                "    v dir1",
-                "          file2.txt  <== selected  <== marked",
-                "          file3.txt",
-                "    v dir2",
-                "          file4.txt",
-                "          file5.txt",
-            ],
-            "Should delete selected file, not marked file"
-        );
-
-        select_path_with_mark(&panel, "root/dir1/file3.txt", cx);
-        select_path_with_mark(&panel, "root/dir2/file4.txt", cx);
-        select_path(&panel, "root/dir2/file5.txt", cx);
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..15, cx),
-            &[
-                "v root",
-                "    v dir1",
-                "          file2.txt  <== marked",
-                "          file3.txt  <== marked",
-                "    v dir2",
-                "          file4.txt  <== marked",
-                "          file5.txt  <== selected",
-            ],
-            "Initial state with multiple marked entries and different selection"
-        );
-
-        // Delete should operate on all marked entries, ignoring the selection
-        submit_deletion(&panel, cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..15, cx),
-            &[
-                "v root",
-                "    v dir1",
-                "    v dir2",
-                "          file5.txt  <== selected",
-            ],
-            "Should delete all marked files, leaving only the selected file"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_selection_fallback_to_next_highest_worktree(cx: &mut gpui::TestAppContext) {
-        init_test_with_editor(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            "/root_b",
-            json!({
-                "dir1": {
-                    "file1.txt": "content 1",
-                    "file2.txt": "content 2",
-                },
-            }),
-        )
-        .await;
-
-        fs.insert_tree(
-            "/root_c",
-            json!({
-                "dir2": {},
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), ["/root_b".as_ref(), "/root_c".as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        toggle_expand_dir(&panel, "root_b/dir1", cx);
-        toggle_expand_dir(&panel, "root_c/dir2", cx);
-
-        cx.simulate_modifiers_change(gpui::Modifiers {
-            control: true,
-            ..Default::default()
-        });
-        select_path_with_mark(&panel, "root_b/dir1/file1.txt", cx);
-        select_path_with_mark(&panel, "root_b/dir1/file2.txt", cx);
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v root_b",
-                "    v dir1",
-                "          file1.txt  <== marked",
-                "          file2.txt  <== selected  <== marked",
-                "v root_c",
-                "    v dir2",
-            ],
-            "Initial state with files marked in root_b"
-        );
-
-        submit_deletion(&panel, cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                "v root_b",
-                "    v dir1  <== selected",
-                "v root_c",
-                "    v dir2",
-            ],
-            "After deletion in root_b as it's last deletion, selection should be in root_b"
-        );
-
-        select_path_with_mark(&panel, "root_c/dir2", cx);
-
-        submit_deletion(&panel, cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &["v root_b", "    v dir1", "v root_c  <== selected",],
-            "After deleting from root_c, it should remain in root_c"
-        );
-    }
-
-    fn toggle_expand_dir(
-        panel: &Entity<ProjectPanel>,
-        path: impl AsRef<Path>,
-        cx: &mut VisualTestContext,
-    ) {
-        let path = path.as_ref();
-        panel.update_in(cx, |panel, window, cx| {
-            for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
-                let worktree = worktree.read(cx);
-                if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
-                    let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
-                    panel.toggle_expanded(entry_id, window, cx);
-                    return;
-                }
-            }
-            panic!("no worktree for path {:?}", path);
-        });
-    }
-
-    #[gpui::test]
-    async fn test_expand_all_for_entry(cx: &mut gpui::TestAppContext) {
-        init_test_with_editor(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            path!("/root"),
-            json!({
-                ".gitignore": "**/ignored_dir\n**/ignored_nested",
-                "dir1": {
-                    "empty1": {
-                        "empty2": {
-                            "empty3": {
-                                "file.txt": ""
-                            }
-                        }
-                    },
-                    "subdir1": {
-                        "file1.txt": "",
-                        "file2.txt": "",
-                        "ignored_nested": {
-                            "ignored_file.txt": ""
-                        }
-                    },
-                    "ignored_dir": {
-                        "subdir": {
-                            "deep_file.txt": ""
-                        }
-                    }
-                }
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-
-        // Test 1: When auto-fold is enabled
-        cx.update(|_, cx| {
-            let settings = *ProjectPanelSettings::get_global(cx);
-            ProjectPanelSettings::override_global(
-                ProjectPanelSettings {
-                    auto_fold_dirs: true,
-                    ..settings
-                },
-                cx,
-            );
-        });
-
-        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &["v root", "    > dir1", "      .gitignore",],
-            "Initial state should show collapsed root structure"
-        );
-
-        toggle_expand_dir(&panel, "root/dir1", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                separator!("v root"),
-                separator!("    v dir1  <== selected"),
-                separator!("        > empty1/empty2/empty3"),
-                separator!("        > ignored_dir"),
-                separator!("        > subdir1"),
-                separator!("      .gitignore"),
-            ],
-            "Should show first level with auto-folded dirs and ignored dir visible"
-        );
-
-        let entry_id = find_project_entry(&panel, "root/dir1", cx).unwrap();
-        panel.update(cx, |panel, cx| {
-            let project = panel.project.read(cx);
-            let worktree = project.worktrees(cx).next().unwrap().read(cx);
-            panel.expand_all_for_entry(worktree.id(), entry_id, cx);
-            panel.update_visible_entries(None, cx);
-        });
-        cx.run_until_parked();
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                separator!("v root"),
-                separator!("    v dir1  <== selected"),
-                separator!("        v empty1"),
-                separator!("            v empty2"),
-                separator!("                v empty3"),
-                separator!("                      file.txt"),
-                separator!("        > ignored_dir"),
-                separator!("        v subdir1"),
-                separator!("            > ignored_nested"),
-                separator!("              file1.txt"),
-                separator!("              file2.txt"),
-                separator!("      .gitignore"),
-            ],
-            "After expand_all with auto-fold: should not expand ignored_dir, should expand folded dirs, and should not expand ignored_nested"
-        );
-
-        // Test 2: When auto-fold is disabled
-        cx.update(|_, cx| {
-            let settings = *ProjectPanelSettings::get_global(cx);
-            ProjectPanelSettings::override_global(
-                ProjectPanelSettings {
-                    auto_fold_dirs: false,
-                    ..settings
-                },
-                cx,
-            );
-        });
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.collapse_all_entries(&CollapseAllEntries, window, cx);
-        });
-
-        toggle_expand_dir(&panel, "root/dir1", cx);
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                separator!("v root"),
-                separator!("    v dir1  <== selected"),
-                separator!("        > empty1"),
-                separator!("        > ignored_dir"),
-                separator!("        > subdir1"),
-                separator!("      .gitignore"),
-            ],
-            "With auto-fold disabled: should show all directories separately"
-        );
-
-        let entry_id = find_project_entry(&panel, "root/dir1", cx).unwrap();
-        panel.update(cx, |panel, cx| {
-            let project = panel.project.read(cx);
-            let worktree = project.worktrees(cx).next().unwrap().read(cx);
-            panel.expand_all_for_entry(worktree.id(), entry_id, cx);
-            panel.update_visible_entries(None, cx);
-        });
-        cx.run_until_parked();
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                separator!("v root"),
-                separator!("    v dir1  <== selected"),
-                separator!("        v empty1"),
-                separator!("            v empty2"),
-                separator!("                v empty3"),
-                separator!("                      file.txt"),
-                separator!("        > ignored_dir"),
-                separator!("        v subdir1"),
-                separator!("            > ignored_nested"),
-                separator!("              file1.txt"),
-                separator!("              file2.txt"),
-                separator!("      .gitignore"),
-            ],
-            "After expand_all without auto-fold: should expand all dirs normally, \
-         expand ignored_dir itself but not its subdirs, and not expand ignored_nested"
-        );
-
-        // Test 3: When explicitly called on ignored directory
-        let ignored_dir_entry = find_project_entry(&panel, "root/dir1/ignored_dir", cx).unwrap();
-        panel.update(cx, |panel, cx| {
-            let project = panel.project.read(cx);
-            let worktree = project.worktrees(cx).next().unwrap().read(cx);
-            panel.expand_all_for_entry(worktree.id(), ignored_dir_entry, cx);
-            panel.update_visible_entries(None, cx);
-        });
-        cx.run_until_parked();
-
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..20, cx),
-            &[
-                separator!("v root"),
-                separator!("    v dir1  <== selected"),
-                separator!("        v empty1"),
-                separator!("            v empty2"),
-                separator!("                v empty3"),
-                separator!("                      file.txt"),
-                separator!("        v ignored_dir"),
-                separator!("            v subdir"),
-                separator!("                  deep_file.txt"),
-                separator!("        v subdir1"),
-                separator!("            > ignored_nested"),
-                separator!("              file1.txt"),
-                separator!("              file2.txt"),
-                separator!("      .gitignore"),
-            ],
-            "After expand_all on ignored_dir: should expand all contents of the ignored directory"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_collapse_all_for_entry(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor().clone());
-        fs.insert_tree(
-            path!("/root"),
-            json!({
-                "dir1": {
-                    "subdir1": {
-                        "nested1": {
-                            "file1.txt": "",
-                            "file2.txt": ""
-                        },
-                    },
-                    "subdir2": {
-                        "file4.txt": ""
-                    }
-                },
-                "dir2": {
-                    "single_file": {
-                        "file5.txt": ""
-                    }
-                }
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
-
-        // Test 1: Basic collapsing
-        {
-            let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-            toggle_expand_dir(&panel, "root/dir1", cx);
-            toggle_expand_dir(&panel, "root/dir1/subdir1", cx);
-            toggle_expand_dir(&panel, "root/dir1/subdir1/nested1", cx);
-            toggle_expand_dir(&panel, "root/dir1/subdir2", cx);
-
-            assert_eq!(
-                visible_entries_as_strings(&panel, 0..20, cx),
-                &[
-                    separator!("v root"),
-                    separator!("    v dir1"),
-                    separator!("        v subdir1"),
-                    separator!("            v nested1"),
-                    separator!("                  file1.txt"),
-                    separator!("                  file2.txt"),
-                    separator!("        v subdir2  <== selected"),
-                    separator!("              file4.txt"),
-                    separator!("    > dir2"),
-                ],
-                "Initial state with everything expanded"
-            );
-
-            let entry_id = find_project_entry(&panel, "root/dir1", cx).unwrap();
-            panel.update(cx, |panel, cx| {
-                let project = panel.project.read(cx);
-                let worktree = project.worktrees(cx).next().unwrap().read(cx);
-                panel.collapse_all_for_entry(worktree.id(), entry_id, cx);
-                panel.update_visible_entries(None, cx);
-            });
-
-            assert_eq!(
-                visible_entries_as_strings(&panel, 0..20, cx),
-                &["v root", "    > dir1", "    > dir2",],
-                "All subdirs under dir1 should be collapsed"
-            );
-        }
-
-        // Test 2: With auto-fold enabled
-        {
-            cx.update(|_, cx| {
-                let settings = *ProjectPanelSettings::get_global(cx);
-                ProjectPanelSettings::override_global(
-                    ProjectPanelSettings {
-                        auto_fold_dirs: true,
-                        ..settings
-                    },
-                    cx,
-                );
-            });
-
-            let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-            toggle_expand_dir(&panel, "root/dir1", cx);
-            toggle_expand_dir(&panel, "root/dir1/subdir1", cx);
-            toggle_expand_dir(&panel, "root/dir1/subdir1/nested1", cx);
-
-            assert_eq!(
-                visible_entries_as_strings(&panel, 0..20, cx),
-                &[
-                    separator!("v root"),
-                    separator!("    v dir1"),
-                    separator!("        v subdir1/nested1  <== selected"),
-                    separator!("              file1.txt"),
-                    separator!("              file2.txt"),
-                    separator!("        > subdir2"),
-                    separator!("    > dir2/single_file"),
-                ],
-                "Initial state with some dirs expanded"
-            );
-
-            let entry_id = find_project_entry(&panel, "root/dir1", cx).unwrap();
-            panel.update(cx, |panel, cx| {
-                let project = panel.project.read(cx);
-                let worktree = project.worktrees(cx).next().unwrap().read(cx);
-                panel.collapse_all_for_entry(worktree.id(), entry_id, cx);
-            });
-
-            toggle_expand_dir(&panel, "root/dir1", cx);
-
-            assert_eq!(
-                visible_entries_as_strings(&panel, 0..20, cx),
-                &[
-                    separator!("v root"),
-                    separator!("    v dir1  <== selected"),
-                    separator!("        > subdir1/nested1"),
-                    separator!("        > subdir2"),
-                    separator!("    > dir2/single_file"),
-                ],
-                "Subdirs should be collapsed and folded with auto-fold enabled"
-            );
-        }
-
-        // Test 3: With auto-fold disabled
-        {
-            cx.update(|_, cx| {
-                let settings = *ProjectPanelSettings::get_global(cx);
-                ProjectPanelSettings::override_global(
-                    ProjectPanelSettings {
-                        auto_fold_dirs: false,
-                        ..settings
-                    },
-                    cx,
-                );
-            });
-
-            let panel = workspace.update(cx, ProjectPanel::new).unwrap();
-
-            toggle_expand_dir(&panel, "root/dir1", cx);
-            toggle_expand_dir(&panel, "root/dir1/subdir1", cx);
-            toggle_expand_dir(&panel, "root/dir1/subdir1/nested1", cx);
-
-            assert_eq!(
-                visible_entries_as_strings(&panel, 0..20, cx),
-                &[
-                    separator!("v root"),
-                    separator!("    v dir1"),
-                    separator!("        v subdir1"),
-                    separator!("            v nested1  <== selected"),
-                    separator!("                  file1.txt"),
-                    separator!("                  file2.txt"),
-                    separator!("        > subdir2"),
-                    separator!("    > dir2"),
-                ],
-                "Initial state with some dirs expanded and auto-fold disabled"
-            );
-
-            let entry_id = find_project_entry(&panel, "root/dir1", cx).unwrap();
-            panel.update(cx, |panel, cx| {
-                let project = panel.project.read(cx);
-                let worktree = project.worktrees(cx).next().unwrap().read(cx);
-                panel.collapse_all_for_entry(worktree.id(), entry_id, cx);
-            });
-
-            toggle_expand_dir(&panel, "root/dir1", cx);
-
-            assert_eq!(
-                visible_entries_as_strings(&panel, 0..20, cx),
-                &[
-                    separator!("v root"),
-                    separator!("    v dir1  <== selected"),
-                    separator!("        > subdir1"),
-                    separator!("        > subdir2"),
-                    separator!("    > dir2"),
-                ],
-                "Subdirs should be collapsed but not folded with auto-fold disabled"
-            );
-        }
-    }
-
-    fn select_path(
-        panel: &Entity<ProjectPanel>,
-        path: impl AsRef<Path>,
-        cx: &mut VisualTestContext,
-    ) {
-        let path = path.as_ref();
-        panel.update(cx, |panel, cx| {
-            for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
-                let worktree = worktree.read(cx);
-                if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
-                    let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
-                    panel.selection = Some(crate::SelectedEntry {
-                        worktree_id: worktree.id(),
-                        entry_id,
-                    });
-                    return;
-                }
-            }
-            panic!("no worktree for path {:?}", path);
-        });
-    }
-
-    fn select_path_with_mark(
-        panel: &Entity<ProjectPanel>,
-        path: impl AsRef<Path>,
-        cx: &mut VisualTestContext,
-    ) {
-        let path = path.as_ref();
-        panel.update(cx, |panel, cx| {
-            for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
-                let worktree = worktree.read(cx);
-                if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
-                    let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
-                    let entry = crate::SelectedEntry {
-                        worktree_id: worktree.id(),
-                        entry_id,
-                    };
-                    if !panel.marked_entries.contains(&entry) {
-                        panel.marked_entries.insert(entry);
-                    }
-                    panel.selection = Some(entry);
-                    return;
-                }
-            }
-            panic!("no worktree for path {:?}", path);
-        });
-    }
-
-    fn find_project_entry(
-        panel: &Entity<ProjectPanel>,
-        path: impl AsRef<Path>,
-        cx: &mut VisualTestContext,
-    ) -> Option<ProjectEntryId> {
-        let path = path.as_ref();
-        panel.update(cx, |panel, cx| {
-            for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
-                let worktree = worktree.read(cx);
-                if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
-                    return worktree.entry_for_path(relative_path).map(|entry| entry.id);
-                }
-            }
-            panic!("no worktree for path {path:?}");
-        })
-    }
-
-    fn visible_entries_as_strings(
-        panel: &Entity<ProjectPanel>,
-        range: Range<usize>,
-        cx: &mut VisualTestContext,
-    ) -> Vec<String> {
-        let mut result = Vec::new();
-        let mut project_entries = HashSet::default();
-        let mut has_editor = false;
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.for_each_visible_entry(range, window, cx, |project_entry, details, _, _| {
-                if details.is_editing {
-                    assert!(!has_editor, "duplicate editor entry");
-                    has_editor = true;
-                } else {
-                    assert!(
-                        project_entries.insert(project_entry),
-                        "duplicate project entry {:?} {:?}",
-                        project_entry,
-                        details
-                    );
-                }
-
-                let indent = "    ".repeat(details.depth);
-                let icon = if details.kind.is_dir() {
-                    if details.is_expanded {
-                        "v "
-                    } else {
-                        "> "
-                    }
-                } else {
-                    "  "
-                };
-                let name = if details.is_editing {
-                    format!("[EDITOR: '{}']", details.filename)
-                } else if details.is_processing {
-                    format!("[PROCESSING: '{}']", details.filename)
-                } else {
-                    details.filename.clone()
-                };
-                let selected = if details.is_selected {
-                    "  <== selected"
-                } else {
-                    ""
-                };
-                let marked = if details.is_marked {
-                    "  <== marked"
-                } else {
-                    ""
-                };
-
-                result.push(format!("{indent}{icon}{name}{selected}{marked}"));
-            });
-        });
-
-        result
-    }
-
-    fn init_test(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            init_settings(cx);
-            theme::init(theme::LoadThemes::JustBase, cx);
-            language::init(cx);
-            editor::init_settings(cx);
-            crate::init(cx);
-            workspace::init_settings(cx);
-            client::init_settings(cx);
-            Project::init_settings(cx);
-
-            cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                    project_panel_settings.auto_fold_dirs = Some(false);
-                });
-                store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
-                    worktree_settings.file_scan_exclusions = Some(Vec::new());
-                });
-            });
-        });
-    }
-
-    fn init_test_with_editor(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let app_state = AppState::test(cx);
-            theme::init(theme::LoadThemes::JustBase, cx);
-            init_settings(cx);
-            language::init(cx);
-            editor::init(cx);
-            crate::init(cx);
-            workspace::init(app_state.clone(), cx);
-            Project::init_settings(cx);
-
-            cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                    project_panel_settings.auto_fold_dirs = Some(false);
-                });
-                store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
-                    worktree_settings.file_scan_exclusions = Some(Vec::new());
-                });
-            });
-        });
-    }
-
-    fn ensure_single_file_is_opened(
-        window: &WindowHandle<Workspace>,
-        expected_path: &str,
-        cx: &mut TestAppContext,
-    ) {
-        window
-            .update(cx, |workspace, _, cx| {
-                let worktrees = workspace.worktrees(cx).collect::<Vec<_>>();
-                assert_eq!(worktrees.len(), 1);
-                let worktree_id = worktrees[0].read(cx).id();
-
-                let open_project_paths = workspace
-                    .panes()
-                    .iter()
-                    .filter_map(|pane| pane.read(cx).active_item()?.project_path(cx))
-                    .collect::<Vec<_>>();
-                assert_eq!(
-                    open_project_paths,
-                    vec![ProjectPath {
-                        worktree_id,
-                        path: Arc::from(Path::new(expected_path))
-                    }],
-                    "Should have opened file, selected in project panel"
-                );
-            })
-            .unwrap();
-    }
-
-    fn submit_deletion(panel: &Entity<ProjectPanel>, cx: &mut VisualTestContext) {
-        assert!(
-            !cx.has_pending_prompt(),
-            "Should have no prompts before the deletion"
-        );
-        panel.update_in(cx, |panel, window, cx| {
-            panel.delete(&Delete { skip_prompt: false }, window, cx)
-        });
-        assert!(
-            cx.has_pending_prompt(),
-            "Should have a prompt after the deletion"
-        );
-        cx.simulate_prompt_answer("Delete");
-        assert!(
-            !cx.has_pending_prompt(),
-            "Should have no prompts after prompt was replied to"
-        );
-        cx.executor().run_until_parked();
-    }
-
-    fn submit_deletion_skipping_prompt(panel: &Entity<ProjectPanel>, cx: &mut VisualTestContext) {
-        assert!(
-            !cx.has_pending_prompt(),
-            "Should have no prompts before the deletion"
-        );
-        panel.update_in(cx, |panel, window, cx| {
-            panel.delete(&Delete { skip_prompt: true }, window, cx)
-        });
-        assert!(!cx.has_pending_prompt(), "Should have received no prompts");
-        cx.executor().run_until_parked();
-    }
-
-    fn ensure_no_open_items_and_panes(
-        workspace: &WindowHandle<Workspace>,
-        cx: &mut VisualTestContext,
-    ) {
-        assert!(
-            !cx.has_pending_prompt(),
-            "Should have no prompts after deletion operation closes the file"
-        );
-        workspace
-            .read_with(cx, |workspace, cx| {
-                let open_project_paths = workspace
-                    .panes()
-                    .iter()
-                    .filter_map(|pane| pane.read(cx).active_item()?.project_path(cx))
-                    .collect::<Vec<_>>();
-                assert!(
-                    open_project_paths.is_empty(),
-                    "Deleted file's buffer should be closed, but got open files: {open_project_paths:?}"
-                );
-            })
-            .unwrap();
-    }
-
-    struct TestProjectItemView {
-        focus_handle: FocusHandle,
-        path: ProjectPath,
-    }
-
-    struct TestProjectItem {
-        path: ProjectPath,
-    }
-
-    impl project::ProjectItem for TestProjectItem {
-        fn try_open(
-            _project: &Entity<Project>,
-            path: &ProjectPath,
-            cx: &mut App,
-        ) -> Option<Task<gpui::Result<Entity<Self>>>> {
-            let path = path.clone();
-            Some(cx.spawn(async move |cx| cx.new(|_| Self { path })))
-        }
-
-        fn entry_id(&self, _: &App) -> Option<ProjectEntryId> {
-            None
-        }
-
-        fn project_path(&self, _: &App) -> Option<ProjectPath> {
-            Some(self.path.clone())
-        }
-
-        fn is_dirty(&self) -> bool {
-            false
-        }
-    }
-
-    impl ProjectItem for TestProjectItemView {
-        type Item = TestProjectItem;
-
-        fn for_project_item(
-            _: Entity<Project>,
-            project_item: Entity<Self::Item>,
-            _: &mut Window,
-            cx: &mut Context<Self>,
-        ) -> Self
-        where
-            Self: Sized,
-        {
-            Self {
-                path: project_item.update(cx, |project_item, _| project_item.path.clone()),
-                focus_handle: cx.focus_handle(),
-            }
-        }
-    }
-
-    impl Item for TestProjectItemView {
-        type Event = ();
-    }
-
-    impl EventEmitter<()> for TestProjectItemView {}
-
-    impl Focusable for TestProjectItemView {
-        fn focus_handle(&self, _: &App) -> FocusHandle {
-            self.focus_handle.clone()
-        }
-    }
-
-    impl Render for TestProjectItemView {
-        fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            Empty
-        }
-    }
-}
+mod project_panel_tests;

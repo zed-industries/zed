@@ -1,15 +1,16 @@
 use crate::commit::get_messages;
-use crate::Oid;
-use anyhow::{anyhow, Context as _, Result};
+use crate::{GitRemote, Oid};
+use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use futures::AsyncWriteExt;
+use gpui::SharedString;
 use serde::{Deserialize, Serialize};
 use std::process::Stdio;
 use std::{ops::Range, path::Path};
 use text::Rope;
-use time::macros::format_description;
 use time::OffsetDateTime;
 use time::UtcOffset;
+use time::macros::format_description;
 
 pub use git2 as libgit;
 
@@ -18,6 +19,14 @@ pub struct Blame {
     pub entries: Vec<BlameEntry>,
     pub messages: HashMap<Oid, String>,
     pub remote_url: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ParsedCommitMessage {
+    pub message: SharedString,
+    pub permalink: Option<url::Url>,
+    pub pull_request: Option<crate::hosting_provider::PullRequest>,
+    pub remote: Option<GitRemote>,
 }
 
 impl Blame {
@@ -71,7 +80,7 @@ async fn run_git_blame(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| anyhow!("Failed to start git blame process: {}", e))?;
+        .context("starting git blame process")?;
 
     let stdin = child
         .stdin
@@ -83,10 +92,7 @@ async fn run_git_blame(
     }
     stdin.flush().await?;
 
-    let output = child
-        .output()
-        .await
-        .map_err(|e| anyhow!("Failed to read git blame output: {}", e))?;
+    let output = child.output().await.context("reading git blame output")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -94,7 +100,7 @@ async fn run_git_blame(
         if trimmed == GIT_BLAME_NO_COMMIT_ERROR || trimmed.contains(GIT_BLAME_NO_PATH) {
             return Ok(String::new());
         }
-        return Err(anyhow!("git blame process failed: {}", stderr));
+        anyhow::bail!("git blame process failed: {stderr}");
     }
 
     Ok(String::from_utf8(output.stdout)?)
@@ -135,21 +141,21 @@ impl BlameEntry {
         let sha = parts
             .next()
             .and_then(|line| line.parse::<Oid>().ok())
-            .ok_or_else(|| anyhow!("failed to parse sha"))?;
+            .context("parsing sha")?;
 
         let original_line_number = parts
             .next()
             .and_then(|line| line.parse::<u32>().ok())
-            .ok_or_else(|| anyhow!("Failed to parse original line number"))?;
+            .context("parsing original line number")?;
         let final_line_number = parts
             .next()
             .and_then(|line| line.parse::<u32>().ok())
-            .ok_or_else(|| anyhow!("Failed to parse final line number"))?;
+            .context("parsing final line number")?;
 
         let line_count = parts
             .next()
             .and_then(|line| line.parse::<u32>().ok())
-            .ok_or_else(|| anyhow!("Failed to parse final line number"))?;
+            .context("parsing line count")?;
 
         let start_line = final_line_number.saturating_sub(1);
         let end_line = start_line + line_count;
@@ -301,8 +307,8 @@ fn parse_git_blame(output: &str) -> Result<Vec<BlameEntry>> {
 mod tests {
     use std::path::PathBuf;
 
-    use super::parse_git_blame;
     use super::BlameEntry;
+    use super::parse_git_blame;
 
     fn read_test_data(filename: &str) -> String {
         let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

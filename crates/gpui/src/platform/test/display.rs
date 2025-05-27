@@ -1,4 +1,4 @@
-use crate::{px, Bounds, DisplayId, Pixels, PlatformDisplay, Point};
+use crate::{Bounds, DisplayId, Pixels, PlatformDisplay, Point, px};
 use anyhow::{Ok, Result};
 
 #[derive(Debug)]

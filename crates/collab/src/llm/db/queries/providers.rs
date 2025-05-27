@@ -1,5 +1,5 @@
 use super::*;
-use sea_orm::{sea_query::OnConflict, QueryOrder};
+use sea_orm::{QueryOrder, sea_query::OnConflict};
 use std::str::FromStr;
 use strum::IntoEnumIterator as _;
 

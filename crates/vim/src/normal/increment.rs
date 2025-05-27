@@ -1,11 +1,11 @@
-use editor::{scroll::Autoscroll, Editor, MultiBufferSnapshot, ToOffset, ToPoint};
-use gpui::{impl_actions, Context, Window};
+use editor::{Editor, MultiBufferSnapshot, ToOffset, ToPoint, scroll::Autoscroll};
+use gpui::{Context, Window, impl_actions};
 use language::{Bias, Point};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::ops::Range;
 
-use crate::{state::Mode, Vim};
+use crate::{Vim, state::Mode};
 
 const BOOLEAN_PAIRS: &[(&str, &str)] = &[("true", "false"), ("yes", "no"), ("on", "off")];
 
@@ -29,12 +29,14 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, action: &Increment, window, cx| {
         vim.record_current_action(cx);
         let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
         let step = if action.step { count as i32 } else { 0 };
         vim.increment(count as i64, step, window, cx)
     });
     Vim::action(editor, cx, |vim, action: &Decrement, window, cx| {
         vim.record_current_action(cx);
         let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
         let step = if action.step { -1 * (count as i32) } else { 0 };
         vim.increment(-(count as i64), step, window, cx)
     });

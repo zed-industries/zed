@@ -14,20 +14,21 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, Context as _};
+use anyhow::{Context as _, anyhow};
 use async_task::Runnable;
-use calloop::{channel::Channel, LoopSignal};
+use calloop::{LoopSignal, channel::Channel};
 use futures::channel::oneshot;
 use util::ResultExt as _;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
 use crate::{
-    px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu, PathPromptOptions,
-    Pixels, Platform, PlatformDisplay, PlatformTextSystem, PlatformWindow, Point, Result,
-    ScreenCaptureSource, Task, WindowAppearance, WindowParams,
+    Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow,
+    Point, Result, ScreenCaptureSource, Task, WindowAppearance, WindowParams, px,
 };
+
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) const SCROLL_LINES: f32 = 3.0;
 
@@ -45,11 +46,15 @@ const FILE_PICKER_PORTAL_MISSING: &str =
 pub trait LinuxClient {
     fn compositor_name(&self) -> &'static str;
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R;
-    fn keyboard_layout(&self) -> String;
+    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout>;
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     #[allow(unused)]
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
+    fn is_screen_capture_supported(&self) -> bool;
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>>;
 
     fn open_window(
         &self,
@@ -133,7 +138,7 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.with_common(|common| common.text_system.clone())
     }
 
-    fn keyboard_layout(&self) -> String {
+    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         self.keyboard_layout()
     }
 
@@ -230,12 +235,14 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.displays()
     }
 
+    fn is_screen_capture_supported(&self) -> bool {
+        self.is_screen_capture_supported()
+    }
+
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
-        let (mut tx, rx) = oneshot::channel();
-        tx.send(Err(anyhow!("screen capture not implemented"))).ok();
-        rx
+        self.screen_capture_sources()
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
@@ -419,8 +426,8 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn app_path(&self) -> Result<PathBuf> {
         // get the path of the executable of the current process
-        let exe_path = env::current_exe()?;
-        Ok(exe_path)
+        let app_path = env::current_exe()?;
+        return Ok(app_path);
     }
 
     fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
@@ -433,7 +440,9 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.with_common(|common| Some(common.menus.clone()))
     }
 
-    fn set_dock_menu(&self, _menu: Vec<MenuItem>, _keymap: &Keymap) {}
+    fn set_dock_menu(&self, _menu: Vec<MenuItem>, _keymap: &Keymap) {
+        // todo(linux)
+    }
 
     fn path_for_auxiliary_executable(&self, _name: &str) -> Result<PathBuf> {
         Err(anyhow::Error::msg(
@@ -481,7 +490,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                     let attributes = item.attributes().await?;
                     let username = attributes
                         .get("username")
-                        .ok_or_else(|| anyhow!("Cannot find username in stored credentials"))?;
+                        .context("Cannot find username in stored credentials")?;
                     let secret = item.secret().await?;
 
                     // we lose the zeroizing capabilities at this boundary,
@@ -632,15 +641,15 @@ pub(super) fn get_xkb_compose_state(cx: &xkb::Context) -> Option<xkb::compose::S
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(super) unsafe fn read_fd(mut fd: filedescriptor::FileDescriptor) -> Result<Vec<u8>> {
-    let mut file = File::from_raw_fd(fd.as_raw_fd());
+    let mut file = unsafe { File::from_raw_fd(fd.as_raw_fd()) };
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer)?;
     Ok(buffer)
 }
 
 impl CursorStyle {
-    #[allow(unused)]
-    pub(super) fn to_icon_name(&self) -> String {
+    #[cfg(any(feature = "wayland", feature = "x11"))]
+    pub(super) fn to_icon_name(&self) -> &'static str {
         // Based on cursor names from https://gitlab.gnome.org/GNOME/adwaita-icon-theme (GNOME)
         // and https://github.com/KDE/breeze (KDE). Both of them seem to be also derived from
         // Web CSS cursor names: https://developer.mozilla.org/en-US/docs/Web/CSS/cursor#values
@@ -666,8 +675,13 @@ impl CursorStyle {
             CursorStyle::DragLink => "alias",
             CursorStyle::DragCopy => "copy",
             CursorStyle::ContextualMenu => "context-menu",
+            CursorStyle::None => {
+                #[cfg(debug_assertions)]
+                panic!("CursorStyle::None should be handled separately in the client");
+                #[cfg(not(debug_assertions))]
+                "default"
+            }
         }
-        .to_string()
     }
 }
 
@@ -846,7 +860,7 @@ impl crate::Modifiers {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{px, Point};
+    use crate::{Point, px};
 
     #[test]
     fn test_is_within_click_distance() {

@@ -6,7 +6,7 @@ use std::{
     ptr,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use libsqlite3_sys::*;
 
 pub struct Connection {
@@ -199,11 +199,7 @@ impl Connection {
                 )
             };
 
-            Err(anyhow!(
-                "Sqlite call failed with code {} and message: {:?}",
-                code as isize,
-                message
-            ))
+            anyhow::bail!("Sqlite call failed with code {code} and message: {message:?}")
         }
     }
 
@@ -429,12 +425,16 @@ mod test {
     fn test_alter_table_syntax() {
         let connection = Connection::open_memory(Some("test_alter_table_syntax"));
 
-        assert!(connection
-            .sql_has_syntax_error("ALTER TABLE test ADD x TEXT")
-            .is_none());
+        assert!(
+            connection
+                .sql_has_syntax_error("ALTER TABLE test ADD x TEXT")
+                .is_none()
+        );
 
-        assert!(connection
-            .sql_has_syntax_error("ALTER TABLE test AAD x TEXT")
-            .is_some());
+        assert!(
+            connection
+                .sql_has_syntax_error("ALTER TABLE test AAD x TEXT")
+                .is_some()
+        );
     }
 }

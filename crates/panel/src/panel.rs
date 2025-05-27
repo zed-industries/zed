@@ -1,9 +1,9 @@
 //! # panel
 use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{actions, Entity, TextStyle};
+use gpui::{Entity, TextStyle, actions};
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{prelude::*, Tab};
+use ui::{Tab, prelude::*};
 
 actions!(panel, [NextPanelTab, PreviousPanelTab]);
 

@@ -1,25 +1,34 @@
-use anyhow::{anyhow, Result};
-use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
+use anyhow::{Result, anyhow};
+use collections::HashMap;
+use futures::Stream;
+use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
-use language_model::{AuthenticateError, LanguageModelCompletionEvent};
+use language_model::{
+    AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
+    StopReason, WrappedTextContent,
+};
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, RateLimiter, Role,
 };
 use lmstudio::{
-    get_models, preload_model, stream_chat_completion, ChatCompletionRequest, ChatMessage,
-    ModelType,
+    ChatCompletionRequest, ChatMessage, ModelType, ResponseStreamEvent, get_models, preload_model,
+    stream_chat_completion,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
+use std::pin::Pin;
+use std::str::FromStr;
 use std::{collections::BTreeMap, sync::Arc};
-use ui::{prelude::*, ButtonLike, Indicator};
+use ui::{ButtonLike, Indicator, List, prelude::*};
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
+use crate::ui::InstructionListItem;
 
 const LMSTUDIO_DOWNLOAD_URL: &str = "https://lmstudio.ai/download";
 const LMSTUDIO_CATALOG_URL: &str = "https://lmstudio.ai/models";
@@ -36,12 +45,10 @@ pub struct LmStudioSettings {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AvailableModel {
-    /// The model name in the LM Studio API. e.g. qwen2.5-coder-7b, phi-4, etc
     pub name: String,
-    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
     pub display_name: Option<String>,
-    /// The model's context window size.
     pub max_tokens: usize,
+    pub supports_tool_calls: bool,
 }
 
 pub struct LmStudioLanguageModelProvider {
@@ -73,7 +80,14 @@ impl State {
             let mut models: Vec<lmstudio::Model> = models
                 .into_iter()
                 .filter(|model| model.r#type != ModelType::Embeddings)
-                .map(|model| lmstudio::Model::new(&model.id, None, None))
+                .map(|model| {
+                    lmstudio::Model::new(
+                        &model.id,
+                        None,
+                        None,
+                        model.capabilities.supports_tool_calls(),
+                    )
+                })
                 .collect();
 
             models.sort_by(|a, b| a.name.cmp(&b.name));
@@ -152,8 +166,16 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
         IconName::AiLmStudio
     }
 
-    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        self.provided_models(cx).into_iter().next()
+    fn default_model(&self, _: &App) -> Option<Arc<dyn LanguageModel>> {
+        // We shouldn't try to select default model, because it might lead to a load call for an unloaded model.
+        // In a constrained environment where user might not have enough resources it'll be a bad UX to select something
+        // to load by default.
+        None
+    }
+
+    fn default_fast_model(&self, _: &App) -> Option<Arc<dyn LanguageModel>> {
+        // See explanation for default_model.
+        None
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -176,6 +198,7 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
                     name: model.name.clone(),
                     display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
+                    supports_tool_calls: model.supports_tool_calls,
                 },
             );
         }
@@ -229,30 +252,116 @@ pub struct LmStudioLanguageModel {
 
 impl LmStudioLanguageModel {
     fn to_lmstudio_request(&self, request: LanguageModelRequest) -> ChatCompletionRequest {
+        let mut messages = Vec::new();
+
+        for message in request.messages {
+            for content in message.content {
+                match content {
+                    MessageContent::Text(text) | MessageContent::Thinking { text, .. } => messages
+                        .push(match message.role {
+                            Role::User => ChatMessage::User { content: text },
+                            Role::Assistant => ChatMessage::Assistant {
+                                content: Some(text),
+                                tool_calls: Vec::new(),
+                            },
+                            Role::System => ChatMessage::System { content: text },
+                        }),
+                    MessageContent::RedactedThinking(_) => {}
+                    MessageContent::Image(_) => {}
+                    MessageContent::ToolUse(tool_use) => {
+                        let tool_call = lmstudio::ToolCall {
+                            id: tool_use.id.to_string(),
+                            content: lmstudio::ToolCallContent::Function {
+                                function: lmstudio::FunctionContent {
+                                    name: tool_use.name.to_string(),
+                                    arguments: serde_json::to_string(&tool_use.input)
+                                        .unwrap_or_default(),
+                                },
+                            },
+                        };
+
+                        if let Some(lmstudio::ChatMessage::Assistant { tool_calls, .. }) =
+                            messages.last_mut()
+                        {
+                            tool_calls.push(tool_call);
+                        } else {
+                            messages.push(lmstudio::ChatMessage::Assistant {
+                                content: None,
+                                tool_calls: vec![tool_call],
+                            });
+                        }
+                    }
+                    MessageContent::ToolResult(tool_result) => {
+                        match &tool_result.content {
+                            LanguageModelToolResultContent::Text(text)
+                            | LanguageModelToolResultContent::WrappedText(WrappedTextContent {
+                                text,
+                                ..
+                            }) => {
+                                messages.push(lmstudio::ChatMessage::Tool {
+                                    content: text.to_string(),
+                                    tool_call_id: tool_result.tool_use_id.to_string(),
+                                });
+                            }
+                            LanguageModelToolResultContent::Image(_) => {
+                                // no support for images for now
+                            }
+                        };
+                    }
+                }
+            }
+        }
+
         ChatCompletionRequest {
             model: self.model.name.clone(),
-            messages: request
-                .messages
-                .into_iter()
-                .map(|msg| match msg.role {
-                    Role::User => ChatMessage::User {
-                        content: msg.string_contents(),
-                    },
-                    Role::Assistant => ChatMessage::Assistant {
-                        content: Some(msg.string_contents()),
-                        tool_calls: None,
-                    },
-                    Role::System => ChatMessage::System {
-                        content: msg.string_contents(),
-                    },
-                })
-                .collect(),
+            messages,
             stream: true,
             max_tokens: Some(-1),
             stop: Some(request.stop),
-            temperature: request.temperature.or(Some(0.0)),
-            tools: vec![],
+            // In LM Studio you can configure specific settings you'd like to use for your model.
+            // For example Qwen3 is recommended to be used with 0.7 temperature.
+            // It would be a bad UX to silently override these settings from Zed, so we pass no temperature as a default.
+            temperature: request.temperature.or(None),
+            tools: request
+                .tools
+                .into_iter()
+                .map(|tool| lmstudio::ToolDefinition::Function {
+                    function: lmstudio::FunctionDefinition {
+                        name: tool.name,
+                        description: Some(tool.description),
+                        parameters: Some(tool.input_schema),
+                    },
+                })
+                .collect(),
+            tool_choice: request.tool_choice.map(|choice| match choice {
+                LanguageModelToolChoice::Auto => lmstudio::ToolChoice::Auto,
+                LanguageModelToolChoice::Any => lmstudio::ToolChoice::Required,
+                LanguageModelToolChoice::None => lmstudio::ToolChoice::None,
+            }),
         }
+    }
+
+    fn stream_completion(
+        &self,
+        request: ChatCompletionRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
+    {
+        let http_client = self.http_client.clone();
+        let Ok(api_url) = cx.update(|cx| {
+            let settings = &AllLanguageModelSettings::get_global(cx).lmstudio;
+            settings.api_url.clone()
+        }) else {
+            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+        };
+
+        let future = self.request_limiter.stream(async move {
+            let request = stream_chat_completion(http_client.as_ref(), &api_url, request);
+            let response = request.await?;
+            Ok(response)
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
     }
 }
 
@@ -271,6 +380,23 @@ impl LanguageModel for LmStudioLanguageModel {
 
     fn provider_name(&self) -> LanguageModelProviderName {
         LanguageModelProviderName(PROVIDER_NAME.into())
+    }
+
+    fn supports_tools(&self) -> bool {
+        self.model.supports_tool_calls()
+    }
+
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        self.supports_tools()
+            && match choice {
+                LanguageModelToolChoice::Auto => true,
+                LanguageModelToolChoice::Any => true,
+                LanguageModelToolChoice::None => true,
+            }
+    }
+
+    fn supports_images(&self) -> bool {
+        false
     }
 
     fn telemetry_id(&self) -> String {
@@ -301,76 +427,131 @@ impl LanguageModel for LmStudioLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+        >,
+    > {
         let request = self.to_lmstudio_request(request);
-
-        let http_client = self.http_client.clone();
-        let Ok(api_url) = cx.update(|cx| {
-            let settings = &AllLanguageModelSettings::get_global(cx).lmstudio;
-            settings.api_url.clone()
-        }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
-        };
-
-        let future = self.request_limiter.stream(async move {
-            let response = stream_chat_completion(http_client.as_ref(), &api_url, request).await?;
-            let stream = response
-                .filter_map(|response| async move {
-                    match response {
-                        Ok(fragment) => {
-                            // Skip empty deltas
-                            if fragment.choices[0].delta.is_object()
-                                && fragment.choices[0].delta.as_object().unwrap().is_empty()
-                            {
-                                return None;
-                            }
-
-                            // Try to parse the delta as ChatMessage
-                            if let Ok(chat_message) = serde_json::from_value::<ChatMessage>(
-                                fragment.choices[0].delta.clone(),
-                            ) {
-                                let content = match chat_message {
-                                    ChatMessage::User { content } => content,
-                                    ChatMessage::Assistant { content, .. } => {
-                                        content.unwrap_or_default()
-                                    }
-                                    ChatMessage::System { content } => content,
-                                };
-                                if !content.is_empty() {
-                                    Some(Ok(content))
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        }
-                        Err(error) => Some(Err(error)),
-                    }
-                })
-                .boxed();
-            Ok(stream)
-        });
-
+        let completions = self.stream_completion(request, cx);
         async move {
-            Ok(future
-                .await?
-                .map(|result| result.map(LanguageModelCompletionEvent::Text))
-                .boxed())
+            let mapper = LmStudioEventMapper::new();
+            Ok(mapper.map_stream(completions.await?).boxed())
         }
         .boxed()
     }
+}
 
-    fn use_any_tool(
-        &self,
-        _request: LanguageModelRequest,
-        _tool_name: String,
-        _tool_description: String,
-        _schema: serde_json::Value,
-        _cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        async move { Ok(futures::stream::empty().boxed()) }.boxed()
+struct LmStudioEventMapper {
+    tool_calls_by_index: HashMap<usize, RawToolCall>,
+}
+
+impl LmStudioEventMapper {
+    fn new() -> Self {
+        Self {
+            tool_calls_by_index: HashMap::default(),
+        }
     }
+
+    pub fn map_stream(
+        mut self,
+        events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
+    ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
+    {
+        events.flat_map(move |event| {
+            futures::stream::iter(match event {
+                Ok(event) => self.map_event(event),
+                Err(error) => vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))],
+            })
+        })
+    }
+
+    pub fn map_event(
+        &mut self,
+        event: ResponseStreamEvent,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let Some(choice) = event.choices.into_iter().next() else {
+            return vec![Err(LanguageModelCompletionError::Other(anyhow!(
+                "Response contained no choices"
+            )))];
+        };
+
+        let mut events = Vec::new();
+        if let Some(content) = choice.delta.content {
+            events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+        }
+
+        if let Some(tool_calls) = choice.delta.tool_calls {
+            for tool_call in tool_calls {
+                let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
+
+                if let Some(tool_id) = tool_call.id {
+                    entry.id = tool_id;
+                }
+
+                if let Some(function) = tool_call.function {
+                    if let Some(name) = function.name {
+                        // At the time of writing this code LM Studio (0.3.15) is incompatible with the OpenAI API:
+                        // 1. It sends function name in the first chunk
+                        // 2. It sends empty string in the function name field in all subsequent chunks for arguments
+                        // According to https://platform.openai.com/docs/guides/function-calling?api-mode=responses#streaming
+                        // function name field should be sent only inside the first chunk.
+                        if !name.is_empty() {
+                            entry.name = name;
+                        }
+                    }
+
+                    if let Some(arguments) = function.arguments {
+                        entry.arguments.push_str(&arguments);
+                    }
+                }
+            }
+        }
+
+        match choice.finish_reason.as_deref() {
+            Some("stop") => {
+                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+            }
+            Some("tool_calls") => {
+                events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
+                    match serde_json::Value::from_str(&tool_call.arguments) {
+                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
+                            LanguageModelToolUse {
+                                id: tool_call.id.into(),
+                                name: tool_call.name.into(),
+                                is_input_complete: true,
+                                input,
+                                raw_input: tool_call.arguments,
+                            },
+                        )),
+                        Err(error) => Err(LanguageModelCompletionError::BadInputJson {
+                            id: tool_call.id.into(),
+                            tool_name: tool_call.name.into(),
+                            raw_input: tool_call.arguments.into(),
+                            json_parse_error: error.to_string(),
+                        }),
+                    }
+                }));
+
+                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
+            }
+            Some(stop_reason) => {
+                log::error!("Unexpected OpenAI stop_reason: {stop_reason:?}",);
+                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+            }
+            None => {}
+        }
+
+        events
+    }
+}
+
+#[derive(Default)]
+struct RawToolCall {
+    id: String,
+    name: String,
+    arguments: String,
 }
 
 struct ConfigurationView {
@@ -415,41 +596,26 @@ impl Render for ConfigurationView {
         let is_authenticated = self.state.read(cx).is_authenticated();
 
         let lmstudio_intro = "Run local LLMs like Llama, Phi, and Qwen.";
-        let lmstudio_reqs =
-            "To use LM Studio as a provider for Zed assistant, it needs to be running with at least one model downloaded.";
-
-        let inline_code_bg = cx.theme().colors().editor_foreground.opacity(0.05);
 
         if self.loading_models_task.is_some() {
             div().child(Label::new("Loading models...")).into_any()
         } else {
             v_flex()
-                .size_full()
-                .gap_3()
+                .gap_2()
                 .child(
-                    v_flex()
-                        .size_full()
-                        .gap_2()
-                        .p_1()
-                        .child(Label::new(lmstudio_intro))
-                        .child(Label::new(lmstudio_reqs))
-                        .child(
-                            h_flex()
-                                .gap_0p5()
-                                .child(Label::new("To get your first model, try running"))
-                                .child(
-                                    div()
-                                        .bg(inline_code_bg)
-                                        .px_1p5()
-                                        .rounded_sm()
-                                        .child(Label::new("lms get qwen2.5-coder-7b")),
-                                ),
-                        ),
+                    v_flex().gap_1().child(Label::new(lmstudio_intro)).child(
+                        List::new()
+                            .child(InstructionListItem::text_only(
+                                "LM Studio needs to be running with at least one model downloaded.",
+                            ))
+                            .child(InstructionListItem::text_only(
+                                "To get your first model, try running `lms get qwen2.5-coder-7b`",
+                            )),
+                    ),
                 )
                 .child(
                     h_flex()
                         .w_full()
-                        .pt_2()
                         .justify_between()
                         .gap_2()
                         .child(
@@ -497,29 +663,31 @@ impl Render for ConfigurationView {
                                         }),
                                 ),
                         )
-                        .child(if is_authenticated {
-                            // This is only a button to ensure the spacing is correct
-                            // it should stay disabled
-                            ButtonLike::new("connected")
-                                .disabled(true)
-                                // Since this won't ever be clickable, we can use the arrow cursor
-                                .cursor_style(gpui::CursorStyle::Arrow)
-                                .child(
-                                    h_flex()
-                                        .gap_2()
-                                        .child(Indicator::dot().color(Color::Success))
-                                        .child(Label::new("Connected"))
-                                        .into_any_element(),
+                        .map(|this| {
+                            if is_authenticated {
+                                this.child(
+                                    ButtonLike::new("connected")
+                                        .disabled(true)
+                                        .cursor_style(gpui::CursorStyle::Arrow)
+                                        .child(
+                                            h_flex()
+                                                .gap_2()
+                                                .child(Indicator::dot().color(Color::Success))
+                                                .child(Label::new("Connected"))
+                                                .into_any_element(),
+                                        ),
                                 )
-                                .into_any_element()
-                        } else {
-                            Button::new("retry_lmstudio_models", "Connect")
-                                .icon_position(IconPosition::Start)
-                                .icon(IconName::ArrowCircle)
-                                .on_click(cx.listener(move |this, _, _window, cx| {
-                                    this.retry_connection(cx)
-                                }))
-                                .into_any_element()
+                            } else {
+                                this.child(
+                                    Button::new("retry_lmstudio_models", "Connect")
+                                        .icon_position(IconPosition::Start)
+                                        .icon_size(IconSize::XSmall)
+                                        .icon(IconName::Play)
+                                        .on_click(cx.listener(move |this, _, _window, cx| {
+                                            this.retry_connection(cx)
+                                        })),
+                                )
+                            }
                         }),
                 )
                 .into_any()

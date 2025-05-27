@@ -28,10 +28,9 @@ futures.workspace = true
 gpui.workspace = true
 itertools.workspace = true
 language.workspace = true
-libc.workspace = true
 log.workspace = true
 multi_buffer.workspace = true
-nvim-rs = { git = "https://github.com/KillTheMule/nvim-rs", branch = "master", features = ["use_tokio"], optional = true }
+nvim-rs = { git = "https://github.com/KillTheMule/nvim-rs", rev = "764dd270c642f77f10f3e19d05cc178a6cbe69f3", features = ["use_tokio"], optional = true }
 picker.workspace = true
 project.workspace = true
 regex.workspace = true
@@ -50,6 +49,7 @@ util.workspace = true
 vim_mode_setting.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 assets.workspace = true

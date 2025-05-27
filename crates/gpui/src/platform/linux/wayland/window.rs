@@ -13,7 +13,7 @@ use futures::channel::oneshot::Receiver;
 use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
 use wayland_client::WEnum;
-use wayland_client::{protocol::wl_surface, Proxy};
+use wayland_client::{Proxy, protocol::wl_surface};
 use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1;
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
@@ -22,16 +22,17 @@ use wayland_protocols::xdg::shell::client::xdg_toplevel::{self};
 use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 
 use crate::platform::{
+    PlatformAtlas, PlatformInputHandler, PlatformWindow,
     blade::{BladeContext, BladeRenderer, BladeSurfaceConfig},
     linux::wayland::{display::WaylandDisplay, serial::SerialKind},
-    PlatformAtlas, PlatformInputHandler, PlatformWindow,
 };
 use crate::scene::Scene;
 use crate::{
-    px, size, AnyWindowHandle, Bounds, Decorations, Globals, GpuSpecs, Modifiers, Output, Pixels,
+    AnyWindowHandle, Bounds, Decorations, Globals, GpuSpecs, Modifiers, Output, Pixels,
     PlatformDisplay, PlatformInput, Point, PromptLevel, RequestFrameOptions, ResizeEdge,
     ScaledPixels, Size, Tiling, WaylandClientStatePtr, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowParams,
+    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowParams, px,
+    size,
 };
 
 #[derive(Default)]
@@ -795,6 +796,25 @@ impl PlatformWindow for WaylandWindow {
 
     fn content_size(&self) -> Size<Pixels> {
         self.borrow().bounds.size
+    }
+
+    fn resize(&mut self, size: Size<Pixels>) {
+        let state = self.borrow();
+        let state_ptr = self.0.clone();
+        let dp_size = size.to_device_pixels(self.scale_factor());
+
+        state.xdg_surface.set_window_geometry(
+            state.bounds.origin.x.0 as i32,
+            state.bounds.origin.y.0 as i32,
+            dp_size.width.0,
+            dp_size.height.0,
+        );
+
+        state
+            .globals
+            .executor
+            .spawn(async move { state_ptr.resize(size) })
+            .detach();
     }
 
     fn scale_factor(&self) -> f32 {

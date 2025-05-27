@@ -1,38 +1,39 @@
 use crate::{
     rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
     tests::{
-        channel_id, following_tests::join_channel, room_participants, rust_lang, RoomParticipants,
-        TestClient, TestServer,
+        RoomParticipants, TestClient, TestServer, channel_id, following_tests::join_channel,
+        room_participants, rust_lang,
     },
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use assistant_context_editor::ContextStore;
 use assistant_slash_command::SlashCommandWorkingSet;
-use buffer_diff::{assert_hunks, DiffHunkSecondaryStatus, DiffHunkStatus};
-use call::{room, ActiveCall, ParticipantLocation, Room};
-use client::{User, RECEIVE_TIMEOUT};
+use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus, assert_hunks};
+use call::{ActiveCall, ParticipantLocation, Room, room};
+use client::{RECEIVE_TIMEOUT, User};
 use collections::{HashMap, HashSet};
 use fs::{FakeFs, Fs as _, RemoveOptions};
-use futures::{channel::mpsc, StreamExt as _};
+use futures::{StreamExt as _, channel::mpsc};
 use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
 use gpui::{
-    px, size, App, BackgroundExecutor, Entity, Modifiers, MouseButton, MouseDownEvent,
-    TestAppContext, UpdateGlobal,
+    App, BackgroundExecutor, Entity, Modifiers, MouseButton, MouseDownEvent, TestAppContext,
+    UpdateGlobal, px, size,
 };
 use language::{
+    Diagnostic, DiagnosticEntry, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher,
+    LineEnding, OffsetRangeExt, Point, Rope,
     language_settings::{
         AllLanguageSettings, Formatter, FormatterList, PrettierSettings, SelectedFormatter,
     },
-    tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticEntry, FakeLspAdapter,
-    Language, LanguageConfig, LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
+    tree_sitter_rust, tree_sitter_typescript,
 };
-use lsp::LanguageServerId;
+use lsp::{LanguageServerId, OneOf};
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use project::{
+    DiagnosticSummary, HoverBlockKind, Project, ProjectPath,
     lsp_store::{FormatTrigger, LspFormatTarget},
     search::{SearchQuery, SearchResult},
-    DiagnosticSummary, HoverBlockKind, Project, ProjectPath,
 };
 use prompt_store::PromptBuilder;
 use rand::prelude::*;
@@ -44,19 +45,47 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::{
-        atomic::{AtomicBool, Ordering::SeqCst},
         Arc,
+        atomic::{AtomicBool, Ordering::SeqCst},
     },
     time::Duration,
 };
 use unindent::Unindent as _;
+use util::{path, separator, uri};
 use workspace::Pane;
 
 #[ctor::ctor]
 fn init_logger() {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::init();
+    zlog::init_test();
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_database_failure_during_client_reconnection(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client = server.create_client(cx, "user_a").await;
+
+    // Keep disconnecting the client until a database failure prevents it from
+    // reconnecting.
+    server.test_db.set_query_failure_probability(0.3);
+    loop {
+        server.disconnect_client(client.peer_id().unwrap());
+        executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+        if !client.status().borrow().is_connected() {
+            break;
+        }
     }
+
+    // Make the database healthy again and ensure the client can finally connect.
+    server.test_db.set_query_failure_probability(0.);
+    executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+    assert!(
+        matches!(*client.status().borrow(), client::Status::Connected { .. }),
+        "status was {:?}",
+        *client.status().borrow()
+    );
 }
 
 #[gpui::test(iterations = 10)]
@@ -243,60 +272,56 @@ async fn test_basic_calls(
         }
     );
 
-    // TODO: Re-enable this test once we can replace our swift Livekit SDK with the rust SDK
-    #[cfg(not(target_os = "macos"))]
-    {
-        // User A shares their screen
-        let display = gpui::TestScreenCaptureSource::new();
-        let events_b = active_call_events(cx_b);
-        let events_c = active_call_events(cx_c);
-        cx_a.set_screen_capture_sources(vec![display]);
-        active_call_a
-            .update(cx_a, |call, cx| {
-                call.room()
-                    .unwrap()
-                    .update(cx, |room, cx| room.share_screen(cx))
-            })
-            .await
-            .unwrap();
+    // User A shares their screen
+    let display = gpui::TestScreenCaptureSource::new();
+    let events_b = active_call_events(cx_b);
+    let events_c = active_call_events(cx_c);
+    cx_a.set_screen_capture_sources(vec![display]);
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.room()
+                .unwrap()
+                .update(cx, |room, cx| room.share_screen(cx))
+        })
+        .await
+        .unwrap();
 
-        executor.run_until_parked();
+    executor.run_until_parked();
 
-        // User B observes the remote screen sharing track.
-        assert_eq!(events_b.borrow().len(), 1);
-        let event_b = events_b.borrow().first().unwrap().clone();
-        if let call::room::Event::RemoteVideoTracksChanged { participant_id } = event_b {
-            assert_eq!(participant_id, client_a.peer_id().unwrap());
+    // User B observes the remote screen sharing track.
+    assert_eq!(events_b.borrow().len(), 1);
+    let event_b = events_b.borrow().first().unwrap().clone();
+    if let call::room::Event::RemoteVideoTracksChanged { participant_id } = event_b {
+        assert_eq!(participant_id, client_a.peer_id().unwrap());
 
-            room_b.read_with(cx_b, |room, _| {
-                assert_eq!(
-                    room.remote_participants()[&client_a.user_id().unwrap()]
-                        .video_tracks
-                        .len(),
-                    1
-                );
-            });
-        } else {
-            panic!("unexpected event")
-        }
+        room_b.read_with(cx_b, |room, _| {
+            assert_eq!(
+                room.remote_participants()[&client_a.user_id().unwrap()]
+                    .video_tracks
+                    .len(),
+                1
+            );
+        });
+    } else {
+        panic!("unexpected event")
+    }
 
-        // User C observes the remote screen sharing track.
-        assert_eq!(events_c.borrow().len(), 1);
-        let event_c = events_c.borrow().first().unwrap().clone();
-        if let call::room::Event::RemoteVideoTracksChanged { participant_id } = event_c {
-            assert_eq!(participant_id, client_a.peer_id().unwrap());
+    // User C observes the remote screen sharing track.
+    assert_eq!(events_c.borrow().len(), 1);
+    let event_c = events_c.borrow().first().unwrap().clone();
+    if let call::room::Event::RemoteVideoTracksChanged { participant_id } = event_c {
+        assert_eq!(participant_id, client_a.peer_id().unwrap());
 
-            room_c.read_with(cx_c, |room, _| {
-                assert_eq!(
-                    room.remote_participants()[&client_a.user_id().unwrap()]
-                        .video_tracks
-                        .len(),
-                    1
-                );
-            });
-        } else {
-            panic!("unexpected event")
-        }
+        room_c.read_with(cx_c, |room, _| {
+            assert_eq!(
+                room.remote_participants()[&client_a.user_id().unwrap()]
+                    .video_tracks
+                    .len(),
+                1
+            );
+        });
+    } else {
+        panic!("unexpected event")
     }
 
     // User A leaves the room.
@@ -1255,6 +1280,7 @@ async fn test_calls_on_multiple_connections(
     client_b1
         .authenticate_and_connect(false, &cx_b1.to_async())
         .await
+        .into_response()
         .unwrap();
 
     // User B hangs up, and user A calls them again.
@@ -1459,7 +1485,7 @@ async fn test_project_reconnect(
     client_a
         .fs()
         .insert_tree(
-            "/root-1",
+            path!("/root-1"),
             json!({
                 "dir1": {
                     "a.txt": "a",
@@ -1487,7 +1513,7 @@ async fn test_project_reconnect(
     client_a
         .fs()
         .insert_tree(
-            "/root-2",
+            path!("/root-2"),
             json!({
                 "2.txt": "2",
             }),
@@ -1496,7 +1522,7 @@ async fn test_project_reconnect(
     client_a
         .fs()
         .insert_tree(
-            "/root-3",
+            path!("/root-3"),
             json!({
                 "3.txt": "3",
             }),
@@ -1504,9 +1530,11 @@ async fn test_project_reconnect(
         .await;
 
     let active_call_a = cx_a.read(ActiveCall::global);
-    let (project_a1, _) = client_a.build_local_project("/root-1/dir1", cx_a).await;
-    let (project_a2, _) = client_a.build_local_project("/root-2", cx_a).await;
-    let (project_a3, _) = client_a.build_local_project("/root-3", cx_a).await;
+    let (project_a1, _) = client_a
+        .build_local_project(path!("/root-1/dir1"), cx_a)
+        .await;
+    let (project_a2, _) = client_a.build_local_project(path!("/root-2"), cx_a).await;
+    let (project_a3, _) = client_a.build_local_project(path!("/root-3"), cx_a).await;
     let worktree_a1 =
         project_a1.read_with(cx_a, |project, cx| project.worktrees(cx).next().unwrap());
     let project1_id = active_call_a
@@ -1533,7 +1561,7 @@ async fn test_project_reconnect(
     });
     let (worktree_a2, _) = project_a1
         .update(cx_a, |p, cx| {
-            p.find_or_create_worktree("/root-1/dir2", true, cx)
+            p.find_or_create_worktree(path!("/root-1/dir2"), true, cx)
         })
         .await
         .unwrap();
@@ -1579,7 +1607,7 @@ async fn test_project_reconnect(
     client_a
         .fs()
         .insert_tree(
-            "/root-1/dir1/subdir2",
+            path!("/root-1/dir1/subdir2"),
             json!({
                 "f.txt": "f-contents",
                 "g.txt": "g-contents",
@@ -1591,7 +1619,7 @@ async fn test_project_reconnect(
     client_a
         .fs()
         .remove_dir(
-            "/root-1/dir1/subdir1".as_ref(),
+            path!("/root-1/dir1/subdir1").as_ref(),
             RemoveOptions {
                 recursive: true,
                 ..Default::default()
@@ -1606,7 +1634,7 @@ async fn test_project_reconnect(
     });
     let (worktree_a3, _) = project_a1
         .update(cx_a, |p, cx| {
-            p.find_or_create_worktree("/root-1/dir3", true, cx)
+            p.find_or_create_worktree(path!("/root-1/dir3"), true, cx)
         })
         .await
         .unwrap();
@@ -1633,6 +1661,7 @@ async fn test_project_reconnect(
     client_a
         .authenticate_and_connect(false, &cx_a.to_async())
         .await
+        .into_response()
         .unwrap();
     executor.run_until_parked();
 
@@ -1647,13 +1676,13 @@ async fn test_project_reconnect(
                 .map(|p| p.to_str().unwrap())
                 .collect::<Vec<_>>(),
             vec![
-                "a.txt",
-                "b.txt",
-                "subdir2",
-                "subdir2/f.txt",
-                "subdir2/g.txt",
-                "subdir2/h.txt",
-                "subdir2/i.txt"
+                separator!("a.txt"),
+                separator!("b.txt"),
+                separator!("subdir2"),
+                separator!("subdir2/f.txt"),
+                separator!("subdir2/g.txt"),
+                separator!("subdir2/h.txt"),
+                separator!("subdir2/i.txt")
             ]
         );
         assert!(worktree_a3.read(cx).has_update_observer());
@@ -1680,13 +1709,13 @@ async fn test_project_reconnect(
                 .map(|p| p.to_str().unwrap())
                 .collect::<Vec<_>>(),
             vec![
-                "a.txt",
-                "b.txt",
-                "subdir2",
-                "subdir2/f.txt",
-                "subdir2/g.txt",
-                "subdir2/h.txt",
-                "subdir2/i.txt"
+                separator!("a.txt"),
+                separator!("b.txt"),
+                separator!("subdir2"),
+                separator!("subdir2/f.txt"),
+                separator!("subdir2/g.txt"),
+                separator!("subdir2/h.txt"),
+                separator!("subdir2/i.txt")
             ]
         );
         assert!(project.worktree_for_id(worktree2_id, cx).is_none());
@@ -1719,18 +1748,21 @@ async fn test_project_reconnect(
     // While client B is disconnected, add and remove files from client A's project
     client_a
         .fs()
-        .insert_file("/root-1/dir1/subdir2/j.txt", "j-contents".into())
+        .insert_file(path!("/root-1/dir1/subdir2/j.txt"), "j-contents".into())
         .await;
     client_a
         .fs()
-        .remove_file("/root-1/dir1/subdir2/i.txt".as_ref(), Default::default())
+        .remove_file(
+            path!("/root-1/dir1/subdir2/i.txt").as_ref(),
+            Default::default(),
+        )
         .await
         .unwrap();
 
     // While client B is disconnected, add and remove worktrees from client A's project.
     let (worktree_a4, _) = project_a1
         .update(cx_a, |p, cx| {
-            p.find_or_create_worktree("/root-1/dir4", true, cx)
+            p.find_or_create_worktree(path!("/root-1/dir4"), true, cx)
         })
         .await
         .unwrap();
@@ -1758,6 +1790,7 @@ async fn test_project_reconnect(
     client_b
         .authenticate_and_connect(false, &cx_b.to_async())
         .await
+        .into_response()
         .unwrap();
     executor.run_until_parked();
 
@@ -1773,13 +1806,13 @@ async fn test_project_reconnect(
                 .map(|p| p.to_str().unwrap())
                 .collect::<Vec<_>>(),
             vec![
-                "a.txt",
-                "b.txt",
-                "subdir2",
-                "subdir2/f.txt",
-                "subdir2/g.txt",
-                "subdir2/h.txt",
-                "subdir2/j.txt"
+                separator!("a.txt"),
+                separator!("b.txt"),
+                separator!("subdir2"),
+                separator!("subdir2/f.txt"),
+                separator!("subdir2/g.txt"),
+                separator!("subdir2/h.txt"),
+                separator!("subdir2/j.txt")
             ]
         );
         assert!(project.worktree_for_id(worktree2_id, cx).is_none());
@@ -1821,6 +1854,8 @@ async fn test_active_call_events(
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
+    executor.run_until_parked();
+
     let active_call_a = cx_a.read(ActiveCall::global);
     let active_call_b = cx_b.read(ActiveCall::global);
 
@@ -2085,17 +2120,7 @@ async fn test_mute_deafen(
                     audio_tracks_playing: participant
                         .audio_tracks
                         .values()
-                        .map({
-                            #[cfg(target_os = "macos")]
-                            {
-                                |track| track.is_playing()
-                            }
-
-                            #[cfg(not(target_os = "macos"))]
-                            {
-                                |(track, _)| track.rtc_track().enabled()
-                            }
-                        })
+                        .map(|(track, _)| track.enabled())
                         .collect(),
                 })
                 .collect::<Vec<_>>()
@@ -2316,14 +2341,14 @@ async fn test_propagate_saves_and_fs_changes(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "file1.rs": "",
                 "file2": ""
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
 
     let worktree_a = project_a.read_with(cx_a, |p, cx| p.worktrees(cx).next().unwrap());
     let project_id = active_call_a
@@ -2409,18 +2434,25 @@ async fn test_propagate_saves_and_fs_changes(
     client_a
         .fs()
         .rename(
-            "/a/file1.rs".as_ref(),
-            "/a/file1.js".as_ref(),
+            path!("/a/file1.rs").as_ref(),
+            path!("/a/file1.js").as_ref(),
             Default::default(),
         )
         .await
         .unwrap();
     client_a
         .fs()
-        .rename("/a/file2".as_ref(), "/a/file3".as_ref(), Default::default())
+        .rename(
+            path!("/a/file2").as_ref(),
+            path!("/a/file3").as_ref(),
+            Default::default(),
+        )
         .await
         .unwrap();
-    client_a.fs().insert_file("/a/file4", "4".into()).await;
+    client_a
+        .fs()
+        .insert_file(path!("/a/file4"), "4".into())
+        .await;
     executor.run_until_parked();
 
     worktree_a.read_with(cx_a, |tree, _| {
@@ -2847,7 +2879,7 @@ async fn test_git_diff_base_change(
     });
 }
 
-#[gpui::test]
+#[gpui::test(iterations = 10)]
 async fn test_git_branch_name(
     executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
@@ -2892,14 +2924,17 @@ async fn test_git_branch_name(
     #[track_caller]
     fn assert_branch(branch_name: Option<impl Into<String>>, project: &Project, cx: &App) {
         let branch_name = branch_name.map(Into::into);
-        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
-        assert_eq!(worktrees.len(), 1);
-        let worktree = worktrees[0].clone();
-        let root_entry = worktree.read(cx).snapshot().root_git_entry().unwrap();
+        let repositories = project.repositories(cx).values().collect::<Vec<_>>();
+        assert_eq!(repositories.len(), 1);
+        let repository = repositories[0].clone();
         assert_eq!(
-            root_entry.branch().map(|branch| branch.name.to_string()),
+            repository
+                .read(cx)
+                .branch
+                .as_ref()
+                .map(|branch| branch.name().to_owned()),
             branch_name
-        );
+        )
     }
 
     // Smoke test branch reading
@@ -2956,7 +2991,7 @@ async fn test_git_status_sync(
     client_a
         .fs()
         .insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 ".git": {},
                 "a.txt": "a",
@@ -2969,11 +3004,11 @@ async fn test_git_status_sync(
     // Initially, a.txt is uncommitted, but present in the index,
     // and b.txt is unmerged.
     client_a.fs().set_head_for_repo(
-        "/dir/.git".as_ref(),
+        path!("/dir/.git").as_ref(),
         &[("b.txt".into(), "B".into()), ("c.txt".into(), "c".into())],
     );
     client_a.fs().set_index_for_repo(
-        "/dir/.git".as_ref(),
+        path!("/dir/.git").as_ref(),
         &[
             ("a.txt".into(), "".into()),
             ("b.txt".into(), "B".into()),
@@ -2981,7 +3016,7 @@ async fn test_git_status_sync(
         ],
     );
     client_a.fs().set_unmerged_paths_for_repo(
-        "/dir/.git".as_ref(),
+        path!("/dir/.git").as_ref(),
         &[(
             "b.txt".into(),
             UnmergedStatus {
@@ -3000,7 +3035,7 @@ async fn test_git_status_sync(
         second_head: UnmergedStatusCode::Deleted,
     });
 
-    let (project_local, _worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+    let (project_local, _worktree_id) = client_a.build_local_project(path!("/dir"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| {
             call.share_project(project_local.clone(), cx)
@@ -3021,11 +3056,19 @@ async fn test_git_status_sync(
         cx: &App,
     ) {
         let file = file.as_ref();
-        let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
-        assert_eq!(worktrees.len(), 1);
-        let worktree = worktrees[0].clone();
-        let snapshot = worktree.read(cx).snapshot();
-        assert_eq!(snapshot.status_for_file(file), status);
+        let repos = project
+            .repositories(cx)
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(repos.len(), 1);
+        let repo = repos.into_iter().next().unwrap();
+        assert_eq!(
+            repo.read(cx)
+                .status_for_path(&file.into())
+                .map(|entry| entry.status),
+            status
+        );
     }
 
     project_local.read_with(cx_a, |project, cx| {
@@ -3056,15 +3099,15 @@ async fn test_git_status_sync(
     // Delete b.txt from the index, mark conflict as resolved,
     // and modify c.txt in the working copy.
     client_a.fs().set_index_for_repo(
-        "/dir/.git".as_ref(),
+        path!("/dir/.git").as_ref(),
         &[("a.txt".into(), "a".into()), ("c.txt".into(), "c".into())],
     );
     client_a
         .fs()
-        .set_unmerged_paths_for_repo("/dir/.git".as_ref(), &[]);
+        .set_unmerged_paths_for_repo(path!("/dir/.git").as_ref(), &[]);
     client_a
         .fs()
-        .atomic_write("/dir/c.txt".into(), "CC".into())
+        .atomic_write(path!("/dir/c.txt").into(), "CC".into())
         .await
         .unwrap();
 
@@ -3093,6 +3136,27 @@ async fn test_git_status_sync(
         assert_status("b.txt", Some(B_STATUS_END), project, cx);
         assert_status("c.txt", Some(C_STATUS_END), project, cx);
     });
+
+    // Now remove the original git repository and check that collaborators are notified.
+    client_a
+        .fs()
+        .remove_dir(path!("/dir/.git").as_ref(), RemoveOptions::default())
+        .await
+        .unwrap();
+
+    executor.run_until_parked();
+    project_remote.update(cx_b, |project, cx| {
+        pretty_assertions::assert_eq!(
+            project.git_store().read(cx).repo_snapshots(cx),
+            HashMap::default()
+        );
+    });
+    project_remote_c.update(cx_c, |project, cx| {
+        pretty_assertions::assert_eq!(
+            project.git_store().read(cx).repo_snapshots(cx),
+            HashMap::default()
+        );
+    });
 }
 
 #[gpui::test(iterations = 10)]
@@ -3112,14 +3176,14 @@ async fn test_fs_operations(
     client_a
         .fs()
         .insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 "a.txt": "a-contents",
                 "b.txt": "b-contents",
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/dir"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -3250,13 +3314,13 @@ async fn test_fs_operations(
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
             [
-                "DIR",
-                "DIR/SUBDIR",
-                "DIR/SUBDIR/f.txt",
-                "DIR/e.txt",
-                "a.txt",
-                "b.txt",
-                "d.txt"
+                separator!("DIR"),
+                separator!("DIR/SUBDIR"),
+                separator!("DIR/SUBDIR/f.txt"),
+                separator!("DIR/e.txt"),
+                separator!("a.txt"),
+                separator!("b.txt"),
+                separator!("d.txt")
             ]
         );
     });
@@ -3268,13 +3332,13 @@ async fn test_fs_operations(
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
             [
-                "DIR",
-                "DIR/SUBDIR",
-                "DIR/SUBDIR/f.txt",
-                "DIR/e.txt",
-                "a.txt",
-                "b.txt",
-                "d.txt"
+                separator!("DIR"),
+                separator!("DIR/SUBDIR"),
+                separator!("DIR/SUBDIR/f.txt"),
+                separator!("DIR/e.txt"),
+                separator!("a.txt"),
+                separator!("b.txt"),
+                separator!("d.txt")
             ]
         );
     });
@@ -3294,14 +3358,14 @@ async fn test_fs_operations(
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
             [
-                "DIR",
-                "DIR/SUBDIR",
-                "DIR/SUBDIR/f.txt",
-                "DIR/e.txt",
-                "a.txt",
-                "b.txt",
-                "d.txt",
-                "f.txt"
+                separator!("DIR"),
+                separator!("DIR/SUBDIR"),
+                separator!("DIR/SUBDIR/f.txt"),
+                separator!("DIR/e.txt"),
+                separator!("a.txt"),
+                separator!("b.txt"),
+                separator!("d.txt"),
+                separator!("f.txt")
             ]
         );
     });
@@ -3313,14 +3377,14 @@ async fn test_fs_operations(
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
             [
-                "DIR",
-                "DIR/SUBDIR",
-                "DIR/SUBDIR/f.txt",
-                "DIR/e.txt",
-                "a.txt",
-                "b.txt",
-                "d.txt",
-                "f.txt"
+                separator!("DIR"),
+                separator!("DIR/SUBDIR"),
+                separator!("DIR/SUBDIR/f.txt"),
+                separator!("DIR/e.txt"),
+                separator!("a.txt"),
+                separator!("b.txt"),
+                separator!("d.txt"),
+                separator!("f.txt")
             ]
         );
     });
@@ -3537,13 +3601,13 @@ async fn test_buffer_conflict_after_save(
     client_a
         .fs()
         .insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 "a.txt": "a-contents",
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/dir"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -3601,13 +3665,13 @@ async fn test_buffer_reloading(
     client_a
         .fs()
         .insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 "a.txt": "a\nb\nc",
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/dir"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -3629,7 +3693,11 @@ async fn test_buffer_reloading(
     let new_contents = Rope::from("d\ne\nf");
     client_a
         .fs()
-        .save("/dir/a.txt".as_ref(), &new_contents, LineEnding::Windows)
+        .save(
+            path!("/dir/a.txt").as_ref(),
+            &new_contents,
+            LineEnding::Windows,
+        )
         .await
         .unwrap();
 
@@ -3659,9 +3727,9 @@ async fn test_editing_while_guest_opens_buffer(
 
     client_a
         .fs()
-        .insert_tree("/dir", json!({ "a.txt": "a-contents" }))
+        .insert_tree(path!("/dir"), json!({ "a.txt": "a-contents" }))
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/dir"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -3974,19 +4042,19 @@ async fn test_collaborating_with_diagnostics(
     client_a
         .fs()
         .insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "a.rs": "let one = two",
                 "other.rs": "",
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
 
     // Cause the language server to start.
     let _buffer = project_a
         .update(cx_a, |project, cx| {
-            project.open_local_buffer_with_lsp("/a/other.rs", cx)
+            project.open_local_buffer_with_lsp(path!("/a/other.rs"), cx)
         })
         .await
         .unwrap();
@@ -3998,7 +4066,7 @@ async fn test_collaborating_with_diagnostics(
         .await;
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         &lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
+            uri: lsp::Url::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
             diagnostics: vec![lsp::Diagnostic {
                 severity: Some(lsp::DiagnosticSeverity::WARNING),
@@ -4018,7 +4086,7 @@ async fn test_collaborating_with_diagnostics(
         .unwrap();
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         &lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
+            uri: lsp::Url::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
             diagnostics: vec![lsp::Diagnostic {
                 severity: Some(lsp::DiagnosticSeverity::ERROR),
@@ -4092,7 +4160,7 @@ async fn test_collaborating_with_diagnostics(
     // Simulate a language server reporting more errors for a file.
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         &lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
+            uri: lsp::Url::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
             diagnostics: vec![
                 lsp::Diagnostic {
@@ -4186,7 +4254,7 @@ async fn test_collaborating_with_diagnostics(
     // Simulate a language server reporting no errors for a file.
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         &lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
+            uri: lsp::Url::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
             diagnostics: vec![],
         },
@@ -4242,7 +4310,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
     client_a
         .fs()
         .insert_tree(
-            "/test",
+            path!("/test"),
             json!({
                 "one.rs": "const ONE: usize = 1;",
                 "two.rs": "const TWO: usize = 2;",
@@ -4253,7 +4321,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
         )
         .await;
 
-    let (project_a, worktree_id) = client_a.build_local_project("/test", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/test"), cx_a).await;
 
     // Share a project as client A
     let active_call_a = cx_a.read(ActiveCall::global);
@@ -4279,6 +4347,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
             token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
         })
         .await
+        .into_response()
         .unwrap();
     fake_language_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
@@ -4292,7 +4361,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
     for file_name in file_names {
         fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
             &lsp::PublishDiagnosticsParams {
-                uri: lsp::Url::from_file_path(Path::new("/test").join(file_name)).unwrap(),
+                uri: lsp::Url::from_file_path(Path::new(path!("/test")).join(file_name)).unwrap(),
                 version: None,
                 diagnostics: vec![lsp::Diagnostic {
                     severity: Some(lsp::DiagnosticSeverity::WARNING),
@@ -4359,9 +4428,9 @@ async fn test_reloading_buffer_manually(
 
     client_a
         .fs()
-        .insert_tree("/a", json!({ "a.rs": "let one = 1;" }))
+        .insert_tree(path!("/a"), json!({ "a.rs": "let one = 1;" }))
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     let buffer_a = project_a
         .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx))
         .await
@@ -4389,7 +4458,7 @@ async fn test_reloading_buffer_manually(
     client_a
         .fs()
         .save(
-            "/a/a.rs".as_ref(),
+            path!("/a/a.rs").as_ref(),
             &Rope::from("let seven = 7;"),
             LineEnding::Unix,
         )
@@ -4479,7 +4548,7 @@ async fn test_formatting_buffer(
         project.register_buffer_with_language_servers(&buffer_b, cx)
     });
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.handle_request::<lsp::request::Formatting, _, _>(|_, _| async move {
+    fake_language_server.set_request_handler::<lsp::request::Formatting, _, _>(|_, _| async move {
         Ok(Some(vec![
             lsp::TextEdit {
                 range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 4)),
@@ -4511,39 +4580,45 @@ async fn test_formatting_buffer(
         "let honey = \"two\"\n"
     );
 
-    // Ensure buffer can be formatted using an external command. Notice how the
-    // host's configuration is honored as opposed to using the guest's settings.
-    cx_a.update(|cx| {
-        SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter = Some(SelectedFormatter::List(FormatterList(
-                    vec![Formatter::External {
-                        command: "awk".into(),
-                        arguments: Some(vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()].into()),
-                    }]
-                    .into(),
-                )));
+    // There is no `awk` command on Windows.
+    #[cfg(not(target_os = "windows"))]
+    {
+        // Ensure buffer can be formatted using an external command. Notice how the
+        // host's configuration is honored as opposed to using the guest's settings.
+        cx_a.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings::<AllLanguageSettings>(cx, |file| {
+                    file.defaults.formatter = Some(SelectedFormatter::List(FormatterList(
+                        vec![Formatter::External {
+                            command: "awk".into(),
+                            arguments: Some(
+                                vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()].into(),
+                            ),
+                        }]
+                        .into(),
+                    )));
+                });
             });
         });
-    });
 
-    executor.allow_parking();
-    project_b
-        .update(cx_b, |project, cx| {
-            project.format(
-                HashSet::from_iter([buffer_b.clone()]),
-                LspFormatTarget::Buffers,
-                true,
-                FormatTrigger::Save,
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-    assert_eq!(
-        buffer_b.read_with(cx_b, |buffer, _| buffer.text()),
-        format!("let honey = \"{}/a.rs\"\n", directory.to_str().unwrap())
-    );
+        executor.allow_parking();
+        project_b
+            .update(cx_b, |project, cx| {
+                project.format(
+                    HashSet::from_iter([buffer_b.clone()]),
+                    LspFormatTarget::Buffers,
+                    true,
+                    FormatTrigger::Save,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            buffer_b.read_with(cx_b, |buffer, _| buffer.text()),
+            format!("let honey = \"{}/a.rs\"\n", directory.to_str().unwrap())
+        );
+    }
 }
 
 #[gpui::test(iterations = 10)]
@@ -4632,7 +4707,7 @@ async fn test_prettier_formatting_buffer(
         });
     });
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.handle_request::<lsp::request::Formatting, _, _>(|_, _| async move {
+    fake_language_server.set_request_handler::<lsp::request::Formatting, _, _>(|_, _| async move {
         panic!(
             "Unexpected: prettier should be preferred since it's enabled and language supports it"
         )
@@ -4701,7 +4776,7 @@ async fn test_definition(
     client_a
         .fs()
         .insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "dir-1": {
                     "a.rs": "const ONE: usize = b::TWO + b::THREE;",
@@ -4713,7 +4788,9 @@ async fn test_definition(
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/root/dir-1", cx_a).await;
+    let (project_a, worktree_id) = client_a
+        .build_local_project(path!("/root/dir-1"), cx_a)
+        .await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -4730,14 +4807,16 @@ async fn test_definition(
 
     // Request the definition of a symbol as the guest.
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.handle_request::<lsp::request::GotoDefinition, _, _>(|_, _| async move {
-        Ok(Some(lsp::GotoDefinitionResponse::Scalar(
-            lsp::Location::new(
-                lsp::Url::from_file_path("/root/dir-2/b.rs").unwrap(),
-                lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
-            ),
-        )))
-    });
+    fake_language_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(
+        |_, _| async move {
+            Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                lsp::Location::new(
+                    lsp::Url::from_file_path(path!("/root/dir-2/b.rs")).unwrap(),
+                    lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                ),
+            )))
+        },
+    );
 
     let definitions_1 = project_b
         .update(cx_b, |p, cx| p.definition(&buffer_b, 23, cx))
@@ -4759,14 +4838,16 @@ async fn test_definition(
 
     // Try getting more definitions for the same buffer, ensuring the buffer gets reused from
     // the previous call to `definition`.
-    fake_language_server.handle_request::<lsp::request::GotoDefinition, _, _>(|_, _| async move {
-        Ok(Some(lsp::GotoDefinitionResponse::Scalar(
-            lsp::Location::new(
-                lsp::Url::from_file_path("/root/dir-2/b.rs").unwrap(),
-                lsp::Range::new(lsp::Position::new(1, 6), lsp::Position::new(1, 11)),
-            ),
-        )))
-    });
+    fake_language_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(
+        |_, _| async move {
+            Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                lsp::Location::new(
+                    lsp::Url::from_file_path(path!("/root/dir-2/b.rs")).unwrap(),
+                    lsp::Range::new(lsp::Position::new(1, 6), lsp::Position::new(1, 11)),
+                ),
+            )))
+        },
+    );
 
     let definitions_2 = project_b
         .update(cx_b, |p, cx| p.definition(&buffer_b, 33, cx))
@@ -4790,7 +4871,7 @@ async fn test_definition(
         definitions_2[0].target.buffer
     );
 
-    fake_language_server.handle_request::<lsp::request::GotoTypeDefinition, _, _>(
+    fake_language_server.set_request_handler::<lsp::request::GotoTypeDefinition, _, _>(
         |req, _| async move {
             assert_eq!(
                 req.text_document_position_params.position,
@@ -4798,7 +4879,7 @@ async fn test_definition(
             );
             Ok(Some(lsp::GotoDefinitionResponse::Scalar(
                 lsp::Location::new(
-                    lsp::Url::from_file_path("/root/dir-2/c.rs").unwrap(),
+                    lsp::Url::from_file_path(path!("/root/dir-2/c.rs")).unwrap(),
                     lsp::Range::new(lsp::Position::new(0, 5), lsp::Position::new(0, 7)),
                 ),
             )))
@@ -4850,7 +4931,7 @@ async fn test_references(
     client_a
         .fs()
         .insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "dir-1": {
                     "one.rs": "const ONE: usize = 1;",
@@ -4862,7 +4943,9 @@ async fn test_references(
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/root/dir-1", cx_a).await;
+    let (project_a, worktree_id) = client_a
+        .build_local_project(path!("/root/dir-1"), cx_a)
+        .await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -4880,12 +4963,12 @@ async fn test_references(
     // Request references to a symbol as the guest.
     let fake_language_server = fake_language_servers.next().await.unwrap();
     let (lsp_response_tx, rx) = mpsc::unbounded::<Result<Option<Vec<lsp::Location>>>>();
-    fake_language_server.handle_request::<lsp::request::References, _, _>({
+    fake_language_server.set_request_handler::<lsp::request::References, _, _>({
         let rx = Arc::new(Mutex::new(Some(rx)));
         move |params, _| {
             assert_eq!(
                 params.text_document_position.text_document.uri.as_str(),
-                "file:///root/dir-1/one.rs"
+                uri!("file:///root/dir-1/one.rs")
             );
             let rx = rx.clone();
             async move {
@@ -4914,15 +4997,15 @@ async fn test_references(
     lsp_response_tx
         .unbounded_send(Ok(Some(vec![
             lsp::Location {
-                uri: lsp::Url::from_file_path("/root/dir-1/two.rs").unwrap(),
+                uri: lsp::Url::from_file_path(path!("/root/dir-1/two.rs")).unwrap(),
                 range: lsp::Range::new(lsp::Position::new(0, 24), lsp::Position::new(0, 27)),
             },
             lsp::Location {
-                uri: lsp::Url::from_file_path("/root/dir-1/two.rs").unwrap(),
+                uri: lsp::Url::from_file_path(path!("/root/dir-1/two.rs")).unwrap(),
                 range: lsp::Range::new(lsp::Position::new(0, 35), lsp::Position::new(0, 38)),
             },
             lsp::Location {
-                uri: lsp::Url::from_file_path("/root/dir-2/three.rs").unwrap(),
+                uri: lsp::Url::from_file_path(path!("/root/dir-2/three.rs")).unwrap(),
                 range: lsp::Range::new(lsp::Position::new(0, 37), lsp::Position::new(0, 40)),
             },
         ])))
@@ -4947,7 +5030,7 @@ async fn test_references(
         assert_eq!(references[1].buffer, references[0].buffer);
         assert_eq!(
             three_buffer.file().unwrap().full_path(cx),
-            Path::new("/root/dir-2/three.rs")
+            Path::new(path!("/root/dir-2/three.rs"))
         );
 
         assert_eq!(references[0].range.to_offset(two_buffer), 24..27);
@@ -5041,6 +5124,7 @@ async fn test_project_search(
                 false,
                 Default::default(),
                 Default::default(),
+                false,
                 None,
             )
             .unwrap(),
@@ -5053,7 +5137,9 @@ async fn test_project_search(
                 results.entry(buffer).or_insert(ranges);
             }
             SearchResult::LimitReached => {
-                panic!("Unexpectedly reached search limit in tests. If you do want to assert limit-reached, change this panic call.")
+                panic!(
+                    "Unexpectedly reached search limit in tests. If you do want to assert limit-reached, change this panic call."
+                )
             }
         };
     }
@@ -5101,7 +5187,7 @@ async fn test_document_highlights(
     client_a
         .fs()
         .insert_tree(
-            "/root-1",
+            path!("/root-1"),
             json!({
                 "main.rs": "fn double(number: i32) -> i32 { number + number }",
             }),
@@ -5113,7 +5199,7 @@ async fn test_document_highlights(
         .register_fake_lsp("Rust", Default::default());
     client_a.language_registry().add(rust_lang());
 
-    let (project_a, worktree_id) = client_a.build_local_project("/root-1", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/root-1"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -5130,7 +5216,7 @@ async fn test_document_highlights(
 
     // Request document highlights as the guest.
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.handle_request::<lsp::request::DocumentHighlightRequest, _, _>(
+    fake_language_server.set_request_handler::<lsp::request::DocumentHighlightRequest, _, _>(
         |params, _| async move {
             assert_eq!(
                 params
@@ -5138,7 +5224,7 @@ async fn test_document_highlights(
                     .text_document
                     .uri
                     .as_str(),
-                "file:///root-1/main.rs"
+                uri!("file:///root-1/main.rs")
             );
             assert_eq!(
                 params.text_document_position_params.position,
@@ -5201,7 +5287,7 @@ async fn test_lsp_hover(
     client_a
         .fs()
         .insert_tree(
-            "/root-1",
+            path!("/root-1"),
             json!({
                 "main.rs": "use std::collections::HashMap;",
             }),
@@ -5235,7 +5321,7 @@ async fn test_lsp_hover(
         ),
     ];
 
-    let (project_a, worktree_id) = client_a.build_local_project("/root-1", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/root-1"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -5267,7 +5353,7 @@ async fn test_lsp_hover(
             "CrabLang-ls" => {
                 servers_with_hover_requests.insert(
                     new_server_name.clone(),
-                    new_server.handle_request::<lsp::request::HoverRequest, _, _>(
+                    new_server.set_request_handler::<lsp::request::HoverRequest, _, _>(
                         move |params, _| {
                             assert_eq!(
                                 params
@@ -5275,7 +5361,7 @@ async fn test_lsp_hover(
                                     .text_document
                                     .uri
                                     .as_str(),
-                                "file:///root-1/main.rs"
+                                uri!("file:///root-1/main.rs")
                             );
                             let name = new_server_name.clone();
                             async move {
@@ -5293,7 +5379,7 @@ async fn test_lsp_hover(
             "rust-analyzer" => {
                 servers_with_hover_requests.insert(
                     new_server_name.clone(),
-                    new_server.handle_request::<lsp::request::HoverRequest, _, _>(
+                    new_server.set_request_handler::<lsp::request::HoverRequest, _, _>(
                         |params, _| async move {
                             assert_eq!(
                                 params
@@ -5301,7 +5387,7 @@ async fn test_lsp_hover(
                                     .text_document
                                     .uri
                                     .as_str(),
-                                "file:///root-1/main.rs"
+                                uri!("file:///root-1/main.rs")
                             );
                             assert_eq!(
                                 params.text_document_position_params.position,
@@ -5394,14 +5480,21 @@ async fn test_project_symbols(
     let active_call_a = cx_a.read(ActiveCall::global);
 
     client_a.language_registry().add(rust_lang());
-    let mut fake_language_servers = client_a
-        .language_registry()
-        .register_fake_lsp("Rust", Default::default());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                workspace_symbol_provider: Some(OneOf::Left(true)),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
 
     client_a
         .fs()
         .insert_tree(
-            "/code",
+            path!("/code"),
             json!({
                 "crate-1": {
                     "one.rs": "const ONE: usize = 1;",
@@ -5415,7 +5508,9 @@ async fn test_project_symbols(
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/code/crate-1", cx_a).await;
+    let (project_a, worktree_id) = client_a
+        .build_local_project(path!("/code/crate-1"), cx_a)
+        .await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -5431,22 +5526,24 @@ async fn test_project_symbols(
         .unwrap();
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.handle_request::<lsp::WorkspaceSymbolRequest, _, _>(|_, _| async move {
-        Ok(Some(lsp::WorkspaceSymbolResponse::Flat(vec![
-            #[allow(deprecated)]
-            lsp::SymbolInformation {
-                name: "TWO".into(),
-                location: lsp::Location {
-                    uri: lsp::Url::from_file_path("/code/crate-2/two.rs").unwrap(),
-                    range: lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+    fake_language_server.set_request_handler::<lsp::WorkspaceSymbolRequest, _, _>(
+        |_, _| async move {
+            Ok(Some(lsp::WorkspaceSymbolResponse::Flat(vec![
+                #[allow(deprecated)]
+                lsp::SymbolInformation {
+                    name: "TWO".into(),
+                    location: lsp::Location {
+                        uri: lsp::Url::from_file_path(path!("/code/crate-2/two.rs")).unwrap(),
+                        range: lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                    },
+                    kind: lsp::SymbolKind::CONSTANT,
+                    tags: None,
+                    container_name: None,
+                    deprecated: None,
                 },
-                kind: lsp::SymbolKind::CONSTANT,
-                tags: None,
-                container_name: None,
-                deprecated: None,
-            },
-        ])))
-    });
+            ])))
+        },
+    );
 
     // Request the definition of a symbol as the guest.
     let symbols = project_b
@@ -5467,13 +5564,13 @@ async fn test_project_symbols(
     buffer_b_2.read_with(cx_b, |buffer, cx| {
         assert_eq!(
             buffer.file().unwrap().full_path(cx),
-            Path::new("/code/crate-2/two.rs")
+            Path::new(path!("/code/crate-2/two.rs"))
         );
     });
 
     // Attempt to craft a symbol and violate host's privacy by opening an arbitrary file.
     let mut fake_symbol = symbols[0].clone();
-    fake_symbol.path.path = Path::new("/code/secrets").into();
+    fake_symbol.path.path = Path::new(path!("/code/secrets")).into();
     let error = project_b
         .update(cx_b, |project, cx| {
             project.open_buffer_for_symbol(&fake_symbol, cx)
@@ -5506,14 +5603,14 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
     client_a
         .fs()
         .insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "a.rs": "const ONE: usize = b::TWO;",
                 "b.rs": "const TWO: usize = 2",
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/root", cx_a).await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/root"), cx_a).await;
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -5528,18 +5625,20 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
         .unwrap();
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.handle_request::<lsp::request::GotoDefinition, _, _>(|_, _| async move {
-        Ok(Some(lsp::GotoDefinitionResponse::Scalar(
-            lsp::Location::new(
-                lsp::Url::from_file_path("/root/b.rs").unwrap(),
-                lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
-            ),
-        )))
-    });
+    fake_language_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(
+        |_, _| async move {
+            Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                lsp::Location::new(
+                    lsp::Url::from_file_path(path!("/root/b.rs")).unwrap(),
+                    lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                ),
+            )))
+        },
+    );
 
     let definitions;
     let buffer_b2;
-    if rng.gen() {
+    if rng.r#gen() {
         definitions = project_b.update(cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
         (buffer_b2, _) = project_b
             .update(cx_b, |p, cx| {
@@ -5631,6 +5730,7 @@ async fn test_contacts(
     client_c
         .authenticate_and_connect(false, &cx_c.to_async())
         .await
+        .into_response()
         .unwrap();
 
     executor.run_until_parked();
@@ -6141,15 +6241,19 @@ async fn test_contact_requests(
     executor.run_until_parked();
     assert_eq!(client_a.summarize_contacts(cx_a).current, &["user_b"]);
     assert_eq!(client_b.summarize_contacts(cx_b).current, &["user_a"]);
-    assert!(client_b
-        .summarize_contacts(cx_b)
-        .incoming_requests
-        .is_empty());
+    assert!(
+        client_b
+            .summarize_contacts(cx_b)
+            .incoming_requests
+            .is_empty()
+    );
     assert!(client_c.summarize_contacts(cx_c).current.is_empty());
-    assert!(client_c
-        .summarize_contacts(cx_c)
-        .outgoing_requests
-        .is_empty());
+    assert!(
+        client_c
+            .summarize_contacts(cx_c)
+            .outgoing_requests
+            .is_empty()
+    );
 
     async fn disconnect_and_reconnect(client: &TestClient, cx: &mut TestAppContext) {
         client.disconnect(&cx.to_async());
@@ -6157,12 +6261,11 @@ async fn test_contact_requests(
         client
             .authenticate_and_connect(false, &cx.to_async())
             .await
+            .into_response()
             .unwrap();
     }
 }
 
-// TODO: Re-enable this test once we can replace our swift Livekit SDK with the rust SDK
-#[cfg(not(target_os = "macos"))]
 #[gpui::test(iterations = 10)]
 async fn test_join_call_after_screen_was_shared(
     executor: BackgroundExecutor,
@@ -6340,7 +6443,7 @@ async fn test_join_after_restart(cx1: &mut TestAppContext, cx2: &mut TestAppCont
 async fn test_preview_tabs(cx: &mut TestAppContext) {
     let (_server, client) = TestServer::start1(cx).await;
     let (workspace, cx) = client.build_test_workspace(cx).await;
-    let project = workspace.update(cx, |workspace, _| workspace.project().clone());
+    let project = workspace.read_with(cx, |workspace, _| workspace.project().clone());
 
     let worktree_id = project.update(cx, |project, cx| {
         project.worktrees(cx).next().unwrap().read(cx).id()
@@ -6359,7 +6462,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         path: Path::new("3.rs").into(),
     };
 
-    let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
     let get_path = |pane: &Pane, idx: usize, cx: &App| {
         pane.item_for_index(idx).unwrap().project_path(cx).unwrap()
@@ -6512,7 +6615,7 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
         pane.split(workspace::SplitDirection::Right, cx);
     });
 
-    let right_pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    let right_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
     pane.update(cx, |pane, cx| {
         assert_eq!(pane.items_len(), 1);
@@ -6639,8 +6742,6 @@ async fn test_context_collaboration_with_reconnect(
         assert_eq!(project.collaborators().len(), 1);
     });
 
-    cx_a.update(context_server::init);
-    cx_b.update(context_server::init);
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context_store_a = cx_a
         .update(|cx| {
@@ -6771,7 +6872,7 @@ async fn test_remote_git_branches(
         .map(ToString::to_string)
         .collect::<HashSet<_>>();
 
-    let (project_a, worktree_id) = client_a.build_local_project("/project", cx_a).await;
+    let (project_a, _) = client_a.build_local_project("/project", cx_a).await;
 
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
@@ -6784,8 +6885,6 @@ async fn test_remote_git_branches(
 
     let repo_b = cx_b.update(|cx| project_b.read(cx).active_repository(cx).unwrap());
 
-    let root_path = ProjectPath::root_path(worktree_id);
-
     let branches_b = cx_b
         .update(|cx| repo_b.update(cx, |repository, _| repository.branches()))
         .await
@@ -6796,44 +6895,53 @@ async fn test_remote_git_branches(
 
     let branches_b = branches_b
         .into_iter()
-        .map(|branch| branch.name.to_string())
+        .map(|branch| branch.name().to_string())
         .collect::<HashSet<_>>();
 
     assert_eq!(branches_b, branches_set);
 
-    cx_b.update(|cx| repo_b.read(cx).change_branch(new_branch.to_string()))
-        .await
-        .unwrap()
-        .unwrap();
+    cx_b.update(|cx| {
+        repo_b.update(cx, |repository, _cx| {
+            repository.change_branch(new_branch.to_string())
+        })
+    })
+    .await
+    .unwrap()
+    .unwrap();
 
     executor.run_until_parked();
 
     let host_branch = cx_a.update(|cx| {
         project_a.update(cx, |project, cx| {
-            project.worktree_store().update(cx, |worktree_store, cx| {
-                worktree_store
-                    .current_branch(root_path.clone(), cx)
-                    .unwrap()
-            })
+            project
+                .repositories(cx)
+                .values()
+                .next()
+                .unwrap()
+                .read(cx)
+                .branch
+                .as_ref()
+                .unwrap()
+                .clone()
         })
     });
 
-    assert_eq!(host_branch.name, branches[2]);
+    assert_eq!(host_branch.name(), branches[2]);
 
     // Also try creating a new branch
     cx_b.update(|cx| {
-        repo_b
-            .read(cx)
-            .create_branch("totally-new-branch".to_string())
+        repo_b.update(cx, |repository, _cx| {
+            repository.create_branch("totally-new-branch".to_string())
+        })
     })
     .await
     .unwrap()
     .unwrap();
 
     cx_b.update(|cx| {
-        repo_b
-            .read(cx)
-            .change_branch("totally-new-branch".to_string())
+        repo_b.update(cx, |repository, _cx| {
+            repository.change_branch("totally-new-branch".to_string())
+        })
     })
     .await
     .unwrap()
@@ -6843,11 +6951,18 @@ async fn test_remote_git_branches(
 
     let host_branch = cx_a.update(|cx| {
         project_a.update(cx, |project, cx| {
-            project.worktree_store().update(cx, |worktree_store, cx| {
-                worktree_store.current_branch(root_path, cx).unwrap()
-            })
+            project
+                .repositories(cx)
+                .values()
+                .next()
+                .unwrap()
+                .read(cx)
+                .branch
+                .as_ref()
+                .unwrap()
+                .clone()
         })
     });
 
-    assert_eq!(host_branch.name, "totally-new-branch");
+    assert_eq!(host_branch.name(), "totally-new-branch");
 }

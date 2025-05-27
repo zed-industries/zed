@@ -77,6 +77,8 @@
 
 (comment) @comment
 
+(hash_bang_line) @comment
+
 [
   (string)
   (template_string)
@@ -85,7 +87,7 @@
 (escape_sequence) @string.escape
 
 (regex) @string.regex
-(regex_flags) @keyword.regex
+(regex_flags) @keyword.operator.regex
 (number) @number
 
 ; Tokens
@@ -144,6 +146,8 @@
   "||="
   "??="
 ] @operator
+
+(regex "/" @string.regex)
 
 [
   "("

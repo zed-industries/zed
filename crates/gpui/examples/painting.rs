@@ -1,7 +1,7 @@
 use gpui::{
-    canvas, div, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size, Application,
-    Background, Bounds, ColorSpace, Context, MouseDownEvent, Path, PathBuilder, PathStyle, Pixels,
-    Point, Render, StrokeOptions, Window, WindowOptions,
+    Application, Background, Bounds, ColorSpace, Context, MouseDownEvent, Path, PathBuilder,
+    PathStyle, Pixels, Point, Render, StrokeOptions, Window, WindowOptions, canvas, div,
+    linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size,
 };
 
 struct PaintingViewer {
@@ -27,10 +27,15 @@ impl PaintingViewer {
 
         // draw a lightening bolt ⚡
         let mut builder = PathBuilder::fill();
-        builder.move_to(point(px(150.), px(200.)));
-        builder.line_to(point(px(200.), px(125.)));
-        builder.line_to(point(px(200.), px(175.)));
-        builder.line_to(point(px(250.), px(100.)));
+        builder.add_polygon(
+            &[
+                point(px(150.), px(200.)),
+                point(px(200.), px(125.)),
+                point(px(200.), px(175.)),
+                point(px(250.), px(100.)),
+            ],
+            false,
+        );
         let path = builder.build().unwrap();
         lines.push((path, rgb(0x1d4ed8).into()));
 
@@ -58,6 +63,7 @@ impl PaintingViewer {
             .color_space(ColorSpace::Oklab),
         ));
 
+        // draw linear gradient
         let square_bounds = Bounds {
             origin: point(px(450.), px(100.)),
             size: size(px(200.), px(80.)),
@@ -86,6 +92,47 @@ impl PaintingViewer {
                 linear_color_stop(gpui::red(), 1.),
             ),
         ));
+
+        // draw a pie chart
+        let center = point(px(96.), px(96.));
+        let pie_center = point(px(775.), px(155.));
+        let segments = [
+            (
+                point(px(871.), px(155.)),
+                point(px(747.), px(63.)),
+                rgb(0x1374e9),
+            ),
+            (
+                point(px(747.), px(63.)),
+                point(px(679.), px(163.)),
+                rgb(0xe13527),
+            ),
+            (
+                point(px(679.), px(163.)),
+                point(px(754.), px(249.)),
+                rgb(0x0751ce),
+            ),
+            (
+                point(px(754.), px(249.)),
+                point(px(854.), px(210.)),
+                rgb(0x209742),
+            ),
+            (
+                point(px(854.), px(210.)),
+                point(px(871.), px(155.)),
+                rgb(0xfbc10a),
+            ),
+        ];
+
+        for (start, end, color) in segments {
+            let mut builder = PathBuilder::fill();
+            builder.move_to(start);
+            builder.arc_to(center, px(0.), false, false, end);
+            builder.line_to(pie_center);
+            builder.close();
+            let path = builder.build().unwrap();
+            lines.push((path, color.into()));
+        }
 
         // draw a wave
         let options = StrokeOptions::default()

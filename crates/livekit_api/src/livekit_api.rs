@@ -1,7 +1,7 @@
 pub mod proto;
 pub mod token;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use prost::Message;
 use reqwest::header::CONTENT_TYPE;
@@ -79,12 +79,12 @@ impl LiveKitClient {
                 Ok(Res::decode(response.bytes().await?)?)
             } else {
                 log::error!("Response {}: {:?}", url, response.status());
-                Err(anyhow!(
+                anyhow::bail!(
                     "POST {} failed with status code {:?}, {:?}",
                     url,
                     response.status(),
                     response.text().await
-                ))
+                );
             }
         }
     }

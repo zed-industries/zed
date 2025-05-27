@@ -1,20 +1,21 @@
-use crate::wasm_host::{wit::ToWasmtimeResult, WasmState};
+use crate::wasm_host::{WasmState, wit::ToWasmtimeResult};
 use ::http_client::{AsyncBody, HttpRequestExt};
 use ::settings::{Settings, WorktreeId};
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context as _, Result, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use extension::{ExtensionLanguageServerProxy, KeyValueStoreDelegate, WorktreeDelegate};
-use futures::{io::BufReader, FutureExt as _};
-use futures::{lock::Mutex, AsyncReadExt};
+use futures::{AsyncReadExt, lock::Mutex};
+use futures::{FutureExt as _, io::BufReader};
 use language::LanguageName;
-use language::{language_settings::AllLanguageSettings, BinaryStatus};
+use language::{BinaryStatus, language_settings::AllLanguageSettings};
 use project::project_settings::ProjectSettings;
 use semantic_version::SemanticVersion;
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
+use util::archive::extract_zip;
 use util::maybe;
 use wasmtime::component::{Linker, Resource};
 
@@ -365,7 +366,7 @@ impl From<http_client::HttpMethod> for ::http_client::Method {
 
 fn convert_request(
     extension_request: &http_client::HttpRequest,
-) -> Result<::http_client::Request<AsyncBody>, anyhow::Error> {
+) -> anyhow::Result<::http_client::Request<AsyncBody>> {
     let mut request = ::http_client::Request::builder()
         .method(::http_client::Method::from(extension_request.method))
         .uri(&extension_request.url)
@@ -389,7 +390,7 @@ fn convert_request(
 
 async fn convert_response(
     response: &mut ::http_client::Response<AsyncBody>,
-) -> Result<http_client::HttpResponse, anyhow::Error> {
+) -> anyhow::Result<http_client::HttpResponse> {
     let mut extension_response = http_client::HttpResponse {
         body: Vec::new(),
         headers: Vec::new(),
@@ -508,14 +509,13 @@ impl ExtensionImports for WasmState {
                 .http_client
                 .get(&url, Default::default(), true)
                 .await
-                .map_err(|err| anyhow!("error downloading release: {}", err))?;
+                .context("downloading release")?;
 
-            if !response.status().is_success() {
-                Err(anyhow!(
-                    "download failed with status {}",
-                    response.status().to_string()
-                ))?;
-            }
+            anyhow::ensure!(
+                response.status().is_success(),
+                "download failed with status {}",
+                response.status().to_string()
+            );
             let body = BufReader::new(response.body_mut());
 
             match file_type {
@@ -544,9 +544,9 @@ impl ExtensionImports for WasmState {
                 }
                 DownloadedFileType::Zip => {
                     futures::pin_mut!(body);
-                    node_runtime::extract_zip(&destination_path, body)
+                    extract_zip(&destination_path, body)
                         .await
-                        .with_context(|| format!("failed to unzip {} archive", path.display()))?;
+                        .with_context(|| format!("unzipping {path:?} archive"))?;
                 }
             }
 
@@ -568,7 +568,7 @@ impl ExtensionImports for WasmState {
             use std::os::unix::fs::PermissionsExt;
 
             return fs::set_permissions(&path, Permissions::from_mode(0o755))
-                .map_err(|error| anyhow!("failed to set permissions for path {path:?}: {error}"))
+                .with_context(|| format!("setting permissions for path {path:?}"))
                 .to_wasmtime_result();
         }
 

@@ -8,7 +8,7 @@ use crate::{
     WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
-use futures::{channel::oneshot, Stream, StreamExt};
+use futures::{Stream, StreamExt, channel::oneshot};
 use std::{cell::RefCell, future::Future, ops::Deref, rc::Rc, sync::Arc, time::Duration};
 
 /// A TestAppContext is provided to tests created with `#[gpui::test]`, it provides
@@ -34,7 +34,7 @@ impl AppContext for TestAppContext {
 
     fn new<T: 'static>(
         &mut self,
-        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Self::Result<Entity<T>> {
         let mut app = self.app.borrow_mut();
         app.new(build_entity)
@@ -48,7 +48,7 @@ impl AppContext for TestAppContext {
     fn insert_entity<T: 'static>(
         &mut self,
         reservation: crate::Reservation<T>,
-        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Self::Result<Entity<T>> {
         let mut app = self.app.borrow_mut();
         app.insert_entity(reservation, build_entity)
@@ -57,7 +57,7 @@ impl AppContext for TestAppContext {
     fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Entity<T>,
-        update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Context<T>) -> R,
     ) -> Self::Result<R> {
         let mut app = self.app.borrow_mut();
         app.update_entity(handle, update)
@@ -113,7 +113,7 @@ impl AppContext for TestAppContext {
 
 impl TestAppContext {
     /// Creates a new `TestAppContext`. Usually you can rely on `#[gpui::test]` to do this for you.
-    pub fn new(dispatcher: TestDispatcher, fn_name: Option<&'static str>) -> Self {
+    pub fn build(dispatcher: TestDispatcher, fn_name: Option<&'static str>) -> Self {
         let arc_dispatcher = Arc::new(dispatcher.clone());
         let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
@@ -146,7 +146,7 @@ impl TestAppContext {
 
     /// returns a new `TestAppContext` re-using the same executors to interleave tasks.
     pub fn new_app(&self) -> TestAppContext {
-        Self::new(self.dispatcher.clone(), self.fn_name)
+        Self::build(self.dispatcher.clone(), self.fn_name)
     }
 
     /// Called by the test helper to end the test.
@@ -176,6 +176,11 @@ impl TestAppContext {
     /// Returns an executor (for running tasks on the main thread)
     pub fn foreground_executor(&self) -> &ForegroundExecutor {
         &self.foreground_executor
+    }
+
+    fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Entity<T> {
+        let mut cx = self.app.borrow_mut();
+        cx.new(build_entity)
     }
 
     /// Gives you an `&mut App` for the duration of the closure
@@ -444,7 +449,10 @@ impl TestAppContext {
     }
 
     /// Returns a stream of notifications whenever the Entity is updated.
-    pub fn notifications<T: 'static>(&mut self, entity: &Entity<T>) -> impl Stream<Item = ()> {
+    pub fn notifications<T: 'static>(
+        &mut self,
+        entity: &Entity<T>,
+    ) -> impl Stream<Item = ()> + use<T> {
         let (tx, rx) = futures::channel::mpsc::unbounded();
         self.update(|cx| {
             cx.observe(entity, {
@@ -586,11 +594,6 @@ impl<V> Entity<V> {
         use postage::prelude::{Sink as _, Stream as _};
 
         let (tx, mut rx) = postage::mpsc::channel(1024);
-        let timeout_duration = if cfg!(target_os = "macos") {
-            Duration::from_millis(100)
-        } else {
-            Duration::from_secs(1)
-        };
 
         let mut cx = cx.app.borrow_mut();
         let subscriptions = (
@@ -612,7 +615,7 @@ impl<V> Entity<V> {
         let handle = self.downgrade();
 
         async move {
-            crate::util::timeout(timeout_duration, async move {
+            crate::util::timeout(Duration::from_secs(1), async move {
                 loop {
                     {
                         let cx = cx.borrow();
@@ -872,7 +875,7 @@ impl AppContext for VisualTestContext {
 
     fn new<T: 'static>(
         &mut self,
-        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Self::Result<Entity<T>> {
         self.cx.new(build_entity)
     }
@@ -884,7 +887,7 @@ impl AppContext for VisualTestContext {
     fn insert_entity<T: 'static>(
         &mut self,
         reservation: crate::Reservation<T>,
-        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Self::Result<Entity<T>> {
         self.cx.insert_entity(reservation, build_entity)
     }
@@ -892,7 +895,7 @@ impl AppContext for VisualTestContext {
     fn update_entity<T, R>(
         &mut self,
         handle: &Entity<T>,
-        update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
+        update: impl FnOnce(&mut T, &mut Context<T>) -> R,
     ) -> Self::Result<R>
     where
         T: 'static,
@@ -952,7 +955,7 @@ impl VisualContext for VisualTestContext {
 
     fn new_window_entity<T: 'static>(
         &mut self,
-        build_entity: impl FnOnce(&mut Window, &mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Window, &mut Context<T>) -> T,
     ) -> Self::Result<Entity<T>> {
         self.window
             .update(&mut self.cx, |_, window, cx| {

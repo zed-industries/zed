@@ -15,21 +15,27 @@ pub use serde_json;
 // We explicitly enumerate the symbols we want to re-export, as there are some
 // that we may want to shadow to provide a cleaner Rust API.
 pub use wit::{
-    download_file, make_file_executable,
+    CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
+    KeyValueStore, LanguageServerInstallationStatus, Project, Range, Worktree, download_file,
+    make_file_executable,
+    zed::extension::context_server::ContextServerConfiguration,
+    zed::extension::dap::{
+        DebugAdapterBinary, DebugTaskDefinition, StartDebuggingRequestArguments,
+        StartDebuggingRequestArgumentsRequest, TcpArguments, TcpArgumentsTemplate,
+        resolve_tcp_template,
+    },
     zed::extension::github::{
-        github_release_by_tag_name, latest_github_release, GithubRelease, GithubReleaseAsset,
-        GithubReleaseOptions,
+        GithubRelease, GithubReleaseAsset, GithubReleaseOptions, github_release_by_tag_name,
+        latest_github_release,
     },
     zed::extension::nodejs::{
         node_binary_path, npm_install_package, npm_package_installed_version,
         npm_package_latest_version,
     },
-    zed::extension::platform::{current_platform, Architecture, Os},
+    zed::extension::platform::{Architecture, Os, current_platform},
     zed::extension::slash_command::{
         SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, SlashCommandOutputSection,
     },
-    CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
-    KeyValueStore, LanguageServerInstallationStatus, Project, Range, Worktree,
 };
 
 // Undocumented WIT re-exports.
@@ -93,6 +99,26 @@ pub trait Extension: Send + Sync {
         Ok(None)
     }
 
+    /// Returns the initialization options to pass to the other language server.
+    fn language_server_additional_initialization_options(
+        &mut self,
+        _language_server_id: &LanguageServerId,
+        _target_language_server_id: &LanguageServerId,
+        _worktree: &Worktree,
+    ) -> Result<Option<serde_json::Value>> {
+        Ok(None)
+    }
+
+    /// Returns the workspace configuration options to pass to the other language server.
+    fn language_server_additional_workspace_configuration(
+        &mut self,
+        _language_server_id: &LanguageServerId,
+        _target_language_server_id: &LanguageServerId,
+        _worktree: &Worktree,
+    ) -> Result<Option<serde_json::Value>> {
+        Ok(None)
+    }
+
     /// Returns the label for the given completion.
     fn label_for_completion(
         &self,
@@ -139,6 +165,15 @@ pub trait Extension: Send + Sync {
         Err("`context_server_command` not implemented".to_string())
     }
 
+    /// Returns the configuration options for the specified context server.
+    fn context_server_configuration(
+        &mut self,
+        _context_server_id: &ContextServerId,
+        _project: &Project,
+    ) -> Result<Option<ContextServerConfiguration>> {
+        Ok(None)
+    }
+
     /// Returns a list of package names as suggestions to be included in the
     /// search results of the `/docs` slash command.
     ///
@@ -157,6 +192,21 @@ pub trait Extension: Send + Sync {
     ) -> Result<(), String> {
         Err("`index_docs` not implemented".to_string())
     }
+
+    /// Returns the debug adapter binary for the specified adapter name and configuration.
+    fn get_dap_binary(
+        &mut self,
+        _adapter_name: String,
+        _config: DebugTaskDefinition,
+        _user_provided_path: Option<String>,
+        _worktree: &Worktree,
+    ) -> Result<DebugAdapterBinary, String> {
+        Err("`get_dap_binary` not implemented".to_string())
+    }
+
+    fn dap_schema(&mut self) -> Result<serde_json::Value, String> {
+        Err("`dap_schema` not implemented".to_string())
+    }
 }
 
 /// Registers the provided type as a Zed extension.
@@ -165,7 +215,7 @@ pub trait Extension: Send + Sync {
 #[macro_export]
 macro_rules! register_extension {
     ($extension_type:ty) => {
-        #[export_name = "init-extension"]
+        #[unsafe(export_name = "init-extension")]
         pub extern "C" fn __init_extension() {
             std::env::set_current_dir(std::env::var("PWD").unwrap()).unwrap();
             zed_extension_api::register_extension(|| {
@@ -190,7 +240,7 @@ fn extension() -> &'static mut dyn Extension {
 static mut EXTENSION: Option<Box<dyn Extension>> = None;
 
 #[cfg(target_arch = "wasm32")]
-#[link_section = "zed:api-version"]
+#[unsafe(link_section = "zed:api-version")]
 #[doc(hidden)]
 pub static ZED_API_VERSION: [u8; 6] = *include_bytes!(concat!(env!("OUT_DIR"), "/version_bytes"));
 
@@ -198,7 +248,7 @@ mod wit {
 
     wit_bindgen::generate!({
         skip: ["init-extension"],
-        path: "./wit/since_v0.3.0",
+        path: "./wit/since_v0.6.0",
     });
 }
 
@@ -232,6 +282,38 @@ impl wit::Guest for Component {
         let language_server_id = LanguageServerId(language_server_id);
         Ok(extension()
             .language_server_workspace_configuration(&language_server_id, worktree)?
+            .and_then(|value| serde_json::to_string(&value).ok()))
+    }
+
+    fn language_server_additional_initialization_options(
+        language_server_id: String,
+        target_language_server_id: String,
+        worktree: &Worktree,
+    ) -> Result<Option<String>, String> {
+        let language_server_id = LanguageServerId(language_server_id);
+        let target_language_server_id = LanguageServerId(target_language_server_id);
+        Ok(extension()
+            .language_server_additional_initialization_options(
+                &language_server_id,
+                &target_language_server_id,
+                worktree,
+            )?
+            .and_then(|value| serde_json::to_string(&value).ok()))
+    }
+
+    fn language_server_additional_workspace_configuration(
+        language_server_id: String,
+        target_language_server_id: String,
+        worktree: &Worktree,
+    ) -> Result<Option<String>, String> {
+        let language_server_id = LanguageServerId(language_server_id);
+        let target_language_server_id = LanguageServerId(target_language_server_id);
+        Ok(extension()
+            .language_server_additional_workspace_configuration(
+                &language_server_id,
+                &target_language_server_id,
+                worktree,
+            )?
             .and_then(|value| serde_json::to_string(&value).ok()))
     }
 
@@ -290,6 +372,14 @@ impl wit::Guest for Component {
         extension().context_server_command(&context_server_id, project)
     }
 
+    fn context_server_configuration(
+        context_server_id: String,
+        project: &Project,
+    ) -> Result<Option<ContextServerConfiguration>, String> {
+        let context_server_id = ContextServerId(context_server_id);
+        extension().context_server_configuration(&context_server_id, project)
+    }
+
     fn suggest_docs_packages(provider: String) -> Result<Vec<String>, String> {
         extension().suggest_docs_packages(provider)
     }
@@ -300,6 +390,19 @@ impl wit::Guest for Component {
         database: &KeyValueStore,
     ) -> Result<(), String> {
         extension().index_docs(provider, package, database)
+    }
+
+    fn get_dap_binary(
+        adapter_name: String,
+        config: DebugTaskDefinition,
+        user_installed_path: Option<String>,
+        worktree: &Worktree,
+    ) -> Result<wit::DebugAdapterBinary, String> {
+        extension().get_dap_binary(adapter_name, config, user_installed_path, worktree)
+    }
+
+    fn dap_schema() -> Result<String, String> {
+        extension().dap_schema().map(|schema| schema.to_string())
     }
 }
 

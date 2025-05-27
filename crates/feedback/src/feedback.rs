@@ -1,18 +1,18 @@
-use gpui::{actions, App, ClipboardItem, PromptLevel};
+use gpui::{App, ClipboardItem, PromptLevel, actions};
 use system_specs::SystemSpecs;
 use util::ResultExt;
 use workspace::Workspace;
+use zed_actions::feedback::FileBugReport;
 
 pub mod feedback_modal;
 
-mod system_specs;
+pub mod system_specs;
 
 actions!(
     zed,
     [
         CopySystemSpecsIntoClipboard,
         EmailZed,
-        FileBugReport,
         OpenZedRepo,
         RequestFeature,
     ]
@@ -27,7 +27,7 @@ fn file_bug_report_url(specs: &SystemSpecs) -> String {
         concat!(
             "https://github.com/zed-industries/zed/issues/new",
             "?",
-            "template=1_bug_report.yml",
+            "template=10_bug_report.yml",
             "&",
             "environment={}"
         ),

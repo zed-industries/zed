@@ -1,21 +1,21 @@
 mod active_buffer_language;
 
 pub use active_buffer_language::ActiveBufferLanguage;
-use anyhow::anyhow;
+use anyhow::Context as _;
 use editor::Editor;
 use file_finder::file_finder_settings::FileFinderSettings;
 use file_icons::FileIcons;
-use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
+use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    actions, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    ParentElement, Render, Styled, WeakEntity, Window,
+    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ParentElement,
+    Render, Styled, WeakEntity, Window, actions,
 };
 use language::{Buffer, LanguageMatcher, LanguageName, LanguageRegistry};
 use picker::{Picker, PickerDelegate};
 use project::Project;
 use settings::Settings;
 use std::{ops::Not as _, path::Path, sync::Arc};
-use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
+use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
@@ -192,12 +192,8 @@ impl PickerDelegate for LanguageSelectorDelegate {
             let buffer = self.buffer.downgrade();
             cx.spawn_in(window, async move |_, cx| {
                 let language = language.await?;
-                let project = project
-                    .upgrade()
-                    .ok_or_else(|| anyhow!("project was dropped"))?;
-                let buffer = buffer
-                    .upgrade()
-                    .ok_or_else(|| anyhow!("buffer was dropped"))?;
+                let project = project.upgrade().context("project was dropped")?;
+                let buffer = buffer.upgrade().context("buffer was dropped")?;
                 project.update(cx, |project, cx| {
                     project.set_language_for_buffer(&buffer, language, cx);
                 })

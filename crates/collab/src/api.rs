@@ -5,13 +5,15 @@ pub mod extensions;
 pub mod ips_file;
 pub mod slack;
 
+use crate::db::Database;
 use crate::{
-    auth,
+    AppState, Error, Result, auth,
     db::{User, UserId},
-    rpc, AppState, Error, Result,
+    rpc,
 };
-use anyhow::anyhow;
+use anyhow::Context as _;
 use axum::{
+    Extension, Json, Router,
     body::Body,
     extract::{Path, Query},
     headers::Header,
@@ -19,7 +21,6 @@ use axum::{
     middleware::{self, Next},
     response::IntoResponse,
     routing::{get, post},
-    Extension, Json, Router,
 };
 use axum_extra::response::ErasedJson;
 use serde::{Deserialize, Serialize};
@@ -97,6 +98,7 @@ impl std::fmt::Display for SystemIdHeader {
 pub fn routes(rpc_server: Arc<rpc::Server>) -> Router<(), Body> {
     Router::new()
         .route("/user", get(get_authenticated_user))
+        .route("/users/look_up", get(look_up_user))
         .route("/users/:id/access_tokens", post(create_access_token))
         .route("/rpc_server_snapshot", get(get_rpc_server_snapshot))
         .merge(billing::router())
@@ -152,6 +154,7 @@ struct AuthenticatedUserParams {
 struct AuthenticatedUserResponse {
     user: User,
     metrics_id: String,
+    feature_flags: Vec<String>,
 }
 
 async fn get_authenticated_user(
@@ -172,7 +175,93 @@ async fn get_authenticated_user(
         )
         .await?;
     let metrics_id = app.db.get_user_metrics_id(user.id).await?;
-    Ok(Json(AuthenticatedUserResponse { user, metrics_id }))
+    let feature_flags = app.db.get_user_flags(user.id).await?;
+    Ok(Json(AuthenticatedUserResponse {
+        user,
+        metrics_id,
+        feature_flags,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct LookUpUserParams {
+    identifier: String,
+}
+
+#[derive(Debug, Serialize)]
+struct LookUpUserResponse {
+    user: Option<User>,
+}
+
+async fn look_up_user(
+    Query(params): Query<LookUpUserParams>,
+    Extension(app): Extension<Arc<AppState>>,
+) -> Result<Json<LookUpUserResponse>> {
+    let user = resolve_identifier_to_user(&app.db, &params.identifier).await?;
+    let user = if let Some(user) = user {
+        match user {
+            UserOrId::User(user) => Some(user),
+            UserOrId::Id(id) => app.db.get_user_by_id(id).await?,
+        }
+    } else {
+        None
+    };
+
+    Ok(Json(LookUpUserResponse { user }))
+}
+
+enum UserOrId {
+    User(User),
+    Id(UserId),
+}
+
+async fn resolve_identifier_to_user(
+    db: &Arc<Database>,
+    identifier: &str,
+) -> Result<Option<UserOrId>> {
+    if let Some(identifier) = identifier.parse::<i32>().ok() {
+        let user = db.get_user_by_id(UserId(identifier)).await?;
+
+        return Ok(user.map(UserOrId::User));
+    }
+
+    if identifier.starts_with("cus_") {
+        let billing_customer = db
+            .get_billing_customer_by_stripe_customer_id(&identifier)
+            .await?;
+
+        return Ok(billing_customer.map(|billing_customer| UserOrId::Id(billing_customer.user_id)));
+    }
+
+    if identifier.starts_with("sub_") {
+        let billing_subscription = db
+            .get_billing_subscription_by_stripe_subscription_id(&identifier)
+            .await?;
+
+        if let Some(billing_subscription) = billing_subscription {
+            let billing_customer = db
+                .get_billing_customer_by_id(billing_subscription.billing_customer_id)
+                .await?;
+
+            return Ok(
+                billing_customer.map(|billing_customer| UserOrId::Id(billing_customer.user_id))
+            );
+        } else {
+            return Ok(None);
+        }
+    }
+
+    if identifier.contains('@') {
+        let user = db.get_user_by_email(identifier).await?;
+
+        return Ok(user.map(UserOrId::User));
+    }
+
+    if let Some(user) = db.get_user_by_github_login(identifier).await? {
+        return Ok(Some(UserOrId::User(user)));
+    }
+
+    Ok(None)
 }
 
 #[derive(Deserialize, Debug)]
@@ -214,7 +303,7 @@ async fn create_access_token(
         .db
         .get_user_by_id(user_id)
         .await?
-        .ok_or_else(|| anyhow!("user not found"))?;
+        .context("user not found")?;
 
     let mut impersonated_user_id = None;
     if let Some(impersonate) = params.impersonate {

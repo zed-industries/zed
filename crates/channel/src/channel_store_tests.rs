@@ -1,7 +1,7 @@
 use crate::channel_chat::ChannelChatEvent;
 
 use super::*;
-use client::{test::FakeServer, Client, UserStore};
+use client::{Client, UserStore, test::FakeServer};
 use clock::FakeSystemClock;
 use gpui::{App, AppContext as _, Entity, SemanticVersion, TestAppContext};
 use http_client::FakeHttpClient;
@@ -137,7 +137,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
     let user_id = 5;
     let channel_id = 5;
     let channel_store = cx.update(init_test);
-    let client = channel_store.update(cx, |s, _| s.client());
+    let client = channel_store.read_with(cx, |s, _| s.client());
     let server = FakeServer::for_client(user_id, &client, cx).await;
 
     // Get the available channels.

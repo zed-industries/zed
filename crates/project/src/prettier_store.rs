@@ -4,18 +4,18 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use futures::{
+    FutureExt,
     future::{self, Shared},
     stream::FuturesUnordered,
-    FutureExt,
 };
 use gpui::{AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use language::{
-    language_settings::{Formatter, LanguageSettings, SelectedFormatter},
     Buffer, LanguageRegistry, LocalFile,
+    language_settings::{Formatter, LanguageSettings, SelectedFormatter},
 };
 use lsp::{LanguageServer, LanguageServerId, LanguageServerName};
 use node_runtime::NodeRuntime;
@@ -25,8 +25,8 @@ use smol::stream::StreamExt;
 use util::{ResultExt, TryFutureExt};
 
 use crate::{
-    lsp_store::WorktreeId, worktree_store::WorktreeStore, File, PathChange, ProjectEntryId,
-    Worktree,
+    File, PathChange, ProjectEntryId, Worktree, lsp_store::WorktreeId,
+    worktree_store::WorktreeStore,
 };
 
 pub struct PrettierStore {
@@ -279,7 +279,7 @@ impl PrettierStore {
     ) -> PrettierTask {
         cx.spawn(async move |prettier_store, cx| {
             log::info!("Starting prettier at path {prettier_dir:?}");
-            let new_server_id = prettier_store.update(cx, |prettier_store, _| {
+            let new_server_id = prettier_store.read_with(cx, |prettier_store, _| {
                 prettier_store.languages.next_language_server_id()
             })?;
 
@@ -306,7 +306,7 @@ impl PrettierStore {
         cx: &mut Context<PrettierStore>,
     ) -> Task<anyhow::Result<PrettierTask>> {
         cx.spawn(async move |prettier_store, cx| {
-            let installation_task = prettier_store.update(cx, |prettier_store, _| {
+            let installation_task = prettier_store.read_with(cx, |prettier_store, _| {
                 match &prettier_store.default_prettier.prettier {
                     PrettierInstallation::NotInstalled {
                         installation_task, ..
@@ -407,7 +407,7 @@ impl PrettierStore {
                                     .read(cx)
                                     .worktree_for_id(id, cx)
                             })
-                            .map(|worktree| worktree.update(cx, |worktree, _| worktree.abs_path()));
+                            .map(|worktree| worktree.read(cx).abs_path());
                         let name = match worktree_path {
                             Some(worktree_path) => {
                                 if prettier_dir == worktree_path.as_ref() {
@@ -761,8 +761,7 @@ pub(super) async fn format_with_prettier(
                 .log_err();
 
             Some(Err(anyhow!(
-                "{} failed to spawn: {error:#}",
-                prettier_description
+                "{prettier_description} failed to spawn: {error:#}"
             )))
         }
     }

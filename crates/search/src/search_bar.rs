@@ -1,6 +1,6 @@
 use gpui::{Action, FocusHandle, IntoElement};
-use ui::{prelude::*, Tooltip};
 use ui::{IconButton, IconButtonShape};
+use ui::{Tooltip, prelude::*};
 
 pub(super) fn render_nav_button(
     icon: ui::IconName,

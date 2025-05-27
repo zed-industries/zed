@@ -1,27 +1,27 @@
 use super::{
-    proto::{
-        self, AnyTypedEnvelope, EnvelopedMessage, MessageStream, PeerId, Receipt, RequestMessage,
-        TypedEnvelope,
-    },
     Connection,
+    message_stream::{Message, MessageStream},
+    proto::{
+        self, AnyTypedEnvelope, EnvelopedMessage, PeerId, Receipt, RequestMessage, TypedEnvelope,
+    },
 };
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
 use futures::{
+    FutureExt, SinkExt, Stream, StreamExt, TryFutureExt,
     channel::{mpsc, oneshot},
     stream::BoxStream,
-    FutureExt, SinkExt, Stream, StreamExt, TryFutureExt,
 };
 use parking_lot::{Mutex, RwLock};
 use proto::{ErrorCode, ErrorCodeExt, ErrorExt, RpcError};
-use serde::{ser::SerializeStruct, Serialize};
+use serde::{Serialize, ser::SerializeStruct};
 use std::{
     fmt, future,
     future::Future,
     sync::atomic::Ordering::SeqCst,
     sync::{
-        atomic::{self, AtomicU32},
         Arc,
+        atomic::{self, AtomicU32},
     },
     time::Duration,
     time::Instant,
@@ -67,7 +67,7 @@ pub struct Peer {
 #[derive(Clone, Serialize)]
 pub struct ConnectionState {
     #[serde(skip)]
-    outgoing_tx: mpsc::UnboundedSender<proto::Message>,
+    outgoing_tx: mpsc::UnboundedSender<Message>,
     next_message_id: Arc<AtomicU32>,
     #[allow(clippy::type_complexity)]
     #[serde(skip)]
@@ -116,7 +116,7 @@ impl Peer {
         create_timer: F,
     ) -> (
         ConnectionId,
-        impl Future<Output = anyhow::Result<()>> + Send,
+        impl Future<Output = anyhow::Result<()>> + Send + use<F, Fut, Out>,
         BoxStream<'static, Box<dyn AnyTypedEnvelope>>,
     )
     where
@@ -197,7 +197,7 @@ impl Peer {
                                     }
                                     _ = create_timer(WRITE_TIMEOUT).fuse() => {
                                         tracing::trace!(%connection_id, "outgoing rpc message: writing timed out");
-                                        Err(anyhow!("timed out writing message"))?;
+                                        anyhow::bail!("timed out writing message");
                                     }
                                 }
                             }
@@ -209,7 +209,7 @@ impl Peer {
                         _ = keepalive_timer => {
                             tracing::trace!(%connection_id, "keepalive interval: pinging");
                             futures::select_biased! {
-                                result = writer.write(proto::Message::Ping).fuse() => {
+                                result = writer.write(Message::Ping).fuse() => {
                                     tracing::trace!(%connection_id, "keepalive interval: done pinging");
                                     result.context("failed to send keepalive")?;
                                     tracing::trace!(%connection_id, "keepalive interval: resetting after pinging");
@@ -217,7 +217,7 @@ impl Peer {
                                 }
                                 _ = create_timer(WRITE_TIMEOUT).fuse() => {
                                     tracing::trace!(%connection_id, "keepalive interval: pinging timed out");
-                                    Err(anyhow!("timed out sending keepalive"))?;
+                                    anyhow::bail!("timed out sending keepalive");
                                 }
                             }
                         }
@@ -226,7 +226,7 @@ impl Peer {
                             tracing::trace!(%connection_id, "incoming rpc message: received");
                             tracing::trace!(%connection_id, "receive timeout: resetting");
                             receive_timeout.set(create_timer(RECEIVE_TIMEOUT).fuse());
-                            if let (proto::Message::Envelope(incoming), received_at) = incoming {
+                            if let (Message::Envelope(incoming), received_at) = incoming {
                                 tracing::trace!(%connection_id, "incoming rpc message: processing");
                                 futures::select_biased! {
                                     result = incoming_tx.send((incoming, received_at)).fuse() => match result {
@@ -240,7 +240,7 @@ impl Peer {
                                     },
                                     _ = create_timer(WRITE_TIMEOUT).fuse() => {
                                         tracing::trace!(%connection_id, "incoming rpc message: processing timed out");
-                                        Err(anyhow!("timed out processing incoming message"))?
+                                        anyhow::bail!("timed out processing incoming message");
                                     }
                                 }
                             }
@@ -248,7 +248,7 @@ impl Peer {
                         },
                         _ = receive_timeout => {
                             tracing::trace!(%connection_id, "receive timeout: delay between messages too long");
-                            Err(anyhow!("delay between messages too long"))?
+                            anyhow::bail!("delay between messages too long");
                         }
                     }
                 }
@@ -377,7 +377,7 @@ impl Peer {
         executor: gpui::BackgroundExecutor,
     ) -> (
         ConnectionId,
-        impl Future<Output = anyhow::Result<()>> + Send,
+        impl Future<Output = anyhow::Result<()>> + Send + use<>,
         BoxStream<'static, Box<dyn AnyTypedEnvelope>>,
     ) {
         let executor = executor.clone();
@@ -403,7 +403,7 @@ impl Peer {
         &self,
         receiver_id: ConnectionId,
         request: T,
-    ) -> impl Future<Output = Result<T::Response>> {
+    ) -> impl Future<Output = Result<T::Response>> + use<T> {
         self.request_internal(None, receiver_id, request)
             .map_ok(|envelope| envelope.payload)
     }
@@ -412,7 +412,7 @@ impl Peer {
         &self,
         receiver_id: ConnectionId,
         request: T,
-    ) -> impl Future<Output = Result<TypedEnvelope<T::Response>>> {
+    ) -> impl Future<Output = Result<TypedEnvelope<T::Response>>> + use<T> {
         self.request_internal(None, receiver_id, request)
     }
 
@@ -431,7 +431,7 @@ impl Peer {
         original_sender_id: Option<ConnectionId>,
         receiver_id: ConnectionId,
         request: T,
-    ) -> impl Future<Output = Result<TypedEnvelope<T::Response>>> {
+    ) -> impl Future<Output = Result<TypedEnvelope<T::Response>>> + use<T> {
         let envelope = request.into_envelope(0, None, original_sender_id.map(Into::into));
         let response = self.request_dynamic(receiver_id, envelope, T::NAME);
         async move {
@@ -441,7 +441,7 @@ impl Peer {
                 sender_id: receiver_id.into(),
                 original_sender_id: response.original_sender_id,
                 payload: T::Response::from_envelope(response)
-                    .ok_or_else(|| anyhow!("received response of the wrong type"))?,
+                    .context("received response of the wrong type")?,
                 received_at,
             })
         }
@@ -457,7 +457,7 @@ impl Peer {
         receiver_id: ConnectionId,
         mut envelope: proto::Envelope,
         type_name: &'static str,
-    ) -> impl Future<Output = Result<(proto::Envelope, Instant)>> {
+    ) -> impl Future<Output = Result<(proto::Envelope, Instant)>> + use<> {
         let (tx, rx) = oneshot::channel();
         let send = self.connection_state(receiver_id).and_then(|connection| {
             envelope.id = connection.next_message_id.fetch_add(1, SeqCst);
@@ -465,18 +465,17 @@ impl Peer {
                 .response_channels
                 .lock()
                 .as_mut()
-                .ok_or_else(|| anyhow!("connection was closed"))?
+                .context("connection was closed")?
                 .insert(envelope.id, tx);
             connection
                 .outgoing_tx
-                .unbounded_send(proto::Message::Envelope(envelope))
-                .map_err(|_| anyhow!("connection was closed"))?;
+                .unbounded_send(Message::Envelope(envelope))
+                .context("connection was closed")?;
             Ok(())
         });
         async move {
             send?;
-            let (response, received_at, _barrier) =
-                rx.await.map_err(|_| anyhow!("connection was closed"))?;
+            let (response, received_at, _barrier) = rx.await.context("connection was closed")?;
             if let Some(proto::envelope::Payload::Error(error)) = &response.payload {
                 return Err(RpcError::from_proto(error, type_name));
             }
@@ -496,14 +495,14 @@ impl Peer {
             stream_response_channels
                 .lock()
                 .as_mut()
-                .ok_or_else(|| anyhow!("connection was closed"))?
+                .context("connection was closed")?
                 .insert(message_id, tx);
             connection
                 .outgoing_tx
-                .unbounded_send(proto::Message::Envelope(
+                .unbounded_send(Message::Envelope(
                     request.into_envelope(message_id, None, None),
                 ))
-                .map_err(|_| anyhow!("connection was closed"))?;
+                .context("connection was closed")?;
             Ok((message_id, stream_response_channels))
         });
 
@@ -530,7 +529,7 @@ impl Peer {
                         } else {
                             Some(
                                 T::Response::from_envelope(response)
-                                    .ok_or_else(|| anyhow!("received response of the wrong type")),
+                                    .context("received response of the wrong type"),
                             )
                         }
                     }
@@ -545,11 +544,9 @@ impl Peer {
         let message_id = connection
             .next_message_id
             .fetch_add(1, atomic::Ordering::SeqCst);
-        connection
-            .outgoing_tx
-            .unbounded_send(proto::Message::Envelope(
-                message.into_envelope(message_id, None, None),
-            ))?;
+        connection.outgoing_tx.unbounded_send(Message::Envelope(
+            message.into_envelope(message_id, None, None),
+        ))?;
         Ok(())
     }
 
@@ -557,7 +554,7 @@ impl Peer {
         let connection = self.connection_state(receiver_id)?;
         connection
             .outgoing_tx
-            .unbounded_send(proto::Message::Envelope(message))?;
+            .unbounded_send(Message::Envelope(message))?;
         Ok(())
     }
 
@@ -573,7 +570,7 @@ impl Peer {
             .fetch_add(1, atomic::Ordering::SeqCst);
         connection
             .outgoing_tx
-            .unbounded_send(proto::Message::Envelope(message.into_envelope(
+            .unbounded_send(Message::Envelope(message.into_envelope(
                 message_id,
                 None,
                 Some(sender_id.into()),
@@ -592,7 +589,7 @@ impl Peer {
             .fetch_add(1, atomic::Ordering::SeqCst);
         connection
             .outgoing_tx
-            .unbounded_send(proto::Message::Envelope(response.into_envelope(
+            .unbounded_send(Message::Envelope(response.into_envelope(
                 message_id,
                 Some(receipt.message_id),
                 None,
@@ -610,7 +607,7 @@ impl Peer {
 
         connection
             .outgoing_tx
-            .unbounded_send(proto::Message::Envelope(message.into_envelope(
+            .unbounded_send(Message::Envelope(message.into_envelope(
                 message_id,
                 Some(receipt.message_id),
                 None,
@@ -629,7 +626,7 @@ impl Peer {
             .fetch_add(1, atomic::Ordering::SeqCst);
         connection
             .outgoing_tx
-            .unbounded_send(proto::Message::Envelope(response.into_envelope(
+            .unbounded_send(Message::Envelope(response.into_envelope(
                 message_id,
                 Some(receipt.message_id),
                 None,
@@ -652,7 +649,7 @@ impl Peer {
             .fetch_add(1, atomic::Ordering::SeqCst);
         connection
             .outgoing_tx
-            .unbounded_send(proto::Message::Envelope(response.into_envelope(
+            .unbounded_send(Message::Envelope(response.into_envelope(
                 message_id,
                 Some(request_message_id),
                 None,
@@ -664,7 +661,7 @@ impl Peer {
         let connections = self.connections.read();
         let connection = connections
             .get(&connection_id)
-            .ok_or_else(|| anyhow!("no such connection: {}", connection_id))?;
+            .with_context(|| format!("no such connection: {connection_id}"))?;
         Ok(connection.clone())
     }
 }
@@ -687,9 +684,7 @@ mod tests {
     use gpui::TestAppContext;
 
     fn init_logger() {
-        if std::env::var("RUST_LOG").is_ok() {
-            env_logger::init();
-        }
+        zlog::init_test();
     }
 
     #[gpui::test(iterations = 50)]
@@ -1030,10 +1025,12 @@ mod tests {
 
         let _ = io_ended_rx.await;
         let _ = messages_ended_rx.await;
-        assert!(server_conn
-            .send(WebSocketMessage::Binary(vec![]))
-            .await
-            .is_err());
+        assert!(
+            server_conn
+                .send(WebSocketMessage::Binary(vec![].into()))
+                .await
+                .is_err()
+        );
     }
 
     #[gpui::test(iterations = 50)]

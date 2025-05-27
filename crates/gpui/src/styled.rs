@@ -1,20 +1,23 @@
 use crate::{
-    self as gpui, px, relative, rems, AbsoluteLength, AlignItems, CursorStyle, DefiniteLength,
-    Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight, Hsla, JustifyContent, Length,
-    SharedString, StrikethroughStyle, StyleRefinement, TextOverflow, UnderlineStyle, WhiteSpace,
+    self as gpui, AbsoluteLength, AlignContent, AlignItems, BorderStyle, CursorStyle,
+    DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight, Hsla,
+    JustifyContent, Length, SharedString, StrikethroughStyle, StyleRefinement, TextAlign,
+    TextOverflow, TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative, rems,
 };
-use crate::{TextAlign, TextStyleRefinement};
 pub use gpui_macros::{
     border_style_methods, box_shadow_style_methods, cursor_style_methods, margin_style_methods,
     overflow_style_methods, padding_style_methods, position_style_methods,
     visibility_style_methods,
 };
-use taffy::style::{AlignContent, Display};
 
-const ELLIPSIS: &str = "…";
+const ELLIPSIS: SharedString = SharedString::new_static("…");
 
 /// A trait for elements that can be styled.
 /// Use this to opt-in to a utility CSS-like styling API.
+#[cfg_attr(
+    any(feature = "inspector", debug_assertions),
+    gpui_macros::derive_inspector_reflection
+)]
 pub trait Styled: Sized {
     /// Returns a reference to the style memory of this element.
     fn style(&mut self) -> &mut StyleRefinement;
@@ -66,7 +69,7 @@ pub trait Styled: Sized {
     fn text_ellipsis(mut self) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
-            .text_overflow = Some(TextOverflow::Ellipsis(ELLIPSIS));
+            .text_overflow = Some(TextOverflow::Truncate(ELLIPSIS));
         self
     }
 
@@ -358,6 +361,12 @@ pub trait Styled: Sized {
         Self: Sized,
     {
         self.style().background = Some(fill.into());
+        self
+    }
+
+    /// Sets the border style of the element.
+    fn border_dashed(mut self) -> Self {
+        self.style().border_style = Some(BorderStyle::Dashed);
         self
     }
 

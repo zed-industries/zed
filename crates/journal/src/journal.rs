@@ -1,8 +1,8 @@
 use anyhow::Result;
 use chrono::{Datelike, Local, NaiveTime, Timelike};
-use editor::scroll::Autoscroll;
 use editor::Editor;
-use gpui::{actions, App, AppContext as _, Context, Window};
+use editor::scroll::Autoscroll;
+use gpui::{App, AppContext as _, Context, Window, actions};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -53,6 +53,8 @@ impl settings::Settings for JournalSettings {
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         sources.json_merge()
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
 pub fn init(_: Arc<AppState>, cx: &mut App) {

@@ -6,12 +6,12 @@ use project::{Entry, PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
 use std::{
     path::{Path, PathBuf},
     sync::{
-        atomic::{self, AtomicBool},
         Arc,
+        atomic::{self, AtomicBool},
     },
 };
-use ui::{highlight_ranges, prelude::*, LabelLike, ListItemSpacing};
 use ui::{Context, ListItem, Window};
+use ui::{LabelLike, ListItemSpacing, highlight_ranges, prelude::*};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -150,14 +150,14 @@ impl Match {
 
                     text.push_str(dir_indicator);
                     highlights.push((
-                        offset..offset + dir_indicator.bytes().len(),
+                        offset..offset + dir_indicator.len(),
                         HighlightStyle::color(Color::Muted.color(cx)),
                     ));
                 }
             } else {
                 text.push_str(dir_indicator);
                 highlights.push((
-                    offset..offset + dir_indicator.bytes().len(),
+                    offset..offset + dir_indicator.len(),
                     HighlightStyle::color(Color::Muted.color(cx)),
                 ))
             }
@@ -186,7 +186,7 @@ impl Match {
             if suffix.ends_with('/') {
                 text.push_str(dir_indicator);
                 highlights.push((
-                    offset..offset + dir_indicator.bytes().len(),
+                    offset..offset + dir_indicator.len(),
                     HighlightStyle::color(Color::Muted.color(cx)),
                 ));
             }
@@ -354,8 +354,9 @@ impl PickerDelegate for NewPathDelegate {
         let m = self.matches.get(self.selected_index)?;
         if m.is_dir(self.project.read(cx), cx) {
             let path = m.relative_path();
-            self.last_selected_dir = Some(path.clone());
-            Some(format!("{}/", path))
+            let result = format!("{}/", path);
+            self.last_selected_dir = Some(path);
+            Some(result)
         } else {
             None
         }

@@ -1,7 +1,7 @@
 use gpui::{
-    div, AnyElement, App, Bounds, Div, DivFrameState, Element, ElementId, GlobalElementId, Hitbox,
+    AnyElement, App, Bounds, Div, DivFrameState, Element, ElementId, GlobalElementId, Hitbox,
     InteractiveElement as _, IntoElement, LayoutId, ParentElement, Pixels, StyleRefinement, Styled,
-    Window,
+    Window, div,
 };
 
 /// An element that sets a particular rem size for its children.
@@ -50,33 +50,41 @@ impl Element for WithRemSize {
         Element::id(&self.div)
     }
 
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        Element::source_location(&self.div)
+    }
+
     fn request_layout(
         &mut self,
         id: Option<&GlobalElementId>,
+        inspector_id: Option<&gpui::InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         window.with_rem_size(Some(self.rem_size), |window| {
-            self.div.request_layout(id, window, cx)
+            self.div.request_layout(id, inspector_id, window, cx)
         })
     }
 
     fn prepaint(
         &mut self,
         id: Option<&GlobalElementId>,
+        inspector_id: Option<&gpui::InspectorElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
         window.with_rem_size(Some(self.rem_size), |window| {
-            self.div.prepaint(id, bounds, request_layout, window, cx)
+            self.div
+                .prepaint(id, inspector_id, bounds, request_layout, window, cx)
         })
     }
 
     fn paint(
         &mut self,
         id: Option<&GlobalElementId>,
+        inspector_id: Option<&gpui::InspectorElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
@@ -84,8 +92,15 @@ impl Element for WithRemSize {
         cx: &mut App,
     ) {
         window.with_rem_size(Some(self.rem_size), |window| {
-            self.div
-                .paint(id, bounds, request_layout, prepaint, window, cx)
+            self.div.paint(
+                id,
+                inspector_id,
+                bounds,
+                request_layout,
+                prepaint,
+                window,
+                cx,
+            )
         })
     }
 }

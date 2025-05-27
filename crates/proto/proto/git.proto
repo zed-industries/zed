@@ -1,0 +1,410 @@
+syntax = "proto3";
+package zed.messages;
+
+import "worktree.proto";
+import "buffer.proto";
+
+message GitBranchesResponse {
+    repeated Branch branches = 1;
+}
+
+message UpdateDiffBases {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+
+    enum Mode {
+        // No collaborator is using the unstaged diff.
+        HEAD_ONLY = 0;
+        // No collaborator is using the diff from HEAD.
+        INDEX_ONLY = 1;
+        // Both the unstaged and uncommitted diffs are demanded,
+        // and the contents of the index and HEAD are the same for this path.
+        INDEX_MATCHES_HEAD = 2;
+        // Both the unstaged and uncommitted diffs are demanded,
+        // and the contents of the index and HEAD differ for this path,
+        // where None means the path doesn't exist in that state of the repo.
+        INDEX_AND_HEAD = 3;
+    }
+
+    optional string staged_text = 3;
+    optional string committed_text = 4;
+    Mode mode = 5;
+}
+
+message OpenUnstagedDiff {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+}
+
+message OpenUnstagedDiffResponse {
+    optional string staged_text = 1;
+}
+
+message OpenUncommittedDiff {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+}
+
+message OpenUncommittedDiffResponse {
+    enum Mode {
+        INDEX_MATCHES_HEAD = 0;
+        INDEX_AND_HEAD = 1;
+    }
+    optional string staged_text = 1;
+    optional string committed_text = 2;
+    Mode mode = 3;
+}
+
+message SetIndexText {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+    string path = 4;
+    optional string text = 5;
+}
+
+message GetPermalinkToLine {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Range selection = 3;
+}
+
+message GetPermalinkToLineResponse {
+    string permalink = 1;
+}
+
+message Branch {
+    bool is_head = 1;
+    string ref_name = 2;
+    optional uint64 unix_timestamp = 3;
+    optional GitUpstream upstream = 4;
+    optional CommitSummary most_recent_commit = 5;
+}
+
+message GitUpstream {
+    string ref_name = 1;
+    optional UpstreamTracking tracking = 2;
+}
+
+message UpstreamTracking {
+    uint64 ahead = 1;
+    uint64 behind = 2;
+}
+
+message CommitSummary {
+    string sha = 1;
+    string subject = 2;
+    int64 commit_timestamp = 3;
+}
+
+message GitBranches {
+    uint64 project_id = 1;
+    ProjectPath repository = 2;
+}
+
+
+message UpdateGitBranch {
+    uint64 project_id = 1;
+    string branch_name = 2;
+    ProjectPath repository = 3;
+}
+
+message UpdateRepository {
+    uint64 project_id = 1;
+    uint64 id = 2;
+    string abs_path = 3;
+    repeated uint64 entry_ids = 4;
+    optional Branch branch_summary = 5;
+    repeated StatusEntry updated_statuses = 6;
+    repeated string removed_statuses = 7;
+    repeated string current_merge_conflicts = 8;
+    uint64 scan_id = 9;
+    bool is_last_update = 10;
+    optional GitCommitDetails head_commit_details = 11;
+}
+
+message RemoveRepository {
+    uint64 project_id = 1;
+    uint64 id = 2;
+}
+
+enum GitStatus {
+    Added = 0;
+    Modified = 1;
+    Conflict = 2;
+    Deleted = 3;
+    Updated = 4;
+    TypeChanged = 5;
+    Renamed = 6;
+    Copied = 7;
+    Unmodified = 8;
+}
+
+message GitFileStatus {
+    oneof variant {
+        Untracked untracked = 1;
+        Ignored ignored = 2;
+        Unmerged unmerged = 3;
+        Tracked tracked = 4;
+    }
+
+    message Untracked {}
+    message Ignored {}
+    message Unmerged {
+        GitStatus first_head = 1;
+        GitStatus second_head = 2;
+    }
+    message Tracked {
+        GitStatus index_status = 1;
+        GitStatus worktree_status = 2;
+    }
+}
+
+message GitGetBranches {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+}
+
+message GitCreateBranch {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+    string branch_name = 4;
+}
+
+message GitChangeBranch {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+    string branch_name = 4;
+}
+
+message GitDiff {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+    DiffType diff_type = 4;
+
+    enum DiffType {
+        HEAD_TO_WORKTREE = 0;
+        HEAD_TO_INDEX = 1;
+    }
+}
+
+message GitDiffResponse {
+    string diff = 1;
+}
+
+message GitInit {
+    uint64 project_id = 1;
+    string abs_path = 2;
+    string fallback_branch_name = 3;
+}
+
+message CheckForPushedCommits {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+}
+
+message CheckForPushedCommitsResponse {
+  repeated string pushed_to = 1;
+}
+
+message GitShow {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+    string commit = 4;
+}
+
+message GitCommitDetails {
+    string sha = 1;
+    string message = 2;
+    int64 commit_timestamp = 3;
+    string author_email = 4;
+    string author_name = 5;
+}
+
+message LoadCommitDiff {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+    string commit = 4;
+}
+
+message LoadCommitDiffResponse {
+    repeated CommitFile files = 1;
+}
+
+message CommitFile {
+    string path = 1;
+    optional string old_text = 2;
+    optional string new_text = 3;
+}
+
+message GitReset {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+    string commit = 4;
+    ResetMode mode = 5;
+    enum ResetMode {
+        SOFT = 0;
+        MIXED = 1;
+    }
+}
+
+message GitCheckoutFiles {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+    string commit = 4;
+    repeated string paths = 5;
+}
+
+// Move to `git.proto` once collab's min version is >=0.171.0.
+message StatusEntry {
+    string repo_path = 1;
+    // Can be removed once collab's min version is >=0.171.0.
+    GitStatus simple_status = 2;
+    GitFileStatus status = 3;
+}
+
+message Stage {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+    repeated string paths = 4;
+}
+
+message Unstage {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+    repeated string paths = 4;
+}
+
+message Commit {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+    optional string name = 4;
+    optional string email = 5;
+    string message = 6;
+    optional CommitOptions options = 7;
+
+    message CommitOptions {
+        bool amend = 1;
+    }
+}
+
+message OpenCommitMessageBuffer {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+}
+
+message Push {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+    string remote_name = 4;
+    string branch_name = 5;
+    optional PushOptions options = 6;
+    uint64 askpass_id = 7;
+
+    enum PushOptions {
+        SET_UPSTREAM = 0;
+        FORCE = 1;
+    }
+}
+
+message Fetch {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+    uint64 askpass_id = 4;
+}
+
+message GetRemotes {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+    optional string branch_name = 4;
+}
+
+message GetRemotesResponse {
+    repeated Remote remotes = 1;
+
+    message Remote {
+        string name = 1;
+    }
+}
+
+message Pull {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+    string remote_name = 4;
+    string branch_name = 5;
+    uint64 askpass_id = 6;
+}
+
+message RemoteMessageResponse {
+    string stdout = 1;
+    string stderr = 2;
+}
+
+message BlameBuffer {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+}
+
+message BlameEntry {
+    bytes sha = 1;
+
+    uint32 start_line = 2;
+    uint32 end_line = 3;
+    uint32 original_line_number = 4;
+
+    optional string author = 5;
+    optional string author_mail = 6;
+    optional int64 author_time = 7;
+    optional string author_tz = 8;
+
+    optional string committer = 9;
+    optional string committer_mail = 10;
+    optional int64 committer_time = 11;
+    optional string committer_tz = 12;
+
+    optional string summary = 13;
+    optional string previous = 14;
+
+    string filename = 15;
+}
+
+message CommitMessage {
+    bytes oid = 1;
+    string message = 2;
+}
+
+message CommitPermalink {
+    bytes oid = 1;
+    string permalink = 2;
+}
+
+message BlameBufferResponse {
+    message BlameResponse {
+        repeated BlameEntry entries = 1;
+        repeated CommitMessage messages = 2;
+        optional string remote_url = 4;
+        reserved 3;
+    }
+
+    optional BlameResponse blame_response = 5;
+
+    reserved 1 to 4;
+}

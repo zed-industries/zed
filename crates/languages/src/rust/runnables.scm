@@ -1,8 +1,18 @@
 ; Rust mod test
 (
+    (attribute_item (attribute
+        (
+          (identifier) @_attribute)
+          arguments: (
+              (token_tree (identifier) @_test)
+              (#eq? @_test "test")
+          )
+        )
+        (#eq? @_attribute "cfg")
+    )
+    .
     (mod_item
         name: (_) @run
-        (#eq? @run "tests")
     )
     (#set! tag rust-mod-test)
 )

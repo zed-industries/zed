@@ -1,8 +1,8 @@
 use gpui::{
-    black, canvas, div, green, point, prelude::*, px, rgb, size, transparent_black, white, App,
-    Application, Bounds, Context, CursorStyle, Decorations, Hsla, MouseButton, Pixels, Point,
+    App, Application, Bounds, Context, CursorStyle, Decorations, Hsla, MouseButton, Pixels, Point,
     ResizeEdge, Size, Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
-    WindowOptions,
+    WindowOptions, black, canvas, div, green, point, prelude::*, px, rgb, size, transparent_black,
+    white,
 };
 
 struct WindowShadow {}
@@ -61,7 +61,7 @@ impl Render for WindowShadow {
                                             CursorStyle::ResizeUpRightDownLeft
                                         }
                                     },
-                                    &hitbox,
+                                    Some(&hitbox),
                                 );
                             },
                         )
@@ -104,7 +104,7 @@ impl Render for WindowShadow {
                             .when(!tiling.left, |div| div.border_l(border_size))
                             .when(!tiling.right, |div| div.border_r(border_size))
                             .when(!tiling.is_tiled(), |div| {
-                                div.shadow(smallvec::smallvec![gpui::BoxShadow {
+                                div.shadow(vec![gpui::BoxShadow {
                                     color: Hsla {
                                         h: 0.,
                                         s: 0.,
@@ -144,7 +144,7 @@ impl Render for WindowShadow {
                                         .w(px(200.0))
                                         .h(px(100.0))
                                         .bg(green())
-                                        .shadow(smallvec::smallvec![gpui::BoxShadow {
+                                        .shadow(vec![gpui::BoxShadow {
                                             color: Hsla {
                                                 h: 0.,
                                                 s: 0.,

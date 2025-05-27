@@ -117,7 +117,7 @@ if (platform === "darwin") {
   try {
     const resolutionOutput = execSync(
       `powershell -Command "& {Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea.Size}"`,
-      { encoding: "utf8" }
+      { encoding: "utf8" },
     ).trim();
     [screenWidth, screenHeight] = resolutionOutput.match(/\d+/g).map(Number);
   } catch (err) {
@@ -184,10 +184,7 @@ setTimeout(() => {
     const column = i % columns;
     let position;
     if (platform == "win32") {
-      position = [
-        column * instanceWidth,
-        row * instanceHeight,
-      ].join(",");
+      position = [column * instanceWidth, row * instanceHeight].join(",");
     } else {
       position = [
         column * instanceWidth,
@@ -208,8 +205,14 @@ setTimeout(() => {
         ZED_WINDOW_POSITION: position,
         ZED_STATELESS: isStateful && i == 0 ? "" : "1",
         ZED_ALWAYS_ACTIVE: "1",
-        ZED_SERVER_URL: "http://127.0.0.1:3000", // On windows, the http_client could not parse localhost
-        ZED_RPC_URL: "http://127.0.0.1:8080/rpc",
+        ZED_SERVER_URL:
+          platform === "win32"
+            ? "http://127.0.0.1:3000"
+            : "http://localhost:3000",
+        ZED_RPC_URL:
+          platform === "win32"
+            ? "http://127.0.0.1:8080/rpc"
+            : "http://localhost:8080/rpc",
         ZED_ADMIN_API_TOKEN: "secret",
         ZED_WINDOW_SIZE: size,
         ZED_CLIENT_CHECKSUM_SEED: "development-checksum-seed",

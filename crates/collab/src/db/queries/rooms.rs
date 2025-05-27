@@ -1,3 +1,5 @@
+use anyhow::Context as _;
+
 use super::*;
 
 impl Database {
@@ -159,7 +161,7 @@ impl Database {
                 )
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("user is not in the room"))?;
+                .context("user is not in the room")?;
 
             let called_user_role = match caller.role.unwrap_or(ChannelRole::Member) {
                 ChannelRole::Admin | ChannelRole::Member => ChannelRole::Member,
@@ -191,7 +193,7 @@ impl Database {
 
             let room = self.get_room(room_id, &tx).await?;
             let incoming_call = Self::build_incoming_call(&room, called_user_id)
-                .ok_or_else(|| anyhow!("failed to build incoming call"))?;
+                .context("failed to build incoming call")?;
             Ok((room, incoming_call))
         })
         .await
@@ -277,7 +279,7 @@ impl Database {
                 )
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("no call to cancel"))?;
+                .context("no call to cancel")?;
 
             room_participant::Entity::delete(participant.into_active_model())
                 .exec(&*tx)
@@ -308,7 +310,7 @@ impl Database {
                 .into_values::<_, QueryChannelId>()
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("no such room"))?;
+                .context("no such room")?;
 
             if channel_id.is_some() {
                 Err(anyhow!("tried to join channel call directly"))?
@@ -460,7 +462,7 @@ impl Database {
         }
 
         let (channel, room) = self.get_channel_room(room_id, tx).await?;
-        let channel = channel.ok_or_else(|| anyhow!("no channel for room"))?;
+        let channel = channel.context("no channel for room")?;
         Ok(JoinRoom {
             room,
             channel: Some(channel),
@@ -503,7 +505,7 @@ impl Database {
                 let project = project::Entity::find_by_id(project_id)
                     .one(&*tx)
                     .await?
-                    .ok_or_else(|| anyhow!("project does not exist"))?;
+                    .context("project does not exist")?;
                 if project.host_user_id != Some(user_id) {
                     return Err(anyhow!("no such project"))?;
                 }
@@ -517,7 +519,7 @@ impl Database {
                     .position(|collaborator| {
                         collaborator.user_id == user_id && collaborator.is_host
                     })
-                    .ok_or_else(|| anyhow!("host not found among collaborators"))?;
+                    .context("host not found among collaborators")?;
                 let host = collaborators.swap_remove(host_ix);
                 let old_connection_id = host.connection();
 
@@ -606,6 +608,11 @@ impl Database {
 
         let mut worktrees = Vec::new();
         let db_worktrees = project.find_related(worktree::Entity).all(tx).await?;
+        let db_repos = project
+            .find_related(project_repository::Entity)
+            .all(tx)
+            .await?;
+
         for db_worktree in db_worktrees {
             let mut worktree = RejoinedWorktree {
                 id: db_worktree.id as u64,
@@ -673,96 +680,121 @@ impl Database {
                 }
             }
 
-            // Repository Entries
-            {
-                let repository_entry_filter = if let Some(rejoined_worktree) = rejoined_worktree {
-                    worktree_repository::Column::ScanId.gt(rejoined_worktree.scan_id)
+            worktrees.push(worktree);
+        }
+
+        let mut removed_repositories = Vec::new();
+        let mut updated_repositories = Vec::new();
+        for db_repo in db_repos {
+            let rejoined_repository = rejoined_project
+                .repositories
+                .iter()
+                .find(|repo| repo.id == db_repo.id as u64);
+
+            let repository_filter = if let Some(rejoined_repository) = rejoined_repository {
+                project_repository::Column::ScanId.gt(rejoined_repository.scan_id)
+            } else {
+                project_repository::Column::IsDeleted.eq(false)
+            };
+
+            let db_repositories = project_repository::Entity::find()
+                .filter(
+                    Condition::all()
+                        .add(project_repository::Column::ProjectId.eq(project.id))
+                        .add(repository_filter),
+                )
+                .all(tx)
+                .await?;
+
+            for db_repository in db_repositories.into_iter() {
+                if db_repository.is_deleted {
+                    removed_repositories.push(db_repository.id as u64);
                 } else {
-                    worktree_repository::Column::IsDeleted.eq(false)
-                };
-
-                let db_repositories = worktree_repository::Entity::find()
-                    .filter(
-                        Condition::all()
-                            .add(worktree_repository::Column::ProjectId.eq(project.id))
-                            .add(worktree_repository::Column::WorktreeId.eq(worktree.id))
-                            .add(repository_entry_filter),
-                    )
-                    .all(tx)
-                    .await?;
-
-                for db_repository in db_repositories.into_iter() {
-                    if db_repository.is_deleted {
-                        worktree
-                            .removed_repositories
-                            .push(db_repository.work_directory_id as u64);
+                    let status_entry_filter = if let Some(rejoined_repository) = rejoined_repository
+                    {
+                        project_repository_statuses::Column::ScanId.gt(rejoined_repository.scan_id)
                     } else {
-                        let status_entry_filter = if let Some(rejoined_worktree) = rejoined_worktree
-                        {
-                            worktree_repository_statuses::Column::ScanId
-                                .gt(rejoined_worktree.scan_id)
+                        project_repository_statuses::Column::IsDeleted.eq(false)
+                    };
+
+                    let mut db_statuses = project_repository_statuses::Entity::find()
+                        .filter(
+                            Condition::all()
+                                .add(project_repository_statuses::Column::ProjectId.eq(project.id))
+                                .add(
+                                    project_repository_statuses::Column::RepositoryId
+                                        .eq(db_repository.id),
+                                )
+                                .add(status_entry_filter),
+                        )
+                        .stream(tx)
+                        .await?;
+                    let mut removed_statuses = Vec::new();
+                    let mut updated_statuses = Vec::new();
+
+                    while let Some(db_status) = db_statuses.next().await {
+                        let db_status: project_repository_statuses::Model = db_status?;
+                        if db_status.is_deleted {
+                            removed_statuses.push(db_status.repo_path);
                         } else {
-                            worktree_repository_statuses::Column::IsDeleted.eq(false)
-                        };
-
-                        let mut db_statuses = worktree_repository_statuses::Entity::find()
-                            .filter(
-                                Condition::all()
-                                    .add(
-                                        worktree_repository_statuses::Column::ProjectId
-                                            .eq(project.id),
-                                    )
-                                    .add(
-                                        worktree_repository_statuses::Column::WorktreeId
-                                            .eq(worktree.id),
-                                    )
-                                    .add(
-                                        worktree_repository_statuses::Column::WorkDirectoryId
-                                            .eq(db_repository.work_directory_id),
-                                    )
-                                    .add(status_entry_filter),
-                            )
-                            .stream(tx)
-                            .await?;
-                        let mut removed_statuses = Vec::new();
-                        let mut updated_statuses = Vec::new();
-
-                        while let Some(db_status) = db_statuses.next().await {
-                            let db_status: worktree_repository_statuses::Model = db_status?;
-                            if db_status.is_deleted {
-                                removed_statuses.push(db_status.repo_path);
-                            } else {
-                                updated_statuses.push(db_status_to_proto(db_status)?);
-                            }
+                            updated_statuses.push(db_status_to_proto(db_status)?);
                         }
+                    }
 
-                        let current_merge_conflicts = db_repository
-                            .current_merge_conflicts
-                            .as_ref()
-                            .map(|conflicts| serde_json::from_str(&conflicts))
-                            .transpose()?
-                            .unwrap_or_default();
+                    let current_merge_conflicts = db_repository
+                        .current_merge_conflicts
+                        .as_ref()
+                        .map(|conflicts| serde_json::from_str(&conflicts))
+                        .transpose()?
+                        .unwrap_or_default();
 
-                        let branch_summary = db_repository
-                            .branch_summary
-                            .as_ref()
-                            .map(|branch_summary| serde_json::from_str(&branch_summary))
-                            .transpose()?
-                            .unwrap_or_default();
+                    let branch_summary = db_repository
+                        .branch_summary
+                        .as_ref()
+                        .map(|branch_summary| serde_json::from_str(&branch_summary))
+                        .transpose()?
+                        .unwrap_or_default();
 
-                        worktree.updated_repositories.push(proto::RepositoryEntry {
-                            work_directory_id: db_repository.work_directory_id as u64,
-                            branch: db_repository.branch,
+                    let head_commit_details = db_repository
+                        .head_commit_details
+                        .as_ref()
+                        .map(|head_commit_details| serde_json::from_str(&head_commit_details))
+                        .transpose()?
+                        .unwrap_or_default();
+
+                    let entry_ids = serde_json::from_str(&db_repository.entry_ids)
+                        .context("failed to deserialize repository's entry ids")?;
+
+                    if let Some(legacy_worktree_id) = db_repository.legacy_worktree_id {
+                        if let Some(worktree) = worktrees
+                            .iter_mut()
+                            .find(|worktree| worktree.id as i64 == legacy_worktree_id)
+                        {
+                            worktree.updated_repositories.push(proto::RepositoryEntry {
+                                repository_id: db_repository.id as u64,
+                                updated_statuses,
+                                removed_statuses,
+                                current_merge_conflicts,
+                                branch_summary,
+                            });
+                        }
+                    } else {
+                        updated_repositories.push(proto::UpdateRepository {
+                            entry_ids,
                             updated_statuses,
                             removed_statuses,
                             current_merge_conflicts,
                             branch_summary,
+                            head_commit_details,
+                            project_id: project_id.to_proto(),
+                            id: db_repository.id as u64,
+                            abs_path: db_repository.abs_path,
+                            scan_id: db_repository.scan_id as u64,
+                            is_last_update: true,
                         });
                     }
                 }
             }
-
-            worktrees.push(worktree);
         }
 
         let language_servers = project
@@ -832,6 +864,8 @@ impl Database {
             id: project_id,
             old_connection_id,
             collaborators,
+            updated_repositories,
+            removed_repositories,
             worktrees,
             language_servers,
         }))
@@ -1017,11 +1051,7 @@ impl Database {
             let tx = tx;
             let location_kind;
             let location_project_id;
-            match location
-                .variant
-                .as_ref()
-                .ok_or_else(|| anyhow!("invalid location"))?
-            {
+            match location.variant.as_ref().context("invalid location")? {
                 proto::participant_location::Variant::SharedProject(project) => {
                     location_kind = 0;
                     location_project_id = Some(ProjectId::from_proto(project.id));
@@ -1085,7 +1115,7 @@ impl Database {
                 )
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("only admins can set participant role"))?;
+                .context("only admins can set participant role")?;
 
             if role.requires_cla() {
                 self.check_user_has_signed_cla(user_id, room_id, &tx)
@@ -1122,7 +1152,7 @@ impl Database {
         let channel = room::Entity::find_by_id(room_id)
             .one(tx)
             .await?
-            .ok_or_else(|| anyhow!("could not find room"))?
+            .context("could not find room")?
             .find_related(channel::Entity)
             .one(tx)
             .await?;
@@ -1263,7 +1293,7 @@ impl Database {
         let db_room = room::Entity::find_by_id(room_id)
             .one(tx)
             .await?
-            .ok_or_else(|| anyhow!("could not find room"))?;
+            .context("could not find room")?;
 
         let mut db_participants = db_room
             .find_related(room_participant::Entity)

@@ -2,22 +2,32 @@ use super::stack_frame_list::{StackFrameList, StackFrameListEvent};
 use dap::{ScopePresentationHint, StackFrameId, VariablePresentationHintKind, VariableReference};
 use editor::Editor;
 use gpui::{
-    actions, anchored, deferred, uniform_list, AnyElement, ClickEvent, ClipboardItem, Context,
-    DismissEvent, Entity, FocusHandle, Focusable, Hsla, MouseButton, MouseDownEvent, Point,
-    Stateful, Subscription, TextStyleRefinement, UniformListScrollHandle,
+    Action, AnyElement, ClickEvent, ClipboardItem, Context, DismissEvent, Entity, FocusHandle,
+    Focusable, Hsla, MouseButton, MouseDownEvent, Point, Stateful, Subscription,
+    TextStyleRefinement, UniformListScrollHandle, actions, anchored, deferred, uniform_list,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::debugger::session::{Session, SessionEvent};
 use std::{collections::HashMap, ops::Range, sync::Arc};
-use ui::{prelude::*, ContextMenu, ListItem, Scrollbar, ScrollbarState};
-use util::{debug_panic, maybe};
+use ui::{ContextMenu, ListItem, Scrollbar, ScrollbarState, prelude::*};
+use util::debug_panic;
 
-actions!(variable_list, [ExpandSelectedEntry, CollapseSelectedEntry]);
+actions!(
+    variable_list,
+    [
+        ExpandSelectedEntry,
+        CollapseSelectedEntry,
+        CopyVariableName,
+        CopyVariableValue,
+        EditVariable
+    ]
+);
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct EntryState {
     depth: usize,
     is_expanded: bool,
+    has_children: bool,
     parent_reference: VariableReference,
 }
 
@@ -153,11 +163,14 @@ impl VariableList {
 
         let _subscriptions = vec![
             cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
-            cx.subscribe(&session, |this, _, event, _| match event {
+            cx.subscribe(&session, |this, _, event, cx| match event {
                 SessionEvent::Stopped(_) => {
                     this.selection.take();
                     this.edited_path.take();
                     this.selected_stack_frame_id.take();
+                }
+                SessionEvent::Variables => {
+                    this.build_entries(cx);
                 }
                 _ => {}
             }),
@@ -191,6 +204,10 @@ impl VariableList {
         if old_disabled != disabled {
             cx.notify();
         }
+    }
+
+    pub(super) fn has_open_context_menu(&self) -> bool {
+        self.open_context_menu.is_some()
     }
 
     fn build_entries(&mut self, cx: &mut Context<Self>) {
@@ -246,6 +263,7 @@ impl VariableList {
                 .entry(path.clone())
                 .and_modify(|state| {
                     state.parent_reference = container_reference;
+                    state.has_children = variables_reference != 0;
                 })
                 .or_insert(EntryState {
                     depth: path.indices.len(),
@@ -258,6 +276,7 @@ impl VariableList {
                                 .unwrap_or(scope.name.to_lowercase().starts_with("local"))
                     }),
                     parent_reference: container_reference,
+                    has_children: variables_reference != 0,
                 });
 
             entries.push(ListEntry {
@@ -293,8 +312,9 @@ impl VariableList {
         match event {
             StackFrameListEvent::SelectedStackFrameChanged(stack_frame_id) => {
                 self.selected_stack_frame_id = Some(*stack_frame_id);
-                cx.notify();
+                self.build_entries(cx);
             }
+            StackFrameListEvent::BuiltEntries => {}
         }
     }
 
@@ -336,108 +356,100 @@ impl VariableList {
         };
 
         entry.is_expanded = !entry.is_expanded;
-        cx.notify();
+        self.build_entries(cx);
     }
 
     fn select_first(&mut self, _: &SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
-        self.cancel_variable_edit(&Default::default(), window, cx);
+        self.cancel(&Default::default(), window, cx);
         if let Some(variable) = self.entries.first() {
             self.selection = Some(variable.path.clone());
-            cx.notify();
+            self.build_entries(cx);
         }
     }
 
     fn select_last(&mut self, _: &SelectLast, window: &mut Window, cx: &mut Context<Self>) {
-        self.cancel_variable_edit(&Default::default(), window, cx);
+        self.cancel(&Default::default(), window, cx);
         if let Some(variable) = self.entries.last() {
             self.selection = Some(variable.path.clone());
-            cx.notify();
+            self.build_entries(cx);
         }
     }
 
     fn select_prev(&mut self, _: &SelectPrevious, window: &mut Window, cx: &mut Context<Self>) {
-        self.cancel_variable_edit(&Default::default(), window, cx);
+        self.cancel(&Default::default(), window, cx);
         if let Some(selection) = &self.selection {
-            if let Some(var_ix) = self.entries.iter().enumerate().find_map(|(ix, var)| {
-                if &var.path == selection {
+            let index = self.entries.iter().enumerate().find_map(|(ix, var)| {
+                if &var.path == selection && ix > 0 {
                     Some(ix.saturating_sub(1))
                 } else {
                     None
                 }
-            }) {
-                if let Some(new_selection) = self.entries.get(var_ix).map(|var| var.path.clone()) {
-                    self.selection = Some(new_selection);
-                    cx.notify();
-                } else {
-                    self.select_first(&SelectFirst, window, cx);
-                }
+            });
+
+            if let Some(new_selection) =
+                index.and_then(|ix| self.entries.get(ix).map(|var| var.path.clone()))
+            {
+                self.selection = Some(new_selection);
+                self.build_entries(cx);
+            } else {
+                self.select_last(&SelectLast, window, cx);
             }
         } else {
-            self.select_first(&SelectFirst, window, cx);
+            self.select_last(&SelectLast, window, cx);
         }
     }
 
     fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
-        self.cancel_variable_edit(&Default::default(), window, cx);
+        self.cancel(&Default::default(), window, cx);
         if let Some(selection) = &self.selection {
-            if let Some(var_ix) = self.entries.iter().enumerate().find_map(|(ix, var)| {
+            let index = self.entries.iter().enumerate().find_map(|(ix, var)| {
                 if &var.path == selection {
                     Some(ix.saturating_add(1))
                 } else {
                     None
                 }
-            }) {
-                if let Some(new_selection) = self.entries.get(var_ix).map(|var| var.path.clone()) {
-                    self.selection = Some(new_selection);
-                    cx.notify();
-                } else {
-                    self.select_first(&SelectFirst, window, cx);
-                }
+            });
+
+            if let Some(new_selection) =
+                index.and_then(|ix| self.entries.get(ix).map(|var| var.path.clone()))
+            {
+                self.selection = Some(new_selection);
+                self.build_entries(cx);
+            } else {
+                self.select_first(&SelectFirst, window, cx);
             }
         } else {
             self.select_first(&SelectFirst, window, cx);
         }
     }
 
-    fn cancel_variable_edit(
-        &mut self,
-        _: &menu::Cancel,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         self.edited_path.take();
         self.focus_handle.focus(window);
         cx.notify();
     }
 
-    fn confirm_variable_edit(
-        &mut self,
-        _: &menu::Confirm,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let res = maybe!({
-            let (var_path, editor) = self.edited_path.take()?;
-            let state = self.entry_states.get(&var_path)?;
+    fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((var_path, editor)) = self.edited_path.take() {
+            let Some(state) = self.entry_states.get(&var_path) else {
+                return;
+            };
             let variables_reference = state.parent_reference;
-            let name = var_path.leaf_name?;
+            let Some(name) = var_path.leaf_name else {
+                return;
+            };
             let value = editor.read(cx).text(cx);
 
             self.session.update(cx, |session, cx| {
                 session.set_variable_value(variables_reference, name.into(), value, cx)
             });
-            Some(())
-        });
-
-        if res.is_none() {
-            log::error!("Couldn't confirm variable edit because variable doesn't have a leaf name or a parent reference id");
         }
     }
 
     fn collapse_selected_entry(
         &mut self,
         _: &CollapseSelectedEntry,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(ref selected_entry) = self.selection {
@@ -446,62 +458,48 @@ impl VariableList {
                 return;
             };
 
-            entry_state.is_expanded = false;
-            cx.notify();
+            if !entry_state.is_expanded || !entry_state.has_children {
+                self.select_prev(&SelectPrevious, window, cx);
+            } else {
+                entry_state.is_expanded = false;
+                self.build_entries(cx);
+            }
         }
     }
 
     fn expand_selected_entry(
         &mut self,
         _: &ExpandSelectedEntry,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(ref selected_entry) = self.selection {
+        if let Some(selected_entry) = &self.selection {
             let Some(entry_state) = self.entry_states.get_mut(selected_entry) else {
                 debug_panic!("Trying to toggle variable in variable list that has an no state");
                 return;
             };
 
-            entry_state.is_expanded = true;
-            cx.notify();
+            if entry_state.is_expanded || !entry_state.has_children {
+                self.select_next(&SelectNext, window, cx);
+            } else {
+                entry_state.is_expanded = true;
+                self.build_entries(cx);
+            }
         }
     }
 
     fn deploy_variable_context_menu(
         &mut self,
-        variable: ListEntry,
+        _variable: ListEntry,
         position: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(dap_var) = variable.as_variable() else {
-            debug_panic!("Trying to open variable context menu on a scope");
-            return;
-        };
-
-        let variable_value = dap_var.value.clone();
-        let variable_name = dap_var.name.clone();
-        let this = cx.entity().clone();
-
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
-            menu.entry("Copy name", None, move |_, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(variable_name.clone()))
-            })
-            .entry("Copy value", None, {
-                let variable_value = variable_value.clone();
-                move |_, cx| {
-                    cx.write_to_clipboard(ClipboardItem::new_string(variable_value.clone()))
-                }
-            })
-            .entry("Set value", None, move |window, cx| {
-                this.update(cx, |variable_list, cx| {
-                    let editor = Self::create_variable_editor(&variable_value, window, cx);
-                    variable_list.edited_path = Some((variable.path.clone(), editor));
-
-                    cx.notify();
-                });
-            })
+            menu.action("Copy Name", CopyVariableName.boxed_clone())
+                .action("Copy Value", CopyVariableValue.boxed_clone())
+                .action("Edit Value", EditVariable.boxed_clone())
+                .context(self.focus_handle.clone())
         });
 
         cx.focus_view(&context_menu, window);
@@ -522,9 +520,62 @@ impl VariableList {
         self.open_context_menu = Some((context_menu, position, subscription));
     }
 
+    fn copy_variable_name(
+        &mut self,
+        _: &CopyVariableName,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(selection) = self.selection.as_ref() else {
+            return;
+        };
+        let Some(entry) = self.entries.iter().find(|entry| &entry.path == selection) else {
+            return;
+        };
+        let Some(variable) = entry.as_variable() else {
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(variable.name.clone()));
+    }
+
+    fn copy_variable_value(
+        &mut self,
+        _: &CopyVariableValue,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(selection) = self.selection.as_ref() else {
+            return;
+        };
+        let Some(entry) = self.entries.iter().find(|entry| &entry.path == selection) else {
+            return;
+        };
+        let Some(variable) = entry.as_variable() else {
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(variable.value.clone()));
+    }
+
+    fn edit_variable(&mut self, _: &EditVariable, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(selection) = self.selection.as_ref() else {
+            return;
+        };
+        let Some(entry) = self.entries.iter().find(|entry| &entry.path == selection) else {
+            return;
+        };
+        let Some(variable) = entry.as_variable() else {
+            return;
+        };
+
+        let editor = Self::create_variable_editor(&variable.value, window, cx);
+        self.edited_path = Some((entry.path.clone(), editor));
+
+        cx.notify();
+    }
+
     #[track_caller]
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn assert_visual_entries(&self, expected: Vec<&str>) {
+    #[cfg(test)]
+    pub(crate) fn assert_visual_entries(&self, expected: Vec<&str>) {
         const INDENT: &'static str = "    ";
 
         let entries = &self.entries;
@@ -552,8 +603,8 @@ impl VariableList {
     }
 
     #[track_caller]
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn scopes(&self) -> Vec<dap::Scope> {
+    #[cfg(test)]
+    pub(crate) fn scopes(&self) -> Vec<dap::Scope> {
         self.entries
             .iter()
             .filter_map(|entry| match &entry.dap_kind {
@@ -565,8 +616,8 @@ impl VariableList {
     }
 
     #[track_caller]
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn variables_per_scope(&self) -> Vec<(dap::Scope, Vec<dap::Variable>)> {
+    #[cfg(test)]
+    pub(crate) fn variables_per_scope(&self) -> Vec<(dap::Scope, Vec<dap::Variable>)> {
         let mut scopes: Vec<(dap::Scope, Vec<_>)> = Vec::new();
         let mut idx = 0;
 
@@ -587,8 +638,8 @@ impl VariableList {
     }
 
     #[track_caller]
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn variables(&self) -> Vec<dap::Variable> {
+    #[cfg(test)]
+    pub(crate) fn variables(&self) -> Vec<dap::Variable> {
         self.entries
             .iter()
             .filter_map(|entry| match &entry.dap_kind {
@@ -649,10 +700,12 @@ impl VariableList {
         } else {
             colors.default
         };
+        let path = entry.path.clone();
 
         div()
             .id(var_ref as usize)
             .group("variable_list_entry")
+            .pl_2()
             .border_1()
             .border_r_2()
             .border_color(border_color)
@@ -661,22 +714,32 @@ impl VariableList {
             .h_full()
             .hover(|style| style.bg(bg_hover_color))
             .on_click(cx.listener({
-                move |_this, _, _window, cx| {
+                move |this, _, _window, cx| {
+                    this.selection = Some(path.clone());
                     cx.notify();
                 }
             }))
             .child(
                 ListItem::new(SharedString::from(format!("scope-{}", var_ref)))
                     .selectable(false)
-                    .indent_level(state.depth + 1)
-                    .indent_step_size(px(20.))
+                    .disabled(self.disabled)
+                    .indent_level(state.depth)
+                    .indent_step_size(px(10.))
                     .always_show_disclosure_icon(true)
                     .toggle(state.is_expanded)
                     .on_toggle({
                         let var_path = entry.path.clone();
                         cx.listener(move |this, _, _, cx| this.toggle_entry(&var_path, cx))
                     })
-                    .child(div().text_ui(cx).w_full().child(scope.name.clone())),
+                    .child(
+                        div()
+                            .text_ui(cx)
+                            .w_full()
+                            .when(self.disabled, |this| {
+                                this.text_color(Color::Disabled.color(cx))
+                            })
+                            .child(scope.name.clone()),
+                    ),
             )
             .into_any()
     }
@@ -697,20 +760,27 @@ impl VariableList {
         };
 
         let syntax_color_for = |name| cx.theme().syntax().get(name).color;
-        let variable_name_color = match &dap
-            .presentation_hint
-            .as_ref()
-            .and_then(|hint| hint.kind.as_ref())
-            .unwrap_or(&VariablePresentationHintKind::Unknown)
-        {
-            VariablePresentationHintKind::Class
-            | VariablePresentationHintKind::BaseClass
-            | VariablePresentationHintKind::InnerClass
-            | VariablePresentationHintKind::MostDerivedClass => syntax_color_for("type"),
-            VariablePresentationHintKind::Data => syntax_color_for("variable"),
-            VariablePresentationHintKind::Unknown | _ => syntax_color_for("variable"),
+        let variable_name_color = if self.disabled {
+            Some(Color::Disabled.color(cx))
+        } else {
+            match &dap
+                .presentation_hint
+                .as_ref()
+                .and_then(|hint| hint.kind.as_ref())
+                .unwrap_or(&VariablePresentationHintKind::Unknown)
+            {
+                VariablePresentationHintKind::Class
+                | VariablePresentationHintKind::BaseClass
+                | VariablePresentationHintKind::InnerClass
+                | VariablePresentationHintKind::MostDerivedClass => syntax_color_for("type"),
+                VariablePresentationHintKind::Data => syntax_color_for("variable"),
+                VariablePresentationHintKind::Unknown | _ => syntax_color_for("variable"),
+            }
         };
-        let variable_color = syntax_color_for("variable.special");
+        let variable_color = self
+            .disabled
+            .then(|| Color::Disabled.color(cx))
+            .or_else(|| syntax_color_for("variable.special"));
 
         let var_ref = dap.variables_reference;
         let colors = get_entry_color(cx);
@@ -733,6 +803,7 @@ impl VariableList {
         div()
             .id(variable.item_id())
             .group("variable_list_entry")
+            .pl_2()
             .border_1()
             .border_r_2()
             .border_color(border_color)
@@ -752,8 +823,8 @@ impl VariableList {
                 )))
                 .disabled(self.disabled)
                 .selectable(false)
-                .indent_level(state.depth + 1_usize)
-                .indent_step_size(px(20.))
+                .indent_level(state.depth)
+                .indent_step_size(px(10.))
                 .always_show_disclosure_icon(true)
                 .when(var_ref > 0, |list_item| {
                     list_item.toggle(state.is_expanded).on_toggle(cx.listener({
@@ -770,12 +841,14 @@ impl VariableList {
                 .on_secondary_mouse_down(cx.listener({
                     let variable = variable.clone();
                     move |this, event: &MouseDownEvent, window, cx| {
+                        this.selection = Some(variable.path.clone());
                         this.deploy_variable_context_menu(
                             variable.clone(),
                             event.position,
                             window,
                             cx,
-                        )
+                        );
+                        cx.stop_propagation();
                     }
                 }))
                 .child(
@@ -832,6 +905,7 @@ impl VariableList {
                                                 .single_line()
                                                 .truncate()
                                                 .size(LabelSize::Small)
+                                                .color(Color::Muted)
                                                 .when_some(variable_color, |this, color| {
                                                     this.color(Color::from(color))
                                                 }),
@@ -886,24 +960,24 @@ impl Focusable for VariableList {
 
 impl Render for VariableList {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.build_entries(cx);
-
         v_flex()
+            .track_focus(&self.focus_handle)
             .key_context("VariableList")
             .id("variable-list")
             .group("variable-list")
             .overflow_y_scroll()
             .size_full()
-            .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::select_prev))
             .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::expand_selected_entry))
             .on_action(cx.listener(Self::collapse_selected_entry))
-            .on_action(cx.listener(Self::cancel_variable_edit))
-            .on_action(cx.listener(Self::confirm_variable_edit))
-            //
+            .on_action(cx.listener(Self::copy_variable_name))
+            .on_action(cx.listener(Self::copy_variable_value))
+            .on_action(cx.listener(Self::edit_variable))
             .child(
                 uniform_list(
                     cx.entity().clone(),
