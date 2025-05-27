@@ -216,13 +216,16 @@ impl TaskTemplate {
             None,
         )?;
 
-        let args = substitute_all_template_variables_in_vec(
-            &self.args,
-            &task_variables,
-            &variable_names,
-            &mut substituted_variables,
-            self.arg_variable_processor,
-        )?;
+        let args = match self.arg_variable_processor  {
+            Some(arg_variable_processor) => substitute_all_template_variables_in_vec(
+                &self.args,
+                &task_variables,
+                &variable_names,
+                &mut substituted_variables,
+                Some(arg_variable_processor),
+            )?,
+            None => self.args.clone(),
+        };
 
         let task_hash = to_hex_hash(self)
             .context("hashing task template")
