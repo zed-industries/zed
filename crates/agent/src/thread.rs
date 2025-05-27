@@ -1804,8 +1804,6 @@ impl Thread {
                         }
                     }
 
-                    thread.pending_completions.retain(|completion| completion.id != pending_completion_id);
-
                     cx.emit(ThreadEvent::Stopped(result.map_err(Arc::new)));
 
                     if let Some((request_callback, (request, response_events))) = thread
