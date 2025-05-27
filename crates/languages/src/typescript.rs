@@ -32,7 +32,7 @@ pub(super) fn typescript_task_context() -> ContextProviderWithTasks {
             ..TaskTemplate::default()
         },
         TaskTemplate {
-            label: "jest test $ZED_SYMBOL".to_owned(),
+            label: "jest test $ZED_SYMBOL $ZED_SYMBOL".to_owned(),
             command: "npx jest".to_owned(),
             args: vec![
                 "--testNamePattern".into(),
@@ -40,6 +40,24 @@ pub(super) fn typescript_task_context() -> ContextProviderWithTasks {
                 VariableName::File.template_value(),
             ],
             tags: vec!["ts-test".into(), "js-test".into(), "tsx-test".into()],
+            arg_variable_processor: Some(|name, value| {
+                println!(
+                    "Processing variable: {} with value: {}. Result: {}",
+                    name,
+                    value,
+                    replace_test_name_parameters(&value)
+                );
+
+                if name == "ZED_SYMBOL" {
+                    println!(
+                        "Replacing test name parameters in: {}",
+                        replace_test_name_parameters(&value)
+                    );
+                    Some(replace_test_name_parameters(&value))
+                } else {
+                    None
+                }
+            }),
             ..TaskTemplate::default()
         },
         TaskTemplate {
@@ -64,6 +82,12 @@ fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
         server_path.into(),
         "--stdio".into(),
     ]
+}
+
+fn replace_test_name_parameters(test_name: &str) -> String {
+    let pattern = regex::Regex::new(r"(%|\$)[0-9a-zA-Z]").unwrap();
+
+    pattern.replace_all(test_name, "(.+?)").to_string()
 }
 
 pub struct TypeScriptLspAdapter {

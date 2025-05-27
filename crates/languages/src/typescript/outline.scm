@@ -88,4 +88,21 @@
     )
 ) @item
 
+; Add support for parameterized tests with .each()
+(
+    (call_expression
+        function: (call_expression
+            function: (member_expression
+                object: [(identifier) @_name (member_expression object: (identifier) @_name)]
+                property: (property_identifier) @_property
+            )
+            (#any-of? @_name "it" "test")
+            (#any-of? @_property "each" "only" "skip" "concurrent" "todo")
+        )
+        arguments: (
+            arguments . (string (string_fragment) @name)
+        )
+    )
+) @item
+
 (comment) @annotation
