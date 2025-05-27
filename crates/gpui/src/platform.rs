@@ -259,6 +259,7 @@ pub trait PlatformDisplay: Send + Sync + Debug {
 }
 
 /// Metadata for a given [ScreenCaptureSource]
+#[derive(Clone)]
 pub struct SourceMetadata {
     /// Opaque identifier of this screen.
     pub id: u64,
@@ -285,7 +286,10 @@ pub trait ScreenCaptureSource {
 }
 
 /// A video stream captured from a screen.
-pub trait ScreenCaptureStream {}
+pub trait ScreenCaptureStream {
+    /// Returns metadata for this source.
+    fn metadata(&self) -> Result<SourceMetadata>;
+}
 
 /// A frame of video captured from a screen.
 pub struct ScreenCaptureFrame(pub PlatformScreenCaptureFrame);

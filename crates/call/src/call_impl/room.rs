@@ -12,13 +12,13 @@ use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
 use futures::{FutureExt, StreamExt};
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, ScreenCaptureSource, Task,
-    WeakEntity,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, ScreenCaptureSource,
+    ScreenCaptureStream, Task, WeakEntity,
 };
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use livekit::{LocalTrackPublication, ParticipantIdentity, RoomEvent};
-use livekit_client::{self as livekit, TrackSid};
+use livekit_client::{self as livekit, AudioStream, TrackSid};
 use postage::{sink::Sink, stream::Stream, watch};
 use project::Project;
 use settings::Settings as _;
@@ -1254,9 +1254,18 @@ impl Room {
         })
     }
 
-    pub fn is_screen_sharing(&self) -> bool {
+    pub fn is_sharing_screen(&self) -> bool {
         self.live_kit.as_ref().map_or(false, |live_kit| {
             !matches!(live_kit.screen_track, LocalTrack::None)
+        })
+    }
+
+    pub fn shared_screen_id(&self) -> Option<u64> {
+        self.live_kit.as_ref().and_then(|lk| match lk.screen_track {
+            LocalTrack::Published { ref _stream, .. } => {
+                _stream.metadata().ok().map(|meta| meta.id)
+            }
+            _ => None,
         })
     }
 
@@ -1380,7 +1389,7 @@ impl Room {
         if self.status.is_offline() {
             return Task::ready(Err(anyhow!("room is offline")));
         }
-        if self.is_screen_sharing() {
+        if self.is_sharing_screen() {
             return Task::ready(Err(anyhow!("screen was already shared")));
         }
 
@@ -1421,7 +1430,7 @@ impl Room {
                         } else {
                             live_kit.screen_track = LocalTrack::Published {
                                 track_publication: publication,
-                                _stream: Box::new(stream),
+                                _stream: stream,
                             };
                             cx.notify();
                         }
@@ -1619,8 +1628,8 @@ fn spawn_room_connection(
 
 struct LiveKitRoom {
     room: Rc<livekit::Room>,
-    screen_track: LocalTrack,
-    microphone_track: LocalTrack,
+    screen_track: LocalTrack<dyn ScreenCaptureStream>,
+    microphone_track: LocalTrack<AudioStream>,
     /// Tracks whether we're currently in a muted state due to auto-mute from deafening or manual mute performed by user.
     muted_by_user: bool,
     deafened: bool,
@@ -1658,18 +1667,18 @@ impl LiveKitRoom {
     }
 }
 
-enum LocalTrack {
+enum LocalTrack<Stream: ?Sized> {
     None,
     Pending {
         publish_id: usize,
     },
     Published {
         track_publication: LocalTrackPublication,
-        _stream: Box<dyn Any>,
+        _stream: Box<Stream>,
     },
 }
 
-impl Default for LocalTrack {
+impl<T: ?Sized> Default for LocalTrack<T> {
     fn default() -> Self {
         Self::None
     }

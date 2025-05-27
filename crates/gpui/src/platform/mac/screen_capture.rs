@@ -39,6 +39,7 @@ pub struct MacScreenCaptureSource {
 pub struct MacScreenCaptureStream {
     sc_stream: id,
     sc_stream_output: id,
+    meta: SourceMetadata,
 }
 
 static mut DELEGATE_CLASS: *const Class = ptr::null();
@@ -124,6 +125,7 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
                 move |error: id| {
                     let result = if error == nil {
                         let stream = MacScreenCaptureStream {
+                            meta: meta.clone(),
                             sc_stream: stream,
                             sc_stream_output: output,
                         };
@@ -152,7 +154,11 @@ impl Drop for MacScreenCaptureSource {
     }
 }
 
-impl ScreenCaptureStream for MacScreenCaptureStream {}
+impl ScreenCaptureStream for MacScreenCaptureStream {
+    fn metadata(&self) -> Result<SourceMetadata> {
+        Ok(self.meta.clone())
+    }
+}
 
 impl Drop for MacScreenCaptureStream {
     fn drop(&mut self) {

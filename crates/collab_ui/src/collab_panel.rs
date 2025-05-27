@@ -132,7 +132,7 @@ pub fn init(cx: &mut App) {
             if let Some(room) = room {
                 window.defer(cx, move |_window, cx| {
                     room.update(cx, |room, cx| {
-                        if room.is_screen_sharing() {
+                        if room.is_sharing_screen() {
                             room.unshare_screen(cx).ok();
                         } else {
                             let sources = cx.screen_capture_sources();
@@ -527,10 +527,10 @@ impl CollabPanel {
                                 project_id: project.id,
                                 worktree_root_names: project.worktree_root_names.clone(),
                                 host_user_id: user_id,
-                                is_last: projects.peek().is_none() && !room.is_screen_sharing(),
+                                is_last: projects.peek().is_none() && !room.is_sharing_screen(),
                             });
                         }
-                        if room.is_screen_sharing() {
+                        if room.is_sharing_screen() {
                             self.entries.push(ListEntry::ParticipantScreen {
                                 peer_id: None,
                                 is_last: true,
