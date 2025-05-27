@@ -19,9 +19,7 @@ use crate::icon_theme_selector::{IconThemeSelector, IconThemeSelectorDelegate};
 
 actions!(theme_selector, [Reload]);
 
-pub fn init(_cx: &mut App) {
-    
-}
+
 
 pub fn toggle_theme_selector(
     workspace: &mut Workspace,
