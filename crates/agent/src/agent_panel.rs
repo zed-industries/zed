@@ -1286,11 +1286,9 @@ impl AgentPanel {
 
     fn continue_conversation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let thread_state = self.thread.read(cx).thread().read(cx);
-        // Check if we're actually at the tool use limit
         if !thread_state.tool_use_limit_reached() {
             return;
         }
-        let model = thread_state.configured_model().map(|cm| cm.model.clone());
 
         let model = thread_state.configured_model().map(|cm| cm.model.clone());
         if let Some(model) = model {
