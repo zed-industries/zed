@@ -5,7 +5,7 @@ use crate::{
 };
 use anyhow::Result;
 use collections::HashMap;
-use gpui::{AsyncApp, ScreenCaptureSource, ScreenCaptureStream};
+use gpui::{AsyncApp, ScreenCaptureSource, ScreenCaptureStream, TestScreenCaptureStream};
 
 #[derive(Clone, Debug)]
 pub struct LocalParticipant {
@@ -119,7 +119,3 @@ impl RemoteParticipant {
         self.identity.clone()
     }
 }
-
-struct TestScreenCaptureStream;
-
-impl gpui::ScreenCaptureStream for TestScreenCaptureStream {}

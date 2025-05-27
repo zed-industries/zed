@@ -1,7 +1,7 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
     ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformTextSystem, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Size,
+    PlatformTextSystem, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
     SourceMetadata, Task, TestDisplay, TestWindow, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
@@ -44,6 +44,7 @@ pub(crate) struct TestPlatform {
 /// A fake screen capture source, used for testing.
 pub struct TestScreenCaptureSource {}
 
+/// A fake screen capture stream, used for testing.
 pub struct TestScreenCaptureStream {}
 
 impl ScreenCaptureSource for TestScreenCaptureSource {
@@ -284,7 +285,7 @@ impl Platform for TestPlatform {
             .screen_capture_sources
             .borrow()
             .iter()
-            .map(|source| Arc::new(source.clone()) as Rc<dyn ScreenCaptureSource>)
+            .map(|source| Rc::new(source.clone()) as Rc<dyn ScreenCaptureSource>)
             .collect()))
             .ok();
         rx

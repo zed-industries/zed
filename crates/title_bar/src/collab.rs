@@ -531,10 +531,7 @@ impl TitleBar {
 fn pick_default_screen(cx: &App) -> Task<Option<Rc<dyn ScreenCaptureSource>>> {
     let source = cx.screen_capture_sources();
     cx.spawn(async move |_| {
-        let available_sources =
-            maybe!(async move { Result::<_, anyhow::Error>::Ok(source.await??) })
-                .await
-                .ok()?;
+        let available_sources = maybe!(async move { source.await? }).await.ok()?;
         available_sources
             .iter()
             .find(|it| {
