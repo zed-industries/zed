@@ -50,15 +50,15 @@ impl LspTool {
                     message: proto::update_language_server::Variant::StatusUpdate(status_update),
                 } => {
                     //
-                    dbg!(status_update);
+                    dbg!((language_server_id, name, status_update));
                 }
                 project::LspStoreEvent::LanguageServerUpdate {
                     language_server_id,
                     name,
-                    message: proto::update_language_server::Variant::AssociationUpdate(association_update),
+                    message: proto::update_language_server::Variant::RegisteredForBuffer(update),
                 } => {
                     //
-                    dbg!(association_update);
+                    dbg!((language_server_id, name, update));
                 }
                 project::LspStoreEvent::LanguageServerLog(
                     language_server_id,
@@ -178,7 +178,7 @@ impl LspTool {
                                         Some((server_name, adapter, server));
                                 }
 
-                                // TODO kb why does it not work
+                                // TODO kb use language model selector instead
                                 context_menu.update(cx, |context_menu, cx| {
                                     context_menu.rebuild(window, cx);
                                     cx.notify();
@@ -240,7 +240,6 @@ impl StatusItemView for LspTool {
 }
 
 impl Render for LspTool {
-    // TODO kb won't work for remote clients for now
     // TODO kb add a setting to remove this button out of the status bar
     fn render(
         &mut self,
