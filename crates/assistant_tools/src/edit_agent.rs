@@ -2,6 +2,7 @@ mod create_file_parser;
 mod edit_parser;
 #[cfg(test)]
 mod evals;
+mod streaming_fuzzy_matcher;
 
 use crate::{Template, Templates};
 use aho_corasick::AhoCorasick;
@@ -269,9 +270,11 @@ impl EditAgent {
     ) -> Result<EditAgentOutput> {
         let (output, mut edit_events) = Self::parse_edit_chunks(edit_chunks, cx);
         while let Some(edit_event) = edit_events.next().await {
-            let EditParserEvent::OldText(old_text_query) = edit_event? else {
+            let EditParserEvent::OldTextChunk { chunk, done } = edit_event? else {
                 continue;
             };
+
+            let old_text_query = chunk;
 
             // Skip edits with an empty old text.
             if old_text_query.is_empty() {
