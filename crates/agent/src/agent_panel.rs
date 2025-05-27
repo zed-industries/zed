@@ -2652,7 +2652,7 @@ impl AgentPanel {
                                 .label_size(LabelSize::Small)
                                 .key_binding(
                                     KeyBinding::for_action_in(
-                                        &ContinueWithLitMode,
+                                        &ContinueWithBurnMode,
                                         &focus_handle,
                                         window,
                                         cx,
@@ -3057,7 +3057,7 @@ impl Render for AgentPanel {
             .on_action(cx.listener(|this, _: &ContinueThread, window, cx| {
                 this.continue_conversation(window, cx);
             }))
-            .on_action(cx.listener(|this, _: &ContinueWithLitMode, window, cx| {
+            .on_action(cx.listener(|this, _: &ContinueWithBurnMode, window, cx| {
                 this.thread.update(cx, |active_thread, cx| {
                     active_thread.thread().update(cx, |thread, _cx| {
                         thread.set_completion_mode(CompletionMode::Max);

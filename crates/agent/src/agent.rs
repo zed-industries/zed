@@ -88,7 +88,7 @@ actions!(
         ResetTrialUpsell,
         ResetTrialEndUpsell,
         ContinueThread,
-        ContinueWithLitMode,
+        ContinueWithBurnMode,
     ]
 );
 

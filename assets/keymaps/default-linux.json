@@ -250,7 +250,7 @@
       "ctrl-alt-e": "agent::RemoveAllContext",
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-enter": "agent::ContinueThread",
-      "alt-enter": "agent::ContinueWithLitMode"
+      "alt-enter": "agent::ContinueWithBurnMode"
     }
   },
   {
