@@ -74,7 +74,7 @@ fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 }
 
 fn replace_test_name_parameters(test_name: &str) -> String {
-    let pattern = regex::Regex::new(r"(%|\$)[0-9a-zA-Z]").unwrap();
+    let pattern = regex::Regex::new(r"(%|\$)[0-9a-zA-Z]+").unwrap();
 
     pattern.replace_all(test_name, "(.+?)").to_string()
 }
