@@ -451,15 +451,22 @@ impl TitleBar {
                     "Share Screen"
                 }))
                 .on_click(move |_, window, cx| {
-                    let screen = pick_default_screen(cx);
+                    let should_share = ActiveCall::global(cx)
+                        .read(cx)
+                        .room()
+                        .is_some_and(|room| !room.read(cx).is_sharing_screen());
+
                     window
                         .spawn(cx, async move |cx| {
-                            if let Some(screen) = screen.await {
-                                cx.update(|window, cx| {
-                                    toggle_screen_sharing(Some(screen), window, cx)
-                                })
-                                .ok();
-                            }
+                            let screen = if should_share {
+                                cx.update(|_, cx| pick_default_screen(cx))?.await
+                            } else {
+                                None
+                            };
+
+                            cx.update(|window, cx| toggle_screen_sharing(screen, window, cx))?;
+
+                            Result::<_, anyhow::Error>::Ok(())
                         })
                         .detach();
                 });
