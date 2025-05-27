@@ -60,7 +60,8 @@ fn inject_thread_data(template: String, threads_data: Value) -> Result<String> {
         .context("Could not find the thread injection point in the template")?;
 
     let threads_json = serde_json::to_string_pretty(&threads_data)
-        .context("Failed to serialize threads data to JSON")?;
+        .context("Failed to serialize threads data to JSON")?
+        .replace("</script>", r"<\/script>");
     let script_injection = format!("let threadsData = {};", threads_json);
     let final_html = template.replacen(injection_marker, &script_injection, 1);
 
