@@ -307,10 +307,14 @@ impl DebugAdapter for GoDebugAdapter {
         let mut args = match &zed_scenario.request {
             dap::DebugRequest::Attach(attach_config) => {
                 json!({
+                    "request": "attach",
+                    "mode": "debug",
                     "processId": attach_config.process_id,
                 })
             }
             dap::DebugRequest::Launch(launch_config) => json!({
+                "request": "launch",
+                "mode": "debug",
                 "program": launch_config.program,
                 "cwd": launch_config.cwd,
                 "args": launch_config.args,
