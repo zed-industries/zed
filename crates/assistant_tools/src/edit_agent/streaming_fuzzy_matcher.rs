@@ -50,8 +50,7 @@ impl StreamingFuzzyMatcher {
 
             self.incomplete_line.replace_range(..last_pos + 1, "");
 
-            // Try to find a match with the accumulated query
-            self.update_match();
+            self.best_match = self.resolve_location_fuzzy();
         }
 
         self.best_match.clone()
@@ -65,16 +64,10 @@ impl StreamingFuzzyMatcher {
         // Process any remaining incomplete line
         if !self.incomplete_line.is_empty() {
             self.query_lines.push(self.incomplete_line.clone());
-            self.update_match();
+            self.best_match = self.resolve_location_fuzzy();
         }
 
         self.best_match
-    }
-
-    fn update_match(&mut self) {
-        if let Some(best_match) = self.resolve_location_fuzzy() {
-            self.best_match = Some(best_match);
-        }
     }
 
     fn resolve_location_fuzzy(&mut self) -> Option<Range<usize>> {
@@ -256,6 +249,8 @@ mod tests {
     use super::*;
     use indoc::indoc;
     use language::{BufferId, TextBuffer};
+    use rand::prelude::*;
+    use util::test::{generate_marked_text, marked_text_ranges};
 
     #[test]
     fn test_streaming_exact_match() {
@@ -482,6 +477,231 @@ mod tests {
                 "            .field(\"name\", &self.name)"
             ))
         );
+    }
+
+    #[gpui::test(iterations = 100)]
+    fn test_resolve_location_single_line(mut rng: StdRng) {
+        assert_location_resolution(
+            concat!(
+                "    Lorem\n",
+                "«    ipsum»\n",
+                "    dolor sit amet\n",
+                "    consecteur",
+            ),
+            "ipsum",
+            &mut rng,
+        );
+    }
+
+    #[gpui::test(iterations = 100)]
+    fn test_resolve_location_multiline(mut rng: StdRng) {
+        assert_location_resolution(
+            concat!(
+                "    Lorem\n",
+                "«    ipsum\n",
+                "    dolor sit amet»\n",
+                "    consecteur",
+            ),
+            "ipsum\ndolor sit amet",
+            &mut rng,
+        );
+    }
+
+    #[gpui::test(iterations = 100)]
+    fn test_resolve_location_function_with_typo(mut rng: StdRng) {
+        assert_location_resolution(
+            indoc! {"
+                «fn foo1(a: usize) -> usize {
+                    40
+                }»
+
+                fn foo2(b: usize) -> usize {
+                    42
+                }
+            "},
+            "fn foo1(a: usize) -> u32 {\n40\n}",
+            &mut rng,
+        );
+    }
+
+    #[gpui::test(iterations = 100)]
+    fn test_resolve_location_class_methods(mut rng: StdRng) {
+        assert_location_resolution(
+            indoc! {"
+                class Something {
+                    one() { return 1; }
+                «    two() { return 2222; }
+                    three() { return 333; }
+                    four() { return 4444; }
+                    five() { return 5555; }
+                    six() { return 6666; }»
+                    seven() { return 7; }
+                    eight() { return 8; }
+                }
+            "},
+            indoc! {"
+                two() { return 2222; }
+                four() { return 4444; }
+                five() { return 5555; }
+                six() { return 6666; }
+            "},
+            &mut rng,
+        );
+    }
+
+    #[gpui::test(iterations = 100)]
+    fn test_resolve_location_imports_no_match(mut rng: StdRng) {
+        assert_location_resolution(
+            indoc! {"
+                use std::ops::Range;
+                use std::sync::Mutex;
+                use std::{
+                    collections::HashMap,
+                    env,
+                    ffi::{OsStr, OsString},
+                    fs,
+                    io::{BufRead, BufReader},
+                    mem,
+                    path::{Path, PathBuf},
+                    process::Command,
+                    sync::LazyLock,
+                    time::SystemTime,
+                };
+            "},
+            indoc! {"
+                use std::collections::{HashMap, HashSet};
+                use std::ffi::{OsStr, OsString};
+                use std::fmt::Write as _;
+                use std::fs;
+                use std::io::{BufReader, Read, Write};
+                use std::mem;
+                use std::path::{Path, PathBuf};
+                use std::process::Command;
+                use std::sync::Arc;
+            "},
+            &mut rng,
+        );
+    }
+
+    #[gpui::test(iterations = 100)]
+    fn test_resolve_location_nested_closure(mut rng: StdRng) {
+        assert_location_resolution(
+            indoc! {"
+                impl Foo {
+                    fn new() -> Self {
+                        Self {
+                            subscriptions: vec![
+                                cx.observe_window_activation(window, |editor, window, cx| {
+                                    let active = window.is_window_active();
+                                    editor.blink_manager.update(cx, |blink_manager, cx| {
+                                        if active {
+                                            blink_manager.enable(cx);
+                                        } else {
+                                            blink_manager.disable(cx);
+                                        }
+                                    });
+                                }),
+                            ];
+                        }
+                    }
+                }
+            "},
+            concat!(
+                "                    editor.blink_manager.update(cx, |blink_manager, cx| {\n",
+                "                        blink_manager.enable(cx);\n",
+                "                    });",
+            ),
+            &mut rng,
+        );
+    }
+
+    #[gpui::test(iterations = 100)]
+    fn test_resolve_location_tool_invocation(mut rng: StdRng) {
+        assert_location_resolution(
+            indoc! {r#"
+                let tool = cx
+                    .update(|cx| working_set.tool(&tool_name, cx))
+                    .map_err(|err| {
+                        anyhow!("Failed to look up tool '{}': {}", tool_name, err)
+                    })?;
+
+                let Some(tool) = tool else {
+                    return Err(anyhow!("Tool '{}' not found", tool_name));
+                };
+
+                let project = project.clone();
+                let action_log = action_log.clone();
+                let messages = messages.clone();
+                let tool_result = cx
+                    .update(|cx| tool.run(invocation.input, &messages, project, action_log, cx))
+                    .map_err(|err| anyhow!("Failed to start tool '{}': {}", tool_name, err))?;
+
+                tasks.push(tool_result.output);
+            "#},
+            concat!(
+                "let tool_result = cx\n",
+                "    .update(|cx| tool.run(invocation.input, &messages, project, action_log, cx))\n",
+                "    .output;",
+            ),
+            &mut rng,
+        );
+    }
+
+    #[track_caller]
+    fn assert_location_resolution(text_with_expected_range: &str, query: &str, rng: &mut StdRng) {
+        let (text, expected_ranges) = marked_text_ranges(text_with_expected_range, false);
+        let buffer = TextBuffer::new(0, BufferId::new(1).unwrap(), text.clone());
+        let snapshot = buffer.snapshot();
+
+        let mut matcher = StreamingFuzzyMatcher::new(snapshot.clone());
+
+        // Split query into random chunks
+        let chunks = to_random_chunks(rng, query);
+
+        // Push chunks incrementally
+        for chunk in &chunks {
+            matcher.push(chunk);
+        }
+
+        let result = matcher.finish();
+
+        // If no expected ranges, we expect no match
+        if expected_ranges.is_empty() {
+            assert_eq!(
+                result, None,
+                "Expected no match for query: {:?}, but found: {:?}",
+                query, result
+            );
+        } else {
+            let mut actual_ranges = Vec::new();
+            if let Some(range) = result {
+                actual_ranges.push(range);
+            }
+
+            let text_with_actual_range = generate_marked_text(&text, &actual_ranges, false);
+            pretty_assertions::assert_eq!(
+                text_with_actual_range,
+                text_with_expected_range,
+                "Query: {:?}, Chunks: {:?}",
+                query,
+                chunks
+            );
+        }
+    }
+
+    fn to_random_chunks(rng: &mut StdRng, input: &str) -> Vec<String> {
+        let chunk_count = rng.gen_range(1..=cmp::min(input.len(), 50));
+        let mut chunk_indices = (0..input.len()).choose_multiple(rng, chunk_count);
+        chunk_indices.sort();
+        chunk_indices.push(input.len());
+
+        let mut chunks = Vec::new();
+        let mut last_ix = 0;
+        for chunk_ix in chunk_indices {
+            chunks.push(input[last_ix..chunk_ix].to_string());
+            last_ix = chunk_ix;
+        }
+        chunks
     }
 
     fn push(finder: &mut StreamingFuzzyMatcher, chunk: &str) -> Option<String> {

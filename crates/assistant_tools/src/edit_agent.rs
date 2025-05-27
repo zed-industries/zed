@@ -270,7 +270,7 @@ impl EditAgent {
     ) -> Result<EditAgentOutput> {
         let (output, mut edit_events) = Self::parse_edit_chunks(edit_chunks, cx);
         while let Some(edit_event) = edit_events.next().await {
-            let EditParserEvent::OldTextChunk { chunk, done } = edit_event? else {
+            let EditParserEvent::OldTextChunk { chunk, done: _ } = edit_event? else {
                 continue;
             };
 
