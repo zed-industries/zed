@@ -17,10 +17,8 @@ struct Args {
     output: PathBuf,
 }
 
-const DEFAULT_FILENAME: &str = "last.messages.json";
-const MAX_SEARCH_DEPTH: u8 = 2;
-
 /// Recursively finds files with `target_filename` in `dir_path` up to `max_depth`.
+#[allow(dead_code)]
 fn find_target_files_recursive(
     dir_path: &Path,
     target_filename: &str,
@@ -121,7 +119,7 @@ pub fn generate_explorer_html(input_paths: &[PathBuf], output_path: &PathBuf) ->
 
 fn inject_thread_data(template: String, threads_data: Value) -> Result<String> {
     let injection_marker = "let threadsData = window.threadsData || { threads: [dummyThread] };";
-    if template.find(injection_marker).is_none() {
+    if !template.contains(injection_marker) {
         anyhow::bail!(
             "Could not find the thread injection point in the template. Expected: '{}'",
             injection_marker
@@ -142,6 +140,9 @@ fn inject_thread_data(template: String, threads_data: Value) -> Result<String> {
 #[allow(dead_code)]
 fn main() -> Result<()> {
     let args = Args::parse();
+
+    const DEFAULT_FILENAME: &str = "last.messages.json";
+    const MAX_SEARCH_DEPTH: u8 = 2;
 
     let mut resolved_input_files: Vec<PathBuf> = Vec::new();
 
