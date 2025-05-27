@@ -1,8 +1,8 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
     ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformTextSystem, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Size, Task,
-    TestDisplay, TestWindow, WindowAppearance, WindowParams, size,
+    PlatformTextSystem, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Size,
+    SourceMetadata, Task, TestDisplay, TestWindow, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
 use collections::VecDeque;
@@ -47,8 +47,13 @@ pub struct TestScreenCaptureSource {}
 pub struct TestScreenCaptureStream {}
 
 impl ScreenCaptureSource for TestScreenCaptureSource {
-    fn metadata(&self) -> Result<Size<DevicePixels>> {
-        Ok(size(DevicePixels(1), DevicePixels(1)))
+    fn metadata(&self) -> Result<SourceMetadata> {
+        Ok(SourceMetadata {
+            id: 0,
+            is_main: None,
+            label: None,
+            resolution: size(DevicePixels(1), DevicePixels(1)),
+        })
     }
 
     fn stream(
@@ -64,7 +69,11 @@ impl ScreenCaptureSource for TestScreenCaptureSource {
     }
 }
 
-impl ScreenCaptureStream for TestScreenCaptureStream {}
+impl ScreenCaptureStream for TestScreenCaptureStream {
+    fn metadata(&self) -> Result<SourceMetadata> {
+        TestScreenCaptureSource {}.metadata()
+    }
+}
 
 struct TestPrompt {
     msg: String,
@@ -269,13 +278,13 @@ impl Platform for TestPlatform {
 
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+    ) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
         let (mut tx, rx) = oneshot::channel();
         tx.send(Ok(self
             .screen_capture_sources
             .borrow()
             .iter()
-            .map(|source| Box::new(source.clone()) as Box<dyn ScreenCaptureSource>)
+            .map(|source| Arc::new(source.clone()) as Rc<dyn ScreenCaptureSource>)
             .collect()))
             .ok();
         rx

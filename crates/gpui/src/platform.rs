@@ -166,9 +166,8 @@ pub(crate) trait Platform: 'static {
     }
 
     fn is_screen_capture_supported(&self) -> bool;
-    fn screen_capture_sources(
-        &self,
-    ) -> oneshot::Receiver<Result<Vec<Arc<dyn ScreenCaptureSource>>>>;
+    fn screen_capture_sources(&self)
+    -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>>;
 
     fn open_window(
         &self,

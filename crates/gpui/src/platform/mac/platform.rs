@@ -576,7 +576,7 @@ impl Platform for MacPlatform {
 
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Arc<dyn ScreenCaptureSource>>>> {
+    ) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
         screen_capture::get_sources()
     }
 

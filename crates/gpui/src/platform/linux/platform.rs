@@ -52,9 +52,8 @@ pub trait LinuxClient {
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn is_screen_capture_supported(&self) -> bool;
-    fn screen_capture_sources(
-        &self,
-    ) -> oneshot::Receiver<Result<Vec<Arc<dyn ScreenCaptureSource>>>>;
+    fn screen_capture_sources(&self)
+    -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>>;
 
     fn open_window(
         &self,
@@ -241,7 +240,7 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Arc<dyn ScreenCaptureSource>>>> {
+    ) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
         self.screen_capture_sources()
     }
 

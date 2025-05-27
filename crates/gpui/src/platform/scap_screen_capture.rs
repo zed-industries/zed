@@ -15,7 +15,7 @@ use std::sync::atomic::{self, AtomicBool};
 #[allow(dead_code)]
 pub(crate) fn scap_screen_sources(
     foreground_executor: &ForegroundExecutor,
-) -> oneshot::Receiver<Result<Vec<Arc<dyn ScreenCaptureSource>>>> {
+) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
     let (sources_tx, sources_rx) = oneshot::channel();
     get_screen_targets(sources_tx);
     to_dyn_screen_capture_sources(sources_rx, foreground_executor)
@@ -29,7 +29,7 @@ pub(crate) fn scap_screen_sources(
 #[allow(dead_code)]
 pub(crate) fn start_scap_default_target_source(
     foreground_executor: &ForegroundExecutor,
-) -> oneshot::Receiver<Result<Vec<Arc<dyn ScreenCaptureSource>>>> {
+) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
     let (sources_tx, sources_rx) = oneshot::channel();
     start_default_target_screen_capture(sources_tx);
     to_dyn_screen_capture_sources(sources_rx, foreground_executor)
@@ -243,12 +243,12 @@ fn frame_size(frame: &scap::frame::Frame) -> Size<DevicePixels> {
 }
 
 /// This is used by `get_screen_targets` and `start_default_target_screen_capture` to turn their
-/// results into `Arc<dyn ScreenCaptureSource>`. They need to `Send` their capture source, and so
-/// the capture source structs are used as `Arc<dyn ScreenCaptureSource>` is not `Send`.
+/// results into `Rc<dyn ScreenCaptureSource>`. They need to `Send` their capture source, and so
+/// the capture source structs are used as `Rc<dyn ScreenCaptureSource>` is not `Send`.
 fn to_dyn_screen_capture_sources<T: ScreenCaptureSource + 'static>(
     sources_rx: oneshot::Receiver<Result<Vec<T>>>,
     foreground_executor: &ForegroundExecutor,
-) -> oneshot::Receiver<Result<Vec<Arc<dyn ScreenCaptureSource>>>> {
+) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
     let (dyn_sources_tx, dyn_sources_rx) = oneshot::channel();
     foreground_executor
         .spawn(async move {
@@ -256,7 +256,7 @@ fn to_dyn_screen_capture_sources<T: ScreenCaptureSource + 'static>(
                 Ok(Ok(results)) => dyn_sources_tx
                     .send(Ok(results
                         .into_iter()
-                        .map(|source| Arc::new(source) as Arc<dyn ScreenCaptureSource>)
+                        .map(|source| Arc::new(source) as Rc<dyn ScreenCaptureSource>)
                         .collect::<Vec<_>>()))
                     .ok(),
                 Ok(Err(err)) => dyn_sources_tx.send(Err(err)).ok(),

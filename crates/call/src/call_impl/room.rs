@@ -22,7 +22,7 @@ use livekit_client::{self as livekit, AudioStream, TrackSid};
 use postage::{sink::Sink, stream::Stream, watch};
 use project::Project;
 use settings::Settings as _;
-use std::{any::Any, future::Future, mem, rc::Rc, sync::Arc, time::Duration};
+use std::{future::Future, mem, rc::Rc, sync::Arc, time::Duration};
 use util::{ResultExt, TryFutureExt, post_inc};
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -1383,7 +1383,7 @@ impl Room {
 
     pub fn share_screen(
         &mut self,
-        source: Arc<dyn ScreenCaptureSource>,
+        source: Rc<dyn ScreenCaptureSource>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         if self.status.is_offline() {

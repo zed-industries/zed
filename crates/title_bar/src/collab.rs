@@ -1,10 +1,11 @@
+use std::rc::Rc;
 use std::sync::Arc;
 
 use call::{ActiveCall, ParticipantLocation, Room};
 use client::{User, proto::PeerId};
 use gpui::{
-    Action, AnyElement, Hsla, IntoElement, MouseButton, NoAction, Path, ScreenCaptureSource,
-    Styled, WeakEntity, canvas, point,
+    AnyElement, Hsla, IntoElement, MouseButton, Path, ScreenCaptureSource, Styled, WeakEntity,
+    canvas, point,
 };
 use gpui::{App, Task, Window, actions};
 use rpc::proto::{self};
@@ -24,7 +25,7 @@ actions!(
 );
 
 fn toggle_screen_sharing(
-    screen: Option<Arc<dyn ScreenCaptureSource>>,
+    screen: Option<Rc<dyn ScreenCaptureSource>>,
     window: &mut Window,
     cx: &mut App,
 ) {
@@ -527,7 +528,7 @@ impl TitleBar {
 }
 
 /// Picks the screen to share when clicking on the main screen sharing button.
-fn pick_default_screen(cx: &App) -> Task<Option<Arc<dyn ScreenCaptureSource>>> {
+fn pick_default_screen(cx: &App) -> Task<Option<Rc<dyn ScreenCaptureSource>>> {
     let source = cx.screen_capture_sources();
     cx.spawn(async move |_| {
         let available_sources =

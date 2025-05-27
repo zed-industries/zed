@@ -1,5 +1,5 @@
 use crate::{
-    DevicePixels, ForegroundExecutor, SharedString, Size, SourceMetadata,
+    DevicePixels, ForegroundExecutor, SharedString, SourceMetadata,
     platform::{ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream},
     size,
 };
@@ -26,7 +26,7 @@ use objc::{
     runtime::{Class, Object, Sel},
     sel, sel_impl,
 };
-use std::{cell::RefCell, ffi::c_void, mem, ptr, rc::Rc, sync::Arc};
+use std::{cell::RefCell, ffi::c_void, mem, ptr, rc::Rc};
 
 use super::NSStringExt;
 
@@ -230,7 +230,7 @@ unsafe fn screen_id_to_human_label() -> HashMap<CGDirectDisplayID, ScreenMeta> {
     map
 }
 
-pub(crate) fn get_sources() -> oneshot::Receiver<Result<Vec<Arc<dyn ScreenCaptureSource>>>> {
+pub(crate) fn get_sources() -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
     unsafe {
         let (mut tx, rx) = oneshot::channel();
         let tx = Rc::new(RefCell::new(Some(tx)));
@@ -251,7 +251,7 @@ pub(crate) fn get_sources() -> oneshot::Receiver<Result<Vec<Arc<dyn ScreenCaptur
                         sc_display: msg_send![display, retain],
                         meta,
                     };
-                    result.push(Arc::new(source) as Arc<dyn ScreenCaptureSource>);
+                    result.push(Rc::new(source) as Rc<dyn ScreenCaptureSource>);
                 }
                 Ok(result)
             } else {
