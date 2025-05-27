@@ -540,7 +540,7 @@ message UpdateLanguageServer {
         LspDiskBasedDiagnosticsUpdating disk_based_diagnostics_updating = 6;
         LspDiskBasedDiagnosticsUpdated disk_based_diagnostics_updated = 7;
         StatusUpdate status_update = 9;
-        AssociationUpdate association_update = 10;
+        RegisteredForBuffer registered_for_buffer = 10;
     }
 }
 
@@ -574,20 +574,14 @@ message StatusUpdate {
     enum Status {
         Starting = 0;
         Running = 1;
-        Warning = 2;
-        Error = 3;
+        RunningWithWarning = 2;
+        Stopped = 3;
     }
 }
 
-message AssociationUpdate {
+message RegisteredForBuffer {
     uint64 worktree_id = 1;
     uint64 buffer_id = 2;
-    Kind kind = 3;
-
-    enum Kind {
-        Added = 0;
-        Removed = 1;
-    }
 }
 
 message LanguageServerLog {
