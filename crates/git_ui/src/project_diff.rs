@@ -219,7 +219,7 @@ impl ProjectDiff {
         };
         let repo = git_repo.read(cx);
 
-        let namespace = if repo.has_conflict(&entry.repo_path) {
+        let namespace = if repo.had_conflict_on_last_merge_head_change(&entry.repo_path) {
             CONFLICT_NAMESPACE
         } else if entry.status.is_created() {
             NEW_NAMESPACE
@@ -372,7 +372,7 @@ impl ProjectDiff {
                 };
                 let namespace = if GitPanelSettings::get_global(cx).sort_by_path {
                     TRACKED_NAMESPACE
-                } else if repo.has_conflict(&entry.repo_path) {
+                } else if repo.had_conflict_on_last_merge_head_change(&entry.repo_path) {
                     CONFLICT_NAMESPACE
                 } else if entry.status.is_created() {
                     NEW_NAMESPACE
