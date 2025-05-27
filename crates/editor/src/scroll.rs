@@ -292,9 +292,10 @@ impl ScrollManager {
         workspace_id: Option<WorkspaceId>,
         cx: &mut Context<Editor>
     ) -> bool {
+        let ret = 
         if
-        self.animation_manager.is_some() &&
-        self.ongoing.try_use_anim {
+            self.animation_manager.is_some() &&
+            self.ongoing.try_use_anim {
             let current = self.scroll_position(map);
             let anim = Anim::new(
                 current,
@@ -307,10 +308,16 @@ impl ScrollManager {
             );
             self.animation_manager.as_mut().unwrap().start(anim);
             cx.notify();
-            return true;
-        }
+            true
+        } else {
+            false
+        };
 
-        return false;
+        // not that ideal but OngoingScroll has nowhere 
+        // where it's reset and the scroll event marked as treated
+        self.ongoing.try_use_anim = true;
+
+        ret
     }
 
     fn set_scroll_position(

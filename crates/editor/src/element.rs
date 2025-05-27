@@ -5327,7 +5327,7 @@ impl EditorElement {
                             let position = editor.scroll_position(cx).apply_along(axis, |p| {
                                 (p + (new_position - old_position) / *text_unit_size).max(0.)
                             });
-                            editor.set_scroll_position(position, window, cx);
+                            editor.scroll(position, Some(axis), false, window, cx);
                         }
 
                         editor.scroll_manager.show_scrollbars(window, cx);
