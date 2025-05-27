@@ -38,7 +38,7 @@ use ui::{
 };
 use util::ResultExt;
 use workspace::{Workspace, notifications::NotifyResultExt};
-use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
+use zed_actions::{OpenRecent, OpenRemote};
 
 pub use onboarding_banner::restore_banner;
 
@@ -48,8 +48,6 @@ pub use stories::*;
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
 const MAX_SHORT_SHA_LENGTH: usize = 8;
-
-const BOOK_ONBOARDING: &str = "https://dub.sh/zed-c-onboarding";
 
 actions!(collab, [ToggleUserMenu, ToggleProjectMenu, SwitchBranch]);
 
@@ -237,7 +235,9 @@ impl Render for TitleBar {
                                     el.child(self.render_user_menu_button(cx))
                                 } else {
                                     el.children(self.render_connection_status(status, cx))
-                                        .child(self.render_sign_in_button(cx))
+                                        .when(TitleBarSettings::get_global(cx).show_sign_in, |el| {
+                                            el.child(self.render_sign_in_button(cx))
+                                        })
                                         .child(self.render_user_menu_button(cx))
                                 }
                             }),
@@ -430,14 +430,22 @@ impl TitleBar {
                 .tooltip(move |window, cx| {
                     Tooltip::with_meta(
                         "Remote Project",
-                        Some(&OpenRemote),
+                        Some(&OpenRemote {
+                            from_existing_connection: false,
+                        }),
                         meta.clone(),
                         window,
                         cx,
                     )
                 })
                 .on_click(|_, window, cx| {
-                    window.dispatch_action(OpenRemote.boxed_clone(), cx);
+                    window.dispatch_action(
+                        OpenRemote {
+                            from_existing_connection: false,
+                        }
+                        .boxed_clone(),
+                        cx,
+                    );
                 })
                 .into_any_element(),
         )
@@ -473,7 +481,7 @@ impl TitleBar {
                 .label_size(LabelSize::Small)
                 .tooltip(Tooltip::text(format!(
                     "{} is sharing this project. Click to follow.",
-                    host_user.github_login.clone()
+                    host_user.github_login
                 )))
                 .on_click({
                     let host_peer_id = host.peer_id;
@@ -724,13 +732,6 @@ impl TitleBar {
                             zed_actions::Extensions::default().boxed_clone(),
                         )
                         .separator()
-                        .link(
-                            "Book Onboarding",
-                            OpenBrowser {
-                                url: BOOK_ONBOARDING.to_string(),
-                            }
-                            .boxed_clone(),
-                        )
                         .action("Sign Out", client::SignOut.boxed_clone())
                     })
                     .into()
@@ -773,14 +774,6 @@ impl TitleBar {
                             .action(
                                 "Extensions",
                                 zed_actions::Extensions::default().boxed_clone(),
-                            )
-                            .separator()
-                            .link(
-                                "Book Onboarding",
-                                OpenBrowser {
-                                    url: BOOK_ONBOARDING.to_string(),
-                                }
-                                .boxed_clone(),
                             )
                     })
                     .into()

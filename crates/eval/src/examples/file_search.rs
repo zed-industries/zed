@@ -1,5 +1,5 @@
+use agent_settings::AgentProfileId;
 use anyhow::Result;
-use assistant_settings::AgentProfileId;
 use assistant_tools::FindPathToolInput;
 use async_trait::async_trait;
 use regex::Regex;
@@ -18,6 +18,7 @@ impl Example for FileSearchExample {
             language_server: None,
             max_assertions: Some(3),
             profile_id: AgentProfileId::default(),
+            existing_thread_json: None,
         }
     }
 

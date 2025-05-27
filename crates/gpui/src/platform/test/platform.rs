@@ -236,7 +236,7 @@ impl Platform for TestPlatform {
     fn quit(&self) {}
 
     fn restart(&self, _: Option<PathBuf>) {
-        unimplemented!()
+        //
     }
 
     fn activate(&self, _ignoring_other_apps: bool) {

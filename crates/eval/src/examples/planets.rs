@@ -1,5 +1,5 @@
+use agent_settings::AgentProfileId;
 use anyhow::Result;
-use assistant_settings::AgentProfileId;
 use assistant_tool::Tool;
 use assistant_tools::{OpenTool, TerminalTool};
 use async_trait::async_trait;
@@ -18,6 +18,7 @@ impl Example for Planets {
             language_server: None,
             max_assertions: None,
             profile_id: AgentProfileId::default(),
+            existing_thread_json: None,
         }
     }
 

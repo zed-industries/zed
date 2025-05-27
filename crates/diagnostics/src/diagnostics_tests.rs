@@ -27,9 +27,7 @@ use util::{RandomCharIter, path, post_inc};
 
 #[ctor::ctor]
 fn init_logger() {
-    if env::var("RUST_LOG").is_ok() {
-        env_logger::init();
-    }
+    zlog::init_test();
 }
 
 #[gpui::test]
@@ -1413,7 +1411,7 @@ async fn test_diagnostics_with_code(cx: &mut TestAppContext) {
 
 fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
-        env_logger::try_init().ok();
+        zlog::init_test();
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
         theme::init(theme::LoadThemes::JustBase, cx);

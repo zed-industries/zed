@@ -30,9 +30,7 @@ use util::test::TempTree;
 #[cfg(test)]
 #[ctor::ctor]
 fn init_logger() {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::init();
-    }
+    zlog::init_test();
 }
 
 #[gpui::test]
@@ -164,6 +162,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         indexed_docs_providers: BTreeMap::default(),
                         snippets: None,
                         capabilities: Vec::new(),
+                        debug_adapters: Default::default(),
                     }),
                     dev: false,
                 },
@@ -193,6 +192,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         indexed_docs_providers: BTreeMap::default(),
                         snippets: None,
                         capabilities: Vec::new(),
+                        debug_adapters: Default::default(),
                     }),
                     dev: false,
                 },
@@ -367,6 +367,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 indexed_docs_providers: BTreeMap::default(),
                 snippets: None,
                 capabilities: Vec::new(),
+                debug_adapters: Default::default(),
             }),
             dev: false,
         },

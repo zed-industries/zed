@@ -54,7 +54,13 @@ Any time you see instructions that include commands of the form `zed: ...` or `e
 
 To open your custom settings to set things like fonts, formatting settings, per-language settings, and more, use the {#kb zed::OpenSettings} keybinding.
 
-To see all available settings, open the Command Palette with {#kb command_palette::Toggle} and search for "zed: open default settings". You can also check them all out in the [Configuring Zed](./configuring-zed.md) documentation.
+To see all available settings, open the Command Palette with {#kb command_palette::Toggle} and search for `zed: open default settings`.
+You can also check them all out in the [Configuring Zed](./configuring-zed.md) documentation.
+
+## Configure AI in Zed
+
+Zed smoothly integrates LLMs in multiple ways across the editor.
+Visit [the AI overview page](./ai/overview.md) to learn how to quickly get started with LLMs on Zed.
 
 ## Set up your key bindings
 

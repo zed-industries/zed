@@ -9,9 +9,9 @@ use crate::{branch_picker, picker_prompt, render_remote_button};
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
-use anyhow::Result;
+use agent_settings::AgentSettings;
+use anyhow::Context as _;
 use askpass::AskPassDelegate;
-use assistant_settings::AssistantSettings;
 use db::kvp::KEY_VALUE_STORE;
 
 use editor::{
@@ -54,6 +54,7 @@ use project::{
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
 use std::future::Future;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
@@ -62,7 +63,7 @@ use ui::{
     Checkbox, ContextMenu, ElevationIndex, PopoverMenu, Scrollbar, ScrollbarState, SplitButton,
     Tooltip, prelude::*,
 };
-use util::{ResultExt, TryFutureExt, maybe};
+use util::{ResultExt, TryFutureExt, maybe, wrap_with_prefix};
 use workspace::AppState;
 
 use notifications::status_toast::{StatusToast, ToastIcon};
@@ -382,7 +383,6 @@ pub(crate) fn commit_message_editor(
     commit_editor.set_show_gutter(false, cx);
     commit_editor.set_show_wrap_guides(false, cx);
     commit_editor.set_show_indent_guides(false, cx);
-    commit_editor.set_hard_wrap(Some(72), cx);
     let placeholder = placeholder.unwrap_or("Enter commit message".into());
     commit_editor.set_placeholder_text(placeholder, cx);
     commit_editor
@@ -481,10 +481,10 @@ impl GitPanel {
             hide_task: None,
         };
 
-        let mut assistant_enabled = AssistantSettings::get_global(cx).enabled;
+        let mut assistant_enabled = AgentSettings::get_global(cx).enabled;
         let _settings_subscription = cx.observe_global::<SettingsStore>(move |_, cx| {
-            if assistant_enabled != AssistantSettings::get_global(cx).enabled {
-                assistant_enabled = AssistantSettings::get_global(cx).enabled;
+            if assistant_enabled != AgentSettings::get_global(cx).enabled {
+                assistant_enabled = AgentSettings::get_global(cx).enabled;
                 cx.notify();
             }
         });
@@ -1484,8 +1484,22 @@ impl GitPanel {
 
     fn custom_or_suggested_commit_message(&self, cx: &mut Context<Self>) -> Option<String> {
         let message = self.commit_editor.read(cx).text(cx);
+        let width = self
+            .commit_editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .language_settings(cx)
+            .preferred_line_length as usize;
 
         if !message.trim().is_empty() {
+            let message = wrap_with_prefix(
+                String::new(),
+                message,
+                width,
+                NonZeroU32::new(8).unwrap(), // tab size doesn't matter when prefix is empty
+                false,
+            );
             return Some(message);
         }
 
@@ -1626,14 +1640,12 @@ impl GitPanel {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl Future<Output = Result<bool, anyhow::Error>> + use<> {
+    ) -> impl Future<Output = anyhow::Result<bool>> + use<> {
         let repo = self.active_repository.clone();
         let mut cx = window.to_async(cx);
 
         async move {
-            let Some(repo) = repo else {
-                return Err(anyhow::anyhow!("No active repository"));
-            };
+            let repo = repo.context("No active repository")?;
 
             let pushed_to: Vec<SharedString> = repo
                 .update(&mut cx, |repo, _| repo.check_for_pushed_commits())?
@@ -1735,7 +1747,7 @@ impl GitPanel {
             }
         });
 
-        let temperature = AssistantSettings::temperature_for_model(&model, cx);
+        let temperature = AgentSettings::temperature_for_model(&model, cx);
 
         self.generate_commit_message_task = Some(cx.spawn(async move |this, cx| {
              async move {
@@ -2090,22 +2102,16 @@ impl GitPanel {
         let mut cx = window.to_async(cx);
 
         async move {
-            let Some(repo) = repo else {
-                return Err(anyhow::anyhow!("No active repository"));
-            };
-
+            let repo = repo.context("No active repository")?;
             let mut current_remotes: Vec<Remote> = repo
                 .update(&mut cx, |repo, _| {
-                    let Some(current_branch) = repo.branch.as_ref() else {
-                        return Err(anyhow::anyhow!("No active branch"));
-                    };
-
-                    Ok(repo.get_remotes(Some(current_branch.name().to_string())))
+                    let current_branch = repo.branch.as_ref().context("No active branch")?;
+                    anyhow::Ok(repo.get_remotes(Some(current_branch.name().to_string())))
                 })??
                 .await??;
 
             if current_remotes.len() == 0 {
-                return Err(anyhow::anyhow!("No active remote"));
+                anyhow::bail!("No active remote");
             } else if current_remotes.len() == 1 {
                 return Ok(Some(current_remotes.pop().unwrap()));
             } else {
@@ -2583,19 +2589,18 @@ impl GitPanel {
         } else {
             workspace.update(cx, |workspace, cx| {
                 let workspace_weak = cx.weak_entity();
-                let toast =
-                    StatusToast::new(format!("git {} failed", action.clone()), cx, |this, _cx| {
-                        this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
-                            .action("View Log", move |window, cx| {
-                                let message = message.clone();
-                                let action = action.clone();
-                                workspace_weak
-                                    .update(cx, move |workspace, cx| {
-                                        Self::open_output(action, workspace, &message, window, cx)
-                                    })
-                                    .ok();
-                            })
-                    });
+                let toast = StatusToast::new(format!("git {} failed", action), cx, |this, _cx| {
+                    this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
+                        .action("View Log", move |window, cx| {
+                            let message = message.clone();
+                            let action = action.clone();
+                            workspace_weak
+                                .update(cx, move |workspace, cx| {
+                                    Self::open_output(action, workspace, &message, window, cx)
+                                })
+                                .ok();
+                        })
+                });
                 workspace.toggle_status_toast(toast, cx)
             });
         }
@@ -4056,7 +4061,7 @@ impl GitPanel {
 }
 
 fn current_language_model(cx: &Context<'_, GitPanel>) -> Option<Arc<dyn LanguageModel>> {
-    assistant_settings::AssistantSettings::get_global(cx)
+    agent_settings::AgentSettings::get_global(cx)
         .enabled
         .then(|| {
             let ConfiguredModel { provider, model } =
@@ -4774,14 +4779,12 @@ mod tests {
     use super::*;
 
     fn init_test(cx: &mut gpui::TestAppContext) {
-        if std::env::var("RUST_LOG").is_ok() {
-            env_logger::try_init().ok();
-        }
+        zlog::init_test();
 
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            AssistantSettings::register(cx);
+            AgentSettings::register(cx);
             WorktreeSettings::register(cx);
             workspace::init_settings(cx);
             theme::init(LoadThemes::JustBase, cx);
@@ -4848,7 +4851,7 @@ mod tests {
 
         cx.executor().run_until_parked();
 
-        let app_state = workspace.update(cx, |workspace, _| workspace.app_state().clone());
+        let app_state = workspace.read_with(cx, |workspace, _| workspace.app_state().clone());
         let panel = cx.new_window_entity(|window, cx| {
             GitPanel::new(workspace.clone(), project.clone(), app_state, window, cx)
         });
@@ -4859,7 +4862,7 @@ mod tests {
         cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
         handle.await;
 
-        let entries = panel.update(cx, |panel, _| panel.entries.clone());
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
         pretty_assertions::assert_eq!(
             entries,
             [
@@ -4934,7 +4937,7 @@ mod tests {
         });
         cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
         handle.await;
-        let entries = panel.update(cx, |panel, _| panel.entries.clone());
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
         pretty_assertions::assert_eq!(
             entries,
             [

@@ -49,6 +49,7 @@ use theme::{ActiveTheme, Theme};
 use util::{paths::home_dir, truncate_and_trailoff};
 
 use std::{
+    borrow::Cow,
     cmp::{self, min},
     fmt::Display,
     ops::{Deref, Index, RangeInclusive},
@@ -269,13 +270,12 @@ impl TerminalError {
                     Err(s) => s,
                 }
             })
-            .unwrap_or_else(|| {
-                let default_dir =
-                    dirs::home_dir().map(|buf| buf.into_os_string().to_string_lossy().to_string());
-                match default_dir {
-                    Some(dir) => format!("<none specified, using home directory> {}", dir),
-                    None => "<none specified, could not find home directory>".to_string(),
-                }
+            .unwrap_or_else(|| match dirs::home_dir() {
+                Some(dir) => format!(
+                    "<none specified, using home directory> {}",
+                    dir.into_os_string().to_string_lossy()
+                ),
+                None => "<none specified, could not find home directory>".to_string(),
             })
     }
 
@@ -517,7 +517,7 @@ impl TerminalBuilder {
             while let Some(event) = self.events_rx.next().await {
                 terminal.update(cx, |terminal, cx| {
                     //Process the first event immediately for lowered latency
-                    terminal.process_event(&event, cx);
+                    terminal.process_event(event, cx);
                 })?;
 
                 'outer: loop {
@@ -555,11 +555,11 @@ impl TerminalBuilder {
 
                     terminal.update(cx, |this, cx| {
                         if wakeup {
-                            this.process_event(&AlacTermEvent::Wakeup, cx);
+                            this.process_event(AlacTermEvent::Wakeup, cx);
                         }
 
                         for event in events {
-                            this.process_event(&event, cx);
+                            this.process_event(event, cx);
                         }
                     })?;
                     smol::future::yield_now().await;
@@ -705,10 +705,10 @@ impl TaskStatus {
 }
 
 impl Terminal {
-    fn process_event(&mut self, event: &AlacTermEvent, cx: &mut Context<Self>) {
+    fn process_event(&mut self, event: AlacTermEvent, cx: &mut Context<Self>) {
         match event {
             AlacTermEvent::Title(title) => {
-                self.breadcrumb_text = title.to_string();
+                self.breadcrumb_text = title;
                 cx.emit(Event::BreadcrumbsChanged);
             }
             AlacTermEvent::ResetTitle => {
@@ -716,7 +716,7 @@ impl Terminal {
                 cx.emit(Event::BreadcrumbsChanged);
             }
             AlacTermEvent::ClipboardStore(_, data) => {
-                cx.write_to_clipboard(ClipboardItem::new_string(data.to_string()))
+                cx.write_to_clipboard(ClipboardItem::new_string(data))
             }
             AlacTermEvent::ClipboardLoad(_, format) => {
                 self.write_to_pty(
@@ -727,7 +727,7 @@ impl Terminal {
                     },
                 )
             }
-            AlacTermEvent::PtyWrite(out) => self.write_to_pty(out.clone()),
+            AlacTermEvent::PtyWrite(out) => self.write_to_pty(out),
             AlacTermEvent::TextAreaSizeRequest(format) => {
                 self.write_to_pty(format(self.last_content.terminal_bounds.into()))
             }
@@ -759,13 +759,12 @@ impl Terminal {
                 // Instead of locking, we could store the colors in `self.last_content`. But then
                 // we might respond with out of date value if a "set color" sequence is immediately
                 // followed by a color request sequence.
-                let color = self.term.lock().colors()[*index].unwrap_or_else(|| {
-                    to_alac_rgb(get_color_at_index(*index, cx.theme().as_ref()))
-                });
+                let color = self.term.lock().colors()[index]
+                    .unwrap_or_else(|| to_alac_rgb(get_color_at_index(index, cx.theme().as_ref())));
                 self.write_to_pty(format(color));
             }
             AlacTermEvent::ChildExit(error_code) => {
-                self.register_task_finished(Some(*error_code), cx);
+                self.register_task_finished(Some(error_code), cx);
             }
         }
     }
@@ -1088,7 +1087,7 @@ impl Terminal {
         }
 
         self.last_content.last_hovered_word = Some(HoveredWord {
-            word: word.clone(),
+            word,
             word_match,
             id: self.next_link_id(),
         });
@@ -1249,12 +1248,13 @@ impl Terminal {
             return;
         }
 
-        let mut key = keystroke.key.clone();
-        if keystroke.modifiers.shift {
-            key = key.to_uppercase();
-        }
+        let key: Cow<'_, str> = if keystroke.modifiers.shift {
+            Cow::Owned(keystroke.key.to_uppercase())
+        } else {
+            Cow::Borrowed(keystroke.key.as_str())
+        };
 
-        let motion: Option<ViMotion> = match key.as_str() {
+        let motion: Option<ViMotion> = match key.as_ref() {
             "h" | "left" => Some(ViMotion::Left),
             "j" | "down" => Some(ViMotion::Down),
             "k" | "up" => Some(ViMotion::Up),
@@ -1284,7 +1284,7 @@ impl Terminal {
             return;
         }
 
-        let scroll_motion = match key.as_str() {
+        let scroll_motion = match key.as_ref() {
             "g" => Some(AlacScroll::Top),
             "G" => Some(AlacScroll::Bottom),
             "b" if keystroke.modifiers.control => Some(AlacScroll::PageUp),
@@ -1305,7 +1305,7 @@ impl Terminal {
             return;
         }
 
-        match key.as_str() {
+        match key.as_ref() {
             "v" => {
                 let point = self.last_content.cursor.point;
                 let selection_type = SelectionType::Simple;

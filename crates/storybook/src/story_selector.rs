@@ -2,7 +2,6 @@ use std::str::FromStr;
 use std::sync::OnceLock;
 
 use crate::stories::*;
-use anyhow::anyhow;
 use clap::ValueEnum;
 use clap::builder::PossibleValue;
 use gpui::AnyView;
@@ -17,7 +16,6 @@ pub enum ComponentStory {
     CollabNotification,
     ContextMenu,
     Cursor,
-    DefaultColors,
     Focus,
     IconButton,
     Keybinding,
@@ -47,7 +45,6 @@ impl ComponentStory {
                 .into(),
             Self::ContextMenu => cx.new(|_| ui::ContextMenuStory).into(),
             Self::Cursor => cx.new(|_| crate::stories::CursorStory).into(),
-            Self::DefaultColors => DefaultColorsStory::model(cx).into(),
             Self::Focus => FocusStory::model(window, cx).into(),
             Self::IconButton => cx.new(|_| ui::IconButtonStory).into(),
             Self::Keybinding => cx.new(|_| ui::KeybindingStory).into(),
@@ -92,7 +89,7 @@ impl FromStr for StorySelector {
             return Ok(Self::Component(component_story));
         }
 
-        Err(anyhow!("story not found for '{raw_story_name}'"))
+        anyhow::bail!("story not found for '{raw_story_name}'")
     }
 }
 

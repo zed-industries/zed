@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{Ok, Result, anyhow};
+use anyhow::{Context as _, Ok, Result};
 use dap::{
     Capabilities, ContinueArguments, ExceptionFilterOptions, InitializeRequestArguments,
     InitializeRequestArgumentsPathFormat, NextArguments, SetVariableResponse, SourceBreakpoint,
@@ -1766,7 +1766,7 @@ impl DapCommand for LocationsCommand {
             source: response
                 .source
                 .map(<dap::Source as ProtoConversion>::from_proto)
-                .ok_or_else(|| anyhow!("Missing `source` field in Locations proto"))?,
+                .context("Missing `source` field in Locations proto")?,
             line: response.line,
             column: response.column,
             end_line: response.end_line,

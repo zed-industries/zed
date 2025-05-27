@@ -29,6 +29,7 @@ pub struct ExtensionHostProxy {
     slash_command_proxy: RwLock<Option<Arc<dyn ExtensionSlashCommandProxy>>>,
     context_server_proxy: RwLock<Option<Arc<dyn ExtensionContextServerProxy>>>,
     indexed_docs_provider_proxy: RwLock<Option<Arc<dyn ExtensionIndexedDocsProviderProxy>>>,
+    debug_adapter_provider_proxy: RwLock<Option<Arc<dyn ExtensionDebugAdapterProviderProxy>>>,
 }
 
 impl ExtensionHostProxy {
@@ -54,6 +55,7 @@ impl ExtensionHostProxy {
             slash_command_proxy: RwLock::default(),
             context_server_proxy: RwLock::default(),
             indexed_docs_provider_proxy: RwLock::default(),
+            debug_adapter_provider_proxy: RwLock::default(),
         }
     }
 
@@ -90,6 +92,11 @@ impl ExtensionHostProxy {
         proxy: impl ExtensionIndexedDocsProviderProxy,
     ) {
         self.indexed_docs_provider_proxy
+            .write()
+            .replace(Arc::new(proxy));
+    }
+    pub fn register_debug_adapter_proxy(&self, proxy: impl ExtensionDebugAdapterProviderProxy) {
+        self.debug_adapter_provider_proxy
             .write()
             .replace(Arc::new(proxy));
     }
@@ -400,5 +407,19 @@ impl ExtensionIndexedDocsProviderProxy for ExtensionHostProxy {
         };
 
         proxy.register_indexed_docs_provider(extension, provider_id)
+    }
+}
+
+pub trait ExtensionDebugAdapterProviderProxy: Send + Sync + 'static {
+    fn register_debug_adapter(&self, extension: Arc<dyn Extension>, debug_adapter_name: Arc<str>);
+}
+
+impl ExtensionDebugAdapterProviderProxy for ExtensionHostProxy {
+    fn register_debug_adapter(&self, extension: Arc<dyn Extension>, debug_adapter_name: Arc<str>) {
+        let Some(proxy) = self.debug_adapter_provider_proxy.read().clone() else {
+            return;
+        };
+
+        proxy.register_debug_adapter(extension, debug_adapter_name)
     }
 }

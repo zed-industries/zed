@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
+use anyhow::Context as _;
 use anyhow::{Result, anyhow};
 use chrono::DateTime;
 use collections::HashSet;
@@ -113,7 +114,7 @@ pub enum ModelVendor {
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 #[serde(tag = "type")]
-pub enum ChatMessageContent {
+pub enum ChatMessagePart {
     #[serde(rename = "text")]
     Text { text: String },
     #[serde(rename = "image_url")]
@@ -194,24 +195,53 @@ pub enum ToolChoice {
     None,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum ChatMessage {
     Assistant {
-        content: Option<String>,
+        content: ChatMessageContent,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
     },
     User {
-        content: Vec<ChatMessageContent>,
+        content: ChatMessageContent,
     },
     System {
         content: String,
     },
     Tool {
-        content: String,
+        content: ChatMessageContent,
         tool_call_id: String,
     },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ChatMessageContent {
+    Plain(String),
+    Multipart(Vec<ChatMessagePart>),
+}
+
+impl ChatMessageContent {
+    pub fn empty() -> Self {
+        ChatMessageContent::Multipart(vec![])
+    }
+}
+
+impl From<Vec<ChatMessagePart>> for ChatMessageContent {
+    fn from(mut parts: Vec<ChatMessagePart>) -> Self {
+        if let [ChatMessagePart::Text { text }] = parts.as_mut_slice() {
+            ChatMessageContent::Plain(std::mem::take(text))
+        } else {
+            ChatMessageContent::Multipart(parts)
+        }
+    }
+}
+
+impl From<String> for ChatMessageContent {
+    fn from(text: String) -> Self {
+        ChatMessageContent::Plain(text)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -293,8 +323,8 @@ impl TryFrom<ApiTokenResponse> for ApiToken {
     type Error = anyhow::Error;
 
     fn try_from(response: ApiTokenResponse) -> Result<Self, Self::Error> {
-        let expires_at = DateTime::from_timestamp(response.expires_at, 0)
-            .ok_or_else(|| anyhow!("invalid expires_at"))?;
+        let expires_at =
+            DateTime::from_timestamp(response.expires_at, 0).context("invalid expires_at")?;
 
         Ok(Self {
             api_key: response.token,
@@ -413,9 +443,11 @@ impl CopilotChat {
         request: Request,
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
-        let Some(this) = cx.update(|cx| Self::global(cx)).ok().flatten() else {
-            return Err(anyhow!("Copilot chat is not enabled"));
-        };
+        let this = cx
+            .update(|cx| Self::global(cx))
+            .ok()
+            .flatten()
+            .context("Copilot chat is not enabled")?;
 
         let (oauth_token, api_token, client) = this.read_with(&cx, |this, _| {
             (
@@ -425,7 +457,7 @@ impl CopilotChat {
             )
         })?;
 
-        let oauth_token = oauth_token.ok_or_else(|| anyhow!("No OAuth token available"))?;
+        let oauth_token = oauth_token.context("No OAuth token available")?;
 
         let token = match api_token {
             Some(api_token) if api_token.remaining_seconds() > 5 * 60 => api_token.clone(),
@@ -484,18 +516,19 @@ async fn request_models(api_token: String, client: Arc<dyn HttpClient>) -> Resul
 
     let mut response = client.send(request).await?;
 
-    if response.status().is_success() {
-        let mut body = Vec::new();
-        response.body_mut().read_to_end(&mut body).await?;
+    anyhow::ensure!(
+        response.status().is_success(),
+        "Failed to request models: {}",
+        response.status()
+    );
+    let mut body = Vec::new();
+    response.body_mut().read_to_end(&mut body).await?;
 
-        let body_str = std::str::from_utf8(&body)?;
+    let body_str = std::str::from_utf8(&body)?;
 
-        let models = serde_json::from_str::<ModelSchema>(body_str)?.data;
+    let models = serde_json::from_str::<ModelSchema>(body_str)?.data;
 
-        Ok(models)
-    } else {
-        Err(anyhow!("Failed to request models: {}", response.status()))
-    }
+    Ok(models)
 }
 
 async fn request_api_token(oauth_token: &str, client: Arc<dyn HttpClient>) -> Result<ApiToken> {
@@ -522,8 +555,7 @@ async fn request_api_token(oauth_token: &str, client: Arc<dyn HttpClient>) -> Re
         response.body_mut().read_to_end(&mut body).await?;
 
         let body_str = std::str::from_utf8(&body)?;
-
-        Err(anyhow!("Failed to request API token: {}", body_str))
+        anyhow::bail!("Failed to request API token: {body_str}");
     }
 }
 
@@ -549,6 +581,15 @@ async fn stream_completion(
     api_key: String,
     request: Request,
 ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
+    let is_vision_request = request.messages.last().map_or(false, |message| match message {
+        ChatMessage::User { content }
+        | ChatMessage::Assistant { content, .. }
+        | ChatMessage::Tool { content, .. } => {
+            matches!(content, ChatMessageContent::Multipart(parts) if parts.iter().any(|part| matches!(part, ChatMessagePart::Image { .. })))
+        }
+        _ => false,
+    });
+
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(COPILOT_CHAT_COMPLETION_URL)
@@ -562,7 +603,7 @@ async fn stream_completion(
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
         .header("Copilot-Integration-Id", "vscode-chat")
-        .header("Copilot-Vision-Request", "true");
+        .header("Copilot-Vision-Request", is_vision_request.to_string());
 
     let is_streaming = request.stream;
 
@@ -574,11 +615,11 @@ async fn stream_completion(
         let mut body = Vec::new();
         response.body_mut().read_to_end(&mut body).await?;
         let body_str = std::str::from_utf8(&body)?;
-        return Err(anyhow!(
+        anyhow::bail!(
             "Failed to connect to API: {} {}",
             response.status(),
             body_str
-        ));
+        );
     }
 
     if is_streaming {
