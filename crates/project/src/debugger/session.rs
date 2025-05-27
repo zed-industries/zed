@@ -121,11 +121,11 @@ impl From<dap::Thread> for Thread {
 
 pub enum Mode {
     Building,
-    Running(LocalMode),
+    Running(RunningMode),
 }
 
 #[derive(Clone)]
-pub struct LocalMode {
+pub struct RunningMode {
     client: Arc<DebugAdapterClient>,
     binary: DebugAdapterBinary,
     tmp_breakpoint: Option<SourceBreakpoint>,
@@ -148,7 +148,7 @@ fn client_source(abs_path: &Path) -> dap::Source {
     }
 }
 
-impl LocalMode {
+impl RunningMode {
     async fn new(
         session_id: SessionId,
         parent_session: Option<Entity<Session>>,
@@ -704,7 +704,7 @@ impl Session {
             cx.subscribe(&breakpoint_store, |this, store, event, cx| match event {
                 BreakpointStoreEvent::BreakpointsUpdated(path, reason) => {
                     if let Some(local) = (!this.ignore_breakpoints)
-                        .then(|| this.as_local_mut())
+                        .then(|| this.as_running_mut())
                         .flatten()
                     {
                         local
@@ -714,7 +714,7 @@ impl Session {
                 }
                 BreakpointStoreEvent::BreakpointsCleared(paths) => {
                     if let Some(local) = (!this.ignore_breakpoints)
-                        .then(|| this.as_local_mut())
+                        .then(|| this.as_running_mut())
                         .flatten()
                     {
                         local.unset_breakpoints_from_paths(paths, cx).detach();
@@ -806,7 +806,7 @@ impl Session {
         let parent_session = self.parent_session.clone();
 
         cx.spawn(async move |this, cx| {
-            let mode = LocalMode::new(
+            let mode = RunningMode::new(
                 id,
                 parent_session,
                 worktree.downgrade(),
@@ -906,18 +906,29 @@ impl Session {
         return tx;
     }
 
-    pub fn is_local(&self) -> bool {
+    pub fn is_started(&self) -> bool {
+        match &self.mode {
+            Mode::Building => false,
+            Mode::Running(running) => running.is_started,
+        }
+    }
+
+    pub fn is_building(&self) -> bool {
+        matches!(self.mode, Mode::Building)
+    }
+
+    pub fn is_running(&self) -> bool {
         matches!(self.mode, Mode::Running(_))
     }
 
-    pub fn as_local_mut(&mut self) -> Option<&mut LocalMode> {
+    pub fn as_running_mut(&mut self) -> Option<&mut RunningMode> {
         match &mut self.mode {
             Mode::Running(local_mode) => Some(local_mode),
             Mode::Building => None,
         }
     }
 
-    pub fn as_local(&self) -> Option<&LocalMode> {
+    pub fn as_running(&self) -> Option<&RunningMode> {
         match &self.mode {
             Mode::Running(local_mode) => Some(local_mode),
             Mode::Building => None,
@@ -1140,7 +1151,7 @@ impl Session {
         body: Option<serde_json::Value>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let Some(local_session) = self.as_local() else {
+        let Some(local_session) = self.as_running() else {
             unreachable!("Cannot respond to remote client");
         };
         let client = local_session.client.clone();
@@ -1162,7 +1173,7 @@ impl Session {
     fn handle_stopped_event(&mut self, event: StoppedEvent, cx: &mut Context<Self>) {
         // todo(debugger): Find a clean way to get around the clone
         let breakpoint_store = self.breakpoint_store.clone();
-        if let Some((local, path)) = self.as_local_mut().and_then(|local| {
+        if let Some((local, path)) = self.as_running_mut().and_then(|local| {
             let breakpoint = local.tmp_breakpoint.take()?;
             let path = breakpoint.path.clone();
             Some((local, path))
@@ -1528,7 +1539,7 @@ impl Session {
 
         self.ignore_breakpoints = ignore;
 
-        if let Some(local) = self.as_local() {
+        if let Some(local) = self.as_running() {
             local.send_source_breakpoints(ignore, &self.breakpoint_store, cx)
         } else {
             // todo(debugger): We need to propagate this change to downstream sessions and send a message to upstream sessions
@@ -1550,7 +1561,7 @@ impl Session {
     }
 
     fn send_exception_breakpoints(&mut self, cx: &App) {
-        if let Some(local) = self.as_local() {
+        if let Some(local) = self.as_running() {
             let exception_filters = self
                 .exception_breakpoints
                 .values()
