@@ -33,8 +33,7 @@ use zed_actions::{OpenRecent, OpenRemote};
 
 pub fn init(cx: &mut App) {
     SshSettings::register(cx);
-    cx.observe_new(RecentProjects::register).detach();
-    cx.observe_new(RemoteServerProjects::register).detach();
+
     cx.observe_new(DisconnectedOverlay::register).detach();
 
     remote_servers::init(cx);
@@ -97,13 +96,7 @@ impl RecentProjects {
         }
     }
 
-    fn register(
-        _workspace: &mut Workspace,
-        _window: Option<&mut Window>,
-        _cx: &mut Context<Workspace>,
-    ) {
 
-    }
 
     pub fn open(
         workspace: &mut Workspace,

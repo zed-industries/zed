@@ -346,7 +346,10 @@ impl Mode {
 }
 pub fn init(cx: &mut App) {
     cx.on_action({
-        move |_: &OpenRemote, cx: &mut App| {
+        move |action: &OpenRemote, cx: &mut App| {
+            if action.from_existing_connection {
+                return;
+            }
             with_workspace(cx, |workspace, window, cx| {
                 let handle = cx.entity().downgrade();
                 let fs = workspace.app_state().fs.clone();
@@ -359,13 +362,6 @@ pub fn init(cx: &mut App) {
 }
 
 impl RemoteServerProjects {
-    pub fn register(
-        _workspace: &mut Workspace,
-        _window: Option<&mut Window>,
-        _: &mut Context<Workspace>,
-    ) {
-
-    }
 
     pub fn open(workspace: Entity<Workspace>, window: &mut Window, cx: &mut App) {
         workspace.update(cx, |workspace, cx| {
