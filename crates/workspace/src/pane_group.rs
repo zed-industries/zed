@@ -156,30 +156,61 @@ impl PaneGroup {
         direction: SplitDirection,
         cx: &App,
     ) -> Option<&Entity<Pane>> {
-        let bounding_box = self.bounding_box_for_pane(active_pane)?;
+        // Same probe point that the old algorithm used.
+        let active_bounds = self.bounding_box_for_pane(active_pane)?;
         let cursor = active_pane.read(cx).pixel_position_of_cursor(cx);
         let center = match cursor {
-            Some(cursor) if bounding_box.contains(&cursor) => cursor,
-            _ => bounding_box.center(),
+            Some(c) if active_bounds.contains(&c) => c,
+            _ => active_bounds.center(),
         };
 
         let distance_to_next = crate::HANDLE_HITBOX_SIZE;
-
-        let target = match direction {
+        let probe = match direction {
             SplitDirection::Left => {
-                Point::new(bounding_box.left() - distance_to_next.into(), center.y)
+                Point::new(active_bounds.left() - distance_to_next.into(), center.y)
             }
             SplitDirection::Right => {
-                Point::new(bounding_box.right() + distance_to_next.into(), center.y)
+                Point::new(active_bounds.right() + distance_to_next.into(), center.y)
             }
             SplitDirection::Up => {
-                Point::new(center.x, bounding_box.top() - distance_to_next.into())
+                Point::new(center.x, active_bounds.top() - distance_to_next.into())
             }
             SplitDirection::Down => {
-                Point::new(center.x, bounding_box.bottom() + distance_to_next.into())
+                Point::new(center.x, active_bounds.bottom() + distance_to_next.into())
             }
         };
-        self.pane_at_pixel_position(target)
+
+        // Collect every pane whose bounding box contains the probe point.
+        let mut best: Option<&Entity<Pane>> = None;
+        let mut best_ts: usize = 0;
+
+        // Debug: Print info for all panes first
+        dbg!("=== All panes info ===");
+        for (i, pane) in self.panes().iter().enumerate() {
+            let bounds = self.bounding_box_for_pane(pane);
+            let ts = pane.read(cx).last_visit_ts;
+            dbg!(format!("Pane {}: ID={:?}, bounds={:?}, last_visit_ts={}", 
+                         i, pane.entity_id(), bounds, ts));
+        }
+        dbg!(format!("Probe point: {:?}", probe));
+
+        for pane in self.panes() {
+            if let Some(bounds) = self.bounding_box_for_pane(pane) {
+                let ts = pane.read(cx).last_visit_ts;
+                let contains_probe = bounds.contains(&probe);
+                dbg!(format!("Checking pane {:?}: bounds={:?}, contains_probe={}, ts={}, current_best_ts={}", 
+                             pane.entity_id(), bounds, contains_probe, ts, best_ts));
+                
+                if contains_probe {
+                    if best.is_none() || ts > best_ts {
+                        dbg!(format!("New best pane: {:?} (ts={})", pane.entity_id(), ts));
+                        best = Some(pane);
+                        best_ts = ts;
+                    }
+                }
+            }
+        }
+        best
     }
 
     pub fn invert_axies(&mut self) {
