@@ -11,7 +11,7 @@ use futures::future::join_all;
 pub use open_path_prompt::OpenPathDelegate;
 
 use collections::HashMap;
-use editor::Editor;
+use editor::{Editor, items::entry_git_aware_label_color};
 use file_finder_settings::{FileFinderSettings, FileFinderWidth};
 use file_icons::FileIcons;
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
@@ -779,9 +779,7 @@ impl FileFinderDelegate {
                 let worktree = worktree.read(cx);
                 PathMatchCandidateSet {
                     snapshot: worktree.snapshot(),
-                    include_ignored: worktree
-                        .root_entry()
-                        .map_or(false, |entry| entry.is_ignored),
+                    include_ignored: true,
                     include_root_name,
                     candidates: project::Candidates::Files,
                 }
@@ -1038,7 +1036,7 @@ impl FileFinderDelegate {
     ) -> Task<()> {
         cx.spawn_in(window, async move |picker, cx| {
             let Some(project) = picker
-                .update(cx, |picker, _| picker.delegate.project.clone())
+                .read_with(cx, |picker, _| picker.delegate.project.clone())
                 .log_err()
             else {
                 return;
@@ -1172,6 +1170,48 @@ impl PickerDelegate for FileFinderDelegate {
     ) -> Task<()> {
         let raw_query = raw_query.replace(' ', "");
         let raw_query = raw_query.trim();
+
+        let raw_query = match &raw_query.get(0..2) {
+            Some(".\\") | Some("./") => &raw_query[2..],
+            Some("a\\") | Some("a/") => {
+                if self
+                    .workspace
+                    .upgrade()
+                    .into_iter()
+                    .flat_map(|workspace| workspace.read(cx).worktrees(cx))
+                    .all(|worktree| {
+                        worktree
+                            .read(cx)
+                            .entry_for_path(Path::new("a"))
+                            .is_none_or(|entry| !entry.is_dir())
+                    })
+                {
+                    &raw_query[2..]
+                } else {
+                    raw_query
+                }
+            }
+            Some("b\\") | Some("b/") => {
+                if self
+                    .workspace
+                    .upgrade()
+                    .into_iter()
+                    .flat_map(|workspace| workspace.read(cx).worktrees(cx))
+                    .all(|worktree| {
+                        worktree
+                            .read(cx)
+                            .entry_for_path(Path::new("b"))
+                            .is_none_or(|entry| !entry.is_dir())
+                    })
+                {
+                    &raw_query[2..]
+                } else {
+                    raw_query
+                }
+            }
+            _ => raw_query,
+        };
+
         if raw_query.is_empty() {
             // if there was no query before, and we already have some (history) matches
             // there's no need to update anything, since nothing has changed.
@@ -1378,23 +1418,58 @@ impl PickerDelegate for FileFinderDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let settings = FileFinderSettings::get_global(cx);
+        let path_match = self.matches.get(ix)?;
 
-        let path_match = self
-            .matches
-            .get(ix)
-            .expect("Invalid matches state: no element for index {ix}");
+        let git_status_color = if settings.git_status {
+            let (entry, project_path) = match path_match {
+                Match::History { path, .. } => {
+                    let project = self.project.read(cx);
+                    let project_path = path.project.clone();
+                    let entry = project.entry_for_path(&project_path, cx)?;
+                    Some((entry, project_path))
+                }
+                Match::Search(mat) => {
+                    let project = self.project.read(cx);
+                    let project_path = ProjectPath {
+                        worktree_id: WorktreeId::from_usize(mat.0.worktree_id),
+                        path: mat.0.path.clone(),
+                    };
+                    let entry = project.entry_for_path(&project_path, cx)?;
+                    Some((entry, project_path))
+                }
+            }?;
 
-        let history_icon = match &path_match {
+            let git_status = self
+                .project
+                .read(cx)
+                .project_path_git_status(&project_path, cx)
+                .map(|status| status.summary())
+                .unwrap_or_default();
+            Some(entry_git_aware_label_color(
+                git_status,
+                entry.is_ignored,
+                selected,
+            ))
+        } else {
+            None
+        };
+
+        let history_icon = match path_match {
             Match::History { .. } => Icon::new(IconName::HistoryRerun)
-                .color(Color::Muted)
                 .size(IconSize::Small)
+                .color(Color::Muted)
                 .into_any_element(),
             Match::Search(_) => v_flex()
                 .flex_none()
                 .size(IconSize::Small.rems())
                 .into_any_element(),
         };
+
         let (file_name_label, full_path_label) = self.labels_for_match(path_match, window, cx, ix);
+        let file_name_label = match git_status_color {
+            Some(git_status_color) => file_name_label.color(git_status_color),
+            None => file_name_label,
+        };
 
         let file_icon = maybe!({
             if !settings.file_icons {
@@ -1402,7 +1477,7 @@ impl PickerDelegate for FileFinderDelegate {
             }
             let file_name = path_match.path().file_name()?;
             let icon = FileIcons::get_icon(file_name.as_ref(), cx)?;
-            Some(Icon::from_path(icon).color(Color::Muted))
+            Some(Icon::from_path(icon).color(git_status_color.unwrap_or(Color::Muted)))
         });
 
         Some(

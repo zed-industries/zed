@@ -1,3 +1,4 @@
+mod create_file_parser;
 mod edit_parser;
 #[cfg(test)]
 mod evals;
@@ -6,6 +7,7 @@ use crate::{Template, Templates};
 use aho_corasick::AhoCorasick;
 use anyhow::Result;
 use assistant_tool::ActionLog;
+use create_file_parser::{CreateFileParser, CreateFileParserEvent};
 use edit_parser::{EditParser, EditParserEvent, EditParserMetrics};
 use futures::{
     Stream, StreamExt,
@@ -123,16 +125,16 @@ impl EditAgent {
         mpsc::UnboundedReceiver<EditAgentOutputEvent>,
     ) {
         let (output_events_tx, output_events_rx) = mpsc::unbounded();
+        let (parse_task, parse_rx) = Self::parse_create_file_chunks(edit_chunks, cx);
         let this = self.clone();
         let task = cx.spawn(async move |cx| {
             this.action_log
                 .update(cx, |log, cx| log.buffer_created(buffer.clone(), cx))?;
-            let output = this
-                .overwrite_with_chunks_internal(buffer, edit_chunks, output_events_tx, cx)
-                .await;
+            this.overwrite_with_chunks_internal(buffer, parse_rx, output_events_tx, cx)
+                .await?;
             this.project
                 .update(cx, |project, cx| project.set_agent_location(None, cx))?;
-            output
+            parse_task.await
         });
         (task, output_events_rx)
     }
@@ -140,10 +142,10 @@ impl EditAgent {
     async fn overwrite_with_chunks_internal(
         &self,
         buffer: Entity<Buffer>,
-        edit_chunks: impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>>,
+        mut parse_rx: UnboundedReceiver<Result<CreateFileParserEvent>>,
         output_events_tx: mpsc::UnboundedSender<EditAgentOutputEvent>,
         cx: &mut AsyncApp,
-    ) -> Result<EditAgentOutput> {
+    ) -> Result<()> {
         cx.update(|cx| {
             buffer.update(cx, |buffer, cx| buffer.set_text("", cx));
             self.action_log.update(cx, |log, cx| {
@@ -163,34 +165,31 @@ impl EditAgent {
                 .ok();
         })?;
 
-        let mut raw_edits = String::new();
-        pin_mut!(edit_chunks);
-        while let Some(chunk) = edit_chunks.next().await {
-            let chunk = chunk?;
-            raw_edits.push_str(&chunk);
-            cx.update(|cx| {
-                buffer.update(cx, |buffer, cx| buffer.append(chunk, cx));
-                self.action_log
-                    .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-                self.project.update(cx, |project, cx| {
-                    project.set_agent_location(
-                        Some(AgentLocation {
-                            buffer: buffer.downgrade(),
-                            position: language::Anchor::MAX,
-                        }),
-                        cx,
-                    )
-                });
-            })?;
-            output_events_tx
-                .unbounded_send(EditAgentOutputEvent::Edited)
-                .ok();
+        while let Some(event) = parse_rx.next().await {
+            match event? {
+                CreateFileParserEvent::NewTextChunk { chunk } => {
+                    cx.update(|cx| {
+                        buffer.update(cx, |buffer, cx| buffer.append(chunk, cx));
+                        self.action_log
+                            .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+                        self.project.update(cx, |project, cx| {
+                            project.set_agent_location(
+                                Some(AgentLocation {
+                                    buffer: buffer.downgrade(),
+                                    position: language::Anchor::MAX,
+                                }),
+                                cx,
+                            )
+                        });
+                    })?;
+                    output_events_tx
+                        .unbounded_send(EditAgentOutputEvent::Edited)
+                        .ok();
+                }
+            }
         }
 
-        Ok(EditAgentOutput {
-            raw_edits,
-            parser_metrics: EditParserMetrics::default(),
-        })
+        Ok(())
     }
 
     pub fn edit(
@@ -430,6 +429,44 @@ impl EditAgent {
             Ok(EditAgentOutput {
                 raw_edits,
                 parser_metrics: parser.finish(),
+            })
+        });
+        (output, rx)
+    }
+
+    fn parse_create_file_chunks(
+        chunks: impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>>,
+        cx: &mut AsyncApp,
+    ) -> (
+        Task<Result<EditAgentOutput>>,
+        UnboundedReceiver<Result<CreateFileParserEvent>>,
+    ) {
+        let (tx, rx) = mpsc::unbounded();
+        let output = cx.background_spawn(async move {
+            pin_mut!(chunks);
+
+            let mut parser = CreateFileParser::new();
+            let mut raw_edits = String::new();
+            while let Some(chunk) = chunks.next().await {
+                match chunk {
+                    Ok(chunk) => {
+                        raw_edits.push_str(&chunk);
+                        for event in parser.push(Some(&chunk)) {
+                            tx.unbounded_send(Ok(event))?;
+                        }
+                    }
+                    Err(error) => {
+                        tx.unbounded_send(Err(error.into()))?;
+                    }
+                }
+            }
+            // Send final events with None to indicate completion
+            for event in parser.push(None) {
+                tx.unbounded_send(Ok(event))?;
+            }
+            Ok(EditAgentOutput {
+                raw_edits,
+                parser_metrics: EditParserMetrics::default(),
             })
         });
         (output, rx)
@@ -1138,7 +1175,7 @@ mod tests {
             })
         );
 
-        chunks_tx.unbounded_send("jkl\n").unwrap();
+        chunks_tx.unbounded_send("```\njkl\n").unwrap();
         cx.run_until_parked();
         assert_eq!(
             drain_events(&mut events),
@@ -1146,7 +1183,7 @@ mod tests {
         );
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
-            "jkl\n"
+            "jkl"
         );
         assert_eq!(
             project.read_with(cx, |project, _| project.agent_location()),
@@ -1164,7 +1201,7 @@ mod tests {
         );
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
-            "jkl\nmno\n"
+            "jkl\nmno"
         );
         assert_eq!(
             project.read_with(cx, |project, _| project.agent_location()),
@@ -1174,7 +1211,7 @@ mod tests {
             })
         );
 
-        chunks_tx.unbounded_send("pqr").unwrap();
+        chunks_tx.unbounded_send("pqr\n```").unwrap();
         cx.run_until_parked();
         assert_eq!(
             drain_events(&mut events),

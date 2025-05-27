@@ -2519,7 +2519,7 @@ impl Workspace {
         });
         cx.spawn(async move |cx| {
             let (worktree, path) = entry.await?;
-            let worktree_id = worktree.update(cx, |t, _| t.id())?;
+            let worktree_id = worktree.read_with(cx, |t, _| t.id())?;
             Ok((
                 worktree,
                 ProjectPath {
@@ -3344,17 +3344,38 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(&target_pane) = self.center.panes().get(action.destination) else {
-            return;
+        let panes = self.center.panes();
+        let destination = match panes.get(action.destination) {
+            Some(&destination) => destination.clone(),
+            None => {
+                if self.active_pane.read(cx).items_len() < 2 {
+                    return;
+                }
+                let direction = SplitDirection::Right;
+                let split_off_pane = self
+                    .find_pane_in_direction(direction, cx)
+                    .unwrap_or_else(|| self.active_pane.clone());
+                let new_pane = self.add_pane(window, cx);
+                if self
+                    .center
+                    .split(&split_off_pane, &new_pane, direction)
+                    .log_err()
+                    .is_none()
+                {
+                    return;
+                };
+                new_pane
+            }
         };
+
         move_active_item(
             &self.active_pane,
-            target_pane,
+            &destination,
             action.focus,
             true,
             window,
             cx,
-        );
+        )
     }
 
     pub fn activate_next_pane(&mut self, window: &mut Window, cx: &mut App) {
@@ -3486,18 +3507,35 @@ impl Workspace {
         &mut self,
         action: &MoveItemToPaneInDirection,
         window: &mut Window,
-        cx: &mut App,
+        cx: &mut Context<Self>,
     ) {
-        if let Some(destination) = self.find_pane_in_direction(action.direction, cx) {
-            move_active_item(
-                &self.active_pane,
-                &destination,
-                action.focus,
-                true,
-                window,
-                cx,
-            );
-        }
+        let destination = match self.find_pane_in_direction(action.direction, cx) {
+            Some(destination) => destination,
+            None => {
+                if self.active_pane.read(cx).items_len() < 2 {
+                    return;
+                }
+                let new_pane = self.add_pane(window, cx);
+                if self
+                    .center
+                    .split(&self.active_pane, &new_pane, action.direction)
+                    .log_err()
+                    .is_none()
+                {
+                    return;
+                };
+                new_pane
+            }
+        };
+
+        move_active_item(
+            &self.active_pane,
+            &destination,
+            action.focus,
+            true,
+            window,
+            cx,
+        );
     }
 
     pub fn bounding_box_for_pane(&self, pane: &Entity<Pane>) -> Option<Bounds<Pixels>> {
@@ -5109,7 +5147,7 @@ impl Workspace {
         cx: &mut Context<Workspace>,
     ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
         cx.spawn_in(window, async move |workspace, cx| {
-            let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
+            let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
 
             let mut center_group = None;
             let mut center_items = None;
@@ -6798,7 +6836,7 @@ pub fn create_and_open_local_file(
     default_content: impl 'static + Send + FnOnce() -> Rope,
 ) -> Task<Result<Box<dyn ItemHandle>>> {
     cx.spawn_in(window, async move |workspace, cx| {
-        let fs = workspace.update(cx, |workspace, _| workspace.app_state().fs.clone())?;
+        let fs = workspace.read_with(cx, |workspace, _| workspace.app_state().fs.clone())?;
         if !fs.is_file(path).await {
             fs.create_file(path, Default::default()).await?;
             fs.save(path, &default_content(), Default::default())
@@ -7609,7 +7647,7 @@ mod tests {
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.add_item_to_active_pane(Box::new(item1.clone()), None, true, window, cx);
         });
-        item1.update(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(0)));
+        item1.read_with(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(0)));
 
         // Adding an item that creates ambiguity increases the level of detail on
         // both tabs.
@@ -7621,8 +7659,8 @@ mod tests {
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.add_item_to_active_pane(Box::new(item2.clone()), None, true, window, cx);
         });
-        item1.update(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(1)));
-        item2.update(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(1)));
+        item1.read_with(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(1)));
+        item2.read_with(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(1)));
 
         // Adding an item that creates ambiguity increases the level of detail only
         // on the ambiguous tabs. In this case, the ambiguity can't be resolved so
@@ -7635,9 +7673,9 @@ mod tests {
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.add_item_to_active_pane(Box::new(item3.clone()), None, true, window, cx);
         });
-        item1.update(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(1)));
-        item2.update(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(3)));
-        item3.update(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(3)));
+        item1.read_with(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(1)));
+        item2.read_with(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(3)));
+        item3.read_with(cx, |item, _| assert_eq!(item.tab_detail.get(), Some(3)));
     }
 
     #[gpui::test]
@@ -7664,7 +7702,7 @@ mod tests {
         let project = Project::test(fs, ["root1".as_ref()], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
         let worktree_id = project.update(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
@@ -8061,7 +8099,7 @@ mod tests {
 
         cx.executor().run_until_parked();
         close.await.unwrap();
-        right_pane.update(cx, |pane, _| {
+        right_pane.read_with(cx, |pane, _| {
             assert_eq!(pane.items_len(), 0);
         });
     }
@@ -8074,7 +8112,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
-        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         let item = cx.new(|cx| {
             TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
@@ -8096,12 +8134,12 @@ mod tests {
 
         // Deactivating the window saves the file.
         cx.deactivate_window();
-        item.update(cx, |item, _| assert_eq!(item.save_count, 1));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 1));
 
         // Re-activating the window doesn't save the file.
         cx.update(|window, _| window.activate_window());
         cx.executor().run_until_parked();
-        item.update(cx, |item, _| assert_eq!(item.save_count, 1));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 1));
 
         // Autosave on focus change.
         item.update_in(cx, |item, window, cx| {
@@ -8117,7 +8155,7 @@ mod tests {
         // Blurring the item saves the file.
         item.update_in(cx, |_, window, _| window.blur());
         cx.executor().run_until_parked();
-        item.update(cx, |item, _| assert_eq!(item.save_count, 2));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 2));
 
         // Deactivating the window still saves the file.
         item.update_in(cx, |item, window, cx| {
@@ -8140,11 +8178,11 @@ mod tests {
 
         // Delay hasn't fully expired, so the file is still dirty and unsaved.
         cx.executor().advance_clock(Duration::from_millis(250));
-        item.update(cx, |item, _| assert_eq!(item.save_count, 3));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 3));
 
         // After delay expires, the file is saved.
         cx.executor().advance_clock(Duration::from_millis(250));
-        item.update(cx, |item, _| assert_eq!(item.save_count, 4));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 4));
 
         // Autosave on focus change, ensuring closing the tab counts as such.
         item.update(cx, |item, cx| {
@@ -8165,7 +8203,7 @@ mod tests {
         .await
         .unwrap();
         assert!(!cx.has_pending_prompt());
-        item.update(cx, |item, _| assert_eq!(item.save_count, 5));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
 
         // Add the item again, ensuring autosave is prevented if the underlying file has been deleted.
         workspace.update_in(cx, |workspace, window, cx| {
@@ -8179,7 +8217,7 @@ mod tests {
             window.blur();
         });
         cx.run_until_parked();
-        item.update(cx, |item, _| assert_eq!(item.save_count, 5));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
 
         // Ensure autosave is prevented for deleted files also when closing the buffer.
         let _close_items = pane.update_in(cx, |pane, window, cx| {
@@ -8187,7 +8225,7 @@ mod tests {
         });
         cx.run_until_parked();
         assert!(cx.has_pending_prompt());
-        item.update(cx, |item, _| assert_eq!(item.save_count, 5));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
     }
 
     #[gpui::test]
@@ -8203,8 +8241,8 @@ mod tests {
         let item = cx.new(|cx| {
             TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
-        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
-        let toolbar = pane.update(cx, |pane, _| pane.toolbar().clone());
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let toolbar = pane.read_with(cx, |pane, _| pane.toolbar().clone());
         let toolbar_notify_count = Rc::new(RefCell::new(0));
 
         workspace.update_in(cx, |workspace, window, cx| {
@@ -8216,7 +8254,7 @@ mod tests {
             .detach();
         });
 
-        pane.update(cx, |pane, _| {
+        pane.read_with(cx, |pane, _| {
             assert!(!pane.can_navigate_backward());
             assert!(!pane.can_navigate_forward());
         });
@@ -8228,7 +8266,7 @@ mod tests {
         // Toolbar must be notified to re-render the navigation buttons
         assert_eq!(*toolbar_notify_count.borrow(), 1);
 
-        pane.update(cx, |pane, _| {
+        pane.read_with(cx, |pane, _| {
             assert!(pane.can_navigate_backward());
             assert!(!pane.can_navigate_forward());
         });
@@ -8241,7 +8279,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(*toolbar_notify_count.borrow(), 2);
-        pane.update(cx, |pane, _| {
+        pane.read_with(cx, |pane, _| {
             assert!(!pane.can_navigate_backward());
             assert!(pane.can_navigate_forward());
         });
@@ -8267,7 +8305,7 @@ mod tests {
             panel
         });
 
-        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
         pane.update_in(cx, |pane, window, cx| {
             let item = cx.new(TestItem::new);
             pane.add_item(Box::new(item), true, true, None, window, cx);
@@ -8833,7 +8871,7 @@ mod tests {
 
         // Emitting a ZoomIn event shows the panel as zoomed.
         panel_1.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
-        workspace.update(cx, |workspace, _| {
+        workspace.read_with(cx, |workspace, _| {
             assert_eq!(workspace.zoomed, Some(panel_1.to_any().downgrade()));
             assert_eq!(workspace.zoomed_position, Some(DockPosition::Left));
         });
@@ -8842,7 +8880,7 @@ mod tests {
         panel_1.update_in(cx, |panel, window, cx| {
             panel.set_position(DockPosition::Right, window, cx)
         });
-        workspace.update(cx, |workspace, _| {
+        workspace.read_with(cx, |workspace, _| {
             assert_eq!(workspace.zoomed, Some(panel_1.to_any().downgrade()));
 
             assert_eq!(workspace.zoomed_position, Some(DockPosition::Right));
@@ -8869,7 +8907,7 @@ mod tests {
         // If focus is transferred to another view that's not a panel or another pane, we still show
         // the panel as zoomed.
         focus_other_view(cx);
-        workspace.update(cx, |workspace, _| {
+        workspace.read_with(cx, |workspace, _| {
             assert_eq!(workspace.zoomed, Some(panel_1.to_any().downgrade()));
             assert_eq!(workspace.zoomed_position, Some(DockPosition::Right));
         });
@@ -8878,7 +8916,7 @@ mod tests {
         workspace.update_in(cx, |_workspace, window, cx| {
             cx.focus_self(window);
         });
-        workspace.update(cx, |workspace, _| {
+        workspace.read_with(cx, |workspace, _| {
             assert_eq!(workspace.zoomed, None);
             assert_eq!(workspace.zoomed_position, None);
         });
@@ -8886,21 +8924,21 @@ mod tests {
         // If focus is transferred again to another view that's not a panel or a pane, we won't
         // show the panel as zoomed because it wasn't zoomed before.
         focus_other_view(cx);
-        workspace.update(cx, |workspace, _| {
+        workspace.read_with(cx, |workspace, _| {
             assert_eq!(workspace.zoomed, None);
             assert_eq!(workspace.zoomed_position, None);
         });
 
         // When the panel is activated, it is zoomed again.
         cx.dispatch_action(ToggleRightDock);
-        workspace.update(cx, |workspace, _| {
+        workspace.read_with(cx, |workspace, _| {
             assert_eq!(workspace.zoomed, Some(panel_1.to_any().downgrade()));
             assert_eq!(workspace.zoomed_position, Some(DockPosition::Right));
         });
 
         // Emitting a ZoomOut event unzooms the panel.
         panel_1.update(cx, |_, cx| cx.emit(PanelEvent::ZoomOut));
-        workspace.update(cx, |workspace, _| {
+        workspace.read_with(cx, |workspace, _| {
             assert_eq!(workspace.zoomed, None);
             assert_eq!(workspace.zoomed_position, None);
         });
@@ -8923,7 +8961,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
-        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         let dirty_regular_buffer = cx.new(|cx| {
             TestItem::new(cx)
@@ -9071,7 +9109,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
-        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         let dirty_regular_buffer = cx.new(|cx| {
             TestItem::new(cx)
@@ -9161,7 +9199,7 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
-        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
         let dirty_regular_buffer = cx.new(|cx| {
             TestItem::new(cx)
@@ -9330,6 +9368,117 @@ mod tests {
         workspace.update(cx, |workspace, cx| {
             assert!(workspace.right_dock().read(cx).is_open());
             assert_eq!(panel.read(cx).position, DockPosition::Right);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_moving_items_create_panes(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let item_1 = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "first.txt", cx)])
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item_1), None, true, window, cx);
+            workspace.move_item_to_pane_in_direction(
+                &MoveItemToPaneInDirection {
+                    direction: SplitDirection::Right,
+                    focus: true,
+                },
+                window,
+                cx,
+            );
+            workspace.move_item_to_pane_at_index(
+                &MoveItemToPane {
+                    destination: 3,
+                    focus: true,
+                },
+                window,
+                cx,
+            );
+
+            assert_eq!(workspace.panes.len(), 1, "No new panes were created");
+            assert_eq!(
+                pane_items_paths(&workspace.active_pane, cx),
+                vec!["first.txt".to_string()],
+                "Single item was not moved anywhere"
+            );
+        });
+
+        let item_2 = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(2, "second.txt", cx)])
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item_2), None, true, window, cx);
+            assert_eq!(
+                pane_items_paths(&workspace.panes[0], cx),
+                vec!["first.txt".to_string(), "second.txt".to_string()],
+            );
+            workspace.move_item_to_pane_in_direction(
+                &MoveItemToPaneInDirection {
+                    direction: SplitDirection::Right,
+                    focus: true,
+                },
+                window,
+                cx,
+            );
+
+            assert_eq!(workspace.panes.len(), 2, "A new pane should be created");
+            assert_eq!(
+                pane_items_paths(&workspace.panes[0], cx),
+                vec!["first.txt".to_string()],
+                "After moving, one item should be left in the original pane"
+            );
+            assert_eq!(
+                pane_items_paths(&workspace.panes[1], cx),
+                vec!["second.txt".to_string()],
+                "New item should have been moved to the new pane"
+            );
+        });
+
+        let item_3 = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(3, "third.txt", cx)])
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            let original_pane = workspace.panes[0].clone();
+            workspace.set_active_pane(&original_pane, window, cx);
+            workspace.add_item_to_active_pane(Box::new(item_3), None, true, window, cx);
+            assert_eq!(workspace.panes.len(), 2, "No new panes were created");
+            assert_eq!(
+                pane_items_paths(&workspace.active_pane, cx),
+                vec!["first.txt".to_string(), "third.txt".to_string()],
+                "New pane should be ready to move one item out"
+            );
+
+            workspace.move_item_to_pane_at_index(
+                &MoveItemToPane {
+                    destination: 3,
+                    focus: true,
+                },
+                window,
+                cx,
+            );
+            assert_eq!(workspace.panes.len(), 3, "A new pane should be created");
+            assert_eq!(
+                pane_items_paths(&workspace.active_pane, cx),
+                vec!["first.txt".to_string()],
+                "After moving, one item should be left in the original pane"
+            );
+            assert_eq!(
+                pane_items_paths(&workspace.panes[1], cx),
+                vec!["second.txt".to_string()],
+                "Previously created pane should be unchanged"
+            );
+            assert_eq!(
+                pane_items_paths(&workspace.panes[2], cx),
+                vec!["third.txt".to_string()],
+                "New item should have been moved to the new pane"
+            );
         });
     }
 
@@ -9646,6 +9795,17 @@ mod tests {
                 .await;
             assert!(handle.is_err());
         }
+    }
+
+    fn pane_items_paths(pane: &Entity<Pane>, cx: &App) -> Vec<String> {
+        pane.read(cx)
+            .items()
+            .flat_map(|item| {
+                item.project_paths(cx)
+                    .into_iter()
+                    .map(|path| path.path.to_string_lossy().to_string())
+            })
+            .collect()
     }
 
     pub fn init_test(cx: &mut TestAppContext) {

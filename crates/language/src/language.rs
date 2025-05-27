@@ -245,6 +245,10 @@ impl CachedLspAdapter {
         self.adapter.retain_old_diagnostic(previous_diagnostic, cx)
     }
 
+    pub fn underline_diagnostic(&self, diagnostic: &lsp::Diagnostic) -> bool {
+        self.adapter.underline_diagnostic(diagnostic)
+    }
+
     pub fn diagnostic_message_to_markdown(&self, message: &str) -> Option<String> {
         self.adapter.diagnostic_message_to_markdown(message)
     }
@@ -470,6 +474,16 @@ pub trait LspAdapter: 'static + Send + Sync {
         false
     }
 
+    /// Whether to underline a given diagnostic or not, when rendering in the editor.
+    ///
+    /// https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnosticTag
+    /// states that
+    /// > Clients are allowed to render diagnostics with this tag faded out instead of having an error squiggle.
+    /// for the unnecessary diagnostics, so do not underline them.
+    fn underline_diagnostic(&self, _diagnostic: &lsp::Diagnostic) -> bool {
+        true
+    }
+
     /// Post-processes completions provided by the language server.
     async fn process_completions(&self, _: &mut [lsp::CompletionItem]) {}
 
@@ -666,7 +680,7 @@ pub struct CodeLabel {
     pub filter_range: Range<usize>,
 }
 
-#[derive(Clone, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct LanguageConfig {
     /// Human-readable name of the language.
     pub name: LanguageName,
@@ -777,7 +791,7 @@ pub struct LanguageMatcher {
 }
 
 /// The configuration for JSX tag auto-closing.
-#[derive(Clone, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct JsxTagAutoCloseConfig {
     /// The name of the node for a opening tag
     pub open_tag_node_name: String,
@@ -810,7 +824,7 @@ pub struct JsxTagAutoCloseConfig {
 }
 
 /// The configuration for documentation block for this language.
-#[derive(Clone, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Deserialize, JsonSchema)]
 pub struct DocumentationConfig {
     /// A start tag of documentation block.
     pub start: Arc<str>,

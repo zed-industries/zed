@@ -12,8 +12,10 @@ This eval tests a fix for a destructive behavior of the `edit_file` tool.
 Previously, it would rewrite existing files too aggressively, which often
 resulted in content loss.
 
-Pass rate before the fix: 10%
-Pass rate after the fix:  100%
+Model           | Pass rate
+----------------|----------
+Sonnet 3.7      | 100%
+Gemini 2.5 Pro  |  80%
 */
 
 #[async_trait(?Send)]
@@ -38,7 +40,9 @@ impl Example for FileOverwriteExample {
             let input = tool_use.parse_input::<EditFileToolInput>()?;
             match input.mode {
                 EditFileMode::Edit => false,
-                EditFileMode::Create | EditFileMode::Overwrite => true,
+                EditFileMode::Create | EditFileMode::Overwrite => {
+                    input.path.ends_with("src/language_model_selector.rs")
+                }
             }
         } else {
             false

@@ -31,6 +31,7 @@
       "ctrl-,": "zed::OpenSettings",
       "ctrl-q": "zed::Quit",
       "f4": "debugger::Start",
+      "alt-f4": "debugger::RerunLastSession",
       "f5": "debugger::Continue",
       "shift-f5": "debugger::Stop",
       "ctrl-shift-f5": "debugger::Restart",
@@ -676,6 +677,7 @@
   {
     "bindings": {
       "ctrl-alt-shift-f": "workspace::FollowNextCollaborator",
+      // Only available in debug builds: opens an element inspector for development.
       "ctrl-alt-i": "dev::ToggleInspector"
     }
   },
@@ -869,6 +871,23 @@
     "bindings": {
       "ctrl-t": "debugger::ToggleThreadPicker",
       "ctrl-i": "debugger::ToggleSessionPicker"
+    }
+  },
+  {
+    "context": "VariableList",
+    "bindings": {
+      "left": "variable_list::CollapseSelectedEntry",
+      "right": "variable_list::ExpandSelectedEntry",
+      "enter": "variable_list::EditVariable",
+      "ctrl-c": "variable_list::CopyVariableValue",
+      "ctrl-alt-c": "variable_list::CopyVariableName"
+    }
+  },
+  {
+    "context": "BreakpointList",
+    "bindings": {
+      "space": "debugger::ToggleEnableBreakpoint",
+      "backspace": "debugger::UnsetBreakpoint"
     }
   },
   {
