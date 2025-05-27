@@ -112,7 +112,7 @@ use language::{
     EditPreview, HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point,
     Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
-        self, InlayHintSettings, LspInsertMode, PreferLspMode, RewrapBehavior, WordsCompletionMode,
+        self, InlayHintSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
         all_language_settings, language_settings,
     },
     point_from_lsp, text_diff_with_options,
@@ -13608,10 +13608,7 @@ impl Editor {
             };
 
             let Ok(prefer_lsp) = multi_buffer.update(cx, |buffer, cx| {
-                matches!(
-                    buffer.language_settings(cx).tasks.prefer_lsp,
-                    PreferLspMode::Gutter | PreferLspMode::Everywhere
-                )
+                buffer.language_settings(cx).tasks.prefer_lsp
             }) else {
                 return;
             };

@@ -9,7 +9,6 @@ use gpui::{
     WeakEntity, Window, rems,
 };
 use itertools::Itertools;
-use language::language_settings::PreferLspMode;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
 use project::{TaskSourceKind, task_store::TaskStore};
 use task::{DebugScenario, ResolvedTask, RevealTarget, TaskContext, TaskTemplate};
@@ -244,12 +243,13 @@ impl PickerDelegate for TasksModalDelegate {
                                 .active_item(cx)
                                 .and_then(|item| item.downcast::<Editor>())
                                 .map(|editor| {
-                                    let language_settings =
-                                        editor.read(cx).buffer().read(cx).language_settings(cx);
-                                    matches!(
-                                        language_settings.tasks.prefer_lsp,
-                                        PreferLspMode::Modal | PreferLspMode::Everywhere
-                                    )
+                                    editor
+                                        .read(cx)
+                                        .buffer()
+                                        .read(cx)
+                                        .language_settings(cx)
+                                        .tasks
+                                        .prefer_lsp
                                 })
                                 .unwrap_or(false);
                             (lsp_tasks, prefer_lsp)

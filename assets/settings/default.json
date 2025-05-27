@@ -1323,18 +1323,8 @@
     // * Zed task from either of the task config file
     // * Zed task from history (e.g. one-off task was spawned before)
     //
-    // May take values:
-    // 1. "nowhere"
-    //   LSP tasks are mixed with Zed tasks.
-    // 2. "modal"
-    //   Only LSP tasks are shown, if found when opening the tasks modal.
-    // 3. "fallback"
-    //   Only LSP tasks are shown in gutter icon lists, if found when refreshing.
-    // 4. "everywhere"
-    //   Both modal and gutter show only LSP tasks, if non-zero amount of them is found.
-    //
-    // Default: everywhere
-    "prefer_lsp": "everywhere"
+    // Default: true
+    "prefer_lsp": true
   },
   // An object whose keys are language names, and whose values
   // are arrays of filenames or extensions of files that should
