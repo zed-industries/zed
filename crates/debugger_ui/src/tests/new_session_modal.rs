@@ -57,7 +57,7 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
         ),
         // Home directory path - should be expanded to full home directory path
         (
-            path!("~/src/program"),
+            format!("~{0}src{0}program", std::path::MAIN_SEPARATOR).leak(),
             home_dir
                 .join("src")
                 .join("program")
