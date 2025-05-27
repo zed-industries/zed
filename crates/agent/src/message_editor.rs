@@ -9,8 +9,8 @@ use crate::ui::{
     AnimatedLabel, MaxModeTooltip,
     preview::{AgentPreview, UsageCallout},
 };
+use agent_settings::{AgentSettings, CompletionMode};
 use assistant_context_editor::language_model_selector::ToggleModelSelector;
-use assistant_settings::{AssistantSettings, CompletionMode};
 use buffer_diff::BufferDiff;
 use client::UserStore;
 use collections::{HashMap, HashSet};
@@ -1273,7 +1273,7 @@ impl MessageEditor {
                         tools: vec![],
                         tool_choice: None,
                         stop: vec![],
-                        temperature: AssistantSettings::temperature_for_model(&model.model, cx),
+                        temperature: AgentSettings::temperature_for_model(&model.model, cx),
                     };
 
                     Some(model.model.count_tokens(request, cx))

@@ -876,6 +876,16 @@
     }
   },
   {
+    "context": "VariableList",
+    "bindings": {
+      "left": "variable_list::CollapseSelectedEntry",
+      "right": "variable_list::ExpandSelectedEntry",
+      "enter": "variable_list::EditVariable",
+      "ctrl-c": "variable_list::CopyVariableValue",
+      "ctrl-alt-c": "variable_list::CopyVariableName"
+    }
+  },
+  {
     "context": "BreakpointList",
     "bindings": {
       "space": "debugger::ToggleEnableBreakpoint",

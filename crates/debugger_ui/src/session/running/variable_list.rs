@@ -2,17 +2,26 @@ use super::stack_frame_list::{StackFrameList, StackFrameListEvent};
 use dap::{ScopePresentationHint, StackFrameId, VariablePresentationHintKind, VariableReference};
 use editor::Editor;
 use gpui::{
-    AnyElement, ClickEvent, ClipboardItem, Context, DismissEvent, Entity, FocusHandle, Focusable,
-    Hsla, MouseButton, MouseDownEvent, Point, Stateful, Subscription, TextStyleRefinement,
-    UniformListScrollHandle, actions, anchored, deferred, uniform_list,
+    Action, AnyElement, ClickEvent, ClipboardItem, Context, DismissEvent, Entity, FocusHandle,
+    Focusable, Hsla, MouseButton, MouseDownEvent, Point, Stateful, Subscription,
+    TextStyleRefinement, UniformListScrollHandle, actions, anchored, deferred, uniform_list,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::debugger::session::{Session, SessionEvent};
 use std::{collections::HashMap, ops::Range, sync::Arc};
 use ui::{ContextMenu, ListItem, Scrollbar, ScrollbarState, prelude::*};
-use util::{debug_panic, maybe};
+use util::debug_panic;
 
-actions!(variable_list, [ExpandSelectedEntry, CollapseSelectedEntry]);
+actions!(
+    variable_list,
+    [
+        ExpandSelectedEntry,
+        CollapseSelectedEntry,
+        CopyVariableName,
+        CopyVariableValue,
+        EditVariable
+    ]
+);
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct EntryState {
@@ -351,7 +360,7 @@ impl VariableList {
     }
 
     fn select_first(&mut self, _: &SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
-        self.cancel_variable_edit(&Default::default(), window, cx);
+        self.cancel(&Default::default(), window, cx);
         if let Some(variable) = self.entries.first() {
             self.selection = Some(variable.path.clone());
             self.build_entries(cx);
@@ -359,7 +368,7 @@ impl VariableList {
     }
 
     fn select_last(&mut self, _: &SelectLast, window: &mut Window, cx: &mut Context<Self>) {
-        self.cancel_variable_edit(&Default::default(), window, cx);
+        self.cancel(&Default::default(), window, cx);
         if let Some(variable) = self.entries.last() {
             self.selection = Some(variable.path.clone());
             self.build_entries(cx);
@@ -367,7 +376,7 @@ impl VariableList {
     }
 
     fn select_prev(&mut self, _: &SelectPrevious, window: &mut Window, cx: &mut Context<Self>) {
-        self.cancel_variable_edit(&Default::default(), window, cx);
+        self.cancel(&Default::default(), window, cx);
         if let Some(selection) = &self.selection {
             let index = self.entries.iter().enumerate().find_map(|(ix, var)| {
                 if &var.path == selection && ix > 0 {
@@ -391,7 +400,7 @@ impl VariableList {
     }
 
     fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
-        self.cancel_variable_edit(&Default::default(), window, cx);
+        self.cancel(&Default::default(), window, cx);
         if let Some(selection) = &self.selection {
             let index = self.entries.iter().enumerate().find_map(|(ix, var)| {
                 if &var.path == selection {
@@ -414,40 +423,26 @@ impl VariableList {
         }
     }
 
-    fn cancel_variable_edit(
-        &mut self,
-        _: &menu::Cancel,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         self.edited_path.take();
         self.focus_handle.focus(window);
         cx.notify();
     }
 
-    fn confirm_variable_edit(
-        &mut self,
-        _: &menu::Confirm,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let res = maybe!({
-            let (var_path, editor) = self.edited_path.take()?;
-            let state = self.entry_states.get(&var_path)?;
+    fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((var_path, editor)) = self.edited_path.take() {
+            let Some(state) = self.entry_states.get(&var_path) else {
+                return;
+            };
             let variables_reference = state.parent_reference;
-            let name = var_path.leaf_name?;
+            let Some(name) = var_path.leaf_name else {
+                return;
+            };
             let value = editor.read(cx).text(cx);
 
             self.session.update(cx, |session, cx| {
                 session.set_variable_value(variables_reference, name.into(), value, cx)
             });
-            Some(())
-        });
-
-        if res.is_none() {
-            log::error!(
-                "Couldn't confirm variable edit because variable doesn't have a leaf name or a parent reference id"
-            );
         }
     }
 
@@ -495,38 +490,16 @@ impl VariableList {
 
     fn deploy_variable_context_menu(
         &mut self,
-        variable: ListEntry,
+        _variable: ListEntry,
         position: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(dap_var) = variable.as_variable() else {
-            debug_panic!("Trying to open variable context menu on a scope");
-            return;
-        };
-
-        let variable_value = dap_var.value.clone();
-        let variable_name = dap_var.name.clone();
-        let this = cx.entity().clone();
-
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
-            menu.entry("Copy name", None, move |_, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(variable_name.clone()))
-            })
-            .entry("Copy value", None, {
-                let variable_value = variable_value.clone();
-                move |_, cx| {
-                    cx.write_to_clipboard(ClipboardItem::new_string(variable_value.clone()))
-                }
-            })
-            .entry("Set value", None, move |window, cx| {
-                this.update(cx, |variable_list, cx| {
-                    let editor = Self::create_variable_editor(&variable_value, window, cx);
-                    variable_list.edited_path = Some((variable.path.clone(), editor));
-
-                    cx.notify();
-                });
-            })
+            menu.action("Copy Name", CopyVariableName.boxed_clone())
+                .action("Copy Value", CopyVariableValue.boxed_clone())
+                .action("Edit Value", EditVariable.boxed_clone())
+                .context(self.focus_handle.clone())
         });
 
         cx.focus_view(&context_menu, window);
@@ -545,6 +518,59 @@ impl VariableList {
         );
 
         self.open_context_menu = Some((context_menu, position, subscription));
+    }
+
+    fn copy_variable_name(
+        &mut self,
+        _: &CopyVariableName,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(selection) = self.selection.as_ref() else {
+            return;
+        };
+        let Some(entry) = self.entries.iter().find(|entry| &entry.path == selection) else {
+            return;
+        };
+        let Some(variable) = entry.as_variable() else {
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(variable.name.clone()));
+    }
+
+    fn copy_variable_value(
+        &mut self,
+        _: &CopyVariableValue,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(selection) = self.selection.as_ref() else {
+            return;
+        };
+        let Some(entry) = self.entries.iter().find(|entry| &entry.path == selection) else {
+            return;
+        };
+        let Some(variable) = entry.as_variable() else {
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(variable.value.clone()));
+    }
+
+    fn edit_variable(&mut self, _: &EditVariable, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(selection) = self.selection.as_ref() else {
+            return;
+        };
+        let Some(entry) = self.entries.iter().find(|entry| &entry.path == selection) else {
+            return;
+        };
+        let Some(variable) = entry.as_variable() else {
+            return;
+        };
+
+        let editor = Self::create_variable_editor(&variable.value, window, cx);
+        self.edited_path = Some((entry.path.clone(), editor));
+
+        cx.notify();
     }
 
     #[track_caller]
@@ -815,12 +841,14 @@ impl VariableList {
                 .on_secondary_mouse_down(cx.listener({
                     let variable = variable.clone();
                     move |this, event: &MouseDownEvent, window, cx| {
+                        this.selection = Some(variable.path.clone());
                         this.deploy_variable_context_menu(
                             variable.clone(),
                             event.position,
                             window,
                             cx,
-                        )
+                        );
+                        cx.stop_propagation();
                     }
                 }))
                 .child(
@@ -943,10 +971,13 @@ impl Render for VariableList {
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::select_prev))
             .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::expand_selected_entry))
             .on_action(cx.listener(Self::collapse_selected_entry))
-            .on_action(cx.listener(Self::cancel_variable_edit))
-            .on_action(cx.listener(Self::confirm_variable_edit))
+            .on_action(cx.listener(Self::copy_variable_name))
+            .on_action(cx.listener(Self::copy_variable_value))
+            .on_action(cx.listener(Self::edit_variable))
             .child(
                 uniform_list(
                     cx.entity().clone(),

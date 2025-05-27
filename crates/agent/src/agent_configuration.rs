@@ -5,7 +5,7 @@ mod tool_picker;
 
 use std::{sync::Arc, time::Duration};
 
-use assistant_settings::AssistantSettings;
+use agent_settings::AgentSettings;
 use assistant_tool::{ToolSource, ToolWorkingSet};
 use collections::HashMap;
 use context_server::ContextServerId;
@@ -249,7 +249,7 @@ impl AgentConfiguration {
     }
 
     fn render_command_permission(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let always_allow_tool_actions = AssistantSettings::get_global(cx).always_allow_tool_actions;
+        let always_allow_tool_actions = AgentSettings::get_global(cx).always_allow_tool_actions;
 
         h_flex()
             .gap_4()
@@ -277,7 +277,7 @@ impl AgentConfiguration {
                     let fs = self.fs.clone();
                     move |state, _window, cx| {
                         let allow = state == &ToggleState::Selected;
-                        update_settings_file::<AssistantSettings>(
+                        update_settings_file::<AgentSettings>(
                             fs.clone(),
                             cx,
                             move |settings, _| {
@@ -290,7 +290,7 @@ impl AgentConfiguration {
     }
 
     fn render_single_file_review(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let single_file_review = AssistantSettings::get_global(cx).single_file_review;
+        let single_file_review = AgentSettings::get_global(cx).single_file_review;
 
         h_flex()
             .gap_4()
@@ -315,7 +315,7 @@ impl AgentConfiguration {
                         let fs = self.fs.clone();
                         move |state, _window, cx| {
                             let allow = state == &ToggleState::Selected;
-                            update_settings_file::<AssistantSettings>(
+                            update_settings_file::<AgentSettings>(
                                 fs.clone(),
                                 cx,
                                 move |settings, _| {
@@ -328,8 +328,7 @@ impl AgentConfiguration {
     }
 
     fn render_sound_notification(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let play_sound_when_agent_done =
-            AssistantSettings::get_global(cx).play_sound_when_agent_done;
+        let play_sound_when_agent_done = AgentSettings::get_global(cx).play_sound_when_agent_done;
 
         h_flex()
             .gap_4()
@@ -354,7 +353,7 @@ impl AgentConfiguration {
                         let fs = self.fs.clone();
                         move |state, _window, cx| {
                             let allow = state == &ToggleState::Selected;
-                            update_settings_file::<AssistantSettings>(
+                            update_settings_file::<AgentSettings>(
                                 fs.clone(),
                                 cx,
                                 move |settings, _| {
