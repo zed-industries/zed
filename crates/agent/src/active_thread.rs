@@ -1761,6 +1761,20 @@ impl ActiveThread {
                     ..Default::default()
                 },
             )))
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Icon::new(IconName::Warning)
+                            .size(IconSize::XSmall)
+                            .color(Color::Warning),
+                    )
+                    .child(
+                        Label::new("Editing will restart the thread from this point.")
+                            .size(LabelSize::XSmall)
+                            .color(Color::Warning),
+                    ),
+            )
     }
 
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
