@@ -5875,7 +5875,7 @@ fn adjust_open_docks_size_by_offset(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let funcs = workspace
+    let fns = workspace
         .all_docks()
         .into_iter()
         .filter_map(|dock| {
@@ -5891,7 +5891,7 @@ fn adjust_open_docks_size_by_offset(
         })
         .collect::<Vec<_>>();
 
-    funcs.into_iter().for_each(|f| f(workspace, window, cx));
+    fns.into_iter().for_each(|f| f(workspace, window, cx));
 }
 
 fn adjust_dock_size(
