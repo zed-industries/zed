@@ -433,7 +433,10 @@ impl DebugPanel {
         };
 
         let dap_store_handle = self.project.read(cx).dap_store().clone();
-        let label = parent_session.read(cx).label().clone();
+        let mut label = parent_session.read(cx).label().clone();
+        if !label.ends_with("(child)") {
+            label = format!("{label} (child)").into();
+        }
         let adapter = parent_session.read(cx).adapter().clone();
         let mut binary = parent_session.read(cx).binary().clone();
         binary.request_args = request.clone();
