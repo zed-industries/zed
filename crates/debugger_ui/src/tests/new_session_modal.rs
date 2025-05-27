@@ -67,7 +67,11 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
         ),
         // Path with $ZED_WORKTREE_ROOT - should be substituted without double appending
         (
-            path!("$ZED_WORKTREE_ROOT/src/program"),
+            format!(
+                "$ZED_WORKTREE_ROOT{0}src{0}program",
+                std::path::MAIN_SEPARATOR
+            )
+            .leak(),
             path!("/test/worktree/path/src/program"),
         ),
     ];
