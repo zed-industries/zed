@@ -480,9 +480,14 @@ impl MessageEditor {
 
         let active_completion_mode = thread.completion_mode();
         let max_mode_enabled = active_completion_mode == CompletionMode::Max;
+        let icon = if max_mode_enabled {
+            IconName::ZedLitModeOn
+        } else {
+            IconName::ZedLitMode
+        };
 
         Some(
-            IconButton::new("lit-mode", IconName::ZedMaxMode)
+            IconButton::new("lit-mode", icon)
                 .icon_size(IconSize::Small)
                 .icon_color(Color::Muted)
                 .toggle_state(max_mode_enabled)

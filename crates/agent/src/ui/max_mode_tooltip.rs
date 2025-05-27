@@ -18,9 +18,15 @@ impl MaxModeTooltip {
 
 impl Render for MaxModeTooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let icon = if self.selected {
+            IconName::ZedLitModeOn
+        } else {
+            IconName::ZedLitMode
+        };
+
         let title = h_flex()
             .gap_1p5()
-            .child(Icon::new(IconName::ZedMaxMode))
+            .child(Icon::new(icon))
             .child(Label::new("Lit Mode"));
 
         tooltip_container(window, cx, |this, _, _| {
