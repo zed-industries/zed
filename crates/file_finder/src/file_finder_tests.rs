@@ -2441,6 +2441,7 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
                     .push(Path::new(path_match.0.path_prefix.as_ref()).join(&path_match.0.path));
                 search_entries.search_matches.push(path_match.0.clone());
             }
+            Match::CreateNew(_) => {}
         }
     }
     search_entries
@@ -2474,6 +2475,7 @@ fn assert_match_at_position(
     let match_file_name = match &match_item {
         Match::History { path, .. } => path.absolute.as_deref().unwrap().file_name(),
         Match::Search(path_match) => path_match.0.path.file_name(),
+        Match::CreateNew(_) => None,
     }
     .unwrap()
     .to_string_lossy();
