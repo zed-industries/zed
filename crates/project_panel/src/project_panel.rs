@@ -3104,7 +3104,8 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let should_copy = window.modifiers().alt;
+        let should_copy = cfg!(target_os = "macos") && window.modifiers().alt
+            || cfg!(not(target_os = "macos")) && window.modifiers().control;
         if should_copy {
             let _ = maybe!({
                 let project = self.project.read(cx);

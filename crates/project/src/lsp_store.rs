@@ -8782,6 +8782,10 @@ impl LspStore {
                 .as_ref()
                 .map_or(false, |tags| tags.contains(&DiagnosticTag::UNNECESSARY));
 
+            let underline = self
+                .language_server_adapter_for_id(language_server_id)
+                .map_or(true, |adapter| adapter.underline_diagnostic(diagnostic));
+
             if is_supporting {
                 supporting_diagnostics.insert(
                     (source, diagnostic.code.clone(), range),
@@ -8814,6 +8818,7 @@ impl LspStore {
                         is_primary: true,
                         is_disk_based,
                         is_unnecessary,
+                        underline,
                         data: diagnostic.data.clone(),
                     },
                 });
@@ -8839,6 +8844,7 @@ impl LspStore {
                                     is_primary: false,
                                     is_disk_based,
                                     is_unnecessary: false,
+                                    underline,
                                     data: diagnostic.data.clone(),
                                 },
                             });
