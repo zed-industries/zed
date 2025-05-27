@@ -382,10 +382,7 @@ impl ContextProvider for PythonContextProvider {
                 toolchains
                     .active_toolchain(worktree_id, Arc::from("".as_ref()), "Python".into(), cx)
                     .await
-                    .map_or_else(
-                        || "python3".to_owned(),
-                        |toolchain| format!("\"{}\"", toolchain.path),
-                    )
+                    .map_or_else(|| "python3".to_owned(), |toolchain| toolchain.path)
             } else {
                 String::from("python3")
             };
