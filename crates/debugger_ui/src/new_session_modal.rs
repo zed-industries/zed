@@ -1,5 +1,5 @@
 use collections::FxHashMap;
-use language::LanguageRegistry;
+use language::{LanguageRegistry, Point, Selection};
 use std::{
     borrow::Cow,
     ops::Not,
@@ -12,7 +12,7 @@ use std::{
 use dap::{
     DapRegistry, DebugRequest, TelemetrySpawnLocation, adapters::DebugAdapterName, send_telemetry,
 };
-use editor::{Editor, EditorElement, EditorStyle};
+use editor::{Anchor, Editor, EditorElement, EditorStyle, scroll::Autoscroll};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Animation, AnimationExt as _, App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle,
@@ -37,7 +37,7 @@ use crate::{attach_modal::AttachModal, debugger_panel::DebugPanel};
 
 enum SaveScenarioState {
     Saving,
-    Saved(ProjectPath),
+    Saved((ProjectPath, SharedString)),
     Failed(SharedString),
 }
 
@@ -285,7 +285,7 @@ impl NewSessionModal {
     }
 
     fn save_debug_scenario(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(save_scenario) = self
+        let Some((save_scenario, scenario_label)) = self
             .debugger
             .as_ref()
             .and_then(|debugger| self.debug_scenario(&debugger, cx))
@@ -296,6 +296,7 @@ impl NewSessionModal {
                         panel.save_scenario(&scenario, worktree_id, window, cx)
                     })
                     .ok()
+                    .zip(Some(scenario.label.clone()))
             })
         else {
             return;
@@ -308,7 +309,8 @@ impl NewSessionModal {
 
             this.update(cx, |this, _| match res {
                 Ok(saved_file) => {
-                    this.save_scenario_state = Some(SaveScenarioState::Saved(saved_file))
+                    this.save_scenario_state =
+                        Some(SaveScenarioState::Saved((saved_file, scenario_label)))
                 }
                 Err(error) => {
                     this.save_scenario_state =
@@ -331,21 +333,23 @@ impl NewSessionModal {
             let this_entity = this_entity.clone();
 
             move |this, save_state| match save_state {
-                SaveScenarioState::Saved(saved_path) => this.child(
+                SaveScenarioState::Saved((saved_path, scenario_label)) => this.child(
                     IconButton::new("new-session-modal-go-to-file", IconName::ArrowUpRight)
                         .icon_size(IconSize::Small)
                         .icon_color(Color::Muted)
                         .on_click({
                             let this_entity = this_entity.clone();
                             let saved_path = saved_path.clone();
+                            let scenario_label = scenario_label.clone();
                             move |_, window, cx| {
                                 window
                                     .spawn(cx, {
                                         let this_entity = this_entity.clone();
                                         let saved_path = saved_path.clone();
+                                        let scenario_label = scenario_label.clone();
 
                                         async move |cx| {
-                                            this_entity
+                                            let editor = this_entity
                                                 .update_in(cx, |this, window, cx| {
                                                     this.workspace.update(cx, |workspace, cx| {
                                                         workspace.open_path(
@@ -358,6 +362,68 @@ impl NewSessionModal {
                                                     })
                                                 })??
                                                 .await?;
+
+                                            cx.update(|window, cx| {
+                                                if let Some(editor) = editor.act_as::<Editor>(cx) {
+                                                    editor.update(cx, |editor, cx| {
+                                                        let row = editor
+                                                            .text(cx)
+                                                            .lines()
+                                                            .into_iter()
+                                                            .enumerate()
+                                                            .find_map(|(row, text)| {
+                                                                if text.contains(
+                                                                    scenario_label.as_ref(),
+                                                                ) {
+                                                                    Some(dbg!(row))
+                                                                } else {
+                                                                    None
+                                                                }
+                                                            })?;
+
+                                                        let buffer = editor.buffer().read(cx);
+                                                        let excerpt_id =
+                                                            *buffer.excerpt_ids().first()?;
+
+                                                        let snapshot = buffer
+                                                            .as_singleton()?
+                                                            .read(cx)
+                                                            .snapshot();
+
+                                                        let anchor = snapshot.anchor_before(
+                                                            Point::new(row as u32, 0),
+                                                        );
+
+                                                        let anchor = Anchor {
+                                                            buffer_id: anchor.buffer_id,
+                                                            excerpt_id,
+                                                            text_anchor: anchor,
+                                                            diff_base_anchor: None,
+                                                        };
+
+                                                        editor.change_selections(
+                                                            Some(Autoscroll::center()),
+                                                            window,
+                                                            cx,
+                                                            |selections| {
+                                                                let id =
+                                                                    selections.new_selection_id();
+                                                                selections.select_anchors(
+                                                                    vec![Selection {
+                                                                id,
+                                                                start: anchor,
+                                                                end: anchor,
+                                                                reversed: false,
+                                                                goal: language::SelectionGoal::None
+                                                            }],
+                                                                );
+                                                            },
+                                                        );
+
+                                                        Some(())
+                                                    });
+                                                }
+                                            })?;
 
                                             this_entity
                                                 .update(cx, |_, cx| cx.emit(DismissEvent))
