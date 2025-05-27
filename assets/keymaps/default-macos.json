@@ -285,7 +285,7 @@
       "cmd-alt-e": "agent::RemoveAllContext",
       "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-shift-enter": "agent::ContinueThread",
-      "cmd-alt-shift-enter": "agent::ContinueWithLitMode"
+      "alt-enter": "agent::ContinueWithLitMode"
     }
   },
   {
