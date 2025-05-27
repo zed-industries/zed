@@ -422,7 +422,7 @@ impl Platform for WindowsPlatform {
 
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+    ) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
         let (mut tx, rx) = oneshot::channel();
         tx.send(Err(anyhow!("screen capture not implemented"))).ok();
         rx
