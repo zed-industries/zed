@@ -46,10 +46,7 @@ If you send a prompt to the Agent and then move elsewhere, thus putting Zed in t
 
 You can use both notification methods together or just pick one of them.
 
-For the visual notification, you can customize its behavior, including the option to turn it off entirely, by using the `agent.notify_when_agent_waiting` settings key.
-For the sound notification, turn it on or off using the `agent.play_sound_when_agent_done` settings key.
-
-#### Sound Notification
+You can customize their behavior, including turning them off entirely, by using the `agent.notify_when_agent_waiting` and `agent.play_sound_when_agent_done` settings keys.
 
 ### Reviewing Changes {#reviewing-changes}
 
