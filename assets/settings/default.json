@@ -822,7 +822,12 @@
     // "primary_screen" - Show the notification only on your primary screen (default)
     // "all_screens" - Show these notifications on all screens
     // "never" - Never show these notifications
-    "notify_when_agent_waiting": "primary_screen"
+    "notify_when_agent_waiting": "primary_screen",
+    // Whether to play a sound when the agent has either completed
+    // its response, or needs user input.
+
+    // Default: false
+    "play_sound_when_agent_done": false
   },
   // The settings for slash commands.
   "slash_commands": {
