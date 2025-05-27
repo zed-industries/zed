@@ -27,6 +27,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::{
+    ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -98,7 +99,7 @@ pub enum EditFileMode {
 pub struct EditFileToolOutput {
     pub original_path: PathBuf,
     pub new_text: String,
-    pub old_text: String,
+    pub old_text: Arc<String>,
     pub raw_output: Option<EditAgentOutput>,
 }
 
@@ -200,9 +201,13 @@ impl Tool for EditFileTool {
             let old_text = cx
                 .background_spawn({
                     let old_snapshot = old_snapshot.clone();
-                    async move { old_snapshot.text() }
+                    async move { Arc::new(old_snapshot.text()) }
                 })
                 .await;
+
+            if let Some(card) = card_clone.as_ref() {
+                card.update(cx, |card, cx| card.initialize(buffer.clone(), cx))?;
+            }
 
             let (output, mut events) = if matches!(input.mode, EditFileMode::Edit) {
                 edit_agent.edit(
@@ -225,28 +230,14 @@ impl Tool for EditFileTool {
                 match event {
                     EditAgentOutputEvent::Edited => {
                         if let Some(card) = card_clone.as_ref() {
-                            let new_snapshot =
-                                buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
-                            let new_text = cx
-                                .background_spawn({
-                                    let new_snapshot = new_snapshot.clone();
-                                    async move { new_snapshot.text() }
-                                })
-                                .await;
-                            card.update(cx, |card, cx| {
-                                card.set_diff(
-                                    project_path.path.clone(),
-                                    old_text.clone(),
-                                    new_text,
-                                    cx,
-                                );
-                            })
-                            .log_err();
+                            card.update(cx, |card, cx| card.update_diff(cx))?;
                         }
                     }
                     EditAgentOutputEvent::UnresolvedEditRange => hallucinated_old_text = true,
                     EditAgentOutputEvent::ResolvingEditRange(range) => {
-                        // todo!("if card doesn't have a diff show the old text getting resolved")
+                        if let Some(card) = card_clone.as_ref() {
+                            card.update(cx, |card, cx| card.reveal_range(range, cx))?;
+                        }
                     }
                 }
             }
@@ -269,13 +260,14 @@ impl Tool for EditFileTool {
             let output = EditFileToolOutput {
                 original_path: project_path.path.to_path_buf(),
                 new_text: new_text.clone(),
-                old_text: old_text.clone(),
+                old_text,
                 raw_output: Some(agent_output),
             };
 
             if let Some(card) = card_clone {
                 card.update(cx, |card, cx| {
-                    card.set_diff(project_path.path.clone(), old_text, new_text, cx);
+                    card.update_diff(cx);
+                    card.finalize(cx)
                 })
                 .log_err();
             }
@@ -285,12 +277,15 @@ impl Tool for EditFileTool {
                 anyhow::ensure!(
                     !hallucinated_old_text,
                     formatdoc! {"
-                    Some edits were produced but none of them could be applied.
-                    Read the relevant sections of {input_path} again so that
-                    I can perform the requested edits.
-                "}
+                        Some edits were produced but none of them could be applied.
+                        Read the relevant sections of {input_path} again so that
+                        I can perform the requested edits.
+                    "}
                 );
-                Ok("No edits were made.".to_string().into())
+                Ok(ToolResultOutput {
+                    content: ToolResultContent::Text("No edits were made.".into()),
+                    output: serde_json::to_value(output).ok(),
+                })
             } else {
                 Ok(ToolResultOutput {
                     content: ToolResultContent::Text(format!(
@@ -321,15 +316,47 @@ impl Tool for EditFileTool {
         };
 
         let card = cx.new(|cx| {
-            let mut card = EditFileToolCard::new(output.original_path.clone(), project, window, cx);
-            card.set_diff(
-                output.original_path.into(),
-                output.old_text,
-                output.new_text,
-                cx,
-            );
-            card
+            EditFileToolCard::new(output.original_path.clone(), project.clone(), window, cx)
         });
+
+        cx.spawn({
+            let path: Arc<Path> = output.original_path.into();
+            let language_registry = project.read(cx).languages().clone();
+            let card = card.clone();
+            async move |cx| {
+                let buffer =
+                    build_buffer(output.new_text, path.clone(), &language_registry, cx).await?;
+                let buffer_diff =
+                    build_buffer_diff(output.old_text.clone(), &buffer, &language_registry, cx)
+                        .await?;
+                card.update(cx, |card, cx| {
+                    card.multibuffer.update(cx, |multibuffer, cx| {
+                        let snapshot = buffer.read(cx).snapshot();
+                        let diff = buffer_diff.read(cx);
+                        let diff_hunk_ranges = diff
+                            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
+                            .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
+                            .collect::<Vec<_>>();
+
+                        multibuffer.set_excerpts_for_path(
+                            PathKey::for_buffer(&buffer, cx),
+                            buffer,
+                            diff_hunk_ranges,
+                            editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                            cx,
+                        );
+                        multibuffer.add_diff(buffer_diff, cx);
+                        let end = multibuffer.len(cx);
+                        card.total_lines =
+                            Some(multibuffer.snapshot(cx).offset_to_point(end).row + 1);
+                    });
+
+                    cx.notify();
+                })?;
+                anyhow::Ok(())
+            }
+        })
+        .detach_and_log_err(cx);
 
         Some(card.into())
     }
@@ -405,6 +432,9 @@ pub struct EditFileToolCard {
     editor: Entity<Editor>,
     multibuffer: Entity<MultiBuffer>,
     project: Entity<Project>,
+    buffer: Option<Entity<Buffer>>,
+    base_text: Option<Arc<String>>,
+    buffer_diff: Option<Entity<BufferDiff>>,
     diff_task: Option<Task<Result<()>>>,
     preview_expanded: bool,
     error_expanded: Option<Entity<Markdown>>,
@@ -448,6 +478,9 @@ impl EditFileToolCard {
             project,
             editor,
             multibuffer,
+            buffer: None,
+            base_text: None,
+            buffer_diff: None,
             diff_task: None,
             preview_expanded: true,
             error_expanded: None,
@@ -456,46 +489,165 @@ impl EditFileToolCard {
         }
     }
 
+    pub fn initialize(&mut self, buffer: Entity<Buffer>, cx: &mut App) {
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let base_text = buffer_snapshot.text();
+        let language_registry = buffer.read(cx).language_registry();
+        let text_snapshot = buffer.read(cx).text_snapshot();
+
+        // Create a buffer diff with the current text as the base
+        let buffer_diff = cx.new(|cx| {
+            let mut diff = BufferDiff::new(&text_snapshot, cx);
+            let _ = diff.set_base_text(
+                buffer_snapshot.clone(),
+                language_registry,
+                text_snapshot,
+                cx,
+            );
+            diff
+        });
+
+        self.buffer = Some(buffer.clone());
+        self.base_text = Some(base_text.into());
+        self.buffer_diff = Some(buffer_diff.clone());
+
+        // Add the diff to the multibuffer
+        self.multibuffer
+            .update(cx, |multibuffer, cx| multibuffer.add_diff(buffer_diff, cx));
+    }
+
     pub fn has_diff(&self) -> bool {
         self.total_lines.is_some()
     }
 
-    pub fn set_diff(
-        &mut self,
-        path: Arc<Path>,
-        old_text: String,
-        new_text: String,
-        cx: &mut Context<Self>,
-    ) {
-        let language_registry = self.project.read(cx).languages().clone();
-        self.diff_task = Some(cx.spawn(async move |this, cx| {
-            let buffer = build_buffer(new_text, path.clone(), &language_registry, cx).await?;
-            let buffer_diff = build_buffer_diff(old_text, &buffer, &language_registry, cx).await?;
+    pub fn update_diff(&mut self, cx: &mut Context<Self>) {
+        if let (Some(buffer), Some(buffer_diff)) = (self.buffer.as_ref(), self.buffer_diff.as_ref())
+        {
+            let buffer = buffer.clone();
+            let buffer_diff = buffer_diff.clone();
+            let base_text = self.base_text.clone();
 
-            this.update(cx, |this, cx| {
-                this.total_lines = this.multibuffer.update(cx, |multibuffer, cx| {
-                    let snapshot = buffer.read(cx).snapshot();
-                    let diff = buffer_diff.read(cx);
-                    let diff_hunk_ranges = diff
-                        .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
-                        .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
-                        .collect::<Vec<_>>();
-                    multibuffer.clear(cx);
-                    multibuffer.set_excerpts_for_path(
-                        PathKey::for_buffer(&buffer, cx),
-                        buffer,
-                        diff_hunk_ranges,
-                        editor::DEFAULT_MULTIBUFFER_CONTEXT,
-                        cx,
-                    );
-                    multibuffer.add_diff(buffer_diff, cx);
-                    let end = multibuffer.len(cx);
-                    Some(multibuffer.snapshot(cx).offset_to_point(end).row + 1)
-                });
+            self.diff_task = Some(cx.spawn(async move |this, cx| {
+                let text_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot())?;
 
-                cx.notify();
+                let diff_snapshot = BufferDiff::update_diff(
+                    buffer_diff.clone(),
+                    text_snapshot.clone(),
+                    base_text,
+                    false,
+                    false,
+                    None,
+                    None,
+                    cx,
+                )
+                .await?;
+                buffer_diff.update(cx, |diff, cx| {
+                    diff.set_snapshot(diff_snapshot, &text_snapshot, cx)
+                })?;
+
+                this.update(cx, |this, cx| {
+                    this.total_lines = this.multibuffer.update(cx, |multibuffer, cx| {
+                        let snapshot = buffer.read(cx).snapshot();
+                        let diff = buffer_diff.read(cx);
+                        let diff_hunk_ranges = diff
+                            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
+                            .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
+                            .collect::<Vec<_>>();
+                        multibuffer.set_excerpts_for_path(
+                            PathKey::for_buffer(&buffer, cx),
+                            buffer,
+                            diff_hunk_ranges,
+                            editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                            cx,
+                        );
+
+                        let end = multibuffer.len(cx);
+                        Some(multibuffer.snapshot(cx).offset_to_point(end).row + 1)
+                    });
+                    cx.notify();
+                })?;
+                anyhow::Ok(())
+            }));
+        }
+    }
+
+    pub fn reveal_range(&mut self, range: Range<Anchor>, cx: &mut Context<Self>) {
+        if let Some(buffer) = self.buffer.as_ref() {
+            let range = range.to_point(buffer.read(cx));
+            self.total_lines = self.multibuffer.update(cx, |multibuffer, cx| {
+                multibuffer.set_excerpts_for_path(
+                    PathKey::for_buffer(buffer, cx),
+                    buffer.clone(),
+                    [range],
+                    editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                    cx,
+                );
+                let end = multibuffer.len(cx);
+                Some(multibuffer.snapshot(cx).offset_to_point(end).row + 1)
+            });
+        }
+    }
+
+    pub fn finalize(&mut self, cx: &mut Context<Self>) -> Result<()> {
+        if let Some((buffer, base_text)) = self.buffer.take().zip(self.base_text.clone()) {
+            let language_registry = self.project.read(cx).languages().clone();
+            let buffer = cx.new(|cx| {
+                let language = buffer.read(cx).language().cloned();
+                let buffer = TextBuffer::new_normalized(
+                    0,
+                    cx.entity_id().as_non_zero_u64().into(),
+                    buffer.read(cx).line_ending(),
+                    buffer.read(cx).as_rope().clone(),
+                );
+                let mut buffer = Buffer::build(buffer, None, Capability::ReadWrite);
+                buffer.set_language(language, cx);
+                buffer
+            });
+
+            let buffer_diff = cx.spawn({
+                let buffer = buffer.clone();
+                let language_registry = language_registry.clone();
+                async move |_this, cx| {
+                    build_buffer_diff(base_text, &buffer, &language_registry, cx).await
+                }
+            });
+
+            cx.spawn(async move |this, cx| {
+                let buffer_diff = buffer_diff.await?;
+                this.update(cx, |this, cx| {
+                    // todo!("keep the same ranges as before")
+                    // Replace the buffer in the multibuffer with the snapshot
+                    this.multibuffer.update(cx, |multibuffer, cx| {
+                        // Get the current excerpt ranges
+                        let path_key = PathKey::for_buffer(&buffer, cx);
+                        let snapshot = buffer.read(cx).snapshot();
+                        let diff = buffer_diff.read(cx);
+                        let diff_hunk_ranges = diff
+                            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
+                            .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
+                            .collect::<Vec<_>>();
+
+                        // Clear and re-add with snapshot buffer
+                        multibuffer.clear(cx);
+                        multibuffer.set_excerpts_for_path(
+                            path_key,
+                            buffer,
+                            diff_hunk_ranges,
+                            editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                            cx,
+                        );
+                        multibuffer.add_diff(buffer_diff.clone(), cx);
+                    });
+
+                    cx.notify();
+                })?;
+
+                anyhow::Ok(())
             })
-        }));
+            .detach_and_log_err(cx);
+        }
+
+        Ok(())
     }
 }
 
@@ -872,19 +1024,23 @@ async fn build_buffer(
 }
 
 async fn build_buffer_diff(
-    mut old_text: String,
+    old_text: Arc<String>,
     buffer: &Entity<Buffer>,
     language_registry: &Arc<LanguageRegistry>,
     cx: &mut AsyncApp,
 ) -> Result<Entity<BufferDiff>> {
-    LineEnding::normalize(&mut old_text);
-
     let buffer = cx.update(|cx| buffer.read(cx).snapshot())?;
 
+    let old_text_rope = cx
+        .background_spawn({
+            let old_text = old_text.clone();
+            async move { Rope::from(old_text.as_str()) }
+        })
+        .await;
     let base_buffer = cx
         .update(|cx| {
             Buffer::build_snapshot(
-                old_text.clone().into(),
+                old_text_rope,
                 buffer.language().cloned(),
                 Some(language_registry.clone()),
                 cx,
