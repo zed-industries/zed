@@ -44,7 +44,7 @@ If you send a prompt to the Agent and then move elsewhere, thus putting Zed in t
 - a visual notification that appears in the top right of your screen
 - or a sound notification
 
-You can use both notification methods together or just pick one of them.
+Both notification methods can be used together or individually according to your preference.
 
 You can customize their behavior, including turning them off entirely, by using the `agent.notify_when_agent_waiting` and `agent.play_sound_when_agent_done` settings keys.
 
