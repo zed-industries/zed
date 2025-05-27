@@ -632,8 +632,8 @@
       "cmd-k shift-down": "workspace::SwapPaneDown",
       "cmd-shift-x": "zed::Extensions",
       "cmd-alt-0": "workspace::ResetDocksSize",
-      "cmd-alt-=": ["workspace::IncreaseOpenDocksSizeByOffset", { "x": 16, "y": 16 }],
-      "cmd-alt--": ["workspace::DecreaseOpenDocksSizeByOffset", { "x": 16, "y": 16 }]
+      "cmd-alt-=": "workspace::IncreaseOpenDocksSizeByOffset",
+      "cmd-alt--": "workspace::DecreaseOpenDocksSizeByOffset"
     }
   },
   {

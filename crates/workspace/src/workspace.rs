@@ -265,44 +265,77 @@ impl_action_as!(file_finder, ToggleFileFinder as Toggle);
 #[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DecreaseActiveDockSizeByOffset {
-    #[serde(flatten)]
-    pub offset: Offset<u32>,
+    #[serde(default, flatten)]
+    pub offset: Offset<f32>,
 }
 
 #[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DecreaseOpenDocksSizeByOffset {
-    #[serde(flatten)]
-    pub offset: Offset<u32>,
+    #[serde(default, flatten)]
+    pub offset: Offset<f32>,
 }
 
 #[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IncreaseActiveDockSizeByOffset {
-    #[serde(flatten)]
-    pub offset: Offset<u32>,
+    #[serde(default, flatten)]
+    pub offset: Offset<f32>,
 }
 
 #[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IncreaseOpenDocksSizeByOffset {
-    #[serde(flatten)]
-    pub offset: Offset<u32>,
+    // TODO: https://github.com/serde-rs/serde/issues/1626.
+    #[serde(default = "Offset::ZERO", flatten)]
+    pub offset: Offset<f32>,
 }
 
+// TODO: All `Default` bound can be removed, after https://github.com/serde-rs/serde/issues/1626.
 #[derive(Clone, Copy, Deserialize, PartialEq, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct Offset<T> {
+pub struct Offset<T>
+where
+    T: Default,
+{
+    #[serde(default)]
     pub x: T,
+    #[serde(default)]
     pub y: T,
 }
-impl Mul<i32> for Offset<u32> {
+impl Offset<f32> {
+    // TODO: https://github.com/serde-rs/serde/issues/1626.
+    // const ZERO: Self = Self { x: 0., y: 0. };
+
+    fn unwrap_or_default(mut self, cx: &Context<Workspace>) -> Self {
+        let mut offset = None;
+        let get_ui_font_size = || ThemeSettings::get_global(cx).ui_font_size(cx).0;
+
+        if self.x == 0. {
+            let ui_font_size = get_ui_font_size();
+
+            self.x = ui_font_size;
+            // Cache ui_font_size, avoid repeated calls to get_ui_font_size().
+            offset = Some(ui_font_size);
+        }
+        if self.y == 0. {
+            if let Some(ui_font_size) = offset {
+                self.y = ui_font_size;
+            } else {
+                self.y = get_ui_font_size();
+            }
+        }
+
+        self
+    }
+}
+impl Mul<Pixels> for Offset<f32> {
     type Output = Offset<Pixels>;
 
-    fn mul(self, rhs: i32) -> Self::Output {
+    fn mul(self, rhs: Pixels) -> Self::Output {
         Offset {
-            x: px((self.x as i32 * rhs) as _),
-            y: px((self.y as i32 * rhs) as _),
+            x: px(self.x * rhs.0),
+            y: px(self.y * rhs.0),
         }
     }
 }
@@ -5421,22 +5454,30 @@ impl Workspace {
             ))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, act: &IncreaseActiveDockSizeByOffset, window, cx| {
-                    adjust_active_dock_size_by_offset(act.offset * 1, workspace, window, cx);
+                    let offset = act.offset.unwrap_or_default(cx) * px(1.);
+
+                    adjust_active_dock_size_by_offset(offset, workspace, window, cx);
                 },
             ))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, act: &DecreaseActiveDockSizeByOffset, window, cx| {
-                    adjust_active_dock_size_by_offset(act.offset * -1, workspace, window, cx);
+                    let offset = act.offset.unwrap_or_default(cx) * px(-1.);
+
+                    adjust_active_dock_size_by_offset(offset, workspace, window, cx);
                 },
             ))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, act: &IncreaseOpenDocksSizeByOffset, window, cx| {
-                    adjust_open_docks_size_by_offset(act.offset * 1, workspace, window, cx);
+                    let offset = act.offset.unwrap_or_default(cx) * px(1.);
+
+                    adjust_open_docks_size_by_offset(offset, workspace, window, cx);
                 },
             ))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, act: &DecreaseOpenDocksSizeByOffset, window, cx| {
-                    adjust_open_docks_size_by_offset(act.offset * -1, workspace, window, cx);
+                    let offset = act.offset.unwrap_or_default(cx) * px(-1.);
+
+                    adjust_open_docks_size_by_offset(offset, workspace, window, cx);
                 },
             ))
             .on_action(cx.listener(Workspace::toggle_centered_layout))
