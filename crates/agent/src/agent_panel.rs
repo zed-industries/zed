@@ -1292,17 +1292,11 @@ impl AgentPanel {
         }
         let model = thread_state.configured_model().map(|cm| cm.model.clone());
 
+        let model = thread_state.configured_model().map(|cm| cm.model.clone());
         if let Some(model) = model {
             self.thread.update(cx, |active_thread, cx| {
                 active_thread.thread().update(cx, |thread, cx| {
-                    // Cancel any pending completions to start fresh
-                    thread.cancel_last_completion(Some(window.window_handle()), cx);
-                    // Insert the invisible continuation message BEFORE sending to model
                     thread.insert_invisible_continue_message(cx);
-                    // Ensure we have remaining turns
-                    if thread.remaining_turns() == 0 {
-                        thread.set_remaining_turns(1);
-                    }
                     thread.advance_prompt_id();
                     thread.send_to_model(model, Some(window.window_handle()), cx);
                 });

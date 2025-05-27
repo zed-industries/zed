@@ -945,6 +945,7 @@ impl Thread {
             vec![MessageSegment::Text(text.into())],
             loaded_context.loaded_context,
             creases,
+            false,
             cx,
         );
 
@@ -961,26 +962,14 @@ impl Thread {
     }
 
     pub fn insert_invisible_continue_message(&mut self, cx: &mut Context<Self>) -> MessageId {
-        let id = self.next_message_id.post_inc();
-
-        self.messages.push(Message {
-            id,
-            role: Role::User,
-            segments: vec![MessageSegment::Text("Continue where you left off.".into())],
-            loaded_context: LoadedContext::default(),
-            creases: vec![],
-            is_hidden: true,
-        });
-        self.touch_updated_at();
-
-        // Reset the tool use limit flag since we're adding a user message
-        // This should help the server recognize that the consecutive tool use chain is broken
-        self.tool_use_limit_reached = false;
-
-        // Don't emit ThreadEvent::MessageAdded to prevent the message from being displayed
-        // Just emit a generic update event so the thread state is refreshed
-        cx.notify();
-
+        let id = self.insert_message(
+            Role::User,
+            vec![MessageSegment::Text("Continue where you left off".into())],
+            LoadedContext::default(),
+            vec![],
+            true,
+            cx,
+        );
         self.pending_checkpoint = None;
 
         id
@@ -996,6 +985,7 @@ impl Thread {
             segments,
             LoadedContext::default(),
             Vec::new(),
+            false,
             cx,
         )
     }
@@ -1006,6 +996,7 @@ impl Thread {
         segments: Vec<MessageSegment>,
         loaded_context: LoadedContext,
         creases: Vec<MessageCrease>,
+        is_hidden: bool,
         cx: &mut Context<Self>,
     ) -> MessageId {
         let id = self.next_message_id.post_inc();
@@ -1015,7 +1006,7 @@ impl Thread {
             segments,
             loaded_context,
             creases,
-            is_hidden: false,
+            is_hidden,
         });
         self.touch_updated_at();
         cx.emit(ThreadEvent::MessageAdded(id));
@@ -1670,8 +1661,6 @@ impl Thread {
                                         }
                                         CompletionRequestStatus::ToolUseLimitReached => {
                                             thread.tool_use_limit_reached = true;
-
-                                            // Clean up empty assistant message if one was created
                                         }
                                     }
                                 }
