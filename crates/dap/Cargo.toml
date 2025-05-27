@@ -53,8 +53,8 @@ workspace-hack.workspace = true
 
 [dev-dependencies]
 async-pipe.workspace = true
-env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 task = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
+zlog.workspace = true

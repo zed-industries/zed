@@ -1,8 +1,8 @@
 use crate::language_model_selector::{
     LanguageModelSelector, LanguageModelSelectorPopoverMenu, ToggleModelSelector,
 };
+use agent_settings::AgentSettings;
 use anyhow::Result;
-use assistant_settings::AssistantSettings;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
 use assistant_slash_commands::{
     DefaultSlashCommand, DocsSlashCommand, DocsSlashCommandArgs, FileSlashCommand,
@@ -51,6 +51,7 @@ use std::{
     cmp,
     ops::Range,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::Arc,
     time::Duration,
 };
@@ -234,7 +235,7 @@ impl ContextEditor {
             editor.set_show_breakpoints(false, cx);
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
-            editor.set_completion_provider(Some(Box::new(completion_provider)));
+            editor.set_completion_provider(Some(Rc::new(completion_provider)));
             editor.set_menu_inline_completions_policy(MenuInlineCompletionsPolicy::Never);
             editor.set_collaboration_hub(Box::new(project.clone()));
 
@@ -282,7 +283,7 @@ impl ContextEditor {
                 LanguageModelSelector::new(
                     |cx| LanguageModelRegistry::read_global(cx).default_model(),
                     move |model, cx| {
-                        update_settings_file::<AssistantSettings>(
+                        update_settings_file::<AgentSettings>(
                             fs.clone(),
                             cx,
                             move |settings, _| settings.set_model(model.clone()),
@@ -1902,7 +1903,7 @@ impl ContextEditor {
                             .on_click(cx.listener(|this, _event, _window, cx| {
                                 let client = this
                                     .workspace
-                                    .update(cx, |workspace, _| workspace.client().clone())
+                                    .read_with(cx, |workspace, _| workspace.client().clone())
                                     .log_err();
 
                                 if let Some(client) = client {
@@ -3365,7 +3366,7 @@ mod tests {
         LanguageModelRegistry::test(cx);
         cx.set_global(settings_store);
         language::init(cx);
-        assistant_settings::init(cx);
+        agent_settings::init(cx);
         Project::init_settings(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         workspace::init_settings(cx);

@@ -250,6 +250,9 @@ impl StackFrameList {
         let Some(abs_path) = Self::abs_path_from_stack_frame(&stack_frame) else {
             return Task::ready(Err(anyhow!("Project path not found")));
         };
+        if abs_path.starts_with("<node_internals>") {
+            return Task::ready(Ok(()));
+        }
         let row = stack_frame.line.saturating_sub(1) as u32;
         cx.emit(StackFrameListEvent::SelectedStackFrameChanged(
             stack_frame_id,
@@ -280,7 +283,7 @@ impl StackFrameList {
                     })
                 })??
                 .await?;
-            let position = buffer.update(cx, |this, _| {
+            let position = buffer.read_with(cx, |this, _| {
                 this.snapshot().anchor_after(PointUtf16::new(row, 0))
             })?;
             this.update_in(cx, |this, window, cx| {

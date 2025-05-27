@@ -1665,7 +1665,7 @@ impl App {
 
     /// Removes an image from the sprite atlas on all windows.
     ///
-    /// If the current window is being updated, it will be removed from `App.windows``, you can use `current_window` to specify the current window.
+    /// If the current window is being updated, it will be removed from `App.windows`, you can use `current_window` to specify the current window.
     /// This is a no-op if the image is not in the sprite atlas.
     pub fn drop_image(&mut self, image: Arc<RenderImage>, current_window: Option<&mut Window>) {
         // remove the texture from all other windows

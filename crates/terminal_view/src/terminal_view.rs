@@ -389,11 +389,9 @@ impl TerminalView {
     fn rerun_task(&mut self, _: &RerunTask, window: &mut Window, cx: &mut Context<Self>) {
         let task = self
             .terminal
-            .update(cx, |terminal, _| {
-                terminal
-                    .task()
-                    .map(|task| terminal_rerun_override(&task.id))
-            })
+            .read(cx)
+            .task()
+            .map(|task| terminal_rerun_override(&task.id))
             .unwrap_or_default();
         window.dispatch_action(Box::new(task), cx);
     }

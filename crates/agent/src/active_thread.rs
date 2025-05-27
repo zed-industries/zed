@@ -13,9 +13,10 @@ use crate::tool_use::{PendingToolUseStatus, ToolUse};
 use crate::ui::{
     AddedContext, AgentNotification, AgentNotificationEvent, AnimatedLabel, ContextPill,
 };
+use agent_settings::{AgentSettings, NotifyWhenAgentWaiting};
 use anyhow::Context as _;
-use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
 use assistant_tool::ToolUseStatus;
+use audio::{Audio, Sound};
 use collections::{HashMap, HashSet};
 use editor::actions::{MoveUp, Paste};
 use editor::scroll::Autoscroll;
@@ -996,9 +997,10 @@ impl ActiveThread {
             }
             ThreadEvent::Stopped(reason) => match reason {
                 Ok(StopReason::EndTurn | StopReason::MaxTokens) => {
-                    let thread = self.thread.read(cx);
+                    let used_tools = self.thread.read(cx).used_tools_since_last_user_message();
+                    self.play_notification_sound(cx);
                     self.show_notification(
-                        if thread.used_tools_since_last_user_message() {
+                        if used_tools {
                             "Finished running tools"
                         } else {
                             "New message"
@@ -1011,6 +1013,7 @@ impl ActiveThread {
                 _ => {}
             },
             ThreadEvent::ToolConfirmationNeeded => {
+                self.play_notification_sound(cx);
                 self.show_notification("Waiting for tool confirmation", IconName::Info, window, cx);
             }
             ThreadEvent::StreamedAssistantText(message_id, text) => {
@@ -1147,6 +1150,13 @@ impl ActiveThread {
         cx.notify();
     }
 
+    fn play_notification_sound(&self, cx: &mut App) {
+        let settings = AgentSettings::get_global(cx);
+        if settings.play_sound_when_agent_done {
+            Audio::play_sound(Sound::AgentDone, cx);
+        }
+    }
+
     fn show_notification(
         &mut self,
         caption: impl Into<SharedString>,
@@ -1160,7 +1170,7 @@ impl ActiveThread {
 
         let title = self.thread.read(cx).summary().unwrap_or("Agent Panel");
 
-        match AssistantSettings::get_global(cx).notify_when_agent_waiting {
+        match AgentSettings::get_global(cx).notify_when_agent_waiting {
             NotifyWhenAgentWaiting::PrimaryScreen => {
                 if let Some(primary) = cx.primary_display() {
                     self.pop_up(icon, caption.into(), title.clone(), window, primary, cx);
@@ -1431,7 +1441,7 @@ impl ActiveThread {
                         tools: vec![],
                         tool_choice: None,
                         stop: vec![],
-                        temperature: AssistantSettings::temperature_for_model(
+                        temperature: AgentSettings::temperature_for_model(
                             &configured_model.model,
                             cx,
                         ),
@@ -1481,7 +1491,7 @@ impl ActiveThread {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.context_store.update(cx, |store, _cx| store.clear());
+        self.context_store.update(cx, |store, cx| store.clear(cx));
         cx.notify();
     }
 
@@ -1888,7 +1898,7 @@ impl ActiveThread {
                         .child(open_as_markdown),
                 )
                 .into_any_element(),
-            None if AssistantSettings::get_global(cx).enable_feedback =>
+            None if AgentSettings::get_global(cx).enable_feedback =>
                 feedback_container
                 .child(
                     div().visible_on_hover("feedback_container").child(
@@ -3068,7 +3078,7 @@ impl ActiveThread {
                                             .on_click(cx.listener(
                                                 move |this, event, window, cx| {
                                                     if let Some(fs) = fs.clone() {
-                                                        update_settings_file::<AssistantSettings>(
+                                                        update_settings_file::<AgentSettings>(
                                                             fs.clone(),
                                                             cx,
                                                             |settings, _| {
@@ -3680,7 +3690,7 @@ mod tests {
             cx.set_global(settings_store);
             language::init(cx);
             Project::init_settings(cx);
-            AssistantSettings::register(cx);
+            AgentSettings::register(cx);
             prompt_store::init(cx);
             thread_store::init(cx);
             workspace::init_settings(cx);

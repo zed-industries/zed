@@ -4,6 +4,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "f4": "debugger::Start",
+      "alt-f4": "debugger::RerunLastSession",
       "f5": "debugger::Continue",
       "shift-f5": "debugger::Stop",
       "shift-cmd-f5": "debugger::Restart",
@@ -311,6 +312,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "enter": "agent::Chat",
+      "cmd-enter": "agent::ChatWithFollow",
       "cmd-i": "agent::ToggleProfileSelector",
       "shift-ctrl-r": "agent::OpenAgentDiff"
     }
@@ -735,6 +737,7 @@
       "ctrl-alt-cmd-f": "workspace::FollowNextCollaborator",
       // TODO: Move this to a dock open action
       "cmd-shift-c": "collab_panel::ToggleFocus",
+      // Only available in debug builds: opens an element inspector for development.
       "cmd-alt-i": "dev::ToggleInspector"
     }
   },
@@ -838,7 +841,10 @@
     "use_key_equivalents": true,
     "bindings": {
       "left": "variable_list::CollapseSelectedEntry",
-      "right": "variable_list::ExpandSelectedEntry"
+      "right": "variable_list::ExpandSelectedEntry",
+      "enter": "variable_list::EditVariable",
+      "cmd-c": "variable_list::CopyVariableValue",
+      "cmd-alt-c": "variable_list::CopyVariableName"
     }
   },
   {
@@ -928,6 +934,13 @@
     "bindings": {
       "cmd-t": "debugger::ToggleThreadPicker",
       "cmd-i": "debugger::ToggleSessionPicker"
+    }
+  },
+  {
+    "context": "BreakpointList",
+    "bindings": {
+      "space": "debugger::ToggleEnableBreakpoint",
+      "backspace": "debugger::UnsetBreakpoint"
     }
   },
   {
