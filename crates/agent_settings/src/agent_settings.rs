@@ -19,12 +19,12 @@ use settings::{Settings, SettingsSources};
 pub use crate::agent_profile::*;
 
 pub fn init(cx: &mut App) {
-    AssistantSettings::register(cx);
+    AgentSettings::register(cx);
 }
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum AssistantDockPosition {
+pub enum AgentDockPosition {
     Left,
     #[default]
     Right,
@@ -51,7 +51,7 @@ pub enum NotifyWhenAgentWaiting {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(tag = "name", rename_all = "snake_case")]
 #[schemars(deny_unknown_fields)]
-pub enum AssistantProviderContentV1 {
+pub enum AgentProviderContentV1 {
     #[serde(rename = "zed.dev")]
     ZedDotDev { default_model: Option<String> },
     #[serde(rename = "openai")]
@@ -88,10 +88,10 @@ pub enum AssistantProviderContentV1 {
 }
 
 #[derive(Default, Clone, Debug)]
-pub struct AssistantSettings {
+pub struct AgentSettings {
     pub enabled: bool,
     pub button: bool,
-    pub dock: AssistantDockPosition,
+    pub dock: AgentDockPosition,
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub default_model: LanguageModelSelection,
@@ -113,7 +113,7 @@ pub struct AssistantSettings {
     pub enable_feedback: bool,
 }
 
-impl AssistantSettings {
+impl AgentSettings {
     pub fn temperature_for_model(model: &Arc<dyn LanguageModel>, cx: &App) -> Option<f32> {
         let settings = Self::get_global(cx);
         settings
@@ -168,58 +168,56 @@ impl LanguageModelParameters {
     }
 }
 
-/// Assistant panel settings
+/// Agent panel settings
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
-pub struct AssistantSettingsContent {
+pub struct AgentSettingsContent {
     #[serde(flatten)]
-    pub inner: Option<AssistantSettingsContentInner>,
+    pub inner: Option<AgentSettingsContentInner>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(untagged)]
-pub enum AssistantSettingsContentInner {
-    Versioned(Box<VersionedAssistantSettingsContent>),
-    Legacy(LegacyAssistantSettingsContent),
+pub enum AgentSettingsContentInner {
+    Versioned(Box<VersionedAgentSettingsContent>),
+    Legacy(LegacyAgentSettingsContent),
 }
 
-impl AssistantSettingsContentInner {
-    fn for_v2(content: AssistantSettingsContentV2) -> Self {
-        AssistantSettingsContentInner::Versioned(Box::new(VersionedAssistantSettingsContent::V2(
-            content,
-        )))
+impl AgentSettingsContentInner {
+    fn for_v2(content: AgentSettingsContentV2) -> Self {
+        AgentSettingsContentInner::Versioned(Box::new(VersionedAgentSettingsContent::V2(content)))
     }
 }
 
-impl JsonSchema for AssistantSettingsContent {
+impl JsonSchema for AgentSettingsContent {
     fn schema_name() -> String {
-        VersionedAssistantSettingsContent::schema_name()
+        VersionedAgentSettingsContent::schema_name()
     }
 
     fn json_schema(r#gen: &mut schemars::r#gen::SchemaGenerator) -> Schema {
-        VersionedAssistantSettingsContent::json_schema(r#gen)
+        VersionedAgentSettingsContent::json_schema(r#gen)
     }
 
     fn is_referenceable() -> bool {
-        VersionedAssistantSettingsContent::is_referenceable()
+        VersionedAgentSettingsContent::is_referenceable()
     }
 }
 
-impl AssistantSettingsContent {
+impl AgentSettingsContent {
     pub fn is_version_outdated(&self) -> bool {
         match &self.inner {
-            Some(AssistantSettingsContentInner::Versioned(settings)) => match **settings {
-                VersionedAssistantSettingsContent::V1(_) => true,
-                VersionedAssistantSettingsContent::V2(_) => false,
+            Some(AgentSettingsContentInner::Versioned(settings)) => match **settings {
+                VersionedAgentSettingsContent::V1(_) => true,
+                VersionedAgentSettingsContent::V2(_) => false,
             },
-            Some(AssistantSettingsContentInner::Legacy(_)) => true,
+            Some(AgentSettingsContentInner::Legacy(_)) => true,
             None => false,
         }
     }
 
-    fn upgrade(&self) -> AssistantSettingsContentV2 {
+    fn upgrade(&self) -> AgentSettingsContentV2 {
         match &self.inner {
-            Some(AssistantSettingsContentInner::Versioned(settings)) => match **settings {
-                VersionedAssistantSettingsContent::V1(ref settings) => AssistantSettingsContentV2 {
+            Some(AgentSettingsContentInner::Versioned(settings)) => match **settings {
+                VersionedAgentSettingsContent::V1(ref settings) => AgentSettingsContentV2 {
                     enabled: settings.enabled,
                     button: settings.button,
                     dock: settings.dock,
@@ -229,48 +227,42 @@ impl AssistantSettingsContent {
                         .provider
                         .clone()
                         .and_then(|provider| match provider {
-                            AssistantProviderContentV1::ZedDotDev { default_model } => {
-                                default_model.map(|model| LanguageModelSelection {
+                            AgentProviderContentV1::ZedDotDev { default_model } => default_model
+                                .map(|model| LanguageModelSelection {
                                     provider: "zed.dev".into(),
                                     model,
-                                })
-                            }
-                            AssistantProviderContentV1::OpenAi { default_model, .. } => {
-                                default_model.map(|model| LanguageModelSelection {
+                                }),
+                            AgentProviderContentV1::OpenAi { default_model, .. } => default_model
+                                .map(|model| LanguageModelSelection {
                                     provider: "openai".into(),
                                     model: model.id().to_string(),
-                                })
-                            }
-                            AssistantProviderContentV1::Anthropic { default_model, .. } => {
+                                }),
+                            AgentProviderContentV1::Anthropic { default_model, .. } => {
                                 default_model.map(|model| LanguageModelSelection {
                                     provider: "anthropic".into(),
                                     model: model.id().to_string(),
                                 })
                             }
-                            AssistantProviderContentV1::Ollama { default_model, .. } => {
-                                default_model.map(|model| LanguageModelSelection {
+                            AgentProviderContentV1::Ollama { default_model, .. } => default_model
+                                .map(|model| LanguageModelSelection {
                                     provider: "ollama".into(),
                                     model: model.id().to_string(),
-                                })
-                            }
-                            AssistantProviderContentV1::LmStudio { default_model, .. } => {
-                                default_model.map(|model| LanguageModelSelection {
+                                }),
+                            AgentProviderContentV1::LmStudio { default_model, .. } => default_model
+                                .map(|model| LanguageModelSelection {
                                     provider: "lmstudio".into(),
                                     model: model.id().to_string(),
-                                })
-                            }
-                            AssistantProviderContentV1::DeepSeek { default_model, .. } => {
-                                default_model.map(|model| LanguageModelSelection {
+                                }),
+                            AgentProviderContentV1::DeepSeek { default_model, .. } => default_model
+                                .map(|model| LanguageModelSelection {
                                     provider: "deepseek".into(),
                                     model: model.id().to_string(),
-                                })
-                            }
-                            AssistantProviderContentV1::Mistral { default_model, .. } => {
-                                default_model.map(|model| LanguageModelSelection {
+                                }),
+                            AgentProviderContentV1::Mistral { default_model, .. } => default_model
+                                .map(|model| LanguageModelSelection {
                                     provider: "mistral".into(),
                                     model: model.id().to_string(),
-                                })
-                            }
+                                }),
                         }),
                     inline_assistant_model: None,
                     commit_message_model: None,
@@ -288,9 +280,9 @@ impl AssistantSettingsContent {
                     enable_feedback: None,
                     play_sound_when_agent_done: None,
                 },
-                VersionedAssistantSettingsContent::V2(ref settings) => settings.clone(),
+                VersionedAgentSettingsContent::V2(ref settings) => settings.clone(),
             },
-            Some(AssistantSettingsContentInner::Legacy(settings)) => AssistantSettingsContentV2 {
+            Some(AgentSettingsContentInner::Legacy(settings)) => AgentSettingsContentV2 {
                 enabled: None,
                 button: settings.button,
                 dock: settings.dock,
@@ -321,30 +313,28 @@ impl AssistantSettingsContent {
                 enable_feedback: None,
                 play_sound_when_agent_done: None,
             },
-            None => AssistantSettingsContentV2::default(),
+            None => AgentSettingsContentV2::default(),
         }
     }
 
-    pub fn set_dock(&mut self, dock: AssistantDockPosition) {
+    pub fn set_dock(&mut self, dock: AgentDockPosition) {
         match &mut self.inner {
-            Some(AssistantSettingsContentInner::Versioned(settings)) => match **settings {
-                VersionedAssistantSettingsContent::V1(ref mut settings) => {
+            Some(AgentSettingsContentInner::Versioned(settings)) => match **settings {
+                VersionedAgentSettingsContent::V1(ref mut settings) => {
                     settings.dock = Some(dock);
                 }
-                VersionedAssistantSettingsContent::V2(ref mut settings) => {
+                VersionedAgentSettingsContent::V2(ref mut settings) => {
                     settings.dock = Some(dock);
                 }
             },
-            Some(AssistantSettingsContentInner::Legacy(settings)) => {
+            Some(AgentSettingsContentInner::Legacy(settings)) => {
                 settings.dock = Some(dock);
             }
             None => {
-                self.inner = Some(AssistantSettingsContentInner::for_v2(
-                    AssistantSettingsContentV2 {
-                        dock: Some(dock),
-                        ..Default::default()
-                    },
-                ))
+                self.inner = Some(AgentSettingsContentInner::for_v2(AgentSettingsContentV2 {
+                    dock: Some(dock),
+                    ..Default::default()
+                }))
             }
         }
     }
@@ -354,107 +344,99 @@ impl AssistantSettingsContent {
         let provider = language_model.provider_id().0.to_string();
 
         match &mut self.inner {
-            Some(AssistantSettingsContentInner::Versioned(settings)) => match **settings {
-                VersionedAssistantSettingsContent::V1(ref mut settings) => {
-                    match provider.as_ref() {
-                        "zed.dev" => {
-                            log::warn!("attempted to set zed.dev model on outdated settings");
-                        }
-                        "anthropic" => {
-                            let api_url = match &settings.provider {
-                                Some(AssistantProviderContentV1::Anthropic { api_url, .. }) => {
-                                    api_url.clone()
-                                }
-                                _ => None,
-                            };
-                            settings.provider = Some(AssistantProviderContentV1::Anthropic {
-                                default_model: AnthropicModel::from_id(&model).ok(),
-                                api_url,
-                            });
-                        }
-                        "ollama" => {
-                            let api_url = match &settings.provider {
-                                Some(AssistantProviderContentV1::Ollama { api_url, .. }) => {
-                                    api_url.clone()
-                                }
-                                _ => None,
-                            };
-                            settings.provider = Some(AssistantProviderContentV1::Ollama {
-                                default_model: Some(ollama::Model::new(
-                                    &model,
-                                    None,
-                                    None,
-                                    Some(language_model.supports_tools()),
-                                )),
-                                api_url,
-                            });
-                        }
-                        "lmstudio" => {
-                            let api_url = match &settings.provider {
-                                Some(AssistantProviderContentV1::LmStudio { api_url, .. }) => {
-                                    api_url.clone()
-                                }
-                                _ => None,
-                            };
-                            settings.provider = Some(AssistantProviderContentV1::LmStudio {
-                                default_model: Some(lmstudio::Model::new(
-                                    &model, None, None, false,
-                                )),
-                                api_url,
-                            });
-                        }
-                        "openai" => {
-                            let (api_url, available_models) = match &settings.provider {
-                                Some(AssistantProviderContentV1::OpenAi {
-                                    api_url,
-                                    available_models,
-                                    ..
-                                }) => (api_url.clone(), available_models.clone()),
-                                _ => (None, None),
-                            };
-                            settings.provider = Some(AssistantProviderContentV1::OpenAi {
-                                default_model: OpenAiModel::from_id(&model).ok(),
+            Some(AgentSettingsContentInner::Versioned(settings)) => match **settings {
+                VersionedAgentSettingsContent::V1(ref mut settings) => match provider.as_ref() {
+                    "zed.dev" => {
+                        log::warn!("attempted to set zed.dev model on outdated settings");
+                    }
+                    "anthropic" => {
+                        let api_url = match &settings.provider {
+                            Some(AgentProviderContentV1::Anthropic { api_url, .. }) => {
+                                api_url.clone()
+                            }
+                            _ => None,
+                        };
+                        settings.provider = Some(AgentProviderContentV1::Anthropic {
+                            default_model: AnthropicModel::from_id(&model).ok(),
+                            api_url,
+                        });
+                    }
+                    "ollama" => {
+                        let api_url = match &settings.provider {
+                            Some(AgentProviderContentV1::Ollama { api_url, .. }) => api_url.clone(),
+                            _ => None,
+                        };
+                        settings.provider = Some(AgentProviderContentV1::Ollama {
+                            default_model: Some(ollama::Model::new(
+                                &model,
+                                None,
+                                None,
+                                Some(language_model.supports_tools()),
+                            )),
+                            api_url,
+                        });
+                    }
+                    "lmstudio" => {
+                        let api_url = match &settings.provider {
+                            Some(AgentProviderContentV1::LmStudio { api_url, .. }) => {
+                                api_url.clone()
+                            }
+                            _ => None,
+                        };
+                        settings.provider = Some(AgentProviderContentV1::LmStudio {
+                            default_model: Some(lmstudio::Model::new(&model, None, None, false)),
+                            api_url,
+                        });
+                    }
+                    "openai" => {
+                        let (api_url, available_models) = match &settings.provider {
+                            Some(AgentProviderContentV1::OpenAi {
                                 api_url,
                                 available_models,
-                            });
-                        }
-                        "deepseek" => {
-                            let api_url = match &settings.provider {
-                                Some(AssistantProviderContentV1::DeepSeek { api_url, .. }) => {
-                                    api_url.clone()
-                                }
-                                _ => None,
-                            };
-                            settings.provider = Some(AssistantProviderContentV1::DeepSeek {
-                                default_model: DeepseekModel::from_id(&model).ok(),
-                                api_url,
-                            });
-                        }
-                        _ => {}
+                                ..
+                            }) => (api_url.clone(), available_models.clone()),
+                            _ => (None, None),
+                        };
+                        settings.provider = Some(AgentProviderContentV1::OpenAi {
+                            default_model: OpenAiModel::from_id(&model).ok(),
+                            api_url,
+                            available_models,
+                        });
                     }
-                }
-                VersionedAssistantSettingsContent::V2(ref mut settings) => {
+                    "deepseek" => {
+                        let api_url = match &settings.provider {
+                            Some(AgentProviderContentV1::DeepSeek { api_url, .. }) => {
+                                api_url.clone()
+                            }
+                            _ => None,
+                        };
+                        settings.provider = Some(AgentProviderContentV1::DeepSeek {
+                            default_model: DeepseekModel::from_id(&model).ok(),
+                            api_url,
+                        });
+                    }
+                    _ => {}
+                },
+                VersionedAgentSettingsContent::V2(ref mut settings) => {
                     settings.default_model = Some(LanguageModelSelection {
                         provider: provider.into(),
                         model,
                     });
                 }
             },
-            Some(AssistantSettingsContentInner::Legacy(settings)) => {
+            Some(AgentSettingsContentInner::Legacy(settings)) => {
                 if let Ok(model) = OpenAiModel::from_id(&language_model.id().0) {
                     settings.default_open_ai_model = Some(model);
                 }
             }
             None => {
-                self.inner = Some(AssistantSettingsContentInner::for_v2(
-                    AssistantSettingsContentV2 {
-                        default_model: Some(LanguageModelSelection {
-                            provider: provider.into(),
-                            model,
-                        }),
-                        ..Default::default()
-                    },
-                ));
+                self.inner = Some(AgentSettingsContentInner::for_v2(AgentSettingsContentV2 {
+                    default_model: Some(LanguageModelSelection {
+                        provider: provider.into(),
+                        model,
+                    }),
+                    ..Default::default()
+                }));
             }
         }
     }
@@ -483,15 +465,15 @@ impl AssistantSettingsContent {
 
     pub fn v2_setting(
         &mut self,
-        f: impl FnOnce(&mut AssistantSettingsContentV2) -> anyhow::Result<()>,
+        f: impl FnOnce(&mut AgentSettingsContentV2) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
         match self.inner.get_or_insert_with(|| {
-            AssistantSettingsContentInner::for_v2(AssistantSettingsContentV2 {
+            AgentSettingsContentInner::for_v2(AgentSettingsContentV2 {
                 ..Default::default()
             })
         }) {
-            AssistantSettingsContentInner::Versioned(boxed) => {
-                if let VersionedAssistantSettingsContent::V2(ref mut settings) = **boxed {
+            AgentSettingsContentInner::Versioned(boxed) => {
+                if let VersionedAgentSettingsContent::V2(ref mut settings) = **boxed {
                     f(settings)
                 } else {
                     Ok(())
@@ -584,16 +566,16 @@ impl AssistantSettingsContent {
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
 #[serde(tag = "version")]
 #[schemars(deny_unknown_fields)]
-pub enum VersionedAssistantSettingsContent {
+pub enum VersionedAgentSettingsContent {
     #[serde(rename = "1")]
-    V1(AssistantSettingsContentV1),
+    V1(AgentSettingsContentV1),
     #[serde(rename = "2")]
-    V2(AssistantSettingsContentV2),
+    V2(AgentSettingsContentV2),
 }
 
-impl Default for VersionedAssistantSettingsContent {
+impl Default for VersionedAgentSettingsContent {
     fn default() -> Self {
-        Self::V2(AssistantSettingsContentV2 {
+        Self::V2(AgentSettingsContentV2 {
             enabled: None,
             button: None,
             dock: None,
@@ -621,8 +603,8 @@ impl Default for VersionedAssistantSettingsContent {
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug, Default)]
 #[schemars(deny_unknown_fields)]
-pub struct AssistantSettingsContentV2 {
-    /// Whether the Assistant is enabled.
+pub struct AgentSettingsContentV2 {
+    /// Whether the Agent is enabled.
     ///
     /// Default: true
     enabled: Option<bool>,
@@ -633,7 +615,7 @@ pub struct AssistantSettingsContentV2 {
     /// Where to dock the agent panel.
     ///
     /// Default: right
-    dock: Option<AssistantDockPosition>,
+    dock: Option<AgentDockPosition>,
     /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640
@@ -792,50 +774,50 @@ pub struct ContextServerPresetContent {
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
 #[schemars(deny_unknown_fields)]
-pub struct AssistantSettingsContentV1 {
-    /// Whether the Assistant is enabled.
+pub struct AgentSettingsContentV1 {
+    /// Whether the Agent is enabled.
     ///
     /// Default: true
     enabled: Option<bool>,
-    /// Whether to show the assistant panel button in the status bar.
+    /// Whether to show the Agent panel button in the status bar.
     ///
     /// Default: true
     button: Option<bool>,
-    /// Where to dock the assistant.
+    /// Where to dock the Agent.
     ///
     /// Default: right
-    dock: Option<AssistantDockPosition>,
-    /// Default width in pixels when the assistant is docked to the left or right.
+    dock: Option<AgentDockPosition>,
+    /// Default width in pixels when the Agent is docked to the left or right.
     ///
     /// Default: 640
     default_width: Option<f32>,
-    /// Default height in pixels when the assistant is docked to the bottom.
+    /// Default height in pixels when the Agent is docked to the bottom.
     ///
     /// Default: 320
     default_height: Option<f32>,
-    /// The provider of the assistant service.
+    /// The provider of the Agent service.
     ///
     /// This can be "openai", "anthropic", "ollama", "lmstudio", "deepseek", "zed.dev"
     /// each with their respective default models and configurations.
-    provider: Option<AssistantProviderContentV1>,
+    provider: Option<AgentProviderContentV1>,
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
 #[schemars(deny_unknown_fields)]
-pub struct LegacyAssistantSettingsContent {
-    /// Whether to show the assistant panel button in the status bar.
+pub struct LegacyAgentSettingsContent {
+    /// Whether to show the Agent panel button in the status bar.
     ///
     /// Default: true
     pub button: Option<bool>,
-    /// Where to dock the assistant.
+    /// Where to dock the Agent.
     ///
     /// Default: right
-    pub dock: Option<AssistantDockPosition>,
-    /// Default width in pixels when the assistant is docked to the left or right.
+    pub dock: Option<AgentDockPosition>,
+    /// Default width in pixels when the Agent is docked to the left or right.
     ///
     /// Default: 640
     pub default_width: Option<f32>,
-    /// Default height in pixels when the assistant is docked to the bottom.
+    /// Default height in pixels when the Agent is docked to the bottom.
     ///
     /// Default: 320
     pub default_height: Option<f32>,
@@ -849,20 +831,20 @@ pub struct LegacyAssistantSettingsContent {
     pub openai_api_url: Option<String>,
 }
 
-impl Settings for AssistantSettings {
+impl Settings for AgentSettings {
     const KEY: Option<&'static str> = Some("agent");
 
     const FALLBACK_KEY: Option<&'static str> = Some("assistant");
 
     const PRESERVED_KEYS: Option<&'static [&'static str]> = Some(&["version"]);
 
-    type FileContent = AssistantSettingsContent;
+    type FileContent = AgentSettingsContent;
 
     fn load(
         sources: SettingsSources<Self::FileContent>,
         _: &mut gpui::App,
     ) -> anyhow::Result<Self> {
-        let mut settings = AssistantSettings::default();
+        let mut settings = AgentSettings::default();
 
         for value in sources.defaults_and_customizations() {
             if value.is_version_outdated() {
@@ -957,28 +939,25 @@ impl Settings for AssistantSettings {
             .and_then(|b| b.as_bool())
         {
             match &mut current.inner {
-                Some(AssistantSettingsContentInner::Versioned(versioned)) => {
-                    match versioned.as_mut() {
-                        VersionedAssistantSettingsContent::V1(setting) => {
-                            setting.enabled = Some(b);
-                            setting.button = Some(b);
-                        }
-
-                        VersionedAssistantSettingsContent::V2(setting) => {
-                            setting.enabled = Some(b);
-                            setting.button = Some(b);
-                        }
+                Some(AgentSettingsContentInner::Versioned(versioned)) => match versioned.as_mut() {
+                    VersionedAgentSettingsContent::V1(setting) => {
+                        setting.enabled = Some(b);
+                        setting.button = Some(b);
                     }
-                }
-                Some(AssistantSettingsContentInner::Legacy(setting)) => setting.button = Some(b),
+
+                    VersionedAgentSettingsContent::V2(setting) => {
+                        setting.enabled = Some(b);
+                        setting.button = Some(b);
+                    }
+                },
+                Some(AgentSettingsContentInner::Legacy(setting)) => setting.button = Some(b),
                 None => {
-                    current.inner = Some(AssistantSettingsContentInner::for_v2(
-                        AssistantSettingsContentV2 {
+                    current.inner =
+                        Some(AgentSettingsContentInner::for_v2(AgentSettingsContentV2 {
                             enabled: Some(b),
                             button: Some(b),
                             ..Default::default()
-                        },
-                    ));
+                        }));
                 }
             }
         }
@@ -1000,7 +979,7 @@ mod tests {
     use super::*;
 
     #[gpui::test]
-    async fn test_deserialize_assistant_settings_with_version(cx: &mut TestAppContext) {
+    async fn test_deserialize_agent_settings_with_version(cx: &mut TestAppContext) {
         let fs = fs::FakeFs::new(cx.executor().clone());
         fs.create_dir(paths::settings_file().parent().unwrap())
             .await
@@ -1009,13 +988,13 @@ mod tests {
         cx.update(|cx| {
             let test_settings = settings::SettingsStore::test(cx);
             cx.set_global(test_settings);
-            AssistantSettings::register(cx);
+            AgentSettings::register(cx);
         });
 
         cx.update(|cx| {
-            assert!(!AssistantSettings::get_global(cx).using_outdated_settings_version);
+            assert!(!AgentSettings::get_global(cx).using_outdated_settings_version);
             assert_eq!(
-                AssistantSettings::get_global(cx).default_model,
+                AgentSettings::get_global(cx).default_model,
                 LanguageModelSelection {
                     provider: "zed.dev".into(),
                     model: "claude-sonnet-4".into(),
@@ -1024,38 +1003,36 @@ mod tests {
         });
 
         cx.update(|cx| {
-            settings::SettingsStore::global(cx).update_settings_file::<AssistantSettings>(
+            settings::SettingsStore::global(cx).update_settings_file::<AgentSettings>(
                 fs.clone(),
                 |settings, _| {
-                    *settings = AssistantSettingsContent {
-                        inner: Some(AssistantSettingsContentInner::for_v2(
-                            AssistantSettingsContentV2 {
-                                default_model: Some(LanguageModelSelection {
-                                    provider: "test-provider".into(),
-                                    model: "gpt-99".into(),
-                                }),
-                                inline_assistant_model: None,
-                                commit_message_model: None,
-                                thread_summary_model: None,
-                                inline_alternatives: None,
-                                enabled: None,
-                                button: None,
-                                dock: None,
-                                default_width: None,
-                                default_height: None,
-                                default_profile: None,
-                                default_view: None,
-                                profiles: None,
-                                always_allow_tool_actions: None,
-                                play_sound_when_agent_done: None,
-                                notify_when_agent_waiting: None,
-                                stream_edits: None,
-                                single_file_review: None,
-                                enable_feedback: None,
-                                model_parameters: Vec::new(),
-                                preferred_completion_mode: None,
-                            },
-                        )),
+                    *settings = AgentSettingsContent {
+                        inner: Some(AgentSettingsContentInner::for_v2(AgentSettingsContentV2 {
+                            default_model: Some(LanguageModelSelection {
+                                provider: "test-provider".into(),
+                                model: "gpt-99".into(),
+                            }),
+                            inline_assistant_model: None,
+                            commit_message_model: None,
+                            thread_summary_model: None,
+                            inline_alternatives: None,
+                            enabled: None,
+                            button: None,
+                            dock: None,
+                            default_width: None,
+                            default_height: None,
+                            default_profile: None,
+                            default_view: None,
+                            profiles: None,
+                            always_allow_tool_actions: None,
+                            play_sound_when_agent_done: None,
+                            notify_when_agent_waiting: None,
+                            stream_edits: None,
+                            single_file_review: None,
+                            enable_feedback: None,
+                            model_parameters: Vec::new(),
+                            preferred_completion_mode: None,
+                        })),
                     }
                 },
             );
@@ -1067,14 +1044,14 @@ mod tests {
         assert!(raw_settings_value.contains(r#""version": "2""#));
 
         #[derive(Debug, Deserialize)]
-        struct AssistantSettingsTest {
-            agent: AssistantSettingsContent,
+        struct AgentSettingsTest {
+            agent: AgentSettingsContent,
         }
 
-        let assistant_settings: AssistantSettingsTest =
+        let agent_settings: AgentSettingsTest =
             serde_json_lenient::from_str(&raw_settings_value).unwrap();
 
-        assert!(!assistant_settings.agent.is_version_outdated());
+        assert!(!agent_settings.agent.is_version_outdated());
     }
 
     #[gpui::test]
@@ -1099,29 +1076,27 @@ mod tests {
                 .set_user_settings(user_settings_content, cx)
                 .unwrap();
             cx.set_global(test_settings);
-            AssistantSettings::register(cx);
+            AgentSettings::register(cx);
         });
 
         cx.run_until_parked();
 
-        let assistant_settings = cx.update(|cx| AssistantSettings::get_global(cx).clone());
-        assert!(assistant_settings.enabled);
-        assert!(!assistant_settings.using_outdated_settings_version);
-        assert_eq!(assistant_settings.default_model.model, "gpt-99");
+        let agent_settings = cx.update(|cx| AgentSettings::get_global(cx).clone());
+        assert!(agent_settings.enabled);
+        assert!(!agent_settings.using_outdated_settings_version);
+        assert_eq!(agent_settings.default_model.model, "gpt-99");
 
         cx.update_global::<SettingsStore, _>(|settings_store, cx| {
-            settings_store.update_user_settings::<AssistantSettings>(cx, |settings| {
-                *settings = AssistantSettingsContent {
-                    inner: Some(AssistantSettingsContentInner::for_v2(
-                        AssistantSettingsContentV2 {
-                            enabled: Some(false),
-                            default_model: Some(LanguageModelSelection {
-                                provider: "xai".to_owned().into(),
-                                model: "grok".to_owned(),
-                            }),
-                            ..Default::default()
-                        },
-                    )),
+            settings_store.update_user_settings::<AgentSettings>(cx, |settings| {
+                *settings = AgentSettingsContent {
+                    inner: Some(AgentSettingsContentInner::for_v2(AgentSettingsContentV2 {
+                        enabled: Some(false),
+                        default_model: Some(LanguageModelSelection {
+                            provider: "xai".to_owned().into(),
+                            model: "grok".to_owned(),
+                        }),
+                        ..Default::default()
+                    })),
                 };
             });
         });
@@ -1131,12 +1106,12 @@ mod tests {
         let settings = cx.update(|cx| SettingsStore::global(cx).raw_user_settings().clone());
 
         #[derive(Debug, Deserialize)]
-        struct AssistantSettingsTest {
-            assistant: AssistantSettingsContent,
+        struct AgentSettingsTest {
+            assistant: AgentSettingsContent,
             agent: Option<serde_json_lenient::Value>,
         }
 
-        let assistant_settings: AssistantSettingsTest = serde_json::from_value(settings).unwrap();
-        assert!(assistant_settings.agent.is_none());
+        let agent_settings: AgentSettingsTest = serde_json::from_value(settings).unwrap();
+        assert!(agent_settings.agent.is_none());
     }
 }

@@ -4,8 +4,8 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::time::Instant;
 
+use agent_settings::{AgentSettings, CompletionMode};
 use anyhow::{Result, anyhow};
-use assistant_settings::{AssistantSettings, CompletionMode};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
@@ -329,7 +329,7 @@ pub struct Thread {
     detailed_summary_task: Task<Option<()>>,
     detailed_summary_tx: postage::watch::Sender<DetailedSummaryState>,
     detailed_summary_rx: postage::watch::Receiver<DetailedSummaryState>,
-    completion_mode: assistant_settings::CompletionMode,
+    completion_mode: agent_settings::CompletionMode,
     messages: Vec<Message>,
     next_message_id: MessageId,
     last_prompt_id: PromptId,
@@ -415,7 +415,7 @@ impl Thread {
             detailed_summary_task: Task::ready(None),
             detailed_summary_tx,
             detailed_summary_rx,
-            completion_mode: AssistantSettings::get_global(cx).preferred_completion_mode,
+            completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
             messages: Vec::new(),
             next_message_id: MessageId(0),
             last_prompt_id: PromptId::new(),
@@ -493,7 +493,7 @@ impl Thread {
 
         let completion_mode = serialized
             .completion_mode
-            .unwrap_or_else(|| AssistantSettings::get_global(cx).preferred_completion_mode);
+            .unwrap_or_else(|| AgentSettings::get_global(cx).preferred_completion_mode);
 
         Self {
             id,
@@ -1204,7 +1204,7 @@ impl Thread {
             tools: Vec::new(),
             tool_choice: None,
             stop: Vec::new(),
-            temperature: AssistantSettings::temperature_for_model(&model, cx),
+            temperature: AgentSettings::temperature_for_model(&model, cx),
         };
 
         let available_tools = self.available_tools(cx, model.clone());
@@ -1363,7 +1363,7 @@ impl Thread {
             tools: Vec::new(),
             tool_choice: None,
             stop: Vec::new(),
-            temperature: AssistantSettings::temperature_for_model(model, cx),
+            temperature: AgentSettings::temperature_for_model(model, cx),
         };
 
         for message in &self.messages {
@@ -2039,7 +2039,7 @@ impl Thread {
         for tool_use in pending_tool_uses.iter() {
             if let Some(tool) = self.tools.read(cx).tool(&tool_use.name, cx) {
                 if tool.needs_confirmation(&tool_use.input, cx)
-                    && !AssistantSettings::get_global(cx).always_allow_tool_actions
+                    && !AgentSettings::get_global(cx).always_allow_tool_actions
                 {
                     self.tool_use.confirm_tool_use(
                         tool_use.id.clone(),
@@ -2835,7 +2835,7 @@ struct PendingCompletion {
 mod tests {
     use super::*;
     use crate::{ThreadStore, context::load_context, context_store::ContextStore, thread_store};
-    use assistant_settings::{AssistantSettings, LanguageModelParameters};
+    use agent_settings::{AgentSettings, LanguageModelParameters};
     use assistant_tool::ToolRegistry;
     use editor::EditorSettings;
     use gpui::TestAppContext;
@@ -3263,14 +3263,14 @@ fn main() {{
 
         // Both model and provider
         cx.update(|cx| {
-            AssistantSettings::override_global(
-                AssistantSettings {
+            AgentSettings::override_global(
+                AgentSettings {
                     model_parameters: vec![LanguageModelParameters {
                         provider: Some(model.provider_id().0.to_string().into()),
                         model: Some(model.id().0.clone()),
                         temperature: Some(0.66),
                     }],
-                    ..AssistantSettings::get_global(cx).clone()
+                    ..AgentSettings::get_global(cx).clone()
                 },
                 cx,
             );
@@ -3283,14 +3283,14 @@ fn main() {{
 
         // Only model
         cx.update(|cx| {
-            AssistantSettings::override_global(
-                AssistantSettings {
+            AgentSettings::override_global(
+                AgentSettings {
                     model_parameters: vec![LanguageModelParameters {
                         provider: None,
                         model: Some(model.id().0.clone()),
                         temperature: Some(0.66),
                     }],
-                    ..AssistantSettings::get_global(cx).clone()
+                    ..AgentSettings::get_global(cx).clone()
                 },
                 cx,
             );
@@ -3303,14 +3303,14 @@ fn main() {{
 
         // Only provider
         cx.update(|cx| {
-            AssistantSettings::override_global(
-                AssistantSettings {
+            AgentSettings::override_global(
+                AgentSettings {
                     model_parameters: vec![LanguageModelParameters {
                         provider: Some(model.provider_id().0.to_string().into()),
                         model: None,
                         temperature: Some(0.66),
                     }],
-                    ..AssistantSettings::get_global(cx).clone()
+                    ..AgentSettings::get_global(cx).clone()
                 },
                 cx,
             );
@@ -3323,14 +3323,14 @@ fn main() {{
 
         // Same model name, different provider
         cx.update(|cx| {
-            AssistantSettings::override_global(
-                AssistantSettings {
+            AgentSettings::override_global(
+                AgentSettings {
                     model_parameters: vec![LanguageModelParameters {
                         provider: Some("anthropic".into()),
                         model: Some(model.id().0.clone()),
                         temperature: Some(0.66),
                     }],
-                    ..AssistantSettings::get_global(cx).clone()
+                    ..AgentSettings::get_global(cx).clone()
                 },
                 cx,
             );
@@ -3538,7 +3538,7 @@ fn main() {{
             cx.set_global(settings_store);
             language::init(cx);
             Project::init_settings(cx);
-            AssistantSettings::register(cx);
+            AgentSettings::register(cx);
             prompt_store::init(cx);
             thread_store::init(cx);
             workspace::init_settings(cx);

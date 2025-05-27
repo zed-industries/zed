@@ -7,13 +7,13 @@ use std::time::Duration;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
 
+use agent_settings::{AgentDockPosition, AgentSettings, DefaultView};
 use anyhow::{Result, anyhow};
 use assistant_context_editor::{
     AgentPanelDelegate, AssistantContext, ConfigurationError, ContextEditor, ContextEvent,
     ContextSummary, SlashCommandCompletionProvider, humanize_token_count,
     make_lsp_adapter_delegate, render_remaining_tokens,
 };
-use assistant_settings::{AssistantDockPosition, AssistantSettings, DefaultView};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 
@@ -523,7 +523,7 @@ impl AgentPanel {
 
         cx.observe(&history_store, |_, _, cx| cx.notify()).detach();
 
-        let panel_type = AssistantSettings::get_global(cx).default_view;
+        let panel_type = AgentSettings::get_global(cx).default_view;
         let active_view = match panel_type {
             DefaultView::Thread => ActiveView::thread(thread.clone(), window, cx),
             DefaultView::TextThread => {
@@ -1250,7 +1250,7 @@ impl AgentPanel {
                     .map_or(true, |model| model.provider.id() != provider.id())
                 {
                     if let Some(model) = provider.default_model(cx) {
-                        update_settings_file::<AssistantSettings>(
+                        update_settings_file::<AgentSettings>(
                             self.fs.clone(),
                             cx,
                             move |settings, _| settings.set_model(model),
@@ -1381,10 +1381,10 @@ impl Focusable for AgentPanel {
 }
 
 fn agent_panel_dock_position(cx: &App) -> DockPosition {
-    match AssistantSettings::get_global(cx).dock {
-        AssistantDockPosition::Left => DockPosition::Left,
-        AssistantDockPosition::Bottom => DockPosition::Bottom,
-        AssistantDockPosition::Right => DockPosition::Right,
+    match AgentSettings::get_global(cx).dock {
+        AgentDockPosition::Left => DockPosition::Left,
+        AgentDockPosition::Bottom => DockPosition::Bottom,
+        AgentDockPosition::Right => DockPosition::Right,
     }
 }
 
@@ -1404,22 +1404,18 @@ impl Panel for AgentPanel {
     }
 
     fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {
-        settings::update_settings_file::<AssistantSettings>(
-            self.fs.clone(),
-            cx,
-            move |settings, _| {
-                let dock = match position {
-                    DockPosition::Left => AssistantDockPosition::Left,
-                    DockPosition::Bottom => AssistantDockPosition::Bottom,
-                    DockPosition::Right => AssistantDockPosition::Right,
-                };
-                settings.set_dock(dock);
-            },
-        );
+        settings::update_settings_file::<AgentSettings>(self.fs.clone(), cx, move |settings, _| {
+            let dock = match position {
+                DockPosition::Left => AgentDockPosition::Left,
+                DockPosition::Bottom => AgentDockPosition::Bottom,
+                DockPosition::Right => AgentDockPosition::Right,
+            };
+            settings.set_dock(dock);
+        });
     }
 
     fn size(&self, window: &Window, cx: &App) -> Pixels {
-        let settings = AssistantSettings::get_global(cx);
+        let settings = AgentSettings::get_global(cx);
         match self.position(window, cx) {
             DockPosition::Left | DockPosition::Right => {
                 self.width.unwrap_or(settings.default_width)
@@ -1444,8 +1440,7 @@ impl Panel for AgentPanel {
     }
 
     fn icon(&self, _window: &Window, cx: &App) -> Option<IconName> {
-        (self.enabled(cx) && AssistantSettings::get_global(cx).button)
-            .then_some(IconName::ZedAssistant)
+        (self.enabled(cx) && AgentSettings::get_global(cx).button).then_some(IconName::ZedAssistant)
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
@@ -1461,7 +1456,7 @@ impl Panel for AgentPanel {
     }
 
     fn enabled(&self, cx: &App) -> bool {
-        AssistantSettings::get_global(cx).enabled
+        AgentSettings::get_global(cx).enabled
     }
 
     fn is_zoomed(&self, _window: &Window, _cx: &App) -> bool {

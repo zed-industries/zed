@@ -312,7 +312,7 @@ impl TestServer {
             );
             language_model::LanguageModelRegistry::test(cx);
             assistant_context_editor::init(client.clone(), cx);
-            assistant_settings::init(cx);
+            agent_settings::init(cx);
         });
 
         client
