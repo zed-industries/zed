@@ -154,7 +154,6 @@ pub struct ContextMenu {
     key_context: SharedString,
     _on_blur_subscription: Subscription,
     keep_open_on_confirm: bool,
-    eager: bool,
     documentation_aside: Option<(usize, DocumentationAside)>,
     fixed_width: Option<DefiniteLength>,
 }
@@ -207,7 +206,6 @@ impl ContextMenu {
                     key_context: "menu".into(),
                     _on_blur_subscription,
                     keep_open_on_confirm: false,
-                    eager: false,
                     documentation_aside: None,
                     fixed_width: None,
                     end_slot_action: None,
@@ -250,43 +248,6 @@ impl ContextMenu {
                     key_context: "menu".into(),
                     _on_blur_subscription,
                     keep_open_on_confirm: true,
-                    eager: false,
-                    documentation_aside: None,
-                    fixed_width: None,
-                    end_slot_action: None,
-                },
-                window,
-                cx,
-            )
-        })
-    }
-
-    pub fn build_eager(
-        window: &mut Window,
-        cx: &mut App,
-        f: impl FnOnce(Self, &mut Window, &mut Context<Self>) -> Self,
-    ) -> Entity<Self> {
-        cx.new(|cx| {
-            let focus_handle = cx.focus_handle();
-            let _on_blur_subscription = cx.on_blur(
-                &focus_handle,
-                window,
-                |this: &mut ContextMenu, window, cx| this.cancel(&menu::Cancel, window, cx),
-            );
-            window.refresh();
-            f(
-                Self {
-                    builder: None,
-                    items: Default::default(),
-                    focus_handle,
-                    action_context: None,
-                    selected_index: None,
-                    delayed: false,
-                    clicked: false,
-                    key_context: "menu".into(),
-                    _on_blur_subscription,
-                    keep_open_on_confirm: false,
-                    eager: true,
                     documentation_aside: None,
                     fixed_width: None,
                     end_slot_action: None,
@@ -327,7 +288,6 @@ impl ContextMenu {
                     |this: &mut ContextMenu, window, cx| this.cancel(&menu::Cancel, window, cx),
                 ),
                 keep_open_on_confirm: false,
-                eager: false,
                 documentation_aside: None,
                 fixed_width: None,
                 end_slot_action: None,
@@ -634,10 +594,7 @@ impl ContextMenu {
                 ..
             })
             | ContextMenuItem::CustomEntry { handler, .. },
-        ) = self
-            .selected_index
-            .and_then(|ix| self.items.get(ix))
-            .filter(|_| !self.eager)
+        ) = self.selected_index.and_then(|ix| self.items.get(ix))
         {
             (handler)(context, window, cx)
         }
@@ -740,10 +697,9 @@ impl ContextMenu {
     fn select_index(
         &mut self,
         ix: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
     ) -> Option<usize> {
-        let context = self.action_context.as_ref();
         self.documentation_aside = None;
         let item = self.items.get(ix)?;
         if item.is_selectable() {
@@ -751,9 +707,6 @@ impl ContextMenu {
             if let ContextMenuItem::Entry(entry) = item {
                 if let Some(callback) = &entry.documentation_aside {
                     self.documentation_aside = Some((ix, callback.clone()));
-                }
-                if self.eager && !entry.disabled {
-                    (entry.handler)(context, window, cx)
                 }
             }
         }

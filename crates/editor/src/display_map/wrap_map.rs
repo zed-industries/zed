@@ -411,7 +411,7 @@ impl WrapSnapshot {
         }
 
         let mut tab_edits_iter = tab_edits.iter().peekable();
-        let mut row_edits = Vec::new();
+        let mut row_edits = Vec::with_capacity(tab_edits.len());
         while let Some(edit) = tab_edits_iter.next() {
             let mut row_edit = RowEdit {
                 old_rows: edit.old.start.row()..edit.old.end.row() + 1,
@@ -561,7 +561,7 @@ impl WrapSnapshot {
     }
 
     fn compute_edits(&self, tab_edits: &[TabEdit], new_snapshot: &WrapSnapshot) -> Patch<u32> {
-        let mut wrap_edits = Vec::new();
+        let mut wrap_edits = Vec::with_capacity(tab_edits.len());
         let mut old_cursor = self.transforms.cursor::<TransformSummary>(&());
         let mut new_cursor = new_snapshot.transforms.cursor::<TransformSummary>(&());
         for mut tab_edit in tab_edits.iter().cloned() {

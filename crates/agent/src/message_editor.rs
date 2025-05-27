@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::agent_model_selector::{AgentModelSelector, ModelType};
@@ -8,7 +9,8 @@ use crate::ui::{
     AnimatedLabel, MaxModeTooltip,
     preview::{AgentPreview, UsageCallout},
 };
-use assistant_settings::{AssistantSettings, CompletionMode};
+use agent_settings::{AgentSettings, CompletionMode};
+use assistant_context_editor::language_model_selector::ToggleModelSelector;
 use buffer_diff::BufferDiff;
 use client::UserStore;
 use collections::{HashMap, HashSet};
@@ -30,7 +32,6 @@ use language_model::{
     ConfiguredModel, LanguageModelRequestMessage, MessageContent, RequestUsage,
     ZED_CLOUD_PROVIDER_ID,
 };
-use language_model_selector::ToggleModelSelector;
 use multi_buffer;
 use project::Project;
 use prompt_store::PromptStore;
@@ -49,8 +50,9 @@ use crate::profile_selector::ProfileSelector;
 use crate::thread::{MessageCrease, Thread, TokenUsageRatio};
 use crate::thread_store::{TextThreadStore, ThreadStore};
 use crate::{
-    ActiveThread, AgentDiffPane, Chat, ExpandMessageEditor, Follow, NewThread, OpenAgentDiff,
-    RemoveAllContext, ToggleContextPicker, ToggleProfileSelector, register_agent_preview,
+    ActiveThread, AgentDiffPane, Chat, ChatWithFollow, ExpandMessageEditor, Follow, NewThread,
+    OpenAgentDiff, RemoveAllContext, ToggleContextPicker, ToggleProfileSelector,
+    register_agent_preview,
 };
 
 #[derive(RegisterComponent)]
@@ -120,7 +122,7 @@ pub(crate) fn create_editor(
 
     let editor_entity = editor.downgrade();
     editor.update(cx, |editor, _| {
-        editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
+        editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
             workspace,
             context_store,
             Some(thread_store),
@@ -278,7 +280,7 @@ impl MessageEditor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.context_store.update(cx, |store, _cx| store.clear());
+        self.context_store.update(cx, |store, cx| store.clear(cx));
         cx.notify();
     }
 
@@ -300,6 +302,21 @@ impl MessageEditor {
         self.send_to_model(window, cx);
 
         cx.notify();
+    }
+
+    fn chat_with_follow(
+        &mut self,
+        _: &ChatWithFollow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.workspace
+            .update(cx, |this, cx| {
+                this.follow(CollaboratorId::Agent, window, cx)
+            })
+            .log_err();
+
+        self.chat(&Chat, window, cx);
     }
 
     fn is_editor_empty(&self, cx: &App) -> bool {
@@ -401,7 +418,7 @@ impl MessageEditor {
     fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
         if self.context_picker_menu_handle.is_deployed() {
             cx.propagate();
-        } else {
+        } else if self.context_strip.read(cx).has_context_items(cx) {
             self.context_strip.focus_handle(cx).focus(window);
         }
     }
@@ -562,6 +579,7 @@ impl MessageEditor {
         v_flex()
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
+            .on_action(cx.listener(Self::chat_with_follow))
             .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
                 this.profile_selector
                     .read(cx)
@@ -842,7 +860,7 @@ impl MessageEditor {
             .border_b_0()
             .border_color(border_color)
             .rounded_t_md()
-            .shadow(smallvec::smallvec![gpui::BoxShadow {
+            .shadow(vec![gpui::BoxShadow {
                 color: gpui::black().opacity(0.15),
                 offset: point(px(1.), px(-1.)),
                 blur_radius: px(3.),
@@ -1167,9 +1185,10 @@ impl MessageEditor {
     fn reload_context(&mut self, cx: &mut Context<Self>) -> Task<Option<ContextLoadResult>> {
         let load_task = cx.spawn(async move |this, cx| {
             let Ok(load_task) = this.update(cx, |this, cx| {
-                let new_context = this.context_store.read_with(cx, |context_store, cx| {
-                    context_store.new_context_for_thread(this.thread.read(cx), None)
-                });
+                let new_context = this
+                    .context_store
+                    .read(cx)
+                    .new_context_for_thread(this.thread.read(cx), None);
                 load_context(new_context, &this.project, &this.prompt_store, cx)
             }) else {
                 return;
@@ -1253,7 +1272,7 @@ impl MessageEditor {
                         tools: vec![],
                         tool_choice: None,
                         stop: vec![],
-                        temperature: AssistantSettings::temperature_for_model(&model.model, cx),
+                        temperature: AgentSettings::temperature_for_model(&model.model, cx),
                     };
 
                     Some(model.model.count_tokens(request, cx))

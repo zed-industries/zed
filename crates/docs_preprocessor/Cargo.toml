@@ -19,9 +19,6 @@ workspace-hack.workspace = true
 [lints]
 workspace = true
 
-[lib]
-path = "src/docs_preprocessor.rs"
-
 [[bin]]
 name = "docs_preprocessor"
 path = "src/main.rs"

@@ -5,6 +5,7 @@ use crate::{
     hover_links::{InlayHighlight, RangeInEditor},
     scroll::{Autoscroll, ScrollAmount},
 };
+use anyhow::Context as _;
 use gpui::{
     AnyElement, AsyncWindowContext, Context, Entity, Focusable as _, FontWeight, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, ScrollHandle, Size,
@@ -164,7 +165,7 @@ pub fn hover_at_inlay(
                     this.hover_state.diagnostic_popover = None;
                 })?;
 
-                let language_registry = project.update(cx, |p, _| p.languages().clone())?;
+                let language_registry = project.read_with(cx, |p, _| p.languages().clone())?;
                 let blocks = vec![inlay_hover.tooltip];
                 let parsed_content = parse_blocks(&blocks, &language_registry, None, cx).await;
 
@@ -341,7 +342,7 @@ fn show_hover(
                         .and_then(|renderer| {
                             renderer.render_hover(group, point_range, buffer_id, cx)
                         })
-                        .ok_or_else(|| anyhow::anyhow!("no rendered diagnostic"))
+                        .context("no rendered diagnostic")
                 })??;
 
                 let (background_color, border_color) = cx.update(|_, cx| {

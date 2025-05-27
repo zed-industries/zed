@@ -15,9 +15,9 @@ path = "src/assistant_tools.rs"
 eval = []
 
 [dependencies]
+agent_settings.workspace = true
 aho-corasick.workspace = true
 anyhow.workspace = true
-assistant_settings.workspace = true
 assistant_tool.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true
@@ -41,6 +41,7 @@ open.workspace = true
 paths.workspace = true
 portable-pty.workspace = true
 project.workspace = true
+prompt_store.workspace = true
 regex.workspace = true
 rust-embed.workspace = true
 schemars.workspace = true

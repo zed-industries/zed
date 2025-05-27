@@ -13,7 +13,7 @@ use language_model::{
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, StopReason,
+    RateLimiter, Role, StopReason, WrappedTextContent,
 };
 use open_ai::{ImageUrl, Model, ResponseStreamEvent, stream_completion};
 use schemars::JsonSchema;
@@ -265,7 +265,7 @@ impl OpenAiLanguageModel {
         };
 
         let future = self.request_limiter.stream(async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("Missing OpenAI API Key"))?;
+            let api_key = api_key.context("Missing OpenAI API Key")?;
             let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
             let response = request.await?;
             Ok(response)
@@ -400,14 +400,18 @@ pub fn into_open_ai(
                         tool_calls.push(tool_call);
                     } else {
                         messages.push(open_ai::RequestMessage::Assistant {
-                            content: open_ai::MessageContent::empty(),
+                            content: None,
                             tool_calls: vec![tool_call],
                         });
                     }
                 }
                 MessageContent::ToolResult(tool_result) => {
                     let content = match &tool_result.content {
-                        LanguageModelToolResultContent::Text(text) => {
+                        LanguageModelToolResultContent::Text(text)
+                        | LanguageModelToolResultContent::WrappedText(WrappedTextContent {
+                            text,
+                            ..
+                        }) => {
                             vec![open_ai::MessagePart::Text {
                                 text: text.to_string(),
                             }]
@@ -470,21 +474,27 @@ fn add_message_content_part(
 ) {
     match (role, messages.last_mut()) {
         (Role::User, Some(open_ai::RequestMessage::User { content }))
-        | (Role::Assistant, Some(open_ai::RequestMessage::Assistant { content, .. }))
+        | (
+            Role::Assistant,
+            Some(open_ai::RequestMessage::Assistant {
+                content: Some(content),
+                ..
+            }),
+        )
         | (Role::System, Some(open_ai::RequestMessage::System { content, .. })) => {
             content.push_part(new_part);
         }
         _ => {
             messages.push(match role {
                 Role::User => open_ai::RequestMessage::User {
-                    content: open_ai::MessageContent::empty(),
+                    content: open_ai::MessageContent::from(vec![new_part]),
                 },
                 Role::Assistant => open_ai::RequestMessage::Assistant {
-                    content: open_ai::MessageContent::empty(),
+                    content: Some(open_ai::MessageContent::from(vec![new_part])),
                     tool_calls: Vec::new(),
                 },
                 Role::System => open_ai::RequestMessage::System {
-                    content: open_ai::MessageContent::empty(),
+                    content: open_ai::MessageContent::from(vec![new_part]),
                 },
             });
         }
@@ -628,22 +638,24 @@ pub fn count_open_ai_tokens(
                 };
                 tiktoken_rs::num_tokens_from_messages(model, &messages)
             }
-            // Not currently supported by tiktoken_rs. All use the same tokenizer as gpt-4o (o200k_base)
-            Model::O1
-            | Model::FourPointOne
-            | Model::FourPointOneMini
-            | Model::FourPointOneNano
-            | Model::O3Mini
-            | Model::O3
-            | Model::O4Mini => tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages),
             // Currently supported by tiktoken_rs
+            // Sometimes tiktoken-rs is behind on model support. If that is the case, make a new branch
+            // arm with an override. We enumerate all supported models here so that we can check if new
+            // models are supported yet or not.
             Model::ThreePointFiveTurbo
             | Model::Four
             | Model::FourTurbo
             | Model::FourOmni
             | Model::FourOmniMini
+            | Model::FourPointOne
+            | Model::FourPointOneMini
+            | Model::FourPointOneNano
+            | Model::O1
             | Model::O1Preview
-            | Model::O1Mini => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
+            | Model::O1Mini
+            | Model::O3
+            | Model::O3Mini
+            | Model::O4Mini => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
         }
     })
     .boxed()
@@ -836,6 +848,45 @@ impl Render for ConfigurationView {
                         .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
                 )
                 .into_any()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::TestAppContext;
+    use language_model::LanguageModelRequestMessage;
+
+    use super::*;
+
+    #[gpui::test]
+    fn tiktoken_rs_support(cx: &TestAppContext) {
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            mode: None,
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("message".into())],
+                cache: false,
+            }],
+            tools: vec![],
+            tool_choice: None,
+            stop: vec![],
+            temperature: None,
+        };
+
+        // Validate that all models are supported by tiktoken-rs
+        for model in Model::iter() {
+            let count = cx
+                .executor()
+                .block(count_open_ai_tokens(
+                    request.clone(),
+                    model,
+                    &cx.app.borrow(),
+                ))
+                .unwrap();
+            assert!(count > 0);
         }
     }
 }

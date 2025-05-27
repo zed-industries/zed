@@ -300,9 +300,12 @@ pub fn task_contexts(
         .unwrap_or_default();
 
     let latest_selection = active_editor.as_ref().map(|active_editor| {
-        active_editor.update(cx, |editor, _| {
-            editor.selections.newest_anchor().head().text_anchor
-        })
+        active_editor
+            .read(cx)
+            .selections
+            .newest_anchor()
+            .head()
+            .text_anchor
     });
 
     let mut worktree_abs_paths = workspace
@@ -412,7 +415,7 @@ mod tests {
         )
         .await;
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let worktree_store = project.update(cx, |project, _| project.worktree_store().clone());
+        let worktree_store = project.read_with(cx, |project, _| project.worktree_store().clone());
         let rust_language = Arc::new(
             Language::new(
                 LanguageConfig::default(),

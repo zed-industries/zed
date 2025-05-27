@@ -1,7 +1,7 @@
 use std::path::Path;
 
+use agent_settings::AgentProfileId;
 use anyhow::Result;
-use assistant_settings::AgentProfileId;
 use async_trait::async_trait;
 
 use crate::example::{Example, ExampleContext, ExampleMetadata, JudgeAssertion, LanguageServer};
