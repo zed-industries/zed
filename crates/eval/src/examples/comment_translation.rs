@@ -1,6 +1,6 @@
 use crate::example::{Example, ExampleContext, ExampleMetadata, JudgeAssertion};
-use anyhow::Result;
 use agent_settings::AgentProfileId;
+use anyhow::Result;
 use assistant_tools::{EditFileMode, EditFileToolInput};
 use async_trait::async_trait;
 

@@ -13,8 +13,8 @@ use crate::tool_use::{PendingToolUseStatus, ToolUse};
 use crate::ui::{
     AddedContext, AgentNotification, AgentNotificationEvent, AnimatedLabel, ContextPill,
 };
-use anyhow::Context as _;
 use agent_settings::{AssistantSettings, NotifyWhenAgentWaiting};
+use anyhow::Context as _;
 use assistant_tool::ToolUseStatus;
 use audio::{Audio, Sound};
 use collections::{HashMap, HashSet};

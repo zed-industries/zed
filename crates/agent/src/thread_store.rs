@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result, anyhow};
 use agent_settings::{AgentProfile, AgentProfileId, AssistantSettings, CompletionMode};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ToolId, ToolSource, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;

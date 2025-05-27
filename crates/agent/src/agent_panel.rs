@@ -7,13 +7,13 @@ use std::time::Duration;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
 
+use agent_settings::{AssistantDockPosition, AssistantSettings, DefaultView};
 use anyhow::{Result, anyhow};
 use assistant_context_editor::{
     AgentPanelDelegate, AssistantContext, ConfigurationError, ContextEditor, ContextEvent,
     ContextSummary, SlashCommandCompletionProvider, humanize_token_count,
     make_lsp_adapter_delegate, render_remaining_tokens,
 };
-use agent_settings::{AssistantDockPosition, AssistantSettings, DefaultView};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 

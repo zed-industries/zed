@@ -9,8 +9,8 @@ use crate::ui::{
     AnimatedLabel, MaxModeTooltip,
     preview::{AgentPreview, UsageCallout},
 };
-use assistant_context_editor::language_model_selector::ToggleModelSelector;
 use agent_settings::{AssistantSettings, CompletionMode};
+use assistant_context_editor::language_model_selector::ToggleModelSelector;
 use buffer_diff::BufferDiff;
 use client::UserStore;
 use collections::{HashMap, HashSet};

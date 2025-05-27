@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod context_tests;
 
-use anyhow::{Context as _, Result, bail};
 use agent_settings::AssistantSettings;
+use anyhow::{Context as _, Result, bail};
 use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandLine, SlashCommandOutputSection,
     SlashCommandResult, SlashCommandWorkingSet,

@@ -1,5 +1,5 @@
-use anyhow::Result;
 use agent_settings::AgentProfileId;
+use anyhow::Result;
 use async_trait::async_trait;
 use markdown::PathWithRange;
 

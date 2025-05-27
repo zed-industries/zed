@@ -11,8 +11,8 @@ use crate::{
     assertions::{AssertionsReport, RanAssertion, RanAssertionResult},
 };
 use agent::{ContextLoadResult, Thread, ThreadEvent};
-use anyhow::{Result, anyhow};
 use agent_settings::AgentProfileId;
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use buffer_diff::DiffHunkStatus;
 use collections::HashMap;
