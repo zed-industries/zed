@@ -60,6 +60,7 @@ dependencies = [
  "assistant_slash_commands",
  "assistant_tool",
  "async-watch",
+ "audio",
  "buffer_diff",
  "chrono",
  "client",
@@ -4057,10 +4058,10 @@ dependencies = [
  "gpui",
  "json_dotpath",
  "language",
+ "log",
  "paths",
  "serde",
  "serde_json",
- "smol",
  "task",
  "util",
  "workspace-hack",
@@ -4248,6 +4249,7 @@ dependencies = [
  "util",
  "workspace",
  "workspace-hack",
+ "zed_actions",
  "zlog",
 ]
 
@@ -9561,7 +9563,6 @@ checksum = "3e2e65a1a2e43cfcb47a895c4c8b10d1f4a61097f9f254f183aee60cad9c651d"
 name = "markdown"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "assets",
  "base64 0.22.1",
  "env_logger 0.11.8",

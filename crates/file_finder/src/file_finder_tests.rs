@@ -7,7 +7,7 @@ use menu::{Confirm, SelectNext, SelectPrevious};
 use project::{FS_WATCH_LATENCY, RemoveOptions};
 use serde_json::json;
 use util::path;
-use workspace::{AppState, OpenOptions, ToggleFileFinder, Workspace};
+use workspace::{AppState, CloseActiveItem, OpenOptions, ToggleFileFinder, Workspace};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -206,6 +206,11 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
 
     for bandana_query in [
         "bandana",
+        "./bandana",
+        ".\\bandana",
+        util::separator!("a/bandana"),
+        "b/bandana",
+        "b\\bandana",
         " bandana",
         "bandana ",
         " bandana ",
@@ -224,7 +229,8 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
             assert_eq!(
                 picker.delegate.matches.len(),
                 1,
-                "Wrong number of matches for bandana query '{bandana_query}'"
+                "Wrong number of matches for bandana query '{bandana_query}'. Matches: {:?}",
+                picker.delegate.matches
             );
         });
         cx.dispatch_action(SelectNext);
@@ -615,9 +621,13 @@ async fn test_ignored_root(cx: &mut TestAppContext) {
                     "hiccup": "",
                 },
                 "tracked-root": {
-                    ".gitignore": "height",
+                    ".gitignore": "height*",
                     "happiness": "",
                     "height": "",
+                    "heights": {
+                        "height_1": "",
+                        "height_2": "",
+                    },
                     "hi": "",
                     "hiccup": "",
                 },
@@ -628,14 +638,13 @@ async fn test_ignored_root(cx: &mut TestAppContext) {
     let project = Project::test(
         app_state.fs.clone(),
         [
-            "/ancestor/tracked-root".as_ref(),
-            "/ancestor/ignored-root".as_ref(),
+            Path::new(path!("/ancestor/tracked-root")),
+            Path::new(path!("/ancestor/ignored-root")),
         ],
         cx,
     )
     .await;
-
-    let (picker, _, cx) = build_find_picker(project, cx);
+    let (picker, workspace, cx) = build_find_picker(project, cx);
 
     picker
         .update_in(cx, |picker, window, cx| {
@@ -644,7 +653,75 @@ async fn test_ignored_root(cx: &mut TestAppContext) {
                 .spawn_search(test_path_position("hi"), window, cx)
         })
         .await;
-    picker.update(cx, |picker, _| assert_eq!(picker.delegate.matches.len(), 7));
+    picker.update(cx, |picker, _| {
+        let matches = collect_search_matches(picker);
+        assert_eq!(matches.history.len(), 0);
+        assert_eq!(
+            matches.search,
+            vec![
+                PathBuf::from("ignored-root/hi"),
+                PathBuf::from("tracked-root/hi"),
+                PathBuf::from("ignored-root/hiccup"),
+                PathBuf::from("tracked-root/hiccup"),
+                PathBuf::from("ignored-root/height"),
+                PathBuf::from("tracked-root/height"),
+                PathBuf::from("ignored-root/happiness"),
+                PathBuf::from("tracked-root/happiness"),
+            ],
+            "All ignored files that were indexed are found"
+        );
+    });
+
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from(path!("/ancestor/tracked-root/heights/height_1")),
+                OpenOptions {
+                    visible: Some(OpenVisible::None),
+                    ..OpenOptions::default()
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.close_active_item(&CloseActiveItem::default(), window, cx)
+                    .unwrap()
+            })
+        })
+        .await
+        .unwrap();
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker
+                .delegate
+                .spawn_search(test_path_position("hi"), window, cx)
+        })
+        .await;
+    picker.update(cx, |picker, _| {
+        let matches = collect_search_matches(picker);
+        assert_eq!(matches.history.len(), 0);
+        assert_eq!(
+            matches.search,
+            vec![
+                PathBuf::from("ignored-root/hi"),
+                PathBuf::from("tracked-root/hi"),
+                PathBuf::from("ignored-root/hiccup"),
+                PathBuf::from("tracked-root/hiccup"),
+                PathBuf::from("ignored-root/height"),
+                PathBuf::from("tracked-root/height"),
+                PathBuf::from("tracked-root/heights/height_1"),
+                PathBuf::from("tracked-root/heights/height_2"),
+                PathBuf::from("ignored-root/happiness"),
+                PathBuf::from("tracked-root/happiness"),
+            ],
+            "All ignored files that were indexed are found"
+        );
+    });
 }
 
 #[gpui::test]

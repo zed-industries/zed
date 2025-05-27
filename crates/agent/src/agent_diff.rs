@@ -699,7 +699,7 @@ fn render_diff_hunk_controls(
         .rounded_b_md()
         .bg(cx.theme().colors().editor_background)
         .gap_1()
-        .occlude()
+        .stop_mouse_events_except_scroll()
         .shadow_md()
         .children(vec![
             Button::new(("reject", row as u64), "Reject")

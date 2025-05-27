@@ -646,7 +646,7 @@ impl CompletionsMenu {
             } => div().child(text.clone()),
             CompletionDocumentation::MultiLineMarkdown(parsed) if !parsed.is_empty() => {
                 let markdown = self.markdown_element.get_or_insert_with(|| {
-                    cx.new(|cx| {
+                    let markdown = cx.new(|cx| {
                         let languages = editor
                             .workspace
                             .as_ref()
@@ -656,11 +656,19 @@ impl CompletionsMenu {
                             .language_at(self.initial_position, cx)
                             .map(|l| l.name().to_proto());
                         Markdown::new(SharedString::default(), languages, language, cx)
-                    })
+                    });
+                    // Handles redraw when the markdown is done parsing. The current render is for a
+                    // deferred draw and so was not getting redrawn when `markdown` notified.
+                    cx.observe(&markdown, |_, _, cx| cx.notify()).detach();
+                    markdown
                 });
-                markdown.update(cx, |markdown, cx| {
+                let is_parsing = markdown.update(cx, |markdown, cx| {
                     markdown.reset(parsed.clone(), cx);
+                    markdown.is_parsing()
                 });
+                if is_parsing {
+                    return None;
+                }
                 div().child(
                     MarkdownElement::new(markdown.clone(), hover_markdown_style(window, cx))
                         .code_block_renderer(markdown::CodeBlockRenderer::Default {

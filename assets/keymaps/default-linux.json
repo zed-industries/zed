@@ -31,6 +31,7 @@
       "ctrl-,": "zed::OpenSettings",
       "ctrl-q": "zed::Quit",
       "f4": "debugger::Start",
+      "alt-f4": "debugger::RerunLastSession",
       "f5": "debugger::Continue",
       "shift-f5": "debugger::Stop",
       "ctrl-shift-f5": "debugger::Restart",
@@ -872,6 +873,13 @@
     "bindings": {
       "ctrl-t": "debugger::ToggleThreadPicker",
       "ctrl-i": "debugger::ToggleSessionPicker"
+    }
+  },
+  {
+    "context": "BreakpointList",
+    "bindings": {
+      "space": "debugger::ToggleEnableBreakpoint",
+      "backspace": "debugger::UnsetBreakpoint"
     }
   },
   {

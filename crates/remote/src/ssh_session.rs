@@ -901,7 +901,7 @@ impl SshRemoteClient {
         mut connection_activity_rx: mpsc::Receiver<()>,
         cx: &mut AsyncApp,
     ) -> Task<Result<()>> {
-        let Ok(client) = this.update(cx, |this, _| this.client.clone()) else {
+        let Ok(client) = this.read_with(cx, |this, _| this.client.clone()) else {
             return Task::ready(Err(anyhow!("SshRemoteClient lost")));
         };
 

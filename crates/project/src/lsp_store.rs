@@ -535,8 +535,8 @@ impl LocalLspStore {
                     let this = this.clone();
                     let mut cx = cx.clone();
                     async move {
-                        let Some(server) =
-                            this.update(&mut cx, |this, _| this.language_server_for_id(server_id))?
+                        let Some(server) = this
+                            .read_with(&mut cx, |this, _| this.language_server_for_id(server_id))?
                         else {
                             return Ok(None);
                         };
@@ -600,7 +600,7 @@ impl LocalLspStore {
                                     }
                                 }
                                 "textDocument/rangeFormatting" => {
-                                    this.update(&mut cx, |this, _| {
+                                    this.read_with(&mut cx, |this, _| {
                                         if let Some(server) = this.language_server_for_id(server_id)
                                         {
                                             let options = reg
@@ -626,7 +626,7 @@ impl LocalLspStore {
                                     })??;
                                 }
                                 "textDocument/onTypeFormatting" => {
-                                    this.update(&mut cx, |this, _| {
+                                    this.read_with(&mut cx, |this, _| {
                                         if let Some(server) = this.language_server_for_id(server_id)
                                         {
                                             let options = reg
@@ -651,7 +651,7 @@ impl LocalLspStore {
                                     })??;
                                 }
                                 "textDocument/formatting" => {
-                                    this.update(&mut cx, |this, _| {
+                                    this.read_with(&mut cx, |this, _| {
                                         if let Some(server) = this.language_server_for_id(server_id)
                                         {
                                             let options = reg
@@ -680,7 +680,7 @@ impl LocalLspStore {
                                     // Ignore payload since we notify clients of setting changes unconditionally, relying on them pulling the latest settings.
                                 }
                                 "textDocument/rename" => {
-                                    this.update(&mut cx, |this, _| {
+                                    this.read_with(&mut cx, |this, _| {
                                         if let Some(server) = this.language_server_for_id(server_id)
                                         {
                                             let options = reg
@@ -734,7 +734,7 @@ impl LocalLspStore {
                                     // Ignore payload since we notify clients of setting changes unconditionally, relying on them pulling the latest settings.
                                 }
                                 "textDocument/rename" => {
-                                    this.update(&mut cx, |this, _| {
+                                    this.read_with(&mut cx, |this, _| {
                                         if let Some(server) = this.language_server_for_id(server_id)
                                         {
                                             server.update_capabilities(|capabilities| {
@@ -744,7 +744,7 @@ impl LocalLspStore {
                                     })?;
                                 }
                                 "textDocument/rangeFormatting" => {
-                                    this.update(&mut cx, |this, _| {
+                                    this.read_with(&mut cx, |this, _| {
                                         if let Some(server) = this.language_server_for_id(server_id)
                                         {
                                             server.update_capabilities(|capabilities| {
@@ -755,7 +755,7 @@ impl LocalLspStore {
                                     })?;
                                 }
                                 "textDocument/onTypeFormatting" => {
-                                    this.update(&mut cx, |this, _| {
+                                    this.read_with(&mut cx, |this, _| {
                                         if let Some(server) = this.language_server_for_id(server_id)
                                         {
                                             server.update_capabilities(|capabilities| {
@@ -766,7 +766,7 @@ impl LocalLspStore {
                                     })?;
                                 }
                                 "textDocument/formatting" => {
-                                    this.update(&mut cx, |this, _| {
+                                    this.read_with(&mut cx, |this, _| {
                                         if let Some(server) = this.language_server_for_id(server_id)
                                         {
                                             server.update_capabilities(|capabilities| {
@@ -1954,7 +1954,7 @@ impl LocalLspStore {
         } else if matches!(range_formatting_provider, Some(p) if *p != OneOf::Left(false)) {
             let _timer = zlog::time!(logger => "format-range");
             let buffer_start = lsp::Position::new(0, 0);
-            let buffer_end = buffer.update(cx, |b, _| point_to_lsp(b.max_point_utf16()))?;
+            let buffer_end = buffer.read_with(cx, |b, _| point_to_lsp(b.max_point_utf16()))?;
             language_server
                 .request::<lsp::request::RangeFormatting>(lsp::DocumentRangeFormattingParams {
                     text_document: text_document.clone(),
@@ -2029,7 +2029,7 @@ impl LocalLspStore {
         let stdin = child.stdin.as_mut().context("failed to acquire stdin")?;
         let text = buffer
             .handle
-            .update(cx, |buffer, _| buffer.as_rope().clone())?;
+            .read_with(cx, |buffer, _| buffer.as_rope().clone())?;
         for chunk in text.chunks() {
             stdin.write_all(chunk.as_bytes()).await?;
         }
@@ -3038,7 +3038,7 @@ impl LocalLspStore {
     ) -> Result<lsp::ApplyWorkspaceEditResponse> {
         let this = this.upgrade().context("project project closed")?;
         let language_server = this
-            .update(cx, |this, _| this.language_server_for_id(server_id))?
+            .read_with(cx, |this, _| this.language_server_for_id(server_id))?
             .context("language server not found")?;
         let transaction = Self::deserialize_workspace_edit(
             this.clone(),
@@ -3851,9 +3851,9 @@ impl LspStore {
     }
 
     fn on_buffer_added(&mut self, buffer: &Entity<Buffer>, cx: &mut Context<Self>) -> Result<()> {
-        buffer.update(cx, |buffer, _| {
-            buffer.set_language_registry(self.languages.clone())
-        });
+        buffer
+            .read(cx)
+            .set_language_registry(self.languages.clone());
 
         cx.subscribe(buffer, |this, buffer, event, cx| {
             this.on_buffer_event(buffer, event, cx);
@@ -4691,7 +4691,9 @@ impl LspStore {
                         kind: kind.as_str().to_owned(),
                         buffer_ids: buffers
                             .iter()
-                            .map(|buffer| buffer.update(cx, |buffer, _| buffer.remote_id().into()))
+                            .map(|buffer| {
+                                buffer.read_with(cx, |buffer, _| buffer.remote_id().into())
+                            })
                             .collect::<Result<_>>()?,
                     })
                     .await
@@ -6760,7 +6762,7 @@ impl LspStore {
                         })
                     })?
                     .await?;
-                if worktree.update(cx, |worktree, _| worktree.is_local())? {
+                if worktree.read_with(cx, |worktree, _| worktree.is_local())? {
                     lsp_store
                         .update(cx, |lsp_store, cx| {
                             lsp_store.register_local_language_server(
@@ -6772,7 +6774,7 @@ impl LspStore {
                         })
                         .ok();
                 }
-                let worktree_root = worktree.update(cx, |worktree, _| worktree.abs_path())?;
+                let worktree_root = worktree.read_with(cx, |worktree, _| worktree.abs_path())?;
                 let relative_path = if let Some(known_path) = known_relative_path {
                     known_path
                 } else {
@@ -6781,7 +6783,7 @@ impl LspStore {
                 (worktree, relative_path)
             };
             let project_path = ProjectPath {
-                worktree_id: worktree.update(cx, |worktree, _| worktree.id())?,
+                worktree_id: worktree.read_with(cx, |worktree, _| worktree.id())?,
                 path: relative_path,
             };
             lsp_store
@@ -6897,7 +6899,7 @@ impl LspStore {
         envelope: TypedEnvelope<proto::MultiLspQuery>,
         mut cx: AsyncApp,
     ) -> Result<proto::MultiLspQueryResponse> {
-        let response_from_ssh = this.update(&mut cx, |this, _| {
+        let response_from_ssh = this.read_with(&mut cx, |this, _| {
             let (upstream_client, project_id) = this.upstream_client()?;
             let mut payload = envelope.payload.clone();
             payload.project_id = project_id;
@@ -6919,7 +6921,7 @@ impl LspStore {
                 buffer.wait_for_version(version.clone())
             })?
             .await?;
-        let buffer_version = buffer.update(&mut cx, |buffer, _| buffer.version())?;
+        let buffer_version = buffer.read_with(&mut cx, |buffer, _| buffer.version())?;
         match envelope
             .payload
             .strategy
@@ -7188,7 +7190,7 @@ impl LspStore {
             })?
             .context("worktree not found")?;
         let (old_abs_path, new_abs_path) = {
-            let root_path = worktree.update(&mut cx, |this, _| this.abs_path())?;
+            let root_path = worktree.read_with(&mut cx, |this, _| this.abs_path())?;
             let new_path = PathBuf::from_proto(envelope.payload.new_path.clone());
             (root_path.join(&old_path), root_path.join(&new_path))
         };
@@ -7203,7 +7205,7 @@ impl LspStore {
         )
         .await;
         let response = Worktree::handle_rename_entry(worktree, envelope.payload, cx.clone()).await;
-        this.update(&mut cx, |this, _| {
+        this.read_with(&mut cx, |this, _| {
             this.did_rename_entry(worktree_id, &old_abs_path, &new_abs_path, is_dir);
         })
         .ok();
@@ -7386,7 +7388,7 @@ impl LspStore {
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let server_id = LanguageServerId(envelope.payload.language_server_id as usize);
-        lsp_store.update(&mut cx, |lsp_store, _| {
+        lsp_store.read_with(&mut cx, |lsp_store, _| {
             if let Some(server) = lsp_store.language_server_for_id(server_id) {
                 server
                     .notify::<lsp_store::lsp_ext_command::LspExtCancelFlycheck>(&())
@@ -7438,7 +7440,7 @@ impl LspStore {
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let server_id = LanguageServerId(envelope.payload.language_server_id as usize);
-        lsp_store.update(&mut cx, |lsp_store, _| {
+        lsp_store.read_with(&mut cx, |lsp_store, _| {
             if let Some(server) = lsp_store.language_server_for_id(server_id) {
                 server
                     .notify::<lsp_store::lsp_ext_command::LspExtClearFlycheck>(&())
@@ -8097,7 +8099,7 @@ impl LspStore {
         let peer_id = envelope.original_sender_id().unwrap_or_default();
         let symbol = envelope.payload.symbol.context("invalid symbol")?;
         let symbol = Self::deserialize_symbol(symbol)?;
-        let symbol = this.update(&mut cx, |this, _| {
+        let symbol = this.read_with(&mut cx, |this, _| {
             let signature = this.symbol_signature(&symbol.path);
             anyhow::ensure!(signature == symbol.signature, "invalid symbol signature");
             Ok(symbol)
@@ -8392,7 +8394,7 @@ impl LspStore {
                         trigger: trigger as i32,
                         buffer_ids: buffers
                             .iter()
-                            .map(|buffer| buffer.update(cx, |buffer, _| buffer.remote_id().into()))
+                            .map(|buffer| buffer.read_with(cx, |buffer, _| buffer.remote_id().into()))
                             .collect::<Result<_>>()?,
                     })
                     .await
@@ -8782,6 +8784,10 @@ impl LspStore {
                 .as_ref()
                 .map_or(false, |tags| tags.contains(&DiagnosticTag::UNNECESSARY));
 
+            let underline = self
+                .language_server_adapter_for_id(language_server_id)
+                .map_or(true, |adapter| adapter.underline_diagnostic(diagnostic));
+
             if is_supporting {
                 supporting_diagnostics.insert(
                     (source, diagnostic.code.clone(), range),
@@ -8814,6 +8820,7 @@ impl LspStore {
                         is_primary: true,
                         is_disk_based,
                         is_unnecessary,
+                        underline,
                         data: diagnostic.data.clone(),
                     },
                 });
@@ -8839,6 +8846,7 @@ impl LspStore {
                                     is_primary: false,
                                     is_disk_based,
                                     is_unnecessary: false,
+                                    underline,
                                     data: diagnostic.data.clone(),
                                 },
                             });

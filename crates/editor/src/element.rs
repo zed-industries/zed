@@ -1533,9 +1533,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<MinimapLayout> {
-        let minimap_editor = self
-            .editor
-            .read_with(cx, |editor, _| editor.minimap().cloned())?;
+        let minimap_editor = self.editor.read(cx).minimap().cloned()?;
 
         let minimap_settings = EditorSettings::get_global(cx).minimap;
 
@@ -1581,12 +1579,10 @@ impl EditorElement {
         );
         let minimap_line_height = self.get_minimap_line_height(
             minimap_editor
-                .read_with(cx, |editor, _| {
-                    editor
-                        .text_style_refinement
-                        .as_ref()
-                        .and_then(|refinement| refinement.font_size)
-                })
+                .read(cx)
+                .text_style_refinement
+                .as_ref()
+                .and_then(|refinement| refinement.font_size)
                 .unwrap_or(MINIMAP_FONT_SIZE),
             window,
             cx,
@@ -2197,7 +2193,7 @@ impl EditorElement {
     ) {
         let mouse_position = window.mouse_position();
         let mouse_over_inline_blame = parent_bounds.contains(&mouse_position);
-        let mouse_over_popover = self.editor.update(cx, |editor, _| {
+        let mouse_over_popover = self.editor.read_with(cx, |editor, _| {
             editor
                 .inline_blame_popover
                 .as_ref()
@@ -2213,7 +2209,7 @@ impl EditorElement {
             }
         });
 
-        let should_draw = self.editor.update(cx, |editor, _| {
+        let should_draw = self.editor.read_with(cx, |editor, _| {
             editor
                 .inline_blame_popover
                 .as_ref()
@@ -2247,7 +2243,7 @@ impl EditorElement {
 
             if let Some(mut element) = maybe_element {
                 let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-                let origin = self.editor.update(cx, |editor, _| {
+                let origin = self.editor.read_with(cx, |editor, _| {
                     let target_point = editor
                         .inline_blame_popover
                         .as_ref()
@@ -4326,7 +4322,7 @@ impl EditorElement {
             ..Default::default()
         };
         window.with_text_style(Some(text_style), |window| {
-            let mut element = self.editor.update(cx, |editor, _| {
+            let mut element = self.editor.read_with(cx, |editor, _| {
                 let mouse_context_menu = editor.mouse_context_menu.as_ref()?;
                 let context_menu = mouse_context_menu.context_menu.clone();
 
@@ -6339,9 +6335,23 @@ impl EditorElement {
 
             // Set a minimum scroll_sensitivity of 0.01 to make sure the user doesn't
             // accidentally turn off their scrolling.
-            let scroll_sensitivity = EditorSettings::get_global(cx).scroll_sensitivity.max(0.01);
+            let base_scroll_sensitivity =
+                EditorSettings::get_global(cx).scroll_sensitivity.max(0.01);
+
+            // Use a minimum fast_scroll_sensitivity for same reason above
+            let fast_scroll_sensitivity = EditorSettings::get_global(cx)
+                .fast_scroll_sensitivity
+                .max(0.01);
 
             move |event: &ScrollWheelEvent, phase, window, cx| {
+                let scroll_sensitivity = {
+                    if event.modifiers.alt {
+                        fast_scroll_sensitivity
+                    } else {
+                        base_scroll_sensitivity
+                    }
+                };
+
                 if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
                     delta = delta.coalesce(event.delta);
                     editor.update(cx, |editor, cx| {
@@ -7548,14 +7558,14 @@ impl Element for EditorElement {
                     let scrollbars_shown = settings.scrollbar.show != ShowScrollbar::Never;
                     let vertical_scrollbar_width = (scrollbars_shown
                         && settings.scrollbar.axes.vertical
-                        && self
-                            .editor
-                            .read_with(cx, |editor, _| editor.show_scrollbars))
-                    .then_some(style.scrollbar_width)
-                    .unwrap_or_default();
+                        && self.editor.read(cx).show_scrollbars)
+                        .then_some(style.scrollbar_width)
+                        .unwrap_or_default();
                     let minimap_width = self
                         .editor
-                        .read_with(cx, |editor, _| editor.minimap().is_some())
+                        .read(cx)
+                        .minimap()
+                        .is_some()
                         .then(|| match settings.minimap.show {
                             ShowMinimap::Auto => {
                                 scrollbars_shown.then_some(MinimapLayout::MINIMAP_WIDTH)
@@ -9154,9 +9164,13 @@ impl MinimapLayout {
         visible_minimap_lines: f32,
         scroll_position: f32,
     ) -> f32 {
-        let scroll_percentage =
-            (scroll_position / (document_lines - visible_editor_lines)).clamp(0., 1.);
-        scroll_percentage * (document_lines - visible_minimap_lines).max(0.)
+        let non_visible_document_lines = (document_lines - visible_editor_lines).max(0.);
+        if non_visible_document_lines == 0. {
+            0.
+        } else {
+            let scroll_percentage = (scroll_position / non_visible_document_lines).clamp(0., 1.);
+            scroll_percentage * (document_lines - visible_minimap_lines).max(0.)
+        }
     }
 }
 

@@ -1540,7 +1540,7 @@ impl Project {
                 .unwrap()
                 .await
                 .unwrap();
-            tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+            tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
                 .unwrap()
                 .await;
         }
@@ -1579,7 +1579,7 @@ impl Project {
                 .await
                 .unwrap();
 
-            tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+            tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
                 .await;
         }
         project
@@ -1945,7 +1945,7 @@ impl Project {
         let lsp_store = self.lsp_store().downgrade();
         cx.spawn(async move |_, cx| {
             let (old_abs_path, new_abs_path) = {
-                let root_path = worktree.update(cx, |this, _| this.abs_path())?;
+                let root_path = worktree.read_with(cx, |this, _| this.abs_path())?;
                 let new_abs_path = if is_root_entry {
                     root_path.parent().unwrap().join(&new_path)
                 } else {
@@ -1970,7 +1970,7 @@ impl Project {
                 .await?;
 
             lsp_store
-                .update(cx, |this, _| {
+                .read_with(cx, |this, _| {
                     this.did_rename_entry(worktree_id, &old_abs_path, &new_abs_path, is_dir);
                 })
                 .ok();
@@ -2550,7 +2550,7 @@ impl Project {
             cx: &mut AsyncApp,
         ) -> Result<()> {
             for (buffer_id, operations) in operations_by_buffer_id.drain() {
-                let request = this.update(cx, |this, _| {
+                let request = this.read_with(cx, |this, _| {
                     let project_id = this.remote_id()?;
                     Some(this.client.request(proto::UpdateBuffer {
                         buffer_id: buffer_id.into(),
@@ -2572,7 +2572,7 @@ impl Project {
         let mut changes = rx.ready_chunks(MAX_BATCH_SIZE);
 
         while let Some(changes) = changes.next().await {
-            let is_local = this.update(cx, |this, _| this.is_local())?;
+            let is_local = this.read_with(cx, |this, _| this.is_local())?;
 
             for change in changes {
                 match change {
@@ -2614,7 +2614,7 @@ impl Project {
                         )
                         .await?;
 
-                        this.update(cx, |this, _| {
+                        this.read_with(cx, |this, _| {
                             if let Some(project_id) = this.remote_id() {
                                 this.client
                                     .send(proto::UpdateLanguageServer {
@@ -3870,9 +3870,7 @@ impl Project {
     }
 
     pub fn find_worktree(&self, abs_path: &Path, cx: &App) -> Option<(Entity<Worktree>, PathBuf)> {
-        self.worktree_store.read_with(cx, |worktree_store, cx| {
-            worktree_store.find_worktree(abs_path, cx)
-        })
+        self.worktree_store.read(cx).find_worktree(abs_path, cx)
     }
 
     pub fn is_shared(&self) -> bool {
@@ -4009,7 +4007,7 @@ impl Project {
         cx: &mut AsyncApp,
     ) -> Option<ResolvedPath> {
         worktree
-            .update(cx, |worktree, _| {
+            .read_with(cx, |worktree, _| {
                 let root_entry_path = &worktree.root_entry()?.path;
                 let resolved = resolve_path(root_entry_path, path);
                 let stripped = resolved.strip_prefix(root_entry_path).unwrap_or(&resolved);
