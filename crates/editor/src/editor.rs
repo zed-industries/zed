@@ -112,7 +112,7 @@ use language::{
     EditPreview, HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point,
     Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
-        self, InlayHintSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
+        self, InlayHintSettings, LspInsertMode, PreferLspMode, RewrapBehavior, WordsCompletionMode,
         all_language_settings, language_settings,
     },
     point_from_lsp, text_diff_with_options,
@@ -1669,6 +1669,10 @@ impl Editor {
                         project::Event::RefreshInlayHints => {
                             editor
                                 .refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
+                        }
+                        project::Event::LanguageServerAdded(..)
+                        | project::Event::LanguageServerRemoved(..) => {
+                            editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
                         }
                         project::Event::SnippetEdit(id, snippet_edits) => {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
@@ -13519,6 +13523,7 @@ impl Editor {
         }
         let project = self.project.as_ref().map(Entity::downgrade);
         let task_sources = self.lsp_task_sources(cx);
+        let multi_buffer = self.buffer.downgrade();
         cx.spawn_in(window, async move |editor, cx| {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             let Some(project) = project.and_then(|p| p.upgrade()) else {
@@ -13602,7 +13607,20 @@ impl Editor {
                 return;
             };
 
-            let rows = Self::runnable_rows(project, display_snapshot, new_rows, cx.clone());
+            let Ok(prefer_lsp) = multi_buffer.update(cx, |buffer, cx| {
+                matches!(
+                    buffer.language_settings(cx).tasks.prefer_lsp,
+                    PreferLspMode::Gutter | PreferLspMode::Everywhere
+                )
+            }) else {
+                return;
+            };
+
+            let rows = if prefer_lsp && !lsp_tasks_by_rows.is_empty() {
+                Vec::new()
+            } else {
+                Self::runnable_rows(project, display_snapshot, new_rows, cx.clone())
+            };
             editor
                 .update(cx, |editor, _| {
                     editor.clear_tasks();

@@ -1045,6 +1045,28 @@ pub struct LanguageTaskConfig {
     pub variables: HashMap<String, String>,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Use LSP tasks over Zed ones, if non-empty LSP task set is returned.
+    #[serde(default = "default_prefer_lsp_mode")]
+    pub prefer_lsp: PreferLspMode,
+}
+
+/// Cases where LSP tasks are preferred over Zed tasks.
+#[derive(Debug, Default, Clone, Deserialize, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PreferLspMode {
+    /// LSP tasks are mixed with Zed tasks.
+    Nowhere,
+    /// Only LSP tasks are shown, if found when opening the tasks modal.
+    Modal,
+    /// Only LSP tasks are shown in gutter icon lists, if found when refreshing.
+    Gutter,
+    /// Both modal and gutter show only LSP tasks, if non-zero amount of them is found.
+    #[default]
+    Everywhere,
+}
+
+fn default_prefer_lsp_mode() -> PreferLspMode {
+    PreferLspMode::default()
 }
 
 impl InlayHintSettings {

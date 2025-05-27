@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::TaskContexts;
+use editor::Editor;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AnyElement, App, AppContext as _, Context, DismissEvent, Entity, EventEmitter,
@@ -8,6 +9,7 @@ use gpui::{
     WeakEntity, Window, rems,
 };
 use itertools::Itertools;
+use language::language_settings::PreferLspMode;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
 use project::{TaskSourceKind, task_store::TaskStore};
 use task::{DebugScenario, ResolvedTask, RevealTarget, TaskContext, TaskTemplate};
@@ -230,15 +232,27 @@ impl PickerDelegate for TasksModalDelegate {
                     let workspace = self.workspace.clone();
                     let lsp_task_sources = self.task_contexts.lsp_task_sources.clone();
                     let task_position = self.task_contexts.latest_selection;
-
                     cx.spawn(async move |picker, cx| {
-                        let Ok(lsp_tasks) = workspace.update(cx, |workspace, cx| {
-                            editor::lsp_tasks(
+                        let Ok((lsp_tasks, prefer_lsp)) = workspace.update(cx, |workspace, cx| {
+                            let lsp_tasks = editor::lsp_tasks(
                                 workspace.project().clone(),
                                 &lsp_task_sources,
                                 task_position,
                                 cx,
-                            )
+                            );
+                            let prefer_lsp = workspace
+                                .active_item(cx)
+                                .and_then(|item| item.downcast::<Editor>())
+                                .map(|editor| {
+                                    let language_settings =
+                                        editor.read(cx).buffer().read(cx).language_settings(cx);
+                                    matches!(
+                                        language_settings.tasks.prefer_lsp,
+                                        PreferLspMode::Modal | PreferLspMode::Everywhere
+                                    )
+                                })
+                                .unwrap_or(false);
+                            (lsp_tasks, prefer_lsp)
                         }) else {
                             return Vec::new();
                         };
@@ -253,6 +267,7 @@ impl PickerDelegate for TasksModalDelegate {
                                 };
 
                                 let mut new_candidates = used;
+                                let add_current_tasks = !prefer_lsp || lsp_tasks.is_empty();
                                 new_candidates.extend(lsp_tasks.into_iter().flat_map(
                                     |(kind, tasks_with_locations)| {
                                         tasks_with_locations
@@ -263,7 +278,9 @@ impl PickerDelegate for TasksModalDelegate {
                                             .map(move |(_, task)| (kind.clone(), task))
                                     },
                                 ));
-                                new_candidates.extend(current);
+                                if add_current_tasks {
+                                    new_candidates.extend(current);
+                                }
                                 let match_candidates = string_match_candidates(&new_candidates);
                                 let _ = picker.delegate.candidates.insert(new_candidates);
                                 match_candidates
