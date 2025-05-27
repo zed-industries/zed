@@ -76,7 +76,9 @@ impl ScreenCaptureSource for ScapCaptureSource {
     fn metadata(&self) -> Result<SourceMetadata> {
         Ok(SourceMetadata {
             resolution: self.size,
-            label: None,
+            label: self.target.clone().into(),
+            is_main: None,
+            id: self.target.id as u64,
         })
     }
 
@@ -89,8 +91,8 @@ impl ScreenCaptureSource for ScapCaptureSource {
         let target = self.target.clone();
 
         // Due to use of blocking APIs, a dedicated thread is used.
-        std::thread::spawn(
-            move || match new_scap_capturer(Some(scap::Target::Display(target))) {
+        std::thread::spawn(move || {
+            match new_scap_capturer(Some(scap::Target::Display(target.clone()))) {
                 Ok(mut capturer) => {
                     capturer.start_capture();
                     run_capture(capturer, frame_callback, stream_tx);
@@ -98,8 +100,8 @@ impl ScreenCaptureSource for ScapCaptureSource {
                 Err(e) => {
                     stream_tx.send(Err(e)).ok();
                 }
-            },
-        );
+            }
+        });
 
         to_dyn_screen_capture_stream(stream_rx, foreground_executor)
     }
@@ -260,7 +262,7 @@ fn to_dyn_screen_capture_sources<T: ScreenCaptureSource + 'static>(
                 Ok(Ok(results)) => dyn_sources_tx
                     .send(Ok(results
                         .into_iter()
-                        .map(|source| Arc::new(source) as Rc<dyn ScreenCaptureSource>)
+                        .map(|source| Rc::new(source) as Rc<dyn ScreenCaptureSource>)
                         .collect::<Vec<_>>()))
                     .ok(),
                 Ok(Err(err)) => dyn_sources_tx.send(Err(err)).ok(),
