@@ -19,15 +19,8 @@ use crate::icon_theme_selector::{IconThemeSelector, IconThemeSelectorDelegate};
 
 actions!(theme_selector, [Reload]);
 
-pub fn init(cx: &mut App) {
-    cx.observe_new(
-        |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
-            workspace
-                .register_action(toggle_theme_selector)
-                .register_action(toggle_icon_theme_selector);
-        },
-    )
-    .detach();
+pub fn init(_cx: &mut App) {
+    
 }
 
 pub fn toggle_theme_selector(
