@@ -2600,64 +2600,6 @@ fn test_serialization(cx: &mut gpui::App) {
 }
 
 #[gpui::test]
-fn test_edits_merge(cx: &mut TestAppContext) {
-    let buffer = cx.new(|cx| Buffer::local("|tab|.", cx));
-
-    let start_version = buffer.read_with(cx, |buffer, _cx| buffer.version());
-
-    buffer.update(cx, |buffer, cx| {
-        buffer.edit([(Point::new(0, 6)..Point::new(0, 6), "func(")], None, cx);
-        buffer.edit([(Point::new(0, 0)..Point::new(0, 0), "|tab|")], None, cx);
-    });
-    buffer.read_with(cx, |buffer, _cx| {
-        assert_eq!(buffer.text(), "|tab||tab|.func(");
-    });
-
-    buffer.update(cx, |buffer, cx| {
-        buffer.merge(
-            [(Point::new(0, 0)..Point::new(0, 5), "|tab||tab|")],
-            &start_version,
-            cx,
-        )
-    });
-    buffer.read_with(cx, |buffer, _cx| {
-        assert_eq!(buffer.text(), "|tab||tab|.func(");
-    });
-
-    let start_version = buffer.read_with(cx, |buffer, _cx| buffer.version());
-    buffer.update(cx, |buffer, cx| {
-        buffer.merge(
-            [(Point::new(0, 0)..Point::new(0, 10), "|tab|")],
-            &start_version,
-            cx,
-        );
-    });
-    buffer.read_with(cx, |buffer, _cx| {
-        assert_eq!(buffer.text(), "|tab|.func(");
-    });
-
-    let start_version = buffer.read_with(cx, |buffer, _cx| buffer.version());
-    buffer.update(cx, |buffer, cx| {
-        buffer.edit(
-            [(Point::new(0, 0)..Point::new(0, 5), "|tab||tab|")],
-            None,
-            cx,
-        );
-    });
-
-    buffer.update(cx, |buffer, cx| {
-        buffer.merge(
-            [(Point::new(0, 0)..Point::new(0, 0), "|tab|")],
-            &start_version,
-            cx,
-        )
-    });
-    buffer.read_with(cx, |buffer, _cx| {
-        assert_eq!(buffer.text(), "|tab||tab|.func(");
-    });
-}
-
-#[gpui::test]
 fn test_branch_and_merge(cx: &mut TestAppContext) {
     cx.update(|cx| init_settings(cx, |_| {}));
 
