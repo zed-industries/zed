@@ -34,6 +34,14 @@ pub(crate) fn breakpoint_indicator_path(
         bounds.size.width
     };
     let actual_height = bounds.size.height;
+    
+    // Debug input parameters and initial calculations
+    dbg!(&bounds);
+    dbg!(scale);
+    dbg!(stroke);
+    dbg!(min_allowed_width);
+    dbg!(actual_width);
+    dbg!(actual_height);
 
     // Origin point for positioning
     let origin_x = bounds.origin.x;
@@ -45,6 +53,11 @@ pub(crate) fn breakpoint_indicator_path(
     // Calculate the width of fixed and stretchable sections
     let fixed_sections_width = px(SHAPE_FIXED_WIDTH) * shape_scale;
     let stretchable_middle_width = actual_width - fixed_sections_width;
+    
+    // Debug scaling calculations
+    dbg!(shape_scale);
+    dbg!(fixed_sections_width);
+    dbg!(stretchable_middle_width);
 
     // Helper function to round pixels to nearest 1/8
     let round_to_pixel_grid = |value: Pixels| -> Pixels {
@@ -58,6 +71,14 @@ pub(crate) fn breakpoint_indicator_path(
     let middle_section_end_x = round_to_pixel_grid(origin_x + px(CORNER_RADIUS) * shape_scale + stretchable_middle_width);
     let right_corner_start_x = round_to_pixel_grid(origin_x + px(CORNER_RADIUS) * shape_scale + stretchable_middle_width + px(RIGHT_CORNER_START) * shape_scale);
     let right_edge_x = round_to_pixel_grid(origin_x + px(CORNER_RADIUS) * shape_scale + stretchable_middle_width + px(RIGHT_CORNER_WIDTH) * shape_scale);
+    
+    // Debug x-coordinates
+    dbg!(origin_x);
+    dbg!(left_edge_x);
+    dbg!(left_corner_end_x);
+    dbg!(middle_section_end_x);
+    dbg!(right_corner_start_x);
+    dbg!(right_edge_x);
 
     // Pre-calculate all the key y-coordinates
     let top_edge_y = round_to_pixel_grid(origin_y);
@@ -75,6 +96,16 @@ pub(crate) fn breakpoint_indicator_path(
     // Control point offsets
     let control_offset = px(CURVE_CONTROL_OFFSET) * shape_scale;
     let right_control_offset = px(9.0) * shape_scale;
+    
+    // Debug y-coordinates
+    dbg!(origin_y);
+    dbg!(top_edge_y);
+    dbg!(center_y);
+    dbg!(bottom_edge_y);
+    dbg!(left_upper_curve_start_y);
+    dbg!(left_lower_curve_end_y);
+    dbg!(right_upper_curve_control_y);
+    dbg!(right_lower_curve_control_y);
 
     // Create the path builder
     let mut builder = if stroke {

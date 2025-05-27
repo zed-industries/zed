@@ -2394,16 +2394,29 @@ impl EditorElement {
     ) -> AnyElement {
         let element_id = ElementId::Name(format!("breakpoint_indicator_{}", multibuffer_row.0).into());
 
+        // === Extract text style and calculate dimensions ===
         let text_style = self.style.text.clone();
         let font_size = text_style.font_size;
         let font_size_px = font_size.to_pixels(window.rem_size());
         let rem_size = window.rem_size();
-        let font_scale = font_size_px / rem_size;
-
+        
+        // Calculate font scale relative to a baseline font size
+        const BASELINE_FONT_SIZE: f32 = 14.0; // Default editor font size
+        let font_scale = font_size_px / px(BASELINE_FONT_SIZE);
+        
         let line_height: Pixels = text_style
             .line_height
             .to_pixels(font_size, rem_size);
-
+        
+        // Debug font metrics
+        dbg!(font_size);
+        dbg!(font_size_px);
+        dbg!(rem_size);
+        dbg!(BASELINE_FONT_SIZE);
+        dbg!(font_scale);
+        dbg!(line_height);
+        
+        // Helper to scale pixel values based on font size
         let scale_px = |value: f32| px(value) * font_scale;
 
         const HORIZONTAL_OFFSET: f32 = 40.0;
@@ -2415,6 +2428,12 @@ impl EditorElement {
 
         let line_number_width = self.max_line_number_width(snapshot, window, cx);
         let indicator_width = dbg!(line_number_width) + scale_px(HORIZONTAL_OFFSET);
+        
+        // Debug indicator dimensions
+        dbg!(horizontal_offset);
+        dbg!(vertical_offset);
+        dbg!(indicator_height);
+        dbg!(indicator_width);
 
         let is_disabled = breakpoint.is_disabled();
         let breakpoint_arc = Arc::from(breakpoint.clone());
@@ -2471,17 +2490,27 @@ impl EditorElement {
                 canvas(
                     |_bounds, _cx, _style| {},
                     move |bounds, _cx, window, _style| {
+                        // Debug canvas bounds
+                        dbg!(&bounds);
+                        
+                        // Adjust bounds to account for horizontal offset
                         let adjusted_bounds = Bounds {
                             origin: point(bounds.origin.x + horizontal_offset, bounds.origin.y),
                             size: size(bounds.size.width, indicator_height),
                         };
+                        
+                        // Debug adjusted bounds
+                        dbg!(&adjusted_bounds);
+                        dbg!(font_scale);
 
+                        // Generate the breakpoint indicator path
                         let path = breakpoint_indicator_path(
                             adjusted_bounds,
                             font_scale,
                             is_disabled,
                         );
 
+                        // Paint the path with the calculated color
                         window.paint_path(path, indicator_color);
                     },
                 )
