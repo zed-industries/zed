@@ -481,9 +481,9 @@ impl MessageEditor {
         let active_completion_mode = thread.completion_mode();
         let max_mode_enabled = active_completion_mode == CompletionMode::Max;
         let icon = if max_mode_enabled {
-            IconName::ZedLitModeOn
+            IconName::ZedBurnModeOn
         } else {
-            IconName::ZedLitMode
+            IconName::ZedBurnMode
         };
 
         Some(

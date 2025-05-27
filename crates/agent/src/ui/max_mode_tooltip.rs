@@ -19,9 +19,9 @@ impl MaxModeTooltip {
 impl Render for MaxModeTooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let icon = if self.selected {
-            IconName::ZedLitModeOn
+            IconName::ZedBurnModeOn
         } else {
-            IconName::ZedLitMode
+            IconName::ZedBurnMode
         };
 
         let title = h_flex()
