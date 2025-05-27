@@ -131,6 +131,7 @@ pub struct RunningMode {
     tmp_breakpoint: Option<SourceBreakpoint>,
     worktree: WeakEntity<Worktree>,
     executor: BackgroundExecutor,
+    is_started: bool,
 }
 
 fn client_source(abs_path: &Path) -> dap::Source {
@@ -181,6 +182,7 @@ impl RunningMode {
             tmp_breakpoint: None,
             binary,
             executor: cx.background_executor().clone(),
+            is_started: false,
         })
     }
 
@@ -373,7 +375,7 @@ impl RunningMode {
         capabilities: &Capabilities,
         initialized_rx: oneshot::Receiver<()>,
         dap_store: WeakEntity<DapStore>,
-        cx: &App,
+        cx: &mut Context<Session>,
     ) -> Task<Result<()>> {
         let raw = self.binary.request_args.clone();
 
@@ -405,7 +407,7 @@ impl RunningMode {
         let this = self.clone();
         let worktree = self.worktree().clone();
         let configuration_sequence = cx.spawn({
-            async move |cx| {
+            async move |_, cx| {
                 let breakpoint_store =
                     dap_store.read_with(cx, |dap_store, _| dap_store.breakpoint_store().clone())?;
                 initialized_rx.await?;
@@ -453,9 +455,20 @@ impl RunningMode {
             }
         });
 
-        cx.background_spawn(async move {
-            futures::future::try_join(launch, configuration_sequence).await?;
-            Ok(())
+        let task = cx.background_spawn(futures::future::try_join(launch, configuration_sequence));
+
+        cx.spawn(async move |this, cx| {
+            task.await?;
+
+            this.update(cx, |this, cx| {
+                if let Some(this) = this.as_running_mut() {
+                    this.is_started = true;
+                    cx.notify();
+                }
+            })
+            .ok();
+
+            anyhow::Ok(())
         })
     }
 
