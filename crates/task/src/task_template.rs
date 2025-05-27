@@ -216,7 +216,7 @@ impl TaskTemplate {
             None,
         )?;
 
-        let args = match self.arg_variable_processor  {
+        let args = match self.arg_variable_processor {
             Some(arg_variable_processor) => substitute_all_template_variables_in_vec(
                 &self.args,
                 &task_variables,
