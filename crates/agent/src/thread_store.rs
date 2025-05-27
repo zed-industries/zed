@@ -757,6 +757,8 @@ pub struct SerializedMessage {
     pub context: String,
     #[serde(default)]
     pub creases: Vec<SerializedCrease>,
+    #[serde(default)]
+    pub is_hidden: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -840,6 +842,7 @@ impl LegacySerializedMessage {
             tool_results: self.tool_results,
             context: String::new(),
             creases: Vec::new(),
+            is_hidden: false,
         }
     }
 }

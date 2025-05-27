@@ -541,7 +541,7 @@ impl Thread {
                             context: None,
                         })
                         .collect(),
-                    is_hidden: false,
+                    is_hidden: message.is_hidden,
                 })
                 .collect(),
             next_message_id,
@@ -1155,6 +1155,7 @@ impl Thread {
                                 label: crease.metadata.label.clone(),
                             })
                             .collect(),
+                        is_hidden: message.is_hidden,
                     })
                     .collect(),
                 initial_project_snapshot,
