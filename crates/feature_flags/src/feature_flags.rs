@@ -19,15 +19,7 @@ pub static ZED_DISABLE_STAFF: LazyLock<bool> = LazyLock::new(|| {
 
 impl FeatureFlags {
     fn has_flag<T: FeatureFlag>(&self) -> bool {
-        if T::enabled_for_all() {
-            return true;
-        }
-
-        if self.staff && T::enabled_for_staff() {
-            return true;
-        }
-
-        self.flags.iter().any(|f| f.as_str() == T::NAME)
+        return true;
     }
 }
 
