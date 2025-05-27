@@ -39,10 +39,15 @@ impl LspTool {
                     language_server_name,
                     worktree_id,
                 ) => {
-                    //
+                    dbg!((
+                        "added",
+                        language_server_id,
+                        language_server_name,
+                        worktree_id
+                    ));
                 }
                 project::LspStoreEvent::LanguageServerRemoved(language_server_id) => {
-                    //
+                    dbg!(("removed", language_server_id));
                 }
                 project::LspStoreEvent::LanguageServerUpdate {
                     language_server_id,
@@ -52,6 +57,7 @@ impl LspTool {
                     //
                     dbg!((language_server_id, name, status_update));
                 }
+                // TODO kb events are sent twice
                 project::LspStoreEvent::LanguageServerUpdate {
                     language_server_id,
                     name,
@@ -60,19 +66,7 @@ impl LspTool {
                     //
                     dbg!((language_server_id, name, update));
                 }
-                project::LspStoreEvent::LanguageServerLog(
-                    language_server_id,
-                    language_server_log_type,
-                    _,
-                ) => {
-                    //
-                }
-                project::LspStoreEvent::LanguageServerPrompt(language_server_prompt_request) => {
-                    //
-                }
-                project::LspStoreEvent::Notification(_) => {
-                    //
-                }
+                // TODO kb move custom r-a status thing here too
                 _ => {}
             }
         });
@@ -95,7 +89,6 @@ impl LspTool {
     ) -> Entity<ContextMenu> {
         let lsp_tool = cx.entity();
         let selected_language_server = self.selected_language_server.clone();
-        dbg!(selected_language_server.is_some());
 
         ContextMenu::build_persistent(window, cx, move |mut menu, _, cx| {
             if let Some((selected_adapter, selected_server)) = selected_language_server
@@ -108,20 +101,20 @@ impl LspTool {
                     .custom_row(|_, _| Label::new("Status: TODO kb").into_any_element())
                     .separator()
                     .entry("Open log", None, {
-                        let editor = editor.clone();
+                        // let editor = editor.clone();
                         move |_, _| {
                             dbg!("open log");
                         }
                     })
                     .separator()
                     .entry("Restart", None, {
-                        let editor = editor.clone();
+                        // let editor = editor.clone();
                         move |_, _| {
                             dbg!("Restart");
                         }
                     })
                     .entry("Disable", None, {
-                        let editor = editor.clone();
+                        // let editor = editor.clone();
                         move |_, _| {
                             dbg!("Disable");
                         }
