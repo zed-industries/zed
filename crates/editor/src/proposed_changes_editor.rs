@@ -5,7 +5,7 @@ use futures::{channel::mpsc, future::join_all};
 use gpui::{App, Entity, EventEmitter, Focusable, Render, Subscription, Task};
 use language::{Buffer, BufferEvent, Capability};
 use multi_buffer::{ExcerptRange, MultiBuffer};
-use project::{LspPullDiagnostics, Project};
+use project::Project;
 use smol::stream::StreamExt;
 use std::{any::TypeId, ops::Range, rc::Rc, time::Duration};
 use text::ToOffset;
@@ -525,15 +525,7 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
 
     fn pull_diagnostics_for_buffer(
         &self,
-        _: &Entity<Buffer>,
-        _: &mut App,
-    ) -> Task<anyhow::Result<Vec<LspPullDiagnostics>>> {
-        Task::ready(Ok(Vec::new()))
-    }
-
-    fn update_pull_diagnostics(
-        &self,
-        _: Vec<LspPullDiagnostics>,
+        _: Entity<Buffer>,
         _: &mut App,
     ) -> Task<anyhow::Result<()>> {
         Task::ready(Ok(()))

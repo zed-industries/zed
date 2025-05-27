@@ -163,8 +163,8 @@ use multi_buffer::{
 use parking_lot::Mutex;
 use project::{
     CodeAction, Completion, CompletionIntent, CompletionSource, DocumentHighlight, InlayHint,
-    Location, LocationLink, LspPullDiagnostics, PrepareRenameResponse, Project, ProjectItem,
-    ProjectTransaction, TaskSourceKind,
+    Location, LocationLink, PrepareRenameResponse, Project, ProjectItem, ProjectTransaction,
+    TaskSourceKind,
     debugger::breakpoint_store::Breakpoint,
     lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
     project_settings::{GitGutterSetting, ProjectSettings},
@@ -15548,7 +15548,7 @@ impl Editor {
                 buffers
                     .into_iter()
                     .flat_map(|buffer| {
-                        Some(project.upgrade()?.pull_diagnostics_for_buffer(&buffer, cx))
+                        Some(project.upgrade()?.pull_diagnostics_for_buffer(buffer, cx))
                     })
                     .collect::<FuturesUnordered<_>>()
             }) else {
@@ -15556,28 +15556,18 @@ impl Editor {
             };
 
             while let Some(pull_task) = pull_diagnostics_tasks.next().await {
-                let Some(project) = project.upgrade() else {
-                    return;
-                };
-                if let Some(new_diagnostics) = pull_task.log_err() {
-                    let Ok(update_task) =
-                        cx.update(|_, cx| project.update_pull_diagnostics(new_diagnostics, cx))
-                    else {
-                        return;
-                    };
-                    match update_task.await {
-                        Ok(()) => {
-                            if editor
-                                .update_in(cx, |editor, window, cx| {
-                                    editor.update_diagnostics_state(window, cx);
-                                })
-                                .is_err()
-                            {
-                                return;
-                            }
+                match pull_task {
+                    Ok(()) => {
+                        if editor
+                            .update_in(cx, |editor, window, cx| {
+                                editor.update_diagnostics_state(window, cx);
+                            })
+                            .is_err()
+                        {
+                            return;
                         }
-                        Err(e) => log::error!("Failed to update project diagnostics: {e:#}"),
                     }
+                    Err(e) => log::error!("Failed to update project diagnostics: {e:#}"),
                 }
             }
         });
@@ -19604,15 +19594,9 @@ pub trait SemanticsProvider {
 
     fn pull_diagnostics_for_buffer(
         &self,
-        buffer: &Entity<Buffer>,
+        buffer: Entity<Buffer>,
         cx: &mut App,
-    ) -> Task<Result<Vec<LspPullDiagnostics>>>;
-
-    fn update_pull_diagnostics(
-        &self,
-        diagnostics: Vec<LspPullDiagnostics>,
-        cx: &mut App,
-    ) -> Task<Result<()>>;
+    ) -> Task<anyhow::Result<()>>;
 }
 
 pub trait CompletionProvider {
@@ -20127,59 +20111,54 @@ impl SemanticsProvider for Entity<Project> {
 
     fn pull_diagnostics_for_buffer(
         &self,
-        buffer: &Entity<Buffer>,
+        buffer: Entity<Buffer>,
         cx: &mut App,
-    ) -> Task<Result<Vec<LspPullDiagnostics>>> {
-        self.update(cx, |project, cx| {
-            project.lsp_store().update(cx, |lsp_store, cx| {
-                lsp_store.pull_diagnostics(buffer.clone(), cx)
+    ) -> Task<anyhow::Result<()>> {
+        let diagnostics = self.update(cx, |project, cx| {
+            project
+                .lsp_store()
+                .update(cx, |lsp_store, cx| lsp_store.pull_diagnostics(buffer, cx))
+        });
+        let project = self.clone();
+        cx.spawn(async move |cx| {
+            let diagnostics = diagnostics.await.context("pulling diagnostics")?;
+            project.update(cx, |project, cx| {
+                project.lsp_store().update(cx, |lsp_store, cx| {
+                    for diagnostics_set in diagnostics {
+                        let Some(server_id) = diagnostics_set.server_id else {
+                            continue;
+                        };
+
+                        let adapter = lsp_store.language_server_adapter_for_id(server_id);
+                        let disk_based_sources = adapter
+                            .as_ref()
+                            .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
+                            .unwrap_or(&[]);
+                        let Some(uri) = diagnostics_set.uri.clone() else {
+                            continue;
+                        };
+                        lsp_store
+                            .merge_diagnostics(
+                                server_id,
+                                lsp::PublishDiagnosticsParams {
+                                    uri,
+                                    diagnostics: diagnostics_set.diagnostics.clone(),
+                                    version: None,
+                                },
+                                DiagnosticSourceKind::Pulled,
+                                disk_based_sources,
+                                |old_diagnostic, cx| {
+                                    // TODO(vs) this will overwrite the pushed diagnostics
+                                    // TODO(vs) need to track responses' unchanged and partial
+                                    false
+                                },
+                                cx,
+                            )
+                            .log_err();
+                    }
+                })
             })
         })
-    }
-
-    fn update_pull_diagnostics(
-        &self,
-        diagnostics: Vec<LspPullDiagnostics>,
-        cx: &mut App,
-    ) -> Task<Result<()>> {
-        self.update(cx, |project, cx| {
-            project.lsp_store().update(cx, |lsp_store, cx| {
-                for diagnostics_set in diagnostics {
-                    let Some(server_id) = diagnostics_set.server_id else {
-                        continue;
-                    };
-
-                    let adapter = lsp_store.language_server_adapter_for_id(server_id);
-                    let disk_based_sources = adapter
-                        .as_ref()
-                        .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
-                        .unwrap_or(&[]);
-                    let Some(uri) = diagnostics_set.uri.clone() else {
-                        continue;
-                    };
-                    lsp_store
-                        .merge_diagnostics(
-                            server_id,
-                            lsp::PublishDiagnosticsParams {
-                                uri,
-                                diagnostics: diagnostics_set.diagnostics.clone(),
-                                version: None,
-                            },
-                            DiagnosticSourceKind::Pulled,
-                            disk_based_sources,
-                            |old_diagnostic, cx| {
-                                // TODO(vs) this will overwrite the pushed diagnostics
-                                // TODO(vs) need to track responses' unchanged and partial
-                                false
-                            },
-                            cx,
-                        )
-                        .log_err();
-                }
-            })
-        });
-
-        Task::ready(Ok(()))
     }
 }
 
