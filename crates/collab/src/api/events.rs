@@ -559,7 +559,7 @@ fn for_snowflake(
     country_code: Option<String>,
     checksum_matched: bool,
 ) -> impl Iterator<Item = SnowflakeRow> {
-    body.events.into_iter().filter_map(move |event| {
+    body.events.into_iter().map(move |event| {
         let timestamp =
             first_event_at + Duration::milliseconds(event.milliseconds_since_first_event);
         let (event_type, mut event_properties) = match &event.event {
@@ -594,7 +594,7 @@ fn for_snowflake(
             })
         });
 
-        Some(SnowflakeRow {
+        SnowflakeRow {
             time: timestamp,
             user_id: body.metrics_id.clone(),
             device_id: body.system_id.clone(),
@@ -602,7 +602,7 @@ fn for_snowflake(
             event_properties,
             user_properties,
             insert_id: Some(Uuid::new_v4().to_string()),
-        })
+        }
     })
 }
 
