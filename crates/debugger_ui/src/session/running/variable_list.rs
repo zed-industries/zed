@@ -10,7 +10,7 @@ use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::debugger::session::{Session, SessionEvent};
 use std::{collections::HashMap, ops::Range, sync::Arc};
 use ui::{ContextMenu, ListItem, Scrollbar, ScrollbarState, prelude::*};
-use util::{debug_panic, maybe};
+use util::debug_panic;
 
 actions!(
     variable_list,
@@ -490,20 +490,11 @@ impl VariableList {
 
     fn deploy_variable_context_menu(
         &mut self,
-        variable: ListEntry,
+        _variable: ListEntry,
         position: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(dap_var) = variable.as_variable() else {
-            debug_panic!("Trying to open variable context menu on a scope");
-            return;
-        };
-
-        let variable_value = dap_var.value.clone();
-        let variable_name = dap_var.name.clone();
-        let this = cx.entity().clone();
-
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
             menu.action("Copy Name", CopyVariableName.boxed_clone())
                 .action("Copy Value", CopyVariableValue.boxed_clone())
@@ -532,7 +523,7 @@ impl VariableList {
     fn copy_variable_name(
         &mut self,
         _: &CopyVariableName,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(selection) = self.selection.as_ref() else {
@@ -550,7 +541,7 @@ impl VariableList {
     fn copy_variable_value(
         &mut self,
         _: &CopyVariableValue,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(selection) = self.selection.as_ref() else {
@@ -677,7 +668,6 @@ impl VariableList {
             editor.select_all(&editor::actions::SelectAll, window, cx);
             editor
         });
-        dbg!("C");
         editor.focus_handle(cx).focus(window);
         editor
     }
