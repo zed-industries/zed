@@ -1,5 +1,6 @@
 use std::ops::Range;
 use std::path::Path;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -524,8 +525,8 @@ impl AgentPanel {
 
         let panel_type = AssistantSettings::get_global(cx).default_view;
         let active_view = match panel_type {
-            DefaultView::Agent => ActiveView::thread(thread.clone(), window, cx),
-            DefaultView::Thread => {
+            DefaultView::Thread => ActiveView::thread(thread.clone(), window, cx),
+            DefaultView::TextThread => {
                 let context =
                     context_store.update(cx, |context_store, cx| context_store.create(cx));
                 let lsp_adapter_delegate = make_lsp_adapter_delegate(&project.clone(), cx).unwrap();
@@ -915,8 +916,8 @@ impl AgentPanel {
         open_rules_library(
             self.language_registry.clone(),
             Box::new(PromptLibraryInlineAssist::new(self.workspace.clone())),
-            Arc::new(|| {
-                Box::new(SlashCommandCompletionProvider::new(
+            Rc::new(|| {
+                Rc::new(SlashCommandCompletionProvider::new(
                     Arc::new(SlashCommandWorkingSet::default()),
                     None,
                     None,

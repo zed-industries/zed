@@ -3249,12 +3249,18 @@ impl Render for Pane {
             .on_action(cx.listener(Pane::toggle_zoom))
             .on_action(
                 cx.listener(|pane: &mut Pane, action: &ActivateItem, window, cx| {
-                    pane.activate_item(action.0, true, true, window, cx);
+                    pane.activate_item(
+                        action.0.min(pane.items.len().saturating_sub(1)),
+                        true,
+                        true,
+                        window,
+                        cx,
+                    );
                 }),
             )
             .on_action(
                 cx.listener(|pane: &mut Pane, _: &ActivateLastItem, window, cx| {
-                    pane.activate_item(pane.items.len() - 1, true, true, window, cx);
+                    pane.activate_item(pane.items.len().saturating_sub(1), true, true, window, cx);
                 }),
             )
             .on_action(

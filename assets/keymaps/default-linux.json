@@ -676,6 +676,7 @@
   {
     "bindings": {
       "ctrl-alt-shift-f": "workspace::FollowNextCollaborator",
+      // Only available in debug builds: opens an element inspector for development.
       "ctrl-alt-i": "dev::ToggleInspector"
     }
   },
@@ -869,6 +870,13 @@
     "bindings": {
       "ctrl-t": "debugger::ToggleThreadPicker",
       "ctrl-i": "debugger::ToggleSessionPicker"
+    }
+  },
+  {
+    "context": "BreakpointList",
+    "bindings": {
+      "space": "debugger::ToggleEnableBreakpoint",
+      "backspace": "debugger::UnsetBreakpoint"
     }
   },
   {

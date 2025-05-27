@@ -475,6 +475,10 @@
   // Scroll sensitivity multiplier. This multiplier is applied
   // to both the horizontal and vertical delta values while scrolling.
   "scroll_sensitivity": 1.0,
+  // Scroll sensitivity multiplier for fast scrolling. This multiplier is applied
+  // to both the horizontal and vertical delta values while scrolling. Fast scrolling
+  // happens when a user holds the alt or option key while scrolling.
+  "fast_scroll_sensitivity": 4.0,
   "relative_line_numbers": false,
   // If 'search_wrap' is disabled, search result do not wrap around the end of the file.
   "search_wrap": true,
@@ -818,7 +822,12 @@
     // "primary_screen" - Show the notification only on your primary screen (default)
     // "all_screens" - Show these notifications on all screens
     // "never" - Never show these notifications
-    "notify_when_agent_waiting": "primary_screen"
+    "notify_when_agent_waiting": "primary_screen",
+    // Whether to play a sound when the agent has either completed
+    // its response, or needs user input.
+
+    // Default: false
+    "play_sound_when_agent_done": false
   },
   // The settings for slash commands.
   "slash_commands": {
@@ -950,7 +959,9 @@
     //    "skip_focus_for_active_in_search": false
     //
     // Default: true
-    "skip_focus_for_active_in_search": true
+    "skip_focus_for_active_in_search": true,
+    // Whether to show the git status in the file finder.
+    "git_status": true
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.

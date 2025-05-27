@@ -458,13 +458,12 @@ pub(crate) fn handle_from(
             let ensure_no_edits_since_start = || -> Option<()> {
                 let has_edits_since_start = this
                     .read_with(cx, |this, cx| {
-                        this.buffer.read_with(cx, |buffer, cx| {
-                            buffer.buffer(buffer_id).map_or(true, |buffer| {
-                                buffer.read_with(cx, |buffer, _| {
-                                    buffer.has_edits_since(&buffer_version_initial)
-                                })
+                        this.buffer
+                            .read(cx)
+                            .buffer(buffer_id)
+                            .map_or(true, |buffer| {
+                                buffer.read(cx).has_edits_since(&buffer_version_initial)
                             })
-                        })
                     })
                     .ok()?;
 
@@ -507,9 +506,7 @@ pub(crate) fn handle_from(
             ensure_no_edits_since_start()?;
 
             let multi_buffer_snapshot = this
-                .read_with(cx, |this, cx| {
-                    this.buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx))
-                })
+                .read_with(cx, |this, cx| this.buffer.read(cx).snapshot(cx))
                 .ok()?;
 
             let mut base_selections = Vec::new();

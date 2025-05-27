@@ -1533,9 +1533,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<MinimapLayout> {
-        let minimap_editor = self
-            .editor
-            .read_with(cx, |editor, _| editor.minimap().cloned())?;
+        let minimap_editor = self.editor.read(cx).minimap().cloned()?;
 
         let minimap_settings = EditorSettings::get_global(cx).minimap;
 
@@ -1565,11 +1563,13 @@ impl EditorElement {
             .map(|vertical_scrollbar| vertical_scrollbar.hitbox.origin)
             .unwrap_or_else(|| editor_bounds.top_right());
 
+        let thumb_state = self
+            .editor
+            .read_with(cx, |editor, _| editor.scroll_manager.minimap_thumb_state());
+
         let show_thumb = match minimap_settings.thumb {
             MinimapThumb::Always => true,
-            MinimapThumb::Hover => self.editor.update(cx, |editor, _| {
-                editor.scroll_manager.minimap_thumb_visible()
-            }),
+            MinimapThumb::Hover => thumb_state.is_some(),
         };
 
         let minimap_bounds = Bounds::from_corner_and_size(
@@ -1579,12 +1579,10 @@ impl EditorElement {
         );
         let minimap_line_height = self.get_minimap_line_height(
             minimap_editor
-                .read_with(cx, |editor, _| {
-                    editor
-                        .text_style_refinement
-                        .as_ref()
-                        .and_then(|refinement| refinement.font_size)
-                })
+                .read(cx)
+                .text_style_refinement
+                .as_ref()
+                .and_then(|refinement| refinement.font_size)
                 .unwrap_or(MINIMAP_FONT_SIZE),
             window,
             cx,
@@ -1610,7 +1608,8 @@ impl EditorElement {
             scroll_position,
             minimap_scroll_top,
             show_thumb,
-        );
+        )
+        .with_thumb_state(thumb_state);
 
         minimap_editor.update(cx, |editor, cx| {
             editor.set_scroll_position(point(0., minimap_scroll_top), window, cx)
@@ -5703,10 +5702,7 @@ impl EditorElement {
                         .get_hovered_axis(window)
                         .filter(|_| !event.dragging())
                     {
-                        if layout
-                            .thumb_bounds
-                            .is_some_and(|bounds| bounds.contains(&event.position))
-                        {
+                        if layout.thumb_hovered(&event.position) {
                             editor
                                 .scroll_manager
                                 .set_hovered_scroll_thumb_axis(axis, cx);
@@ -6115,6 +6111,17 @@ impl EditorElement {
                 window.with_element_namespace("minimap", |window| {
                     layout.minimap.paint(window, cx);
                     if let Some(thumb_bounds) = layout.thumb_layout.thumb_bounds {
+                        let minimap_thumb_color = match layout.thumb_layout.thumb_state {
+                            ScrollbarThumbState::Idle => {
+                                cx.theme().colors().minimap_thumb_background
+                            }
+                            ScrollbarThumbState::Hovered => {
+                                cx.theme().colors().minimap_thumb_hover_background
+                            }
+                            ScrollbarThumbState::Dragging => {
+                                cx.theme().colors().minimap_thumb_active_background
+                            }
+                        };
                         let minimap_thumb_border = match layout.thumb_border_style {
                             MinimapThumbBorder::Full => Edges::all(ScrollbarLayout::BORDER_WIDTH),
                             MinimapThumbBorder::LeftOnly => Edges {
@@ -6140,9 +6147,9 @@ impl EditorElement {
                             window.paint_quad(quad(
                                 thumb_bounds,
                                 Corners::default(),
-                                cx.theme().colors().scrollbar_thumb_background,
+                                minimap_thumb_color,
                                 minimap_thumb_border,
-                                cx.theme().colors().scrollbar_thumb_border,
+                                cx.theme().colors().minimap_thumb_border,
                                 BorderStyle::Solid,
                             ));
                         });
@@ -6187,10 +6194,15 @@ impl EditorElement {
                             }
                             cx.stop_propagation();
                         } else {
-                            editor.scroll_manager.set_is_dragging_minimap(false, cx);
-
                             if minimap_hitbox.is_hovered(window) {
-                                editor.scroll_manager.show_minimap_thumb(cx);
+                                editor.scroll_manager.set_is_hovering_minimap_thumb(
+                                    !event.dragging()
+                                        && layout
+                                            .thumb_layout
+                                            .thumb_bounds
+                                            .is_some_and(|bounds| bounds.contains(&event.position)),
+                                    cx,
+                                );
 
                                 // Stop hover events from propagating to the
                                 // underlying editor if the minimap hitbox is hovered
@@ -6209,13 +6221,23 @@ impl EditorElement {
             if self.editor.read(cx).scroll_manager.is_dragging_minimap() {
                 window.on_mouse_event({
                     let editor = self.editor.clone();
-                    move |_: &MouseUpEvent, phase, _, cx| {
+                    move |event: &MouseUpEvent, phase, window, cx| {
                         if phase == DispatchPhase::Capture {
                             return;
                         }
 
                         editor.update(cx, |editor, cx| {
-                            editor.scroll_manager.set_is_dragging_minimap(false, cx);
+                            if minimap_hitbox.is_hovered(window) {
+                                editor.scroll_manager.set_is_hovering_minimap_thumb(
+                                    layout
+                                        .thumb_layout
+                                        .thumb_bounds
+                                        .is_some_and(|bounds| bounds.contains(&event.position)),
+                                    cx,
+                                );
+                            } else {
+                                editor.scroll_manager.hide_minimap_thumb(cx);
+                            }
                             cx.stop_propagation();
                         });
                     }
@@ -6254,7 +6276,7 @@ impl EditorElement {
                                 editor.set_scroll_position(scroll_position, window, cx);
                             }
 
-                            editor.scroll_manager.set_is_dragging_minimap(true, cx);
+                            editor.scroll_manager.set_is_dragging_minimap(cx);
                             cx.stop_propagation();
                         });
                     }
@@ -6313,9 +6335,23 @@ impl EditorElement {
 
             // Set a minimum scroll_sensitivity of 0.01 to make sure the user doesn't
             // accidentally turn off their scrolling.
-            let scroll_sensitivity = EditorSettings::get_global(cx).scroll_sensitivity.max(0.01);
+            let base_scroll_sensitivity =
+                EditorSettings::get_global(cx).scroll_sensitivity.max(0.01);
+
+            // Use a minimum fast_scroll_sensitivity for same reason above
+            let fast_scroll_sensitivity = EditorSettings::get_global(cx)
+                .fast_scroll_sensitivity
+                .max(0.01);
 
             move |event: &ScrollWheelEvent, phase, window, cx| {
+                let scroll_sensitivity = {
+                    if event.modifiers.alt {
+                        fast_scroll_sensitivity
+                    } else {
+                        base_scroll_sensitivity
+                    }
+                };
+
                 if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
                     delta = delta.coalesce(event.delta);
                     editor.update(cx, |editor, cx| {
@@ -7522,14 +7558,14 @@ impl Element for EditorElement {
                     let scrollbars_shown = settings.scrollbar.show != ShowScrollbar::Never;
                     let vertical_scrollbar_width = (scrollbars_shown
                         && settings.scrollbar.axes.vertical
-                        && self
-                            .editor
-                            .read_with(cx, |editor, _| editor.show_scrollbars))
-                    .then_some(style.scrollbar_width)
-                    .unwrap_or_default();
+                        && self.editor.read(cx).show_scrollbars)
+                        .then_some(style.scrollbar_width)
+                        .unwrap_or_default();
                     let minimap_width = self
                         .editor
-                        .read_with(cx, |editor, _| editor.minimap().is_some())
+                        .read(cx)
+                        .minimap()
+                        .is_some()
                         .then(|| match settings.minimap.show {
                             ShowMinimap::Auto => {
                                 scrollbars_shown.then_some(MinimapLayout::MINIMAP_WIDTH)
@@ -8821,10 +8857,6 @@ impl EditorScrollbars {
                     axis != ScrollbarAxis::Horizontal || viewport_size < scroll_range
                 })
                 .map(|(viewport_size, scroll_range)| {
-                    let thumb_state = scrollbar_state
-                        .and_then(|state| state.thumb_state_for_axis(axis))
-                        .unwrap_or(ScrollbarThumbState::Idle);
-
                     ScrollbarLayout::new(
                         window.insert_hitbox(scrollbar_bounds_for(axis), false),
                         viewport_size,
@@ -8833,8 +8865,10 @@ impl EditorScrollbars {
                         content_offset.along(axis),
                         scroll_position.along(axis),
                         show_scrollbars,
-                        thumb_state,
                         axis,
+                    )
+                    .with_thumb_state(
+                        scrollbar_state.and_then(|state| state.thumb_state_for_axis(axis)),
                     )
                 })
         };
@@ -8885,7 +8919,6 @@ impl ScrollbarLayout {
         content_offset: Pixels,
         scroll_position: f32,
         show_thumb: bool,
-        thumb_state: ScrollbarThumbState,
         axis: ScrollbarAxis,
     ) -> Self {
         let track_bounds = scrollbar_track_hitbox.bounds;
@@ -8902,7 +8935,6 @@ impl ScrollbarLayout {
             content_offset,
             scroll_position,
             show_thumb,
-            thumb_state,
             axis,
         )
     }
@@ -8944,7 +8976,6 @@ impl ScrollbarLayout {
             track_top_offset,
             scroll_position,
             show_thumb,
-            ScrollbarThumbState::Idle,
             ScrollbarAxis::Vertical,
         )
     }
@@ -8958,7 +8989,6 @@ impl ScrollbarLayout {
         content_offset: Pixels,
         scroll_position: f32,
         show_thumb: bool,
-        thumb_state: ScrollbarThumbState,
         axis: ScrollbarAxis,
     ) -> Self {
         let text_units_per_page = viewport_size / glyph_space;
@@ -8996,7 +9026,18 @@ impl ScrollbarLayout {
             visible_range,
             text_unit_size,
             thumb_bounds,
-            thumb_state,
+            thumb_state: Default::default(),
+        }
+    }
+
+    fn with_thumb_state(self, thumb_state: Option<ScrollbarThumbState>) -> Self {
+        if let Some(thumb_state) = thumb_state {
+            Self {
+                thumb_state,
+                ..self
+            }
+        } else {
+            self
         }
     }
 
@@ -9015,6 +9056,11 @@ impl ScrollbarLayout {
             thumb_origin,
             scrollbar_track.size.apply_along(axis, |_| thumb_size),
         )
+    }
+
+    fn thumb_hovered(&self, position: &gpui::Point<Pixels>) -> bool {
+        self.thumb_bounds
+            .is_some_and(|bounds| bounds.contains(position))
     }
 
     fn marker_quads_for_ranges(
@@ -9118,9 +9164,13 @@ impl MinimapLayout {
         visible_minimap_lines: f32,
         scroll_position: f32,
     ) -> f32 {
-        let scroll_percentage =
-            (scroll_position / (document_lines - visible_editor_lines)).clamp(0., 1.);
-        scroll_percentage * (document_lines - visible_minimap_lines).max(0.)
+        let non_visible_document_lines = (document_lines - visible_editor_lines).max(0.);
+        if non_visible_document_lines == 0. {
+            0.
+        } else {
+            let scroll_percentage = (scroll_position / non_visible_document_lines).clamp(0., 1.);
+            scroll_percentage * (document_lines - visible_minimap_lines).max(0.)
+        }
     }
 }
 
