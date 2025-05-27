@@ -63,8 +63,8 @@ use dap::TelemetrySpawnLocation;
 use display_map::*;
 pub use display_map::{ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder};
 pub use editor_settings::{
-    CurrentLineHighlight, EditorSettings, HideMouseMode, ScrollBeyondLastLine, SearchSettings,
-    ShowScrollbar,
+    CurrentLineHighlight, EditorSettings, HideMouseMode, ScrollBeyondLastLine, ScrollbarAxes,
+    SearchSettings, ShowScrollbar,
 };
 use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
 pub use editor_settings_controls::*;
@@ -961,7 +961,7 @@ pub struct Editor {
     mode: EditorMode,
     show_breadcrumbs: bool,
     show_gutter: bool,
-    show_scrollbars: bool,
+    show_scrollbars: ScrollbarAxes,
     minimap_visibility: MinimapVisibility,
     offset_content: bool,
     disable_expand_excerpt_buttons: bool,
@@ -1801,7 +1801,10 @@ impl Editor {
             project,
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
-            show_scrollbars: full_mode,
+            show_scrollbars: ScrollbarAxes {
+                horizontal: full_mode,
+                vertical: full_mode,
+            },
             minimap_visibility: MinimapVisibility::for_mode(&mode, cx),
             offset_content: !matches!(mode, EditorMode::SingleLine { .. }),
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
@@ -16999,8 +17002,21 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn set_show_scrollbars(&mut self, show_scrollbars: bool, cx: &mut Context<Self>) {
-        self.show_scrollbars = show_scrollbars;
+    pub fn set_show_scrollbars(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.show_scrollbars = ScrollbarAxes {
+            horizontal: show,
+            vertical: show,
+        };
+        cx.notify();
+    }
+
+    pub fn set_show_vertical_scrollbar(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.show_scrollbars.vertical = show;
+        cx.notify();
+    }
+
+    pub fn set_show_horizontal_scrollbar(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.show_scrollbars.horizontal = show;
         cx.notify();
     }
 

@@ -1,8 +1,8 @@
 use crate::context::ContextLoadResult;
 use crate::inline_prompt_editor::CodegenStatus;
 use crate::{context::load_context, context_store::ContextStore};
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
-use assistant_settings::AssistantSettings;
 use client::telemetry::Telemetry;
 use collections::HashSet;
 use editor::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint};
@@ -443,7 +443,7 @@ impl CodegenAlternative {
             }
         });
 
-        let temperature = AssistantSettings::temperature_for_model(&model, cx);
+        let temperature = AgentSettings::temperature_for_model(&model, cx);
 
         Ok(cx.spawn(async move |_cx| {
             let mut request_message = LanguageModelRequestMessage {

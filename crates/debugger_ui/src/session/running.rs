@@ -496,13 +496,22 @@ pub(crate) fn new_debugger_pane(
 pub struct DebugTerminal {
     pub terminal: Option<Entity<TerminalView>>,
     focus_handle: FocusHandle,
+    _subscriptions: [Subscription; 1],
 }
 
 impl DebugTerminal {
-    fn empty(cx: &mut Context<Self>) -> Self {
+    fn empty(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let focus_handle = cx.focus_handle();
+        let focus_subscription = cx.on_focus(&focus_handle, window, |this, window, cx| {
+            if let Some(terminal) = this.terminal.as_ref() {
+                terminal.focus_handle(cx).focus(window);
+            }
+        });
+
         Self {
             terminal: None,
-            focus_handle: cx.focus_handle(),
+            focus_handle,
+            _subscriptions: [focus_subscription],
         }
     }
 }
@@ -588,7 +597,7 @@ impl RunningState {
             StackFrameList::new(workspace.clone(), session.clone(), weak_state, window, cx)
         });
 
-        let debug_terminal = cx.new(DebugTerminal::empty);
+        let debug_terminal = cx.new(|cx| DebugTerminal::empty(window, cx));
 
         let variable_list =
             cx.new(|cx| VariableList::new(session.clone(), stack_frame_list.clone(), window, cx));

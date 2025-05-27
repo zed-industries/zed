@@ -9,7 +9,7 @@ use assistant_tool::{
     ToolUseStatus,
 };
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Editor, EditorMode, MultiBuffer, PathKey};
+use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey};
 use futures::StreamExt;
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Entity, EntityId, Task,
@@ -428,7 +428,9 @@ impl EditFileToolCard {
             editor.set_show_gutter(false, cx);
             editor.disable_inline_diagnostics();
             editor.disable_expand_excerpt_buttons(cx);
-            editor.disable_scrollbars_and_minimap(window, cx);
+            // Keep horizontal scrollbar so user can scroll horizontally if needed
+            editor.set_show_vertical_scrollbar(false, cx);
+            editor.set_minimap_visibility(MinimapVisibility::Disabled, window, cx);
             editor.set_soft_wrap_mode(SoftWrap::None, cx);
             editor.scroll_manager.set_forbid_vertical_scroll(true);
             editor.set_show_indent_guides(false, cx);

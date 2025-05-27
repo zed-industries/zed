@@ -841,7 +841,10 @@
     "use_key_equivalents": true,
     "bindings": {
       "left": "variable_list::CollapseSelectedEntry",
-      "right": "variable_list::ExpandSelectedEntry"
+      "right": "variable_list::ExpandSelectedEntry",
+      "enter": "variable_list::EditVariable",
+      "cmd-c": "variable_list::CopyVariableValue",
+      "cmd-alt-c": "variable_list::CopyVariableName"
     }
   },
   {

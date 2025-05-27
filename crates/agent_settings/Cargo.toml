@@ -1,5 +1,5 @@
 [package]
-name = "assistant_settings"
+name = "agent_settings"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/assistant_settings.rs"
+path = "src/agent_settings.rs"
 
 [dependencies]
 anthropic = { workspace = true, features = ["schemars"] }

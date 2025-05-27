@@ -8,7 +8,6 @@ pub struct FileFinderSettings {
     pub file_icons: bool,
     pub modal_max_width: Option<FileFinderWidth>,
     pub skip_focus_for_active_in_search: bool,
-    pub git_status: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
@@ -25,10 +24,6 @@ pub struct FileFinderSettingsContent {
     ///
     /// Default: true
     pub skip_focus_for_active_in_search: Option<bool>,
-    /// Determines whether to show the git status in the file finder
-    ///
-    /// Default: true
-    pub git_status: Option<bool>,
 }
 
 impl Settings for FileFinderSettings {
@@ -40,9 +35,7 @@ impl Settings for FileFinderSettings {
         sources.json_merge()
     }
 
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
-        vscode.bool_setting("git.decorations.enabled", &mut current.git_status);
-    }
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
