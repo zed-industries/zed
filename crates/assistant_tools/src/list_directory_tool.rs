@@ -170,6 +170,14 @@ mod tests {
     use settings::SettingsStore;
     use util::path;
 
+    fn platform_paths(path_str: &str) -> String {
+        if cfg!(target_os = "windows") {
+            path_str.replace("/", "\\")
+        } else {
+            path_str.to_string()
+        }
+    }
+
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
@@ -236,7 +244,7 @@ mod tests {
         let content = result.content.as_str().unwrap();
         assert_eq!(
             content,
-            indoc! {"
+            platform_paths(indoc! {"
                 # Folders:
                 project/src
                 project/tests
@@ -244,7 +252,7 @@ mod tests {
                 # Files:
                 project/Cargo.toml
                 project/README.md
-            "}
+            "})
         );
 
         // Test listing src directory
@@ -271,7 +279,7 @@ mod tests {
         let content = result.content.as_str().unwrap();
         assert_eq!(
             content,
-            indoc! {"
+            platform_paths(indoc! {"
                 # Folders:
                 project/src/models
                 project/src/utils
@@ -279,7 +287,7 @@ mod tests {
                 # Files:
                 project/src/lib.rs
                 project/src/main.rs
-            "}
+            "})
         );
 
         // Test listing directory with only files
@@ -306,7 +314,7 @@ mod tests {
         let content = result.content.as_str().unwrap();
         assert!(!content.contains("# Folders:"));
         assert!(content.contains("# Files:"));
-        assert!(content.contains("project/tests/integration_test.rs"));
+        assert!(content.contains(&platform_paths("project/tests/integration_test.rs")));
     }
 
     #[gpui::test]
