@@ -1575,7 +1575,7 @@ impl MultiBuffer {
         context_line_count: u32,
         cx: &mut Context<Self>,
     ) -> (Vec<Range<Anchor>>, bool) {
-        let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+        let buffer_snapshot = buffer.read(cx).snapshot();
         let excerpt_ranges = build_excerpt_ranges(ranges, context_line_count, &buffer_snapshot);
 
         let (new, counts) = Self::merge_excerpt_ranges(&excerpt_ranges);

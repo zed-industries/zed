@@ -324,7 +324,7 @@ impl UserStore {
         message: TypedEnvelope<proto::UpdateContacts>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        this.update(&mut cx, |this, _| {
+        this.read_with(&mut cx, |this, _| {
             this.update_contacts_tx
                 .unbounded_send(UpdateContacts::Update(message.payload))
                 .unwrap();
@@ -660,7 +660,7 @@ impl UserStore {
                 .await?;
             }
 
-            this.update(cx, |this, _| {
+            this.read_with(cx, |this, _| {
                 user_ids
                     .iter()
                     .map(|user_id| {
@@ -703,7 +703,7 @@ impl UserStore {
         let load_users = self.get_users(vec![user_id], cx);
         cx.spawn(async move |this, cx| {
             load_users.await?;
-            this.update(cx, |this, _| {
+            this.read_with(cx, |this, _| {
                 this.users
                     .get(&user_id)
                     .cloned()

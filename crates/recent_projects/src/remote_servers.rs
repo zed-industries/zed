@@ -176,7 +176,7 @@ impl ProjectPicker {
                     };
 
                     let app_state = workspace
-                        .update(cx, |workspace, _| workspace.app_state().clone())
+                        .read_with(cx, |workspace, _| workspace.app_state().clone())
                         .ok()?;
 
                     cx.update(|_, cx| {
@@ -856,7 +856,7 @@ impl RemoteServerProjects {
             move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
                 let Some(app_state) = this
                     .workspace
-                    .update(cx, |workspace, _| workspace.app_state().clone())
+                    .read_with(cx, |workspace, _| workspace.app_state().clone())
                     .log_err()
                 else {
                     return;
@@ -940,7 +940,7 @@ impl RemoteServerProjects {
     ) {
         let Some(fs) = self
             .workspace
-            .update(cx, |workspace, _| workspace.app_state().fs.clone())
+            .read_with(cx, |workspace, _| workspace.app_state().fs.clone())
             .log_err()
         else {
             return;

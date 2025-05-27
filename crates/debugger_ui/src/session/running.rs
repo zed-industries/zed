@@ -319,7 +319,7 @@ pub(crate) fn new_debugger_pane(
                 if let Some(tab) = dragged_item.downcast_ref::<DraggedTab>() {
                     let is_current_pane = tab.pane == cx.entity();
                     let Some(can_drag_away) = weak_running
-                        .update(cx, |running_state, _| {
+                        .read_with(cx, |running_state, _| {
                             let current_panes = running_state.panes.panes();
                             !current_panes.contains(&&tab.pane)
                                 || current_panes.len() > 1
@@ -952,7 +952,7 @@ impl RunningState {
         let running = cx.entity();
         let Ok(project) = self
             .workspace
-            .update(cx, |workspace, _| workspace.project().clone())
+            .read_with(cx, |workspace, _| workspace.project().clone())
         else {
             return Task::ready(Err(anyhow!("no workspace")));
         };

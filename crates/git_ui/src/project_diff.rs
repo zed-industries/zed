@@ -1394,7 +1394,7 @@ mod tests {
         );
         cx.run_until_parked();
 
-        let editor = diff.update(cx, |diff, _| diff.editor.clone());
+        let editor = diff.read_with(cx, |diff, _| diff.editor.clone());
         assert_state_with_diff(
             &editor,
             cx,
@@ -1526,7 +1526,7 @@ mod tests {
         );
         cx.run_until_parked();
 
-        let diff_editor = diff.update(cx, |diff, _| diff.editor.clone());
+        let diff_editor = diff.read_with(cx, |diff, _| diff.editor.clone());
 
         assert_state_with_diff(
             &diff_editor,
@@ -1642,7 +1642,7 @@ mod tests {
             workspace.active_item_as::<ProjectDiff>(cx).unwrap()
         });
         cx.focus(&item);
-        let editor = item.update(cx, |item, _| item.editor.clone());
+        let editor = item.read_with(cx, |item, _| item.editor.clone());
 
         let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
 
@@ -1756,7 +1756,7 @@ mod tests {
             workspace.active_item_as::<ProjectDiff>(cx).unwrap()
         });
         cx.focus(&item);
-        let editor = item.update(cx, |item, _| item.editor.clone());
+        let editor = item.read_with(cx, |item, _| item.editor.clone());
 
         let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
 
