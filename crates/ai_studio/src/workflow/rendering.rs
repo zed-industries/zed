@@ -196,6 +196,7 @@ impl CanvasRenderer {
         interaction_state: &InteractionState,
         current_mouse_screen: Option<Point<f32>>,
         current_mouse_canvas: Option<Point<f32>>,
+        trackpad_state: &crate::workflow::interaction::TrackpadState,
         cx: &mut Context<T>,
     ) -> impl IntoElement {
         div()
@@ -258,6 +259,19 @@ impl CanvasRenderer {
                         )
                         .size(LabelSize::Small)
                         .color(Color::Accent)
+                    )
+                    .child(
+                        Label::new(
+                            if trackpad_state.is_pinch_zooming {
+                                "Pinch Zoom"
+                            } else if trackpad_state.momentum_velocity.x.abs() > 0.1 || trackpad_state.momentum_velocity.y.abs() > 0.1 {
+                                "Momentum"
+                            } else {
+                                "Trackpad"
+                            }
+                        )
+                        .size(LabelSize::Small)
+                        .color(if trackpad_state.is_pinch_zooming { Color::Success } else { Color::Muted })
                     )
             )
             .child(

@@ -1,5 +1,6 @@
-use gpui::{Point, Bounds, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollWheelEvent, Context, MouseButton};
+use gpui::{Point, Bounds, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollWheelEvent, Context, MouseButton, ScrollDelta, TouchPhase};
 use std::collections::HashMap;
+use std::time::Instant;
 
 use crate::workflow::types::*;
 
@@ -9,6 +10,30 @@ pub struct ViewportManager {
     pub last_mouse_position: Option<Point<f32>>,
     pub current_mouse_screen: Option<Point<f32>>,
     pub current_mouse_canvas: Option<Point<f32>>,
+    pub trackpad_state: TrackpadState,
+}
+
+#[derive(Clone, Debug)]
+pub struct TrackpadState {
+    pub momentum_velocity: Point<f32>,
+    pub last_scroll_time: Option<Instant>,
+    pub accumulated_zoom: f32,
+    pub is_pinch_zooming: bool,
+    pub last_touch_phase: TouchPhase,
+    pub scroll_momentum_decay: f32,
+}
+
+impl Default for TrackpadState {
+    fn default() -> Self {
+        Self {
+            momentum_velocity: Point::new(0.0, 0.0),
+            last_scroll_time: None,
+            accumulated_zoom: 0.0,
+            is_pinch_zooming: false,
+            last_touch_phase: TouchPhase::Moved,
+            scroll_momentum_decay: 0.95,
+        }
+    }
 }
 
 impl ViewportManager {
@@ -19,6 +44,7 @@ impl ViewportManager {
             last_mouse_position: None,
             current_mouse_screen: None,
             current_mouse_canvas: None,
+            trackpad_state: TrackpadState::default(),
         }
     }
 
@@ -65,9 +91,11 @@ impl ViewportManager {
         self.zoom_at_point(viewport_center, 1.0 / 1.2, cx);
     }
 
+    /// Enhanced zoom function with better limits for trackpad interaction
     pub fn zoom_at_point<T: 'static>(&mut self, screen_point: Point<f32>, zoom_factor: f32, cx: &mut Context<T>) {
         let old_scale = self.viewport.scale;
-        let new_scale = (old_scale * zoom_factor).clamp(0.1, 3.0);
+        // Improved zoom limits: 0.05x to 5.0x for better trackpad experience
+        let new_scale = (old_scale * zoom_factor).clamp(0.05, 5.0);
         
         if (new_scale - old_scale).abs() < 0.001 {
             return;
@@ -152,6 +180,46 @@ impl ViewportManager {
 
     pub fn update_viewport_bounds(&mut self, bounds: Bounds<gpui::Pixels>) {
         self.viewport.bounds = bounds;
+    }
+
+    /// Apply smooth trackpad panning with immediate momentum
+    pub fn apply_trackpad_pan<T: 'static>(&mut self, delta: Point<f32>, cx: &mut Context<T>) {
+        // Apply pan directly to viewport offset
+        self.viewport.offset.x += delta.x;
+        self.viewport.offset.y += delta.y;
+        
+        // Store momentum for potential future use (could be used for inertial scrolling)
+        self.trackpad_state.momentum_velocity = delta * 0.3; // Momentum factor
+        
+        cx.notify();
+    }
+
+    /// Update momentum (simplified - no longer requires timer)
+    pub fn update_momentum<T: 'static>(&mut self, _cx: &mut Context<T>) {
+        // This method is kept for potential future enhancements
+        // For now, momentum is applied directly in scroll events
+        if self.trackpad_state.momentum_velocity.x.abs() < 0.1 
+            && self.trackpad_state.momentum_velocity.y.abs() < 0.1 {
+            return;
+        }
+
+        // Decay momentum
+        self.trackpad_state.momentum_velocity.x *= self.trackpad_state.scroll_momentum_decay;
+        self.trackpad_state.momentum_velocity.y *= self.trackpad_state.scroll_momentum_decay;
+    }
+
+    /// Handle pinch-to-zoom gesture with improved smoothing
+    pub fn handle_pinch_zoom<T: 'static>(&mut self, zoom_delta: f32, center_point: Point<f32>, cx: &mut Context<T>) {
+        // Accumulate zoom for smoother experience
+        self.trackpad_state.accumulated_zoom += zoom_delta;
+        
+        // Apply zoom when accumulated change is significant enough
+        // Reduced threshold for more responsive pinch gestures
+        if self.trackpad_state.accumulated_zoom.abs() > 0.02 {
+            let zoom_factor = 1.0 + self.trackpad_state.accumulated_zoom;
+            self.zoom_at_point(center_point, zoom_factor, cx);
+            self.trackpad_state.accumulated_zoom = 0.0;
+        }
     }
 }
 
@@ -298,16 +366,105 @@ impl InteractionHandler {
     }
 
     pub fn handle_scroll_wheel<T: 'static>(&mut self, event: &ScrollWheelEvent, canvas_bounds: Option<Bounds<gpui::Pixels>>, cx: &mut Context<T>) {
-        let delta_y = match event.delta {
-            gpui::ScrollDelta::Pixels(pixels) => pixels.y.0,
-            gpui::ScrollDelta::Lines(lines) => lines.y * 20.0,
-        };
-        
-        let zoom_factor = if delta_y > 0.0 { 1.0 / 1.1 } else { 1.1 };
         let window_pos = Point::new(event.position.x.0, event.position.y.0);
         let mouse_pos = self.transform_mouse_position(window_pos, canvas_bounds);
         
-        self.viewport_manager.zoom_at_point(mouse_pos, zoom_factor, cx);
+        // Update trackpad state
+        self.viewport_manager.trackpad_state.last_scroll_time = Some(std::time::Instant::now());
+        self.viewport_manager.trackpad_state.last_touch_phase = event.touch_phase;
+        
+        // Handle different types of scroll input
+        match event.delta {
+            ScrollDelta::Pixels(pixels) => {
+                // This is typically from a trackpad with precise pixel deltas
+                self.handle_trackpad_scroll(pixels, mouse_pos, event, cx);
+            }
+            ScrollDelta::Lines(lines) => {
+                // This is typically from a mouse wheel or older trackpad
+                self.handle_mouse_wheel_scroll(lines, mouse_pos, event, cx);
+            }
+        }
+    }
+
+    fn handle_trackpad_scroll<T: 'static>(&mut self, pixels: Point<gpui::Pixels>, mouse_pos: Point<f32>, event: &ScrollWheelEvent, cx: &mut Context<T>) {
+        let delta = Point::new(pixels.x.0, pixels.y.0);
+        
+        // Enhanced pinch-to-zoom detection
+        // On macOS trackpads, pinch gestures often come with:
+        // 1. Cmd key modifier for zoom
+        // 2. Control key for accessibility zoom
+        // 3. Small horizontal movement with larger vertical movement
+        // 4. Specific touch phase patterns
+        let is_pinch_gesture = event.modifiers.platform || 
+                              event.modifiers.control ||
+                              (delta.x.abs() < 3.0 && delta.y.abs() > 5.0 && 
+                               self.viewport_manager.trackpad_state.is_pinch_zooming);
+        
+        // Detect start of pinch gesture
+        if !self.viewport_manager.trackpad_state.is_pinch_zooming && 
+           (event.modifiers.platform || event.modifiers.control) &&
+           matches!(event.touch_phase, TouchPhase::Started) {
+            self.viewport_manager.trackpad_state.is_pinch_zooming = true;
+        }
+        
+        if is_pinch_gesture {
+            // Handle pinch-to-zoom with improved sensitivity
+            let zoom_sensitivity = if event.modifiers.platform { 0.008 } else { 0.012 };
+            let zoom_delta = -delta.y * zoom_sensitivity;
+            
+            // Apply zoom smoothing for better UX
+            self.viewport_manager.handle_pinch_zoom(zoom_delta, mouse_pos, cx);
+            
+            // Reset pinch state on gesture end
+            if matches!(event.touch_phase, TouchPhase::Ended) {
+                self.viewport_manager.trackpad_state.is_pinch_zooming = false;
+                self.viewport_manager.trackpad_state.accumulated_zoom = 0.0;
+            }
+        } else {
+            // Handle two-finger pan with improved momentum
+            self.viewport_manager.trackpad_state.is_pinch_zooming = false;
+            
+            // Apply different sensitivities based on zoom level for better control
+            let zoom_factor = self.viewport_manager.viewport.scale;
+            let pan_sensitivity = if zoom_factor > 1.5 { 0.8 } else if zoom_factor < 0.5 { 1.2 } else { 1.0 };
+            let pan_delta = Point::new(delta.x * pan_sensitivity, delta.y * pan_sensitivity);
+            
+            match event.touch_phase {
+                TouchPhase::Started => {
+                    // Reset momentum on new gesture
+                    self.viewport_manager.trackpad_state.momentum_velocity = Point::new(0.0, 0.0);
+                    self.viewport_manager.apply_trackpad_pan(pan_delta, cx);
+                }
+                TouchPhase::Moved => {
+                    // Continue panning with momentum
+                    self.viewport_manager.apply_trackpad_pan(pan_delta, cx);
+                }
+                TouchPhase::Ended => {
+                    // Apply final momentum based on gesture velocity
+                    let momentum_factor = 0.4;
+                    self.viewport_manager.trackpad_state.momentum_velocity = pan_delta * momentum_factor;
+                }
+            }
+        }
+    }
+
+    fn handle_mouse_wheel_scroll<T: 'static>(&mut self, lines: Point<f32>, mouse_pos: Point<f32>, _event: &ScrollWheelEvent, cx: &mut Context<T>) {
+        // Traditional mouse wheel behavior - zoom on vertical scroll
+        let zoom_sensitivity = 0.1;
+        let zoom_factor = if lines.y > 0.0 { 
+            1.0 - (lines.y * zoom_sensitivity) 
+        } else { 
+            1.0 + (-lines.y * zoom_sensitivity) 
+        };
+        
+        // Handle horizontal scrolling as panning
+        if lines.x.abs() > 0.1 {
+            let pan_delta = Point::new(lines.x * 20.0, 0.0);
+            self.viewport_manager.apply_trackpad_pan(pan_delta, cx);
+        } else {
+            // Zoom on vertical scroll
+            self.viewport_manager.zoom_at_point(mouse_pos, zoom_factor, cx);
+        }
     }
 
     pub fn handle_key_down<T: 'static>(&mut self, event: &gpui::KeyDownEvent, nodes: &HashMap<NodeId, WorkflowNode>, cx: &mut Context<T>) -> bool {
@@ -329,7 +486,36 @@ impl InteractionHandler {
                     if let Some(node) = nodes.get(&selected_id) {
                         self.viewport_manager.focus_on_node(node, cx);
                     }
+                } else {
+                    // Focus on all nodes if none selected
+                    self.viewport_manager.center_on_nodes(nodes, cx);
                 }
+                true
+            }
+            // Arrow keys for precise panning (like trackpad)
+            "ArrowLeft" => {
+                let pan_amount = if event.keystroke.modifiers.shift { 50.0 } else { 20.0 };
+                self.viewport_manager.apply_trackpad_pan(Point::new(pan_amount, 0.0), cx);
+                true
+            }
+            "ArrowRight" => {
+                let pan_amount = if event.keystroke.modifiers.shift { 50.0 } else { 20.0 };
+                self.viewport_manager.apply_trackpad_pan(Point::new(-pan_amount, 0.0), cx);
+                true
+            }
+            "ArrowUp" => {
+                let pan_amount = if event.keystroke.modifiers.shift { 50.0 } else { 20.0 };
+                self.viewport_manager.apply_trackpad_pan(Point::new(0.0, pan_amount), cx);
+                true
+            }
+            "ArrowDown" => {
+                let pan_amount = if event.keystroke.modifiers.shift { 50.0 } else { 20.0 };
+                self.viewport_manager.apply_trackpad_pan(Point::new(0.0, -pan_amount), cx);
+                true
+            }
+            // Space bar for fit-to-screen (common in design apps)
+            " " if !event.keystroke.modifiers.platform => {
+                self.viewport_manager.center_on_nodes(nodes, cx);
                 true
             }
             _ => false,

@@ -223,28 +223,13 @@ impl WorkflowCanvas {
             &self.interaction.viewport_manager.interaction_state,
             self.interaction.viewport_manager.current_mouse_screen,
             self.interaction.viewport_manager.current_mouse_canvas,
+            &self.interaction.viewport_manager.trackpad_state,
             cx,
         )
     }
 
     pub fn update_viewport_bounds(&mut self, bounds: Bounds<Pixels>) {
         self.interaction.viewport_manager.update_viewport_bounds(bounds);
-    }
-
-    fn render_debug_info(&self, mouse_pos: Point<f32>, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .absolute()
-            .top(px(10.0))
-            .right(px(10.0))
-            .p_2()
-            .bg(cx.theme().colors().surface_background.opacity(0.9))
-            .border_1()
-            .border_color(cx.theme().colors().border)
-            .rounded_md()
-            .child(
-                Label::new(format!("Canvas: ({:.0}, {:.0})", mouse_pos.x, mouse_pos.y))
-                    .size(LabelSize::Small)
-            )
     }
 }
 
