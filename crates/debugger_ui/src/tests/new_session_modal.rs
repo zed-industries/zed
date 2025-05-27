@@ -29,7 +29,6 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    // Set up task variables to simulate a real environment
     let test_variables = vec![(
         VariableName::WorktreeRoot,
         path!("/test/worktree/path").to_string(),
@@ -45,7 +44,6 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
 
     let home_dir = paths::home_dir();
 
-    // Test cases for different path formats
     let test_cases: Vec<(&'static str, &'static str)> = vec![
         // Absolute path - should not be relativized
         (
@@ -54,7 +52,7 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
         ),
         // Relative path - should be prefixed with worktree root
         (
-            path!("./src/program"),
+            format!(".{0}src{0}program", std::path::MAIN_SEPARATOR).leak(),
             path!("/test/worktree/path/src/program"),
         ),
         // Home directory path - should be expanded to full home directory path
@@ -86,7 +84,6 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
                     move |_, args| {
                         let config = args.raw.as_object().unwrap();
 
-                        // Verify the program path was substituted correctly
                         assert_eq!(
                             config["program"].as_str().unwrap(),
                             expected_path,
@@ -94,7 +91,6 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
                             input_path
                         );
 
-                        // Verify the cwd path was substituted correctly
                         assert_eq!(
                             config["cwd"].as_str().unwrap(),
                             expected_path,
@@ -102,8 +98,6 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
                             input_path
                         );
 
-                        // Verify that otherField was substituted but not relativized
-                        // It should still have $ZED_WORKTREE_ROOT substituted if present
                         let expected_other_field = if input_path.contains("$ZED_WORKTREE_ROOT") {
                             input_path
                                 .replace("$ZED_WORKTREE_ROOT", &path!("/test/worktree/path"))
