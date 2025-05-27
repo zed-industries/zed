@@ -195,6 +195,8 @@ pub struct Dock {
     position: DockPosition,
     panel_entries: Vec<PanelEntry>,
     workspace: WeakEntity<Workspace>,
+    /// Last time *any* panel in this dock gained focus.
+    pub(crate) last_visit_ts: usize,
     is_open: bool,
     active_panel_index: Option<usize>,
     focus_handle: FocusHandle,
@@ -273,6 +275,7 @@ impl Dock {
                 active_panel_index: None,
                 is_open: false,
                 focus_handle: focus_handle.clone(),
+                last_visit_ts: 0,
                 _subscriptions: [focus_subscription, zoom_subscription],
                 serialized_dock: None,
                 zoom_layer_open: false,

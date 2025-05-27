@@ -290,6 +290,9 @@ pub struct Pane {
     focus_handle: FocusHandle,
     items: Vec<Box<dyn ItemHandle>>,
     activation_history: Vec<ActivationHistoryEntry>,
+    /// Updated each time this pane gains focus.  Used for directional
+    /// navigation tie-breaking.
+    pub(crate) last_visit_ts: usize,
     next_activation_timestamp: Arc<AtomicUsize>,
     zoomed: bool,
     was_focused: bool,
@@ -418,6 +421,7 @@ impl Pane {
             focus_handle,
             items: Vec::new(),
             activation_history: Vec::new(),
+            last_visit_ts: 0,
             next_activation_timestamp: next_timestamp.clone(),
             was_focused: false,
             zoomed: false,

@@ -1519,7 +1519,17 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let focus_handle = panel.panel_focus_handle(cx);
-        cx.on_focus_in(&focus_handle, window, Self::handle_panel_focused)
+        let dock_for_ts = panel.position(window, cx);       // capture
+        cx.on_focus_in(&focus_handle, window, move |this, window, cx| {
+            // update dock timestamp
+            let ts = this
+                .pane_history_timestamp
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let dock = this.dock_at_position(dock_for_ts);
+            dock.update(cx, |dock, _| dock.last_visit_ts = ts);
+
+            Self::handle_panel_focused(this, window, cx);
+        })
             .detach();
 
         let dock_position = panel.position(window, cx);
@@ -3609,6 +3619,12 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Record pane visit for navigation tie-breaking.
+        let ts = self
+            .pane_history_timestamp
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        pane.update(cx, |pane, _| pane.last_visit_ts = ts);
+
         // This is explicitly hoisted out of the following check for pane identity as
         // terminal panel panes are not registered as a center panes.
         self.status_bar.update(cx, |status_bar, cx| {
