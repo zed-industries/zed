@@ -9563,7 +9563,6 @@ checksum = "3e2e65a1a2e43cfcb47a895c4c8b10d1f4a61097f9f254f183aee60cad9c651d"
 name = "markdown"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "assets",
  "base64 0.22.1",
  "env_logger 0.11.8",
