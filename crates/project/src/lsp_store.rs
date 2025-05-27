@@ -4916,17 +4916,30 @@ impl LspStore {
                 .as_ref(),
             )
         });
-        self.request_lsp(
-            buffer.clone(),
-            LanguageServerToQuery::FirstCapable,
-            OnTypeFormatting {
-                position,
-                trigger,
-                options,
-                push_to_history,
-            },
-            cx,
-        )
+
+        cx.spawn(async move |this, cx| {
+            if let Some(waiter) =
+                buffer.update(cx, |buffer, _| buffer.wait_for_autoindent_applied())?
+            {
+                waiter.await?;
+            }
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    this.request_lsp(
+                        buffer.clone(),
+                        LanguageServerToQuery::FirstCapable,
+                        OnTypeFormatting {
+                            position,
+                            trigger,
+                            options,
+                            push_to_history,
+                        },
+                        cx,
+                    )
+                })
+            })??
+            .await
+        })
     }
 
     pub fn code_actions(
