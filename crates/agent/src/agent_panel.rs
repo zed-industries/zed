@@ -64,7 +64,7 @@ use crate::thread_history::{HistoryEntryElement, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::ui::AgentOnboardingModal;
 use crate::{
-    AddContextServer, AgentDiffPane, ContextStore, ContinueThread, ContinueWithLitMode,
+    AddContextServer, AgentDiffPane, ContextStore, ContinueThread, ContinueWithBurnMode,
     DeleteRecentlyOpenThread, ExpandMessageEditor, Follow, InlineAssistant, NewTextThread,
     NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ResetTrialEndUpsell,
     ResetTrialUpsell, TextThreadStore, ThreadEvent, ToggleContextPicker, ToggleNavigationMenu,
