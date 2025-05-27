@@ -1,23 +1,20 @@
 name: "Nix build"
 
 on:
-  pull_request:
-    paths:
-      - "nix/**"
-      - "*.nix"
   workflow_call:
     inputs:
-      FLAKE_OUTPUT:
-        default: ".#debug"
+      flake-output:
         type: string
-
-    secrets:
+        default: "default"
+      cachix-filter:
+        type: string
+        default: ""
 
 jobs:
   nix-build:
     timeout-minutes: 60
     name: (${{ matrix.system.os }}) Nix Build
-    continue-on-error: true
+    continue-on-error: true # TODO: remove when we want this to start blocking CI
     strategy:
       fail-fast: false
       matrix:
@@ -30,7 +27,6 @@ jobs:
             install_nix: false
     if: github.repository_owner == 'zed-industries'
     runs-on: ${{ matrix.system.runner }}
-    needs: tests
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
       ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
@@ -59,7 +55,11 @@ jobs:
         with:
           name: zed
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
-      - run: nix build ${{ inputs.FLAKE_OUTPUT }} -L --accept-flake-config
-      - name: Limit /nix/store to 50GB
+          pushFilter: "${{ inputs.cachix-filter }}"
+
+      - run: nix build .#${{ inputs.flake-output }} -L --accept-flake-config
+
+      - name: Limit /nix/store to 50GB on macs
+        if: ${{ ! matrix.system.install_nix }}
         run: |
           [ $(du -sm /nix/store | cut -f1) -gt 50000 ] && nix-collect-garbage -d || :
