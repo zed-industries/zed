@@ -384,6 +384,7 @@ impl ShellBuilder {
 
     /// Returns the program and arguments to run this task in a shell.
     pub fn build(mut self, task_command: String, task_args: &Vec<String>) -> (String, Vec<String>) {
+        let task_command = format!("\"{task_command}\"");
         let combined_command = task_args
             .into_iter()
             .fold(task_command, |mut command, arg| {
