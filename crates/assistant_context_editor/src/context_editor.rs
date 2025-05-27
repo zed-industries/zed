@@ -1,7 +1,7 @@
 use crate::language_model_selector::{
     LanguageModelSelector, LanguageModelSelectorPopoverMenu, ToggleModelSelector,
 };
-use agent_settings::AssistantSettings;
+use agent_settings::AgentSettings;
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
 use assistant_slash_commands::{
@@ -283,7 +283,7 @@ impl ContextEditor {
                 LanguageModelSelector::new(
                     |cx| LanguageModelRegistry::read_global(cx).default_model(),
                     move |model, cx| {
-                        update_settings_file::<AssistantSettings>(
+                        update_settings_file::<AgentSettings>(
                             fs.clone(),
                             cx,
                             move |settings, _| settings.set_model(model.clone()),

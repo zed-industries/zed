@@ -19,7 +19,7 @@ use settings::{Settings, SettingsSources};
 pub use crate::agent_profile::*;
 
 pub fn init(cx: &mut App) {
-    AssistantSettings::register(cx);
+    AgentSettings::register(cx);
 }
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
@@ -88,7 +88,7 @@ pub enum AssistantProviderContentV1 {
 }
 
 #[derive(Default, Clone, Debug)]
-pub struct AssistantSettings {
+pub struct AgentSettings {
     pub enabled: bool,
     pub button: bool,
     pub dock: AssistantDockPosition,
@@ -113,7 +113,7 @@ pub struct AssistantSettings {
     pub enable_feedback: bool,
 }
 
-impl AssistantSettings {
+impl AgentSettings {
     pub fn temperature_for_model(model: &Arc<dyn LanguageModel>, cx: &App) -> Option<f32> {
         let settings = Self::get_global(cx);
         settings
@@ -849,7 +849,7 @@ pub struct LegacyAssistantSettingsContent {
     pub openai_api_url: Option<String>,
 }
 
-impl Settings for AssistantSettings {
+impl Settings for AgentSettings {
     const KEY: Option<&'static str> = Some("agent");
 
     const FALLBACK_KEY: Option<&'static str> = Some("assistant");
@@ -862,7 +862,7 @@ impl Settings for AssistantSettings {
         sources: SettingsSources<Self::FileContent>,
         _: &mut gpui::App,
     ) -> anyhow::Result<Self> {
-        let mut settings = AssistantSettings::default();
+        let mut settings = AgentSettings::default();
 
         for value in sources.defaults_and_customizations() {
             if value.is_version_outdated() {
@@ -1009,13 +1009,13 @@ mod tests {
         cx.update(|cx| {
             let test_settings = settings::SettingsStore::test(cx);
             cx.set_global(test_settings);
-            AssistantSettings::register(cx);
+            AgentSettings::register(cx);
         });
 
         cx.update(|cx| {
-            assert!(!AssistantSettings::get_global(cx).using_outdated_settings_version);
+            assert!(!AgentSettings::get_global(cx).using_outdated_settings_version);
             assert_eq!(
-                AssistantSettings::get_global(cx).default_model,
+                AgentSettings::get_global(cx).default_model,
                 LanguageModelSelection {
                     provider: "zed.dev".into(),
                     model: "claude-sonnet-4".into(),
@@ -1024,7 +1024,7 @@ mod tests {
         });
 
         cx.update(|cx| {
-            settings::SettingsStore::global(cx).update_settings_file::<AssistantSettings>(
+            settings::SettingsStore::global(cx).update_settings_file::<AgentSettings>(
                 fs.clone(),
                 |settings, _| {
                     *settings = AssistantSettingsContent {
@@ -1099,18 +1099,18 @@ mod tests {
                 .set_user_settings(user_settings_content, cx)
                 .unwrap();
             cx.set_global(test_settings);
-            AssistantSettings::register(cx);
+            AgentSettings::register(cx);
         });
 
         cx.run_until_parked();
 
-        let assistant_settings = cx.update(|cx| AssistantSettings::get_global(cx).clone());
+        let assistant_settings = cx.update(|cx| AgentSettings::get_global(cx).clone());
         assert!(assistant_settings.enabled);
         assert!(!assistant_settings.using_outdated_settings_version);
         assert_eq!(assistant_settings.default_model.model, "gpt-99");
 
         cx.update_global::<SettingsStore, _>(|settings_store, cx| {
-            settings_store.update_user_settings::<AssistantSettings>(cx, |settings| {
+            settings_store.update_user_settings::<AgentSettings>(cx, |settings| {
                 *settings = AssistantSettingsContent {
                     inner: Some(AssistantSettingsContentInner::for_v2(
                         AssistantSettingsContentV2 {

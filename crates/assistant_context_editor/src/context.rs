@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod context_tests;
 
-use agent_settings::AssistantSettings;
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, bail};
 use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandLine, SlashCommandOutputSection,
@@ -2266,8 +2266,7 @@ impl AssistantContext {
             tools: Vec::new(),
             tool_choice: None,
             stop: Vec::new(),
-            temperature: model
-                .and_then(|model| AssistantSettings::temperature_for_model(model, cx)),
+            temperature: model.and_then(|model| AgentSettings::temperature_for_model(model, cx)),
         };
         for message in self.messages(cx) {
             if message.status != MessageStatus::Done {
