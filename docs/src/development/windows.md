@@ -259,3 +259,35 @@ New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name
 For more information on this, please see [win32 docs](https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation?tabs=powershell)
 
 (note that you will need to restart your system after enabling longpath support)
+
+### Compiled Zed binary fails to start
+
+If your zed binary fails to start, here are some "possible solution" for you.
+
+1. Check your `zed.log` at `C:\Users\YOU\AppData\Local\Zed\logs\Zed.log`
+
+2. If you find something like
+
+```text
+2025-03-06T11:25:41.8523248+08:00 [WARN] Rejected for device extension "VK_KHR_dynamic_rendering" not supported. Please update the driver!
+```
+
+   Then you should try to update your driver.
+
+3. If you find nothing but
+
+```text
+2025-04-30T22:29:03+05:30 INFO  [zed] ========== starting zed ==========
+2025-04-30T22:29:03+05:30 INFO  [gpui] Use Segoe UI as UI font.
+==EOF==
+```
+
+  Then you are in bad luck, check `4.`
+
+4. One of the possible issue&solution we find untill NOW(2025/05/27)
+
+  Check if you have installed `bandicam`. If you do, try to uninstall it / remove the `bdcamvk64.dll`.
+
+  If zed starts right away, your a lucky guy
+
+5. If nothing above, try to check the `Windows Event Viewer` and find some `Application Error` related with `zed.exe`
