@@ -46,7 +46,7 @@ use workspace::OpenOptions;
 use workspace::Toast;
 use workspace::notifications::NotificationId;
 use workspace::{
-    AppState, ModalView, Workspace, notifications::DetachAndPromptErr, open_new,
+    ModalView, Workspace, notifications::DetachAndPromptErr, with_workspace,
     open_ssh_project_with_existing_connection,
 };
 
@@ -344,39 +344,16 @@ impl Mode {
         Self::Default(DefaultState::new(cx))
     }
 }
-/// Initialize app-level registration for OpenRemote
 pub fn init(cx: &mut App) {
-    // Register app-level action for OpenRemote
     cx.on_action({
         move |_: &OpenRemote, cx: &mut App| {
-            if let Some(app_state) = AppState::try_global(cx).and_then(|weak| weak.upgrade()) {
-                // If window exists, use it
-                if let Some(window) = cx.active_window() {
-                    if let Some(workspace_window) = window.downcast::<Workspace>() {
-                        let _ = workspace_window.update(cx, |workspace, window, cx| {
-                            let handle = cx.entity().downgrade();
-                            workspace.toggle_modal(window, cx, |window, cx| {
-                                RemoteServerProjects::new(window, cx, handle)
-                            });
-                        });
-                        return;
-                    }
-                }
-
-                // No window exists, create a new one
-                open_new(
-                    Default::default(),
-                    app_state,
-                    cx,
-                    |workspace, window, cx| {
-                        let handle = cx.entity().downgrade();
-                        workspace.toggle_modal(window, cx, |window, cx| {
-                            RemoteServerProjects::new(window, cx, handle)
-                        });
-                    },
-                )
-                .detach();
-            }
+            with_workspace(cx, |workspace, window, cx| {
+                let handle = cx.entity().downgrade();
+                let fs = workspace.app_state().fs.clone();
+                workspace.toggle_modal(window, cx, |window, cx| {
+                    RemoteServerProjects::new(fs, window, cx, handle)
+                });
+            });
         }
     });
 }

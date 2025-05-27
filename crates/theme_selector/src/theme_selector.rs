@@ -30,7 +30,7 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-fn toggle_theme_selector(
+pub fn toggle_theme_selector(
     workspace: &mut Workspace,
     toggle: &zed_actions::theme_selector::Toggle,
     window: &mut Window,
@@ -48,7 +48,7 @@ fn toggle_theme_selector(
     });
 }
 
-fn toggle_icon_theme_selector(
+pub fn toggle_icon_theme_selector(
     workspace: &mut Workspace,
     toggle: &zed_actions::icon_theme_selector::Toggle,
     window: &mut Window,
@@ -64,6 +64,26 @@ fn toggle_icon_theme_selector(
         );
         IconThemeSelector::new(delegate, window, cx)
     });
+}
+
+/// Public function to toggle theme selector for app-level use
+pub fn toggle_theme_selector_modal(
+    workspace: &mut Workspace,
+    toggle: &zed_actions::theme_selector::Toggle,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    toggle_theme_selector(workspace, toggle, window, cx);
+}
+
+/// Public function to toggle icon theme selector for app-level use
+pub fn toggle_icon_theme_selector_modal(
+    workspace: &mut Workspace,
+    toggle: &zed_actions::icon_theme_selector::Toggle,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    toggle_icon_theme_selector(workspace, toggle, window, cx);
 }
 
 impl ModalView for ThemeSelector {}

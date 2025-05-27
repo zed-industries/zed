@@ -6829,6 +6829,22 @@ pub fn open_new(
     })
 }
 
+pub fn with_workspace<F>(cx: &mut App, f: F)
+where
+    F: FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + 'static + Send,
+{
+    if let Some(app_state) = AppState::try_global(cx).and_then(|weak| weak.upgrade()) {
+        if let Some(window) = cx.active_window() {
+            if let Some(workspace_window) = window.downcast::<Workspace>() {
+                let _ = workspace_window.update(cx, f);
+                return;
+            }
+        }
+
+        open_new(Default::default(), app_state, cx, f).detach();
+    }
+}
+
 pub fn create_and_open_local_file(
     path: &'static Path,
     window: &mut Window,

@@ -68,13 +68,15 @@ use workspace::notifications::{NotificationId, dismiss_app_notification, show_ap
 use workspace::{
     AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
-    open_new,
+    open_new, with_workspace,
 };
 use workspace::{CloseIntent, RestoreBanner};
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
     OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
+    theme_selector, icon_theme_selector,
 };
+
 
 actions!(
     zed,
@@ -111,6 +113,55 @@ pub fn init(cx: &mut App) {
     if ReleaseChannel::global(cx) == ReleaseChannel::Dev {
         cx.on_action(test_panic);
     }
+
+    cx.on_action(|_: &OpenSettings, cx: &mut App| {
+        with_workspace(cx, |_workspace, window, cx| {
+            open_settings_file(
+                paths::settings_file(),
+                || settings::initial_user_settings_content().as_ref().into(),
+                window,
+                cx,
+            );
+        });
+    });
+
+    cx.on_action(|_: &zed_actions::OpenKeymap, cx: &mut App| {
+        with_workspace(cx, |_workspace, window, cx| {
+            open_settings_file(
+                paths::keymap_file(),
+                || settings::initial_keymap_content().as_ref().into(),
+                window,
+                cx,
+            );
+        });
+    });
+
+    cx.on_action(|_: &OpenDefaultSettings, cx: &mut App| {
+        with_workspace(cx, |workspace, window, cx| {
+            open_bundled_file(
+                workspace,
+                settings::default_settings(),
+                "Default Settings",
+                "JSON",
+                window,
+                cx,
+            );
+        });
+    });
+
+    cx.on_action(|action: &theme_selector::Toggle, cx: &mut App| {
+        let action = action.clone();
+        with_workspace(cx, move |_workspace, window, cx| {
+            window.dispatch_action(action.boxed_clone(), cx);
+        });
+    });
+
+    cx.on_action(|action: &icon_theme_selector::Toggle, cx: &mut App| {
+        let action = action.clone();
+        with_workspace(cx, move |_workspace, window, cx| {
+            window.dispatch_action(action.boxed_clone(), cx);
+        });
+    });
 }
 
 fn bind_on_window_closed(cx: &mut App) -> Option<gpui::Subscription> {
@@ -701,24 +752,7 @@ fn register_actions(
                 open_telemetry_log_file(workspace, window, cx);
             },
         )
-        .register_action(
-            move |_: &mut Workspace, _: &zed_actions::OpenKeymap, window, cx| {
-                open_settings_file(
-                    paths::keymap_file(),
-                    || settings::initial_keymap_content().as_ref().into(),
-                    window,
-                    cx,
-                );
-            },
-        )
-        .register_action(move |_: &mut Workspace, _: &OpenSettings, window, cx| {
-            open_settings_file(
-                paths::settings_file(),
-                || settings::initial_user_settings_content().as_ref().into(),
-                window,
-                cx,
-            );
-        })
+
         .register_action(
             |_: &mut Workspace, _: &OpenAccountSettings, _: &mut Window, cx| {
                 cx.open_url(&zed_urls::account_url(cx));
@@ -755,16 +789,7 @@ fn register_actions(
                 );
             },
         )
-        .register_action(move |workspace, _: &OpenDefaultSettings, window, cx| {
-            open_bundled_file(
-                workspace,
-                settings::default_settings(),
-                "Default Settings",
-                "JSON",
-                window,
-                cx,
-            );
-        })
+
         .register_action(
             |workspace: &mut Workspace,
              _: &project_panel::ToggleFocus,
