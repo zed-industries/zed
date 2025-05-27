@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agent_settings::{
-    AgentProfile, AgentProfileId, AgentSettings, AssistantDockPosition, GroupedAgentProfiles,
+    AgentDockPosition, AgentProfile, AgentProfileId, AgentSettings, GroupedAgentProfiles,
     builtin_profiles,
 };
 use fs::Fs;
@@ -208,10 +208,10 @@ impl Render for ProfileSelector {
     }
 }
 
-fn documentation_side(position: AssistantDockPosition) -> DocumentationSide {
+fn documentation_side(position: AgentDockPosition) -> DocumentationSide {
     match position {
-        AssistantDockPosition::Left => DocumentationSide::Right,
-        AssistantDockPosition::Bottom => DocumentationSide::Left,
-        AssistantDockPosition::Right => DocumentationSide::Left,
+        AgentDockPosition::Left => DocumentationSide::Right,
+        AgentDockPosition::Bottom => DocumentationSide::Left,
+        AgentDockPosition::Right => DocumentationSide::Left,
     }
 }

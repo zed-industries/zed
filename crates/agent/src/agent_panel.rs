@@ -7,7 +7,7 @@ use std::time::Duration;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
 
-use agent_settings::{AgentSettings, AssistantDockPosition, DefaultView};
+use agent_settings::{AgentDockPosition, AgentSettings, DefaultView};
 use anyhow::{Result, anyhow};
 use assistant_context_editor::{
     AgentPanelDelegate, AssistantContext, ConfigurationError, ContextEditor, ContextEvent,
@@ -1382,9 +1382,9 @@ impl Focusable for AgentPanel {
 
 fn agent_panel_dock_position(cx: &App) -> DockPosition {
     match AgentSettings::get_global(cx).dock {
-        AssistantDockPosition::Left => DockPosition::Left,
-        AssistantDockPosition::Bottom => DockPosition::Bottom,
-        AssistantDockPosition::Right => DockPosition::Right,
+        AgentDockPosition::Left => DockPosition::Left,
+        AgentDockPosition::Bottom => DockPosition::Bottom,
+        AgentDockPosition::Right => DockPosition::Right,
     }
 }
 
@@ -1406,9 +1406,9 @@ impl Panel for AgentPanel {
     fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {
         settings::update_settings_file::<AgentSettings>(self.fs.clone(), cx, move |settings, _| {
             let dock = match position {
-                DockPosition::Left => AssistantDockPosition::Left,
-                DockPosition::Bottom => AssistantDockPosition::Bottom,
-                DockPosition::Right => AssistantDockPosition::Right,
+                DockPosition::Left => AgentDockPosition::Left,
+                DockPosition::Bottom => AgentDockPosition::Bottom,
+                DockPosition::Right => AgentDockPosition::Right,
             };
             settings.set_dock(dock);
         });

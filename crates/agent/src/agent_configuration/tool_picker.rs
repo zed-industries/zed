@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use agent_settings::{
-    AgentProfile, AgentProfileContent, AgentProfileId, AgentSettings, AssistantSettingsContent,
+    AgentProfile, AgentProfileContent, AgentProfileId, AgentSettings, AgentSettingsContent,
     ContextServerPresetContent,
 };
 use assistant_tool::{ToolSource, ToolWorkingSet};
@@ -273,7 +273,7 @@ impl PickerDelegate for ToolPickerDelegate {
             let default_profile = self.profile.clone();
             let server_id = server_id.clone();
             let tool_name = tool_name.clone();
-            move |settings: &mut AssistantSettingsContent, _cx| {
+            move |settings: &mut AgentSettingsContent, _cx| {
                 settings
                     .v2_setting(|v2_settings| {
                         let profiles = v2_settings.profiles.get_or_insert_default();
