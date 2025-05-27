@@ -1332,14 +1332,14 @@ pub struct ClipboardSelection {
 }
 
 #[derive(Clone, Debug)]
-pub struct KillRing {
+pub struct KillRingItem {
     pub text: String,
     pub row: u32,
     pub column: u32,
     pub buffer_id: BufferId,
 }
 
-impl Global for KillRing {}
+impl Global for KillRingItem {}
 
 // selections, scroll behavior, was newest selection reversed
 type SelectSyntaxNodeHistoryState = (
@@ -10875,13 +10875,13 @@ impl Editor {
 
         let mut text = cut_text;
 
-        if let Some(ring) = cx.try_global::<KillRing>() {
+        if let Some(ring) = cx.try_global::<KillRingItem>() {
             if ring.row == row && ring.column == column && ring.buffer_id == buffer_id {
                 text = format!("{}{}", ring.text, text);
             }
         }
 
-        cx.set_global(KillRing {
+        cx.set_global(KillRingItem {
             text: text,
             row: row,
             column: column,
@@ -10897,7 +10897,7 @@ impl Editor {
     ) {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
 
-        let kill_ring = match cx.try_global::<KillRing>() {
+        let kill_ring = match cx.try_global::<KillRingItem>() {
             Some(kill_ring) => kill_ring,
             None => return,
         };
