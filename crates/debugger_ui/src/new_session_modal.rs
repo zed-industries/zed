@@ -375,7 +375,7 @@ impl NewSessionModal {
                                                                 if text.contains(
                                                                     scenario_label.as_ref(),
                                                                 ) {
-                                                                    Some(dbg!(row))
+                                                                    Some(row)
                                                                 } else {
                                                                     None
                                                                 }
@@ -527,7 +527,7 @@ impl NewSessionModal {
 static SELECT_DEBUGGER_LABEL: SharedString = SharedString::new_static("Select Debugger");
 
 #[derive(Clone)]
-enum NewSessionMode {
+pub(crate) enum NewSessionMode {
     Custom,
     Attach,
     Launch,
@@ -1203,6 +1203,42 @@ pub(crate) fn resolve_path(path: &mut String) {
             &strip_path
         );
     };
+}
+
+#[cfg(test)]
+impl NewSessionModal {
+    pub(crate) fn set_custom(
+        &mut self,
+        program: impl AsRef<str>,
+        cwd: impl AsRef<str>,
+        stop_on_entry: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.mode = NewSessionMode::Custom;
+        self.debugger = Some(dap::adapters::DebugAdapterName("fake-adapter".into()));
+
+        self.custom_mode.update(cx, |custom, cx| {
+            custom.program.update(cx, |editor, cx| {
+                editor.clear(window, cx);
+                editor.set_text(program.as_ref(), window, cx);
+            });
+
+            custom.cwd.update(cx, |editor, cx| {
+                editor.clear(window, cx);
+                editor.set_text(cwd.as_ref(), window, cx);
+            });
+
+            custom.stop_on_entry = match stop_on_entry {
+                true => ToggleState::Selected,
+                _ => ToggleState::Unselected,
+            }
+        })
+    }
+
+    pub(crate) fn save_scenario(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_debug_scenario(window, cx);
+    }
 }
 
 #[cfg(test)]
