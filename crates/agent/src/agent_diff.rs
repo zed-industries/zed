@@ -2513,10 +2513,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_format_on_save_after_agent_finishes(cx: &mut TestAppContext) {
-        // This test verifies that the format_changed_buffers method works correctly
-        // when given the proper setup. The integration with ThreadEvent is tested manually
-        // as the test infrastructure doesn't fully support the deferred workspace registration.
-
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
