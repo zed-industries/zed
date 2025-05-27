@@ -88,7 +88,7 @@
     )
 ) @item
 
-; Add support for parameterized tests with .each()
+; Add support for parameterized tests
 (
     (call_expression
         function: (call_expression
@@ -96,7 +96,7 @@
                 object: [(identifier) @_name (member_expression object: (identifier) @_name)]
                 property: (property_identifier) @_property
             )
-            (#any-of? @_name "it" "test")
+            (#any-of? @_name "it" "test" "describe" "context" "suite")
             (#any-of? @_property "each" "only" "skip" "concurrent" "todo")
         )
         arguments: (
