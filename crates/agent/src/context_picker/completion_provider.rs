@@ -1289,7 +1289,7 @@ mod tests {
                     .map(Entity::downgrade)
             });
             window.focus(&editor.focus_handle(cx));
-            editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
+            editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
                 workspace.downgrade(),
                 context_store.downgrade(),
                 None,

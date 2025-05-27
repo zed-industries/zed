@@ -76,9 +76,9 @@ pub trait Along {
     JsonSchema,
     Hash,
 )]
-#[refineable(Debug, Serialize, Deserialize, JsonSchema)]
+#[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
-pub struct Point<T: Default + Clone + Debug> {
+pub struct Point<T: Clone + Debug + Default + PartialEq> {
     /// The x coordinate of the point.
     pub x: T,
     /// The y coordinate of the point.
@@ -104,11 +104,11 @@ pub struct Point<T: Default + Clone + Debug> {
 /// assert_eq!(p.x, 10);
 /// assert_eq!(p.y, 20);
 /// ```
-pub const fn point<T: Clone + Debug + Default>(x: T, y: T) -> Point<T> {
+pub const fn point<T: Clone + Debug + Default + PartialEq>(x: T, y: T) -> Point<T> {
     Point { x, y }
 }
 
-impl<T: Clone + Debug + Default> Point<T> {
+impl<T: Clone + Debug + Default + PartialEq> Point<T> {
     /// Creates a new `Point` with the specified `x` and `y` coordinates.
     ///
     /// # Arguments
@@ -145,7 +145,7 @@ impl<T: Clone + Debug + Default> Point<T> {
     /// let p_float = p.map(|coord| coord as f32);
     /// assert_eq!(p_float, Point { x: 3.0, y: 4.0 });
     /// ```
-    pub fn map<U: Clone + Default + Debug>(&self, f: impl Fn(T) -> U) -> Point<U> {
+    pub fn map<U: Clone + Debug + Default + PartialEq>(&self, f: impl Fn(T) -> U) -> Point<U> {
         Point {
             x: f(self.x.clone()),
             y: f(self.y.clone()),
@@ -153,7 +153,7 @@ impl<T: Clone + Debug + Default> Point<T> {
     }
 }
 
-impl<T: Clone + Debug + Default> Along for Point<T> {
+impl<T: Clone + Debug + Default + PartialEq> Along for Point<T> {
     type Unit = T;
 
     fn along(&self, axis: Axis) -> T {
@@ -177,7 +177,7 @@ impl<T: Clone + Debug + Default> Along for Point<T> {
     }
 }
 
-impl<T: Clone + Debug + Default + Negate> Negate for Point<T> {
+impl<T: Clone + Debug + Default + PartialEq + Negate> Negate for Point<T> {
     fn negate(self) -> Self {
         self.map(Negate::negate)
     }
@@ -222,7 +222,7 @@ impl Point<Pixels> {
 
 impl<T> Point<T>
 where
-    T: Sub<T, Output = T> + Debug + Clone + Default,
+    T: Sub<T, Output = T> + Clone + Debug + Default + PartialEq,
 {
     /// Get the position of this point, relative to the given origin
     pub fn relative_to(&self, origin: &Point<T>) -> Point<T> {
@@ -235,7 +235,7 @@ where
 
 impl<T, Rhs> Mul<Rhs> for Point<T>
 where
-    T: Mul<Rhs, Output = T> + Clone + Default + Debug,
+    T: Mul<Rhs, Output = T> + Clone + Debug + Default + PartialEq,
     Rhs: Clone + Debug,
 {
     type Output = Point<T>;
@@ -250,7 +250,7 @@ where
 
 impl<T, S> MulAssign<S> for Point<T>
 where
-    T: Clone + Mul<S, Output = T> + Default + Debug,
+    T: Mul<S, Output = T> + Clone + Debug + Default + PartialEq,
     S: Clone,
 {
     fn mul_assign(&mut self, rhs: S) {
@@ -261,7 +261,7 @@ where
 
 impl<T, S> Div<S> for Point<T>
 where
-    T: Div<S, Output = T> + Clone + Default + Debug,
+    T: Div<S, Output = T> + Clone + Debug + Default + PartialEq,
     S: Clone,
 {
     type Output = Self;
@@ -276,7 +276,7 @@ where
 
 impl<T> Point<T>
 where
-    T: PartialOrd + Clone + Default + Debug,
+    T: PartialOrd + Clone + Debug + Default + PartialEq,
 {
     /// Returns a new point with the maximum values of each dimension from `self` and `other`.
     ///
@@ -369,7 +369,7 @@ where
     }
 }
 
-impl<T: Clone + Default + Debug> Clone for Point<T> {
+impl<T: Clone + Debug + Default + PartialEq> Clone for Point<T> {
     fn clone(&self) -> Self {
         Self {
             x: self.x.clone(),
@@ -378,7 +378,7 @@ impl<T: Clone + Default + Debug> Clone for Point<T> {
     }
 }
 
-impl<T: Default + Clone + Debug + Display> Display for Point<T> {
+impl<T: Clone + Debug + Default + PartialEq + Display> Display for Point<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "({}, {})", self.x, self.y)
     }
@@ -389,16 +389,16 @@ impl<T: Default + Clone + Debug + Display> Display for Point<T> {
 /// This struct is generic over the type `T`, which can be any type that implements `Clone`, `Default`, and `Debug`.
 /// It is commonly used to specify dimensions for elements in a UI, such as a window or element.
 #[derive(Refineable, Default, Clone, Copy, PartialEq, Div, Hash, Serialize, Deserialize)]
-#[refineable(Debug, Serialize, Deserialize, JsonSchema)]
+#[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
-pub struct Size<T: Clone + Default + Debug> {
+pub struct Size<T: Clone + Debug + Default + PartialEq> {
     /// The width component of the size.
     pub width: T,
     /// The height component of the size.
     pub height: T,
 }
 
-impl<T: Clone + Default + Debug> Size<T> {
+impl<T: Clone + Debug + Default + PartialEq> Size<T> {
     /// Create a new Size, a synonym for [`size`]
     pub fn new(width: T, height: T) -> Self {
         size(width, height)
@@ -422,14 +422,14 @@ impl<T: Clone + Default + Debug> Size<T> {
 /// ```
 pub const fn size<T>(width: T, height: T) -> Size<T>
 where
-    T: Clone + Default + Debug,
+    T: Clone + Debug + Default + PartialEq,
 {
     Size { width, height }
 }
 
 impl<T> Size<T>
 where
-    T: Clone + Default + Debug,
+    T: Clone + Debug + Default + PartialEq,
 {
     /// Applies a function to the width and height of the size, producing a new `Size<U>`.
     ///
@@ -451,7 +451,7 @@ where
     /// ```
     pub fn map<U>(&self, f: impl Fn(T) -> U) -> Size<U>
     where
-        U: Clone + Default + Debug,
+        U: Clone + Debug + Default + PartialEq,
     {
         Size {
             width: f(self.width.clone()),
@@ -462,7 +462,7 @@ where
 
 impl<T> Size<T>
 where
-    T: Clone + Default + Debug + Half,
+    T: Clone + Debug + Default + PartialEq + Half,
 {
     /// Compute the center point of the size.g
     pub fn center(&self) -> Point<T> {
@@ -502,7 +502,7 @@ impl Size<Pixels> {
 
 impl<T> Along for Size<T>
 where
-    T: Clone + Default + Debug,
+    T: Clone + Debug + Default + PartialEq,
 {
     type Unit = T;
 
@@ -530,7 +530,7 @@ where
 
 impl<T> Size<T>
 where
-    T: PartialOrd + Clone + Default + Debug,
+    T: PartialOrd + Clone + Debug + Default + PartialEq,
 {
     /// Returns a new `Size` with the maximum width and height from `self` and `other`.
     ///
@@ -595,7 +595,7 @@ where
 
 impl<T> Sub for Size<T>
 where
-    T: Sub<Output = T> + Clone + Default + Debug,
+    T: Sub<Output = T> + Clone + Debug + Default + PartialEq,
 {
     type Output = Size<T>;
 
@@ -609,7 +609,7 @@ where
 
 impl<T> Add for Size<T>
 where
-    T: Add<Output = T> + Clone + Default + Debug,
+    T: Add<Output = T> + Clone + Debug + Default + PartialEq,
 {
     type Output = Size<T>;
 
@@ -623,8 +623,8 @@ where
 
 impl<T, Rhs> Mul<Rhs> for Size<T>
 where
-    T: Mul<Rhs, Output = Rhs> + Clone + Default + Debug,
-    Rhs: Clone + Default + Debug,
+    T: Mul<Rhs, Output = Rhs> + Clone + Debug + Default + PartialEq,
+    Rhs: Clone + Debug + Default + PartialEq,
 {
     type Output = Size<Rhs>;
 
@@ -638,7 +638,7 @@ where
 
 impl<T, S> MulAssign<S> for Size<T>
 where
-    T: Mul<S, Output = T> + Clone + Default + Debug,
+    T: Mul<S, Output = T> + Clone + Debug + Default + PartialEq,
     S: Clone,
 {
     fn mul_assign(&mut self, rhs: S) {
@@ -647,24 +647,24 @@ where
     }
 }
 
-impl<T> Eq for Size<T> where T: Eq + Default + Debug + Clone {}
+impl<T> Eq for Size<T> where T: Eq + Clone + Debug + Default + PartialEq {}
 
 impl<T> Debug for Size<T>
 where
-    T: Clone + Default + Debug,
+    T: Clone + Debug + Default + PartialEq,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Size {{ {:?} × {:?} }}", self.width, self.height)
     }
 }
 
-impl<T: Default + Clone + Debug + Display> Display for Size<T> {
+impl<T: Clone + Debug + Default + PartialEq + Display> Display for Size<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} × {}", self.width, self.height)
     }
 }
 
-impl<T: Clone + Default + Debug> From<Point<T>> for Size<T> {
+impl<T: Clone + Debug + Default + PartialEq> From<Point<T>> for Size<T> {
     fn from(point: Point<T>) -> Self {
         Self {
             width: point.x,
@@ -746,7 +746,7 @@ impl Size<Length> {
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
 #[refineable(Debug)]
 #[repr(C)]
-pub struct Bounds<T: Clone + Default + Debug> {
+pub struct Bounds<T: Clone + Debug + Default + PartialEq> {
     /// The origin point of this area.
     pub origin: Point<T>,
     /// The size of the rectangle.
@@ -754,7 +754,10 @@ pub struct Bounds<T: Clone + Default + Debug> {
 }
 
 /// Create a bounds with the given origin and size
-pub fn bounds<T: Clone + Default + Debug>(origin: Point<T>, size: Size<T>) -> Bounds<T> {
+pub fn bounds<T: Clone + Debug + Default + PartialEq>(
+    origin: Point<T>,
+    size: Size<T>,
+) -> Bounds<T> {
     Bounds { origin, size }
 }
 
@@ -790,7 +793,7 @@ impl Bounds<Pixels> {
 
 impl<T> Bounds<T>
 where
-    T: Clone + Debug + Default,
+    T: Clone + Debug + Default + PartialEq,
 {
     /// Creates a new `Bounds` with the specified origin and size.
     ///
@@ -809,7 +812,7 @@ where
 
 impl<T> Bounds<T>
 where
-    T: Clone + Debug + Sub<Output = T> + Default,
+    T: Sub<Output = T> + Clone + Debug + Default + PartialEq,
 {
     /// Constructs a `Bounds` from two corner points: the top left and bottom right corners.
     ///
@@ -875,7 +878,7 @@ where
 
 impl<T> Bounds<T>
 where
-    T: Clone + Debug + Sub<T, Output = T> + Default + Half,
+    T: Sub<T, Output = T> + Half + Clone + Debug + Default + PartialEq,
 {
     /// Creates a new bounds centered at the given point.
     pub fn centered_at(center: Point<T>, size: Size<T>) -> Self {
@@ -889,7 +892,7 @@ where
 
 impl<T> Bounds<T>
 where
-    T: Clone + Debug + PartialOrd + Add<T, Output = T> + Default,
+    T: PartialOrd + Add<T, Output = T> + Clone + Debug + Default + PartialEq,
 {
     /// Checks if this `Bounds` intersects with another `Bounds`.
     ///
@@ -937,7 +940,7 @@ where
 
 impl<T> Bounds<T>
 where
-    T: Clone + Debug + Add<T, Output = T> + Default + Half,
+    T: Add<T, Output = T> + Half + Clone + Debug + Default + PartialEq,
 {
     /// Returns the center point of the bounds.
     ///
@@ -970,7 +973,7 @@ where
 
 impl<T> Bounds<T>
 where
-    T: Clone + Debug + Add<T, Output = T> + Default,
+    T: Add<T, Output = T> + Clone + Debug + Default + PartialEq,
 {
     /// Calculates the half perimeter of a rectangle defined by the bounds.
     ///
@@ -997,7 +1000,7 @@ where
 
 impl<T> Bounds<T>
 where
-    T: Clone + Debug + Add<T, Output = T> + Sub<Output = T> + Default,
+    T: Add<T, Output = T> + Sub<Output = T> + Clone + Debug + Default + PartialEq,
 {
     /// Dilates the bounds by a specified amount in all directions.
     ///
@@ -1048,7 +1051,13 @@ where
 
 impl<T> Bounds<T>
 where
-    T: Clone + Debug + Add<T, Output = T> + Sub<T, Output = T> + Neg<Output = T> + Default,
+    T: Add<T, Output = T>
+        + Sub<T, Output = T>
+        + Neg<Output = T>
+        + Clone
+        + Debug
+        + Default
+        + PartialEq,
 {
     /// Inset the bounds by a specified amount. Equivalent to `dilate` with the amount negated.
     ///
@@ -1058,7 +1067,9 @@ where
     }
 }
 
-impl<T: Clone + Default + Debug + PartialOrd + Add<T, Output = T> + Sub<Output = T>> Bounds<T> {
+impl<T: PartialOrd + Add<T, Output = T> + Sub<Output = T> + Clone + Debug + Default + PartialEq>
+    Bounds<T>
+{
     /// Calculates the intersection of two `Bounds` objects.
     ///
     /// This method computes the overlapping region of two `Bounds`. If the bounds do not intersect,
@@ -1140,7 +1151,7 @@ impl<T: Clone + Default + Debug + PartialOrd + Add<T, Output = T> + Sub<Output =
 
 impl<T> Bounds<T>
 where
-    T: Clone + Debug + Add<T, Output = T> + Sub<T, Output = T> + Default,
+    T: Add<T, Output = T> + Sub<T, Output = T> + Clone + Debug + Default + PartialEq,
 {
     /// Computes the space available within outer bounds.
     pub fn space_within(&self, outer: &Self) -> Edges<T> {
@@ -1155,9 +1166,9 @@ where
 
 impl<T, Rhs> Mul<Rhs> for Bounds<T>
 where
-    T: Mul<Rhs, Output = Rhs> + Clone + Default + Debug,
+    T: Mul<Rhs, Output = Rhs> + Clone + Debug + Default + PartialEq,
     Point<T>: Mul<Rhs, Output = Point<Rhs>>,
-    Rhs: Clone + Default + Debug,
+    Rhs: Clone + Debug + Default + PartialEq,
 {
     type Output = Bounds<Rhs>;
 
@@ -1171,7 +1182,7 @@ where
 
 impl<T, S> MulAssign<S> for Bounds<T>
 where
-    T: Mul<S, Output = T> + Clone + Default + Debug,
+    T: Mul<S, Output = T> + Clone + Debug + Default + PartialEq,
     S: Clone,
 {
     fn mul_assign(&mut self, rhs: S) {
@@ -1183,7 +1194,7 @@ where
 impl<T, S> Div<S> for Bounds<T>
 where
     Size<T>: Div<S, Output = Size<T>>,
-    T: Div<S, Output = T> + Default + Clone + Debug,
+    T: Div<S, Output = T> + Clone + Debug + Default + PartialEq,
     S: Clone,
 {
     type Output = Self;
@@ -1198,7 +1209,7 @@ where
 
 impl<T> Add<Point<T>> for Bounds<T>
 where
-    T: Add<T, Output = T> + Default + Clone + Debug,
+    T: Add<T, Output = T> + Clone + Debug + Default + PartialEq,
 {
     type Output = Self;
 
@@ -1212,7 +1223,7 @@ where
 
 impl<T> Sub<Point<T>> for Bounds<T>
 where
-    T: Sub<T, Output = T> + Default + Clone + Debug,
+    T: Sub<T, Output = T> + Clone + Debug + Default + PartialEq,
 {
     type Output = Self;
 
@@ -1226,7 +1237,7 @@ where
 
 impl<T> Bounds<T>
 where
-    T: Add<T, Output = T> + Clone + Default + Debug,
+    T: Add<T, Output = T> + Clone + Debug + Default + PartialEq,
 {
     /// Returns the top edge of the bounds.
     ///
@@ -1365,7 +1376,7 @@ where
 
 impl<T> Bounds<T>
 where
-    T: Add<T, Output = T> + PartialOrd + Clone + Default + Debug,
+    T: Add<T, Output = T> + PartialOrd + Clone + Debug + Default + PartialEq,
 {
     /// Checks if the given point is within the bounds.
     ///
@@ -1472,7 +1483,7 @@ where
     /// ```
     pub fn map<U>(&self, f: impl Fn(T) -> U) -> Bounds<U>
     where
-        U: Clone + Default + Debug,
+        U: Clone + Debug + Default + PartialEq,
     {
         Bounds {
             origin: self.origin.map(&f),
@@ -1531,7 +1542,7 @@ where
 
 impl<T> Bounds<T>
 where
-    T: Add<T, Output = T> + PartialOrd + Clone + Default + Debug + Sub<T, Output = T>,
+    T: Add<T, Output = T> + Sub<T, Output = T> + PartialOrd + Clone + Debug + Default + PartialEq,
 {
     /// Convert a point to the coordinate space defined by this Bounds
     pub fn localize(&self, point: &Point<T>) -> Option<Point<T>> {
@@ -1545,7 +1556,7 @@ where
 /// # Returns
 ///
 /// Returns `true` if either the width or the height of the bounds is less than or equal to zero, indicating an empty area.
-impl<T: PartialOrd + Default + Debug + Clone> Bounds<T> {
+impl<T: PartialOrd + Clone + Debug + Default + PartialEq> Bounds<T> {
     /// Checks if the bounds represent an empty area.
     ///
     /// # Returns
@@ -1556,7 +1567,7 @@ impl<T: PartialOrd + Default + Debug + Clone> Bounds<T> {
     }
 }
 
-impl<T: Default + Clone + Debug + Display + Add<T, Output = T>> Display for Bounds<T> {
+impl<T: Clone + Debug + Default + PartialEq + Display + Add<T, Output = T>> Display for Bounds<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -1651,7 +1662,7 @@ impl Bounds<DevicePixels> {
     }
 }
 
-impl<T: Clone + Debug + Copy + Default> Copy for Bounds<T> {}
+impl<T: Copy + Clone + Debug + Default + PartialEq> Copy for Bounds<T> {}
 
 /// Represents the edges of a box in a 2D space, such as padding or margin.
 ///
@@ -1674,9 +1685,9 @@ impl<T: Clone + Debug + Copy + Default> Copy for Bounds<T> {}
 /// assert_eq!(edges.left, 40.0);
 /// ```
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
-#[refineable(Debug, Serialize, Deserialize, JsonSchema)]
+#[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
-pub struct Edges<T: Clone + Default + Debug> {
+pub struct Edges<T: Clone + Debug + Default + PartialEq> {
     /// The size of the top edge.
     pub top: T,
     /// The size of the right edge.
@@ -1689,7 +1700,7 @@ pub struct Edges<T: Clone + Default + Debug> {
 
 impl<T> Mul for Edges<T>
 where
-    T: Mul<Output = T> + Clone + Default + Debug,
+    T: Mul<Output = T> + Clone + Debug + Default + PartialEq,
 {
     type Output = Self;
 
@@ -1705,7 +1716,7 @@ where
 
 impl<T, S> MulAssign<S> for Edges<T>
 where
-    T: Mul<S, Output = T> + Clone + Default + Debug,
+    T: Mul<S, Output = T> + Clone + Debug + Default + PartialEq,
     S: Clone,
 {
     fn mul_assign(&mut self, rhs: S) {
@@ -1716,9 +1727,9 @@ where
     }
 }
 
-impl<T: Clone + Default + Debug + Copy> Copy for Edges<T> {}
+impl<T: Clone + Debug + Default + PartialEq + Copy> Copy for Edges<T> {}
 
-impl<T: Clone + Default + Debug> Edges<T> {
+impl<T: Clone + Debug + Default + PartialEq> Edges<T> {
     /// Constructs `Edges` where all sides are set to the same specified value.
     ///
     /// This function creates an `Edges` instance with the `top`, `right`, `bottom`, and `left` fields all initialized
@@ -1776,7 +1787,7 @@ impl<T: Clone + Default + Debug> Edges<T> {
     /// ```
     pub fn map<U>(&self, f: impl Fn(&T) -> U) -> Edges<U>
     where
-        U: Clone + Default + Debug,
+        U: Clone + Debug + Default + PartialEq,
     {
         Edges {
             top: f(&self.top),
@@ -2151,9 +2162,9 @@ impl Corner {
 ///
 /// Each field represents the size of the corner on one side of the box: `top_left`, `top_right`, `bottom_right`, and `bottom_left`.
 #[derive(Refineable, Clone, Default, Debug, Eq, PartialEq)]
-#[refineable(Debug, Serialize, Deserialize, JsonSchema)]
+#[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
-pub struct Corners<T: Clone + Default + Debug> {
+pub struct Corners<T: Clone + Debug + Default + PartialEq> {
     /// The value associated with the top left corner.
     pub top_left: T,
     /// The value associated with the top right corner.
@@ -2166,7 +2177,7 @@ pub struct Corners<T: Clone + Default + Debug> {
 
 impl<T> Corners<T>
 where
-    T: Clone + Default + Debug,
+    T: Clone + Debug + Default + PartialEq,
 {
     /// Constructs `Corners` where all sides are set to the same specified value.
     ///
@@ -2319,7 +2330,7 @@ impl Corners<Pixels> {
     }
 }
 
-impl<T: Div<f32, Output = T> + Ord + Clone + Default + Debug> Corners<T> {
+impl<T: Div<f32, Output = T> + Ord + Clone + Debug + Default + PartialEq> Corners<T> {
     /// Clamps corner radii to be less than or equal to half the shortest side of a quad.
     ///
     /// # Arguments
@@ -2340,7 +2351,7 @@ impl<T: Div<f32, Output = T> + Ord + Clone + Default + Debug> Corners<T> {
     }
 }
 
-impl<T: Clone + Default + Debug> Corners<T> {
+impl<T: Clone + Debug + Default + PartialEq> Corners<T> {
     /// Applies a function to each field of the `Corners`, producing a new `Corners<U>`.
     ///
     /// This method allows for converting a `Corners<T>` to a `Corners<U>` by specifying a closure
@@ -2375,7 +2386,7 @@ impl<T: Clone + Default + Debug> Corners<T> {
     /// ```
     pub fn map<U>(&self, f: impl Fn(&T) -> U) -> Corners<U>
     where
-        U: Clone + Default + Debug,
+        U: Clone + Debug + Default + PartialEq,
     {
         Corners {
             top_left: f(&self.top_left),
@@ -2388,7 +2399,7 @@ impl<T: Clone + Default + Debug> Corners<T> {
 
 impl<T> Mul for Corners<T>
 where
-    T: Mul<Output = T> + Clone + Default + Debug,
+    T: Mul<Output = T> + Clone + Debug + Default + PartialEq,
 {
     type Output = Self;
 
@@ -2404,7 +2415,7 @@ where
 
 impl<T, S> MulAssign<S> for Corners<T>
 where
-    T: Mul<S, Output = T> + Clone + Default + Debug,
+    T: Mul<S, Output = T> + Clone + Debug + Default + PartialEq,
     S: Clone,
 {
     fn mul_assign(&mut self, rhs: S) {
@@ -2415,7 +2426,7 @@ where
     }
 }
 
-impl<T> Copy for Corners<T> where T: Copy + Clone + Default + Debug {}
+impl<T> Copy for Corners<T> where T: Copy + Clone + Debug + Default + PartialEq {}
 
 impl From<f32> for Corners<Pixels> {
     fn from(val: f32) -> Self {
@@ -3427,7 +3438,7 @@ impl Default for DefiniteLength {
 }
 
 /// A length that can be defined in pixels, rems, percent of parent, or auto.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum Length {
     /// A definite length specified either in pixels, rems, or as a fraction of the parent's size.
     Definite(DefiniteLength),
@@ -3772,7 +3783,7 @@ impl IsZero for Length {
     }
 }
 
-impl<T: IsZero + Debug + Clone + Default> IsZero for Point<T> {
+impl<T: IsZero + Clone + Debug + Default + PartialEq> IsZero for Point<T> {
     fn is_zero(&self) -> bool {
         self.x.is_zero() && self.y.is_zero()
     }
@@ -3780,14 +3791,14 @@ impl<T: IsZero + Debug + Clone + Default> IsZero for Point<T> {
 
 impl<T> IsZero for Size<T>
 where
-    T: IsZero + Default + Debug + Clone,
+    T: IsZero + Clone + Debug + Default + PartialEq,
 {
     fn is_zero(&self) -> bool {
         self.width.is_zero() || self.height.is_zero()
     }
 }
 
-impl<T: IsZero + Debug + Clone + Default> IsZero for Bounds<T> {
+impl<T: IsZero + Clone + Debug + Default + PartialEq> IsZero for Bounds<T> {
     fn is_zero(&self) -> bool {
         self.size.is_zero()
     }
@@ -3795,7 +3806,7 @@ impl<T: IsZero + Debug + Clone + Default> IsZero for Bounds<T> {
 
 impl<T> IsZero for Corners<T>
 where
-    T: IsZero + Clone + Default + Debug,
+    T: IsZero + Clone + Debug + Default + PartialEq,
 {
     fn is_zero(&self) -> bool {
         self.top_left.is_zero()

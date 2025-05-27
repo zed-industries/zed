@@ -111,7 +111,7 @@ impl Render for QuickActionBar {
         let supports_minimap = editor_value.supports_minimap(cx);
         let minimap_enabled = supports_minimap && editor_value.minimap().is_some();
         let has_available_code_actions = editor_value.has_available_code_actions();
-        let code_action_enabled = editor_value.code_actions_enabled(cx);
+        let code_action_enabled = editor_value.code_actions_enabled_for_toolbar(cx);
         let focus_handle = editor_value.focus_handle(cx);
 
         let search_button = editor.is_singleton(cx).then(|| {
@@ -147,17 +147,16 @@ impl Render for QuickActionBar {
 
         let code_actions_dropdown = code_action_enabled.then(|| {
             let focus = editor.focus_handle(cx);
-            let (code_action_menu_active, is_deployed_from_quick_action) = {
+            let is_deployed = {
                 let menu_ref = editor.read(cx).context_menu().borrow();
                 let code_action_menu = menu_ref
                     .as_ref()
                     .filter(|menu| matches!(menu, CodeContextMenu::CodeActions(..)));
-                let is_deployed = code_action_menu.as_ref().map_or(false, |menu| {
+                code_action_menu.as_ref().map_or(false, |menu| {
                     matches!(menu.origin(), ContextMenuOrigin::QuickActionBar)
-                });
-                (code_action_menu.is_some(), is_deployed)
+                })
             };
-            let code_action_element = if is_deployed_from_quick_action {
+            let code_action_element = if is_deployed {
                 editor.update(cx, |editor, cx| {
                     if let Some(style) = editor.style() {
                         editor.render_context_menu(&style, MAX_CODE_ACTION_MENU_LINES, window, cx)
@@ -174,8 +173,8 @@ impl Render for QuickActionBar {
                         .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
                         .disabled(!has_available_code_actions)
-                        .toggle_state(code_action_menu_active)
-                        .when(!code_action_menu_active, |this| {
+                        .toggle_state(is_deployed)
+                        .when(!is_deployed, |this| {
                             this.when(has_available_code_actions, |this| {
                                 this.tooltip(Tooltip::for_action_title(
                                     "Code Actions",

@@ -673,8 +673,7 @@ mod tests {
     use super::*;
 
     fn init_test(executor: &BackgroundExecutor, cx: &mut TestAppContext) {
-        zlog::init();
-        zlog::init_output_stdout();
+        zlog::init_test();
 
         executor.allow_parking();
         cx.update(|cx| {

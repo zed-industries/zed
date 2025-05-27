@@ -26,6 +26,7 @@ assistant_slash_command.workspace = true
 assistant_slash_commands.workspace = true
 assistant_tool.workspace = true
 async-watch.workspace = true
+audio.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true
 client.workspace = true

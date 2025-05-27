@@ -47,6 +47,7 @@ actions!(
         ShowStackTrace,
         ToggleThreadPicker,
         ToggleSessionPicker,
+        RerunLastSession,
     ]
 );
 
@@ -66,77 +67,88 @@ pub fn init(cx: &mut App) {
                 })
                 .register_action(|workspace, _: &Pause, _, cx| {
                     if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
-                        if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
-                            panel
-                                .active_session()
-                                .map(|session| session.read(cx).running_state().clone())
-                        }) {
+                        if let Some(active_item) = debug_panel
+                            .read(cx)
+                            .active_session()
+                            .map(|session| session.read(cx).running_state().clone())
+                        {
                             active_item.update(cx, |item, cx| item.pause_thread(cx))
                         }
                     }
                 })
                 .register_action(|workspace, _: &Restart, _, cx| {
                     if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
-                        if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
-                            panel
-                                .active_session()
-                                .map(|session| session.read(cx).running_state().clone())
-                        }) {
+                        if let Some(active_item) = debug_panel
+                            .read(cx)
+                            .active_session()
+                            .map(|session| session.read(cx).running_state().clone())
+                        {
                             active_item.update(cx, |item, cx| item.restart_session(cx))
                         }
                     }
                 })
                 .register_action(|workspace, _: &Continue, _, cx| {
                     if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
-                        if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
-                            panel
-                                .active_session()
-                                .map(|session| session.read(cx).running_state().clone())
-                        }) {
+                        if let Some(active_item) = debug_panel
+                            .read(cx)
+                            .active_session()
+                            .map(|session| session.read(cx).running_state().clone())
+                        {
                             active_item.update(cx, |item, cx| item.continue_thread(cx))
                         }
                     }
                 })
                 .register_action(|workspace, _: &StepInto, _, cx| {
                     if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
-                        if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
-                            panel
-                                .active_session()
-                                .map(|session| session.read(cx).running_state().clone())
-                        }) {
+                        if let Some(active_item) = debug_panel
+                            .read(cx)
+                            .active_session()
+                            .map(|session| session.read(cx).running_state().clone())
+                        {
                             active_item.update(cx, |item, cx| item.step_in(cx))
                         }
                     }
                 })
                 .register_action(|workspace, _: &StepOver, _, cx| {
                     if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
-                        if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
-                            panel
-                                .active_session()
-                                .map(|session| session.read(cx).running_state().clone())
-                        }) {
+                        if let Some(active_item) = debug_panel
+                            .read(cx)
+                            .active_session()
+                            .map(|session| session.read(cx).running_state().clone())
+                        {
                             active_item.update(cx, |item, cx| item.step_over(cx))
                         }
                     }
                 })
-                .register_action(|workspace, _: &StepBack, _, cx| {
+                .register_action(|workspace, _: &StepOut, _, cx| {
                     if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
                         if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
                             panel
                                 .active_session()
                                 .map(|session| session.read(cx).running_state().clone())
                         }) {
+                            active_item.update(cx, |item, cx| item.step_out(cx))
+                        }
+                    }
+                })
+                .register_action(|workspace, _: &StepBack, _, cx| {
+                    if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
+                        if let Some(active_item) = debug_panel
+                            .read(cx)
+                            .active_session()
+                            .map(|session| session.read(cx).running_state().clone())
+                        {
                             active_item.update(cx, |item, cx| item.step_back(cx))
                         }
                     }
                 })
                 .register_action(|workspace, _: &Stop, _, cx| {
                     if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
-                        if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
-                            panel
-                                .active_session()
-                                .map(|session| session.read(cx).running_state().clone())
-                        }) {
+                        if let Some(active_item) = debug_panel
+                            .read(cx)
+                            .active_session()
+                            .map(|session| session.read(cx).running_state().clone())
+                        {
                             cx.defer(move |cx| {
                                 active_item.update(cx, |item, cx| item.stop_thread(cx))
                             })
@@ -145,11 +157,11 @@ pub fn init(cx: &mut App) {
                 })
                 .register_action(|workspace, _: &ToggleIgnoreBreakpoints, _, cx| {
                     if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
-                        if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
-                            panel
-                                .active_session()
-                                .map(|session| session.read(cx).running_state().clone())
-                        }) {
+                        if let Some(active_item) = debug_panel
+                            .read(cx)
+                            .active_session()
+                            .map(|session| session.read(cx).running_state().clone())
+                        {
                             active_item.update(cx, |item, cx| item.toggle_ignore_breakpoints(cx))
                         }
                     }
@@ -197,7 +209,18 @@ pub fn init(cx: &mut App) {
                 )
                 .register_action(|workspace: &mut Workspace, _: &Start, window, cx| {
                     NewSessionModal::show(workspace, window, cx);
-                });
+                })
+                .register_action(
+                    |workspace: &mut Workspace, _: &RerunLastSession, window, cx| {
+                        let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
+                            return;
+                        };
+
+                        debug_panel.update(cx, |debug_panel, cx| {
+                            debug_panel.rerun_last_session(workspace, window, cx);
+                        })
+                    },
+                );
         })
     })
     .detach();
