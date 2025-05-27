@@ -959,7 +959,17 @@
     //    "skip_focus_for_active_in_search": false
     //
     // Default: true
-    "skip_focus_for_active_in_search": true
+    "skip_focus_for_active_in_search": true,
+    // Whether to show the git status in the file finder.
+    "git_status": true,
+    // Whether to use gitignored files when searching.
+    // Only the file Zed had indexed will be used, not necessary all the gitignored files.
+    //
+    // Can accept 3 values:
+    //   * `true`: Use all gitignored files
+    //   * `false`: Use only the files Zed had indexed
+    //   * `null`: Be smart and search for ignored when called from a gitignored worktree
+    "include_ignored": null
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
