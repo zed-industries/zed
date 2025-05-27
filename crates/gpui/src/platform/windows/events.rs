@@ -987,10 +987,6 @@ fn handle_nc_mouse_down_msg(
         return None;
     }
 
-    println!(
-        "handle_nc_mouse_down_msg: button={:?}, wparam={:?}, lparam={:?}",
-        button, wparam, lparam
-    );
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut func) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
@@ -1011,13 +1007,9 @@ fn handle_nc_mouse_down_msg(
             first_mouse: false,
         });
         let result = func(input.clone());
-        let handled = result.default_prevented || !result.propagate;
+        let handled = !result.propagate || result.default_prevented;
         state_ptr.state.borrow_mut().callbacks.input = Some(func);
 
-        println!(
-            "handle_nc_mouse_down_msg: input={:?}, handled={}",
-            input, handled
-        );
         if handled {
             return Some(0);
         }
