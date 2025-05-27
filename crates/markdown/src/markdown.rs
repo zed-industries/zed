@@ -192,6 +192,10 @@ impl Markdown {
         this
     }
 
+    pub fn is_parsing(&self) -> bool {
+        self.pending_parse.is_some()
+    }
+
     pub fn source(&self) -> &str {
         &self.source
     }
@@ -277,10 +281,10 @@ impl Markdown {
             return;
         }
         self.should_reparse = false;
-        self.pending_parse = Some(self.run_background_parse(cx));
+        self.pending_parse = Some(self.start_background_parse(cx));
     }
 
-    fn run_background_parse(&self, cx: &Context<Self>) -> Task<()> {
+    fn start_background_parse(&self, cx: &Context<Self>) -> Task<()> {
         let source = self.source.clone();
         let should_parse_links_only = self.options.parse_links_only;
         let language_registry = self.language_registry.clone();
