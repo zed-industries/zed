@@ -1535,10 +1535,10 @@ fn open_local_file(
         cx.spawn_in(window, async move |workspace, cx| {
             // Check if the file actually exists on disk (even if it's excluded from worktree)
             let file_exists = {
-                let full_path =
-                    worktree.update(cx, |tree, _| tree.abs_path().join(settings_relative_path))?;
+                let full_path = worktree
+                    .read_with(cx, |tree, _| tree.abs_path().join(settings_relative_path))?;
 
-                let fs = project.update(cx, |project, _| project.fs().clone())?;
+                let fs = project.read_with(cx, |project, _| project.fs().clone())?;
                 let file_exists = fs
                     .metadata(&full_path)
                     .await
@@ -1550,7 +1550,7 @@ fn open_local_file(
 
             if !file_exists {
                 if let Some(dir_path) = settings_relative_path.parent() {
-                    if worktree.update(cx, |tree, _| tree.entry_for_path(dir_path).is_none())? {
+                    if worktree.read_with(cx, |tree, _| tree.entry_for_path(dir_path).is_none())? {
                         project
                             .update(cx, |project, cx| {
                                 project.create_entry((tree_id, dir_path), true, cx)
@@ -1560,7 +1560,7 @@ fn open_local_file(
                     }
                 }
 
-                if worktree.update(cx, |tree, _| {
+                if worktree.read_with(cx, |tree, _| {
                     tree.entry_for_path(settings_relative_path).is_none()
                 })? {
                     project

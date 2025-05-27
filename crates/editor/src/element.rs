@@ -2193,7 +2193,7 @@ impl EditorElement {
     ) {
         let mouse_position = window.mouse_position();
         let mouse_over_inline_blame = parent_bounds.contains(&mouse_position);
-        let mouse_over_popover = self.editor.update(cx, |editor, _| {
+        let mouse_over_popover = self.editor.read_with(cx, |editor, _| {
             editor
                 .inline_blame_popover
                 .as_ref()
@@ -2209,7 +2209,7 @@ impl EditorElement {
             }
         });
 
-        let should_draw = self.editor.update(cx, |editor, _| {
+        let should_draw = self.editor.read_with(cx, |editor, _| {
             editor
                 .inline_blame_popover
                 .as_ref()
@@ -2243,7 +2243,7 @@ impl EditorElement {
 
             if let Some(mut element) = maybe_element {
                 let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-                let origin = self.editor.update(cx, |editor, _| {
+                let origin = self.editor.read_with(cx, |editor, _| {
                     let target_point = editor
                         .inline_blame_popover
                         .as_ref()
@@ -4322,7 +4322,7 @@ impl EditorElement {
             ..Default::default()
         };
         window.with_text_style(Some(text_style), |window| {
-            let mut element = self.editor.update(cx, |editor, _| {
+            let mut element = self.editor.read_with(cx, |editor, _| {
                 let mouse_context_menu = editor.mouse_context_menu.as_ref()?;
                 let context_menu = mouse_context_menu.context_menu.clone();
 

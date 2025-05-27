@@ -504,7 +504,8 @@ mod tests {
                 events_tx.send(event.clone()).ok();
             })
         });
-        let conflicts_snapshot = conflict_set.update(cx, |conflict_set, _| conflict_set.snapshot());
+        let conflicts_snapshot =
+            conflict_set.read_with(cx, |conflict_set, _| conflict_set.snapshot());
         assert!(conflicts_snapshot.conflicts.is_empty());
 
         buffer.update(cx, |buffer, cx| {
@@ -543,7 +544,7 @@ mod tests {
         assert_eq!(update.old_range, 0..0);
         assert_eq!(update.new_range, 0..1);
 
-        let conflict = conflict_set.update(cx, |conflict_set, _| {
+        let conflict = conflict_set.read_with(cx, |conflict_set, _| {
             conflict_set.snapshot().conflicts[0].clone()
         });
         cx.update(|cx| {

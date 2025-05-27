@@ -352,7 +352,7 @@ impl MessageEditor {
     ) -> Option<(Anchor, String, Vec<StringMatchCandidate>)> {
         let end_offset = end_anchor.to_offset(buffer.read(cx));
 
-        let query = buffer.update(cx, |buffer, _| {
+        let query = buffer.read_with(cx, |buffer, _| {
             let mut query = String::new();
             for ch in buffer.reversed_chars_at(end_offset).take(100) {
                 if ch == '@' {
@@ -410,7 +410,7 @@ impl MessageEditor {
 
         let end_offset = end_anchor.to_offset(buffer.read(cx));
 
-        let query = buffer.update(cx, |buffer, _| {
+        let query = buffer.read_with(cx, |buffer, _| {
             let mut query = String::new();
             for ch in buffer.reversed_chars_at(end_offset).take(100) {
                 if ch == ':' {

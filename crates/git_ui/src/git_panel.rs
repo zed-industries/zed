@@ -4851,7 +4851,7 @@ mod tests {
 
         cx.executor().run_until_parked();
 
-        let app_state = workspace.update(cx, |workspace, _| workspace.app_state().clone());
+        let app_state = workspace.read_with(cx, |workspace, _| workspace.app_state().clone());
         let panel = cx.new_window_entity(|window, cx| {
             GitPanel::new(workspace.clone(), project.clone(), app_state, window, cx)
         });
@@ -4862,7 +4862,7 @@ mod tests {
         cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
         handle.await;
 
-        let entries = panel.update(cx, |panel, _| panel.entries.clone());
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
         pretty_assertions::assert_eq!(
             entries,
             [
@@ -4937,7 +4937,7 @@ mod tests {
         });
         cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
         handle.await;
-        let entries = panel.update(cx, |panel, _| panel.entries.clone());
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
         pretty_assertions::assert_eq!(
             entries,
             [

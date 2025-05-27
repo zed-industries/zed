@@ -865,7 +865,7 @@ impl OutlinePanel {
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let Some(serialization_key) = self
             .workspace
-            .update(cx, |workspace, _| {
+            .read_with(cx, |workspace, _| {
                 OutlinePanel::serialization_key(workspace)
             })
             .ok()
@@ -5642,7 +5642,7 @@ mod tests {
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
 
-        let active_editor = outline_panel.update(cx, |outline_panel, _| {
+        let active_editor = outline_panel.read_with(cx, |outline_panel, _| {
             outline_panel
                 .active_editor()
                 .expect("should have an active editor open")
@@ -5737,7 +5737,7 @@ mod tests {
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
-        let new_active_editor = outline_panel.update(cx, |outline_panel, _| {
+        let new_active_editor = outline_panel.read_with(cx, |outline_panel, _| {
             outline_panel
                 .active_editor()
                 .expect("should have an active editor open")

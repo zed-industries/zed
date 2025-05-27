@@ -902,7 +902,7 @@ impl SettingsObserver {
         let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
         let weak_entry = cx.weak_entity();
         cx.spawn(async move |settings_observer, cx| {
-            let Ok(task_store) = settings_observer.update(cx, |settings_observer, _| {
+            let Ok(task_store) = settings_observer.read_with(cx, |settings_observer, _| {
                 settings_observer.task_store.clone()
             }) else {
                 return;

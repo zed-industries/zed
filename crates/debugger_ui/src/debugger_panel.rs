@@ -955,7 +955,7 @@ impl DebugPanel {
                 cx.spawn_in(window, async move |workspace, cx| {
                     let serialized_scenario = serialized_scenario?;
                     let fs =
-                        workspace.update(cx, |workspace, _| workspace.app_state().fs.clone())?;
+                        workspace.read_with(cx, |workspace, _| workspace.app_state().fs.clone())?;
 
                     path.push(paths::local_settings_folder_relative_path());
                     if !fs.is_dir(path.as_path()).await {
@@ -1014,7 +1014,7 @@ async fn register_session_inner(
     session: Entity<Session>,
     cx: &mut AsyncWindowContext,
 ) -> Result<Entity<DebugSession>> {
-    let adapter_name = session.update(cx, |session, _| session.adapter())?;
+    let adapter_name = session.read_with(cx, |session, _| session.adapter())?;
     this.update_in(cx, |_, window, cx| {
         cx.subscribe_in(
             &session,

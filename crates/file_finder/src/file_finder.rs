@@ -1036,7 +1036,7 @@ impl FileFinderDelegate {
     ) -> Task<()> {
         cx.spawn_in(window, async move |picker, cx| {
             let Some(project) = picker
-                .update(cx, |picker, _| picker.delegate.project.clone())
+                .read_with(cx, |picker, _| picker.delegate.project.clone())
                 .log_err()
             else {
                 return;
