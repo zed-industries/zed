@@ -41,13 +41,6 @@ pub(super) fn typescript_task_context() -> ContextProviderWithTasks {
             ],
             tags: vec!["ts-test".into(), "js-test".into(), "tsx-test".into()],
             arg_variable_processor: Some(|name, value| {
-                println!(
-                    "Processing variable: {} with value: {}. Result: {}",
-                    name,
-                    value,
-                    replace_test_name_parameters(&value)
-                );
-
                 if name == "ZED_SYMBOL" {
                     println!(
                         "Replacing test name parameters in: {}",
