@@ -1473,7 +1473,7 @@
       }
     },
     "JavaScript": {
-      "language_servers": ["!typescript-language-server", "vtsls", "..."],
+      "language_servers": ["!typescript-language-server", "!vtsls", "typescript", "..."],
       "prettier": {
         "allowed": true
       }
@@ -1541,7 +1541,7 @@
       }
     },
     "TSX": {
-      "language_servers": ["!typescript-language-server", "vtsls", "..."],
+      "language_servers": ["!typescript-language-server", "!vtsls", "typescript", "..."],
       "prettier": {
         "allowed": true
       }
@@ -1552,7 +1552,7 @@
       }
     },
     "TypeScript": {
-      "language_servers": ["!typescript-language-server", "vtsls", "..."],
+      "language_servers": ["!typescript-language-server", "!vtsls", "typescript", "..."],
       "prettier": {
         "allowed": true
       }

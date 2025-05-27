@@ -21,6 +21,7 @@ mod python;
 mod rust;
 mod tailwind;
 mod typescript;
+mod typescript_go;
 mod vtsls;
 mod yaml;
 
@@ -90,6 +91,8 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
     let tailwind_adapter = Arc::new(tailwind::TailwindLspAdapter::new(node.clone()));
     let typescript_context = Arc::new(typescript::typescript_task_context());
     let typescript_lsp_adapter = Arc::new(typescript::TypeScriptLspAdapter::new(node.clone()));
+    let typescript_go_lsp_adapter =
+        Arc::new(typescript_go::TypeScriptGoLspAdapter::new(node.clone()));
     let vtsls_adapter = Arc::new(vtsls::VtslsLspAdapter::new(node.clone()));
     let yaml_lsp_adapter = Arc::new(yaml::YamlLspAdapter::new(node.clone()));
 
@@ -173,25 +176,41 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
         },
         LanguageInfo {
             name: "tsx",
-            adapters: vec![typescript_lsp_adapter.clone(), vtsls_adapter.clone()],
+            adapters: vec![
+                typescript_go_lsp_adapter.clone(),
+                typescript_lsp_adapter.clone(),
+                vtsls_adapter.clone(),
+            ],
             context: Some(typescript_context.clone()),
             ..Default::default()
         },
         LanguageInfo {
             name: "typescript",
-            adapters: vec![typescript_lsp_adapter.clone(), vtsls_adapter.clone()],
+            adapters: vec![
+                typescript_go_lsp_adapter.clone(),
+                typescript_lsp_adapter.clone(),
+                vtsls_adapter.clone(),
+            ],
             context: Some(typescript_context.clone()),
             ..Default::default()
         },
         LanguageInfo {
             name: "javascript",
-            adapters: vec![typescript_lsp_adapter.clone(), vtsls_adapter.clone()],
+            adapters: vec![
+                typescript_go_lsp_adapter.clone(),
+                typescript_lsp_adapter.clone(),
+                vtsls_adapter.clone(),
+            ],
             context: Some(typescript_context.clone()),
             ..Default::default()
         },
         LanguageInfo {
             name: "jsdoc",
-            adapters: vec![typescript_lsp_adapter.clone(), vtsls_adapter.clone()],
+            adapters: vec![
+                typescript_go_lsp_adapter.clone(),
+                typescript_lsp_adapter.clone(),
+                vtsls_adapter.clone(),
+            ],
             ..Default::default()
         },
         LanguageInfo {
@@ -256,6 +275,10 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
             move || adapter.clone()
         },
     );
+    languages.register_available_lsp_adapter(LanguageServerName("typescript".into()), {
+        let adapter = typescript_go_lsp_adapter.clone();
+        move || adapter.clone()
+    });
 
     // Register Tailwind for the existing languages that should have it by default.
     //
