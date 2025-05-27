@@ -167,6 +167,10 @@ jobs:
       - name: Upload Zed Nightly
         run: script/upload-nightly linux-targz
 
+  bundle-nix:
+    needs: tests
+    uses: ./.github/workflows/nix.yml
+
   update-nightly-tag:
     name: Update nightly tag
     if: github.repository_owner == 'zed-industries'
