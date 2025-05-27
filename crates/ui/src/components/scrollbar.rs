@@ -121,19 +121,15 @@ impl ScrollbarState {
         const MINIMUM_THUMB_SIZE: Pixels = px(25.);
         let content_size = self.scroll_handle.content_size().along(axis);
         let viewport_size = self.scroll_handle.viewport().size.along(axis);
-        if content_size.is_zero() || viewport_size.is_zero() || content_size < viewport_size {
+        if content_size.is_zero() || viewport_size.is_zero() || content_size <= viewport_size {
             return None;
         }
-
         let visible_percentage = viewport_size / content_size;
         let thumb_size = MINIMUM_THUMB_SIZE.max(viewport_size * visible_percentage);
         if thumb_size > viewport_size {
             return None;
         }
         let max_offset = content_size - viewport_size;
-        if max_offset.is_zero() {
-            return None;
-        }
         let current_offset = self
             .scroll_handle
             .offset()
