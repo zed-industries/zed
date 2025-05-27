@@ -250,9 +250,6 @@ impl StackFrameList {
         let Some(abs_path) = Self::abs_path_from_stack_frame(&stack_frame) else {
             return Task::ready(Err(anyhow!("Project path not found")));
         };
-        if !abs_path.is_absolute() {
-            return Task::ready(Ok(()));
-        }
         let row = stack_frame.line.saturating_sub(1) as u32;
         cx.emit(StackFrameListEvent::SelectedStackFrameChanged(
             stack_frame_id,
@@ -345,6 +342,7 @@ impl StackFrameList {
             s.path
                 .as_deref()
                 .map(|path| Arc::<Path>::from(Path::new(path)))
+                .filter(|path| path.is_absolute())
         })
     }
 
