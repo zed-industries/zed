@@ -16,7 +16,6 @@ use std::{
     process::Command,
     sync::LazyLock,
     time::SystemTime,
-    cell::OnceCell,
 };
 
 #[cfg(any(feature = "tree-sitter-highlight", feature = "tree-sitter-tags"))]
@@ -26,6 +25,7 @@ use etcetera::BaseStrategy as _;
 use fs4::fs_std::FileExt;
 use indoc::indoc;
 use libloading::{Library, Symbol};
+use once_cell::unsync::OnceCell;
 use path_slash::PathBufExt as _;
 use regex::{Regex, RegexBuilder};
 use semver::Version;
