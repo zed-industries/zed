@@ -32,7 +32,7 @@ pub(super) fn typescript_task_context() -> ContextProviderWithTasks {
             ..TaskTemplate::default()
         },
         TaskTemplate {
-            label: "jest test $ZED_SYMBOL $ZED_SYMBOL".to_owned(),
+            label: "jest test $ZED_SYMBOL".to_owned(),
             command: "npx jest".to_owned(),
             args: vec![
                 "--testNamePattern".into(),
