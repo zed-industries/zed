@@ -20836,6 +20836,19 @@ async fn test_outdent_after_input_for_python(cx: &mut TestAppContext) {
                     break
             else:ˇ
     "});
+
+    // test does not outdent on typing after line with square brackets
+    cx.set_state(indoc! {"
+        def f() -> list[str]:
+            ˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("a", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        def f() -> list[str]:
+            aˇ
+    "});
 }
 
 #[gpui::test]
