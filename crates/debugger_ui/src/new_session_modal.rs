@@ -284,6 +284,112 @@ impl NewSessionModal {
         self.launch_picker.read(cx).delegate.task_contexts.clone()
     }
 
+    fn save_debug_scenario(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(save_scenario) = self
+            .debugger
+            .as_ref()
+            .and_then(|debugger| self.debug_scenario(&debugger, cx))
+            .zip(self.task_contexts(cx).and_then(|tcx| tcx.worktree()))
+            .and_then(|(scenario, worktree_id)| {
+                self.debug_panel
+                    .update(cx, |panel, cx| {
+                        panel.save_scenario(&scenario, worktree_id, window, cx)
+                    })
+                    .ok()
+            })
+        else {
+            return;
+        };
+
+        self.save_scenario_state = Some(SaveScenarioState::Saving);
+
+        cx.spawn(async move |this, cx| {
+            let res = save_scenario.await;
+
+            this.update(cx, |this, _| match res {
+                Ok(saved_file) => {
+                    this.save_scenario_state = Some(SaveScenarioState::Saved(saved_file))
+                }
+                Err(error) => {
+                    this.save_scenario_state =
+                        Some(SaveScenarioState::Failed(error.to_string().into()))
+                }
+            })
+            .ok();
+
+            cx.background_executor().timer(Duration::from_secs(3)).await;
+            this.update(cx, |this, _| this.save_scenario_state.take())
+                .ok();
+        })
+        .detach();
+    }
+
+    fn render_save_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let this_entity = cx.weak_entity().clone();
+
+        div().when_some(self.save_scenario_state.as_ref(), {
+            let this_entity = this_entity.clone();
+
+            move |this, save_state| match save_state {
+                SaveScenarioState::Saved(saved_path) => this.child(
+                    IconButton::new("new-session-modal-go-to-file", IconName::ArrowUpRight)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .on_click({
+                            let this_entity = this_entity.clone();
+                            let saved_path = saved_path.clone();
+                            move |_, window, cx| {
+                                window
+                                    .spawn(cx, {
+                                        let this_entity = this_entity.clone();
+                                        let saved_path = saved_path.clone();
+
+                                        async move |cx| {
+                                            this_entity
+                                                .update_in(cx, |this, window, cx| {
+                                                    this.workspace.update(cx, |workspace, cx| {
+                                                        workspace.open_path(
+                                                            saved_path.clone(),
+                                                            None,
+                                                            true,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    })
+                                                })??
+                                                .await?;
+
+                                            this_entity
+                                                .update(cx, |_, cx| cx.emit(DismissEvent))
+                                                .ok();
+
+                                            anyhow::Ok(())
+                                        }
+                                    })
+                                    .detach();
+                            }
+                        }),
+                ),
+                SaveScenarioState::Saving => this.child(
+                    Icon::new(IconName::Spinner)
+                        .size(IconSize::Small)
+                        .color(Color::Muted)
+                        .with_animation(
+                            "Spinner",
+                            Animation::new(Duration::from_secs(3)).repeat(),
+                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                        ),
+                ),
+                SaveScenarioState::Failed(error_msg) => this.child(
+                    IconButton::new("Failed Scenario Saved", IconName::X)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Error)
+                        .tooltip(ui::Tooltip::text(error_msg.clone())),
+                ),
+            }
+        })
+    }
+
     fn adapter_drop_down_menu(
         &mut self,
         window: &mut Window,
@@ -423,8 +529,6 @@ impl Render for NewSessionModal {
         window: &mut ui::Window,
         cx: &mut ui::Context<Self>,
     ) -> impl ui::IntoElement {
-        let this = cx.weak_entity().clone();
-
         v_flex()
             .size_full()
             .w(rems(34.))
@@ -534,58 +638,7 @@ impl Render for NewSessionModal {
                             .child(
                                 Button::new("new-session-modal-back", "Save to .zed/debug.json...")
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        let Some(save_scenario) = this
-                                            .debugger
-                                            .as_ref()
-                                            .and_then(|debugger| this.debug_scenario(&debugger, cx))
-                                            .zip(
-                                                this.task_contexts(cx)
-                                                    .and_then(|tcx| tcx.worktree()),
-                                            )
-                                            .and_then(|(scenario, worktree_id)| {
-                                                this.debug_panel
-                                                    .update(cx, |panel, cx| {
-                                                        panel.save_scenario(
-                                                            &scenario,
-                                                            worktree_id,
-                                                            window,
-                                                            cx,
-                                                        )
-                                                    })
-                                                    .ok()
-                                            })
-                                        else {
-                                            return;
-                                        };
-
-                                        this.save_scenario_state = Some(SaveScenarioState::Saving);
-
-                                        cx.spawn(async move |this, cx| {
-                                            let res = save_scenario.await;
-
-                                            this.update(cx, |this, _| match res {
-                                                Ok(saved_file) => {
-                                                    this.save_scenario_state =
-                                                        Some(SaveScenarioState::Saved(saved_file))
-                                                }
-                                                Err(error) => {
-                                                    this.save_scenario_state =
-                                                        Some(SaveScenarioState::Failed(
-                                                            error.to_string().into(),
-                                                        ))
-                                                }
-                                            })
-                                            .ok();
-
-                                            cx.background_executor()
-                                                .timer(Duration::from_secs(2))
-                                                .await;
-                                            this.update(cx, |this, _| {
-                                                this.save_scenario_state.take()
-                                            })
-                                            .ok();
-                                        })
-                                        .detach();
+                                        this.save_debug_scenario(window, cx);
                                     }))
                                     .disabled(
                                         self.debugger.is_none()
@@ -598,83 +651,7 @@ impl Render for NewSessionModal {
                                             || self.save_scenario_state.is_some(),
                                     ),
                             )
-                            .when_some(self.save_scenario_state.as_ref(), {
-                                let this_entity = this.clone();
-
-                                move |this, save_state| match save_state {
-                                    SaveScenarioState::Saved(saved_path) => this.child(
-                                        IconButton::new(
-                                            "new-session-modal-go-to-file",
-                                            IconName::ArrowUpRight,
-                                        )
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(Color::Muted)
-                                        .on_click({
-                                            let this_entity = this_entity.clone();
-                                            let saved_path = saved_path.clone();
-                                            move |_, window, cx| {
-                                                window
-                                                    .spawn(cx, {
-                                                        let this_entity = this_entity.clone();
-                                                        let saved_path = saved_path.clone();
-
-                                                        async move |cx| {
-                                                            this_entity
-                                                                .update_in(
-                                                                    cx,
-                                                                    |this, window, cx| {
-                                                                        this.workspace.update(
-                                                                            cx,
-                                                                            |workspace, cx| {
-                                                                                workspace.open_path(
-                                                                                    saved_path
-                                                                                        .clone(),
-                                                                                    None,
-                                                                                    true,
-                                                                                    window,
-                                                                                    cx,
-                                                                                )
-                                                                            },
-                                                                        )
-                                                                    },
-                                                                )??
-                                                                .await?;
-
-                                                            this_entity
-                                                                .update(cx, |_, cx| {
-                                                                    cx.emit(DismissEvent)
-                                                                })
-                                                                .ok();
-
-                                                            anyhow::Ok(())
-                                                        }
-                                                    })
-                                                    .detach();
-                                            }
-                                        }),
-                                    ),
-                                    SaveScenarioState::Saving => this.child(
-                                        Icon::new(IconName::Spinner)
-                                            .size(IconSize::Small)
-                                            .color(Color::Muted)
-                                            .with_animation(
-                                                "Spinner",
-                                                Animation::new(Duration::from_secs(3)).repeat(),
-                                                |icon, delta| {
-                                                    icon.transform(Transformation::rotate(
-                                                        percentage(delta),
-                                                    ))
-                                                },
-                                            ),
-                                    ),
-                                    SaveScenarioState::Failed(error_msg) => this.child(
-                                        IconButton::new("Failed Scenario Saved", IconName::X)
-                                            .icon_size(IconSize::Small)
-                                            .icon_color(Color::Error)
-                                            .tooltip(ui::Tooltip::text(error_msg.clone())),
-                                    ),
-                                }
-                            }),
+                            .child(self.render_save_state(cx)),
                     })
                     .child(
                         Button::new("debugger-spawn", "Start")
