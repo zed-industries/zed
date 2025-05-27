@@ -1672,7 +1672,10 @@ impl Editor {
                         }
                         project::Event::LanguageServerAdded(..)
                         | project::Event::LanguageServerRemoved(..) => {
-                            editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
+                            if editor.tasks_update_task.is_none() {
+                                editor.tasks_update_task =
+                                    Some(editor.refresh_runnables(window, cx));
+                            }
                         }
                         project::Event::SnippetEdit(id, snippet_edits) => {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {

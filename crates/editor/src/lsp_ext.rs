@@ -17,7 +17,7 @@ use project::LocationLink;
 use project::Project;
 use project::TaskSourceKind;
 use project::lsp_store::lsp_ext_command::GetLspRunnables;
-use smol::future::FutureExt;
+use smol::future::FutureExt as _;
 use smol::stream::StreamExt;
 use task::ResolvedTask;
 use task::TaskContext;
@@ -179,6 +179,7 @@ pub fn lsp_tasks(
             let timer = cx.background_executor().timer(Duration::from_millis(200));
             async move {
                 timer.await;
+                log::info!("Timed out waiting for LSP tasks");
                 Vec::new()
             }
         })
