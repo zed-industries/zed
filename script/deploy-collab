@@ -16,7 +16,7 @@ if [ "$branch" != "main" ]; then
   exit 1
 fi
 
-remote=$("$(dirname "$0")"/lib/get-zed-remote)
+remote=$(script/lib/get-zed-remote)
 git pull --ff-only "$remote" main
 git tag -f $tag
 git push -f "$remote" $tag

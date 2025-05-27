@@ -14,7 +14,7 @@ fi
 SQUAWK_VERSION=0.26.0
 SQUAWK_BIN="./target/squawk-$SQUAWK_VERSION"
 SQUAWK_ARGS="--assume-in-transaction --config script/lib/squawk.toml"
-remote=$("$(dirname "$0")"/lib/get-zed-remote)
+remote=$(script/lib/get-zed-remote)
 
 if  [ ! -f "$SQUAWK_BIN" ]; then
   pkgutil --pkg-info com.apple.pkg.RosettaUpdateAuto || /usr/sbin/softwareupdate --install-rosetta --agree-to-license

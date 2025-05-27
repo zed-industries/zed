@@ -15,7 +15,7 @@ if [[ $(git rev-parse --abbrev-ref HEAD) != "main" ]]; then
   exit 1
 fi
 
-remote=$("$(dirname "$0")"/lib/get-zed-remote)
+remote=$(script/lib/get-zed-remote)
 git pull -q --ff-only "$remote" main
 
 # Parse the current version

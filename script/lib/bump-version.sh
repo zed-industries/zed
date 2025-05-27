@@ -21,7 +21,7 @@ new_version=$(script/get-crate-version $package)
 branch_name=$(git rev-parse --abbrev-ref HEAD)
 old_sha=$(git rev-parse HEAD)
 tag_name=${tag_prefix}${new_version}${tag_suffix}
-remote=$("$(dirname "$0")"/get-zed-remote)
+remote=$(script/get-zed-remote)
 
 git commit --quiet --all --message "${package} ${new_version}"
 git tag ${tag_name}
