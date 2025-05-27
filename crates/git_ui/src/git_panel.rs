@@ -199,7 +199,9 @@ impl GitHeaderEntry {
         let this = &self.header;
         let status = status_entry.status;
         match this {
-            Section::Conflict => repo.has_conflict(&status_entry.repo_path),
+            Section::Conflict => {
+                repo.had_conflict_on_last_merge_head_change(&status_entry.repo_path)
+            }
             Section::Tracked => !status.is_created(),
             Section::New => status.is_created(),
         }
@@ -2345,7 +2347,7 @@ impl GitPanel {
         let repo = repo.read(cx);
 
         for entry in repo.cached_status() {
-            let is_conflict = repo.has_conflict(&entry.repo_path);
+            let is_conflict = repo.had_conflict_on_last_merge_head_change(&entry.repo_path);
             let is_new = entry.status.is_created();
             let staging = entry.status.staging();
 
@@ -2516,7 +2518,7 @@ impl GitPanel {
                 continue;
             };
             self.entry_count += 1;
-            if repo.has_conflict(&status_entry.repo_path) {
+            if repo.had_conflict_on_last_merge_head_change(&status_entry.repo_path) {
                 self.conflicted_count += 1;
                 if self.entry_staging(status_entry).has_staged() {
                     self.conflicted_staged_count += 1;
