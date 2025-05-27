@@ -158,7 +158,7 @@ impl PickerDelegate for AttachModalDelegate {
     ) -> gpui::Task<()> {
         cx.spawn(async move |this, cx| {
             let Some(processes) = this
-                .update(cx, |this, _| this.delegate.candidates.clone())
+                .read_with(cx, |this, _| this.delegate.candidates.clone())
                 .ok()
             else {
                 return;
@@ -309,7 +309,7 @@ impl PickerDelegate for AttachModalDelegate {
 
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) fn _process_names(modal: &AttachModal, cx: &mut Context<AttachModal>) -> Vec<String> {
-    modal.picker.update(cx, |picker, _| {
+    modal.picker.read_with(cx, |picker, _| {
         picker
             .delegate
             .matches

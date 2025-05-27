@@ -1340,7 +1340,7 @@ impl BufferStore {
         mut cx: AsyncApp,
     ) -> Result<proto::BufferSaved> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-        let (buffer, project_id) = this.update(&mut cx, |this, _| {
+        let (buffer, project_id) = this.read_with(&mut cx, |this, _| {
             anyhow::Ok((
                 this.get_existing(buffer_id)?,
                 this.downstream_client
@@ -1354,7 +1354,7 @@ impl BufferStore {
                 buffer.wait_for_version(deserialize_version(&envelope.payload.version))
             })?
             .await?;
-        let buffer_id = buffer.update(&mut cx, |buffer, _| buffer.remote_id())?;
+        let buffer_id = buffer.read_with(&mut cx, |buffer, _| buffer.remote_id())?;
 
         if let Some(new_path) = envelope.payload.new_path {
             let new_path = ProjectPath::from_proto(new_path);
@@ -1367,7 +1367,7 @@ impl BufferStore {
                 .await?;
         }
 
-        buffer.update(&mut cx, |buffer, _| proto::BufferSaved {
+        buffer.read_with(&mut cx, |buffer, _| proto::BufferSaved {
             project_id,
             buffer_id: buffer_id.into(),
             version: serialize_version(buffer.saved_version()),
@@ -1524,7 +1524,7 @@ impl BufferStore {
         };
 
         cx.spawn(async move |this, cx| {
-            let Some(buffer) = this.update(cx, |this, _| this.get(buffer_id))? else {
+            let Some(buffer) = this.read_with(cx, |this, _| this.get(buffer_id))? else {
                 return anyhow::Ok(());
             };
 

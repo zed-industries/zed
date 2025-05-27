@@ -71,7 +71,6 @@ diffy = "0.4.2"
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
-env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 lsp = { workspace = true, features = ["test-support"] }
@@ -92,3 +91,4 @@ tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
+zlog.workspace = true

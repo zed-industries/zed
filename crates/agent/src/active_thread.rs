@@ -16,6 +16,7 @@ use crate::ui::{
 use anyhow::Context as _;
 use assistant_settings::{AssistantSettings, NotifyWhenAgentWaiting};
 use assistant_tool::ToolUseStatus;
+use audio::{Audio, Sound};
 use collections::{HashMap, HashSet};
 use editor::actions::{MoveUp, Paste};
 use editor::scroll::Autoscroll;
@@ -996,9 +997,10 @@ impl ActiveThread {
             }
             ThreadEvent::Stopped(reason) => match reason {
                 Ok(StopReason::EndTurn | StopReason::MaxTokens) => {
-                    let thread = self.thread.read(cx);
+                    let used_tools = self.thread.read(cx).used_tools_since_last_user_message();
+                    self.play_notification_sound(cx);
                     self.show_notification(
-                        if thread.used_tools_since_last_user_message() {
+                        if used_tools {
                             "Finished running tools"
                         } else {
                             "New message"
@@ -1011,6 +1013,7 @@ impl ActiveThread {
                 _ => {}
             },
             ThreadEvent::ToolConfirmationNeeded => {
+                self.play_notification_sound(cx);
                 self.show_notification("Waiting for tool confirmation", IconName::Info, window, cx);
             }
             ThreadEvent::StreamedAssistantText(message_id, text) => {
@@ -1145,6 +1148,13 @@ impl ActiveThread {
             message: error.message.clone(),
         });
         cx.notify();
+    }
+
+    fn play_notification_sound(&self, cx: &mut App) {
+        let settings = AssistantSettings::get_global(cx);
+        if settings.play_sound_when_agent_done {
+            Audio::play_sound(Sound::AgentDone, cx);
+        }
     }
 
     fn show_notification(
@@ -1481,7 +1491,7 @@ impl ActiveThread {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.context_store.update(cx, |store, _cx| store.clear());
+        self.context_store.update(cx, |store, cx| store.clear(cx));
         cx.notify();
     }
 

@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::agent_model_selector::{AgentModelSelector, ModelType};
@@ -49,8 +50,9 @@ use crate::profile_selector::ProfileSelector;
 use crate::thread::{MessageCrease, Thread, TokenUsageRatio};
 use crate::thread_store::{TextThreadStore, ThreadStore};
 use crate::{
-    ActiveThread, AgentDiffPane, Chat, ExpandMessageEditor, Follow, NewThread, OpenAgentDiff,
-    RemoveAllContext, ToggleContextPicker, ToggleProfileSelector, register_agent_preview,
+    ActiveThread, AgentDiffPane, Chat, ChatWithFollow, ExpandMessageEditor, Follow, NewThread,
+    OpenAgentDiff, RemoveAllContext, ToggleContextPicker, ToggleProfileSelector,
+    register_agent_preview,
 };
 
 #[derive(RegisterComponent)]
@@ -120,7 +122,7 @@ pub(crate) fn create_editor(
 
     let editor_entity = editor.downgrade();
     editor.update(cx, |editor, _| {
-        editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
+        editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
             workspace,
             context_store,
             Some(thread_store),
@@ -278,7 +280,7 @@ impl MessageEditor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.context_store.update(cx, |store, _cx| store.clear());
+        self.context_store.update(cx, |store, cx| store.clear(cx));
         cx.notify();
     }
 
@@ -300,6 +302,21 @@ impl MessageEditor {
         self.send_to_model(window, cx);
 
         cx.notify();
+    }
+
+    fn chat_with_follow(
+        &mut self,
+        _: &ChatWithFollow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.workspace
+            .update(cx, |this, cx| {
+                this.follow(CollaboratorId::Agent, window, cx)
+            })
+            .log_err();
+
+        self.chat(&Chat, window, cx);
     }
 
     fn is_editor_empty(&self, cx: &App) -> bool {
@@ -562,6 +579,7 @@ impl MessageEditor {
         v_flex()
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
+            .on_action(cx.listener(Self::chat_with_follow))
             .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
                 this.profile_selector
                     .read(cx)
@@ -1167,9 +1185,10 @@ impl MessageEditor {
     fn reload_context(&mut self, cx: &mut Context<Self>) -> Task<Option<ContextLoadResult>> {
         let load_task = cx.spawn(async move |this, cx| {
             let Ok(load_task) = this.update(cx, |this, cx| {
-                let new_context = this.context_store.read_with(cx, |context_store, cx| {
-                    context_store.new_context_for_thread(this.thread.read(cx), None)
-                });
+                let new_context = this
+                    .context_store
+                    .read(cx)
+                    .new_context_for_thread(this.thread.read(cx), None);
                 load_context(new_context, &this.project, &this.prompt_store, cx)
             }) else {
                 return;

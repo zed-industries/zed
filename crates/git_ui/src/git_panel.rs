@@ -54,6 +54,7 @@ use project::{
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
 use std::future::Future;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
@@ -62,7 +63,7 @@ use ui::{
     Checkbox, ContextMenu, ElevationIndex, PopoverMenu, Scrollbar, ScrollbarState, SplitButton,
     Tooltip, prelude::*,
 };
-use util::{ResultExt, TryFutureExt, maybe};
+use util::{ResultExt, TryFutureExt, maybe, wrap_with_prefix};
 use workspace::AppState;
 
 use notifications::status_toast::{StatusToast, ToastIcon};
@@ -382,7 +383,6 @@ pub(crate) fn commit_message_editor(
     commit_editor.set_show_gutter(false, cx);
     commit_editor.set_show_wrap_guides(false, cx);
     commit_editor.set_show_indent_guides(false, cx);
-    commit_editor.set_hard_wrap(Some(72), cx);
     let placeholder = placeholder.unwrap_or("Enter commit message".into());
     commit_editor.set_placeholder_text(placeholder, cx);
     commit_editor
@@ -1484,8 +1484,22 @@ impl GitPanel {
 
     fn custom_or_suggested_commit_message(&self, cx: &mut Context<Self>) -> Option<String> {
         let message = self.commit_editor.read(cx).text(cx);
+        let width = self
+            .commit_editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .language_settings(cx)
+            .preferred_line_length as usize;
 
         if !message.trim().is_empty() {
+            let message = wrap_with_prefix(
+                String::new(),
+                message,
+                width,
+                NonZeroU32::new(8).unwrap(), // tab size doesn't matter when prefix is empty
+                false,
+            );
             return Some(message);
         }
 
@@ -4765,9 +4779,7 @@ mod tests {
     use super::*;
 
     fn init_test(cx: &mut gpui::TestAppContext) {
-        if std::env::var("RUST_LOG").is_ok() {
-            env_logger::try_init().ok();
-        }
+        zlog::init_test();
 
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
@@ -4839,7 +4851,7 @@ mod tests {
 
         cx.executor().run_until_parked();
 
-        let app_state = workspace.update(cx, |workspace, _| workspace.app_state().clone());
+        let app_state = workspace.read_with(cx, |workspace, _| workspace.app_state().clone());
         let panel = cx.new_window_entity(|window, cx| {
             GitPanel::new(workspace.clone(), project.clone(), app_state, window, cx)
         });
@@ -4850,7 +4862,7 @@ mod tests {
         cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
         handle.await;
 
-        let entries = panel.update(cx, |panel, _| panel.entries.clone());
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
         pretty_assertions::assert_eq!(
             entries,
             [
@@ -4925,7 +4937,7 @@ mod tests {
         });
         cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
         handle.await;
-        let entries = panel.update(cx, |panel, _| panel.entries.clone());
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
         pretty_assertions::assert_eq!(
             entries,
             [

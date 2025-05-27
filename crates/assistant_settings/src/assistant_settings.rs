@@ -31,6 +31,14 @@ pub enum AssistantDockPosition {
     Bottom,
 }
 
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DefaultView {
+    #[default]
+    Thread,
+    TextThread,
+}
+
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum NotifyWhenAgentWaiting {
@@ -93,9 +101,11 @@ pub struct AssistantSettings {
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub using_outdated_settings_version: bool,
     pub default_profile: AgentProfileId,
+    pub default_view: DefaultView,
     pub profiles: IndexMap<AgentProfileId, AgentProfile>,
     pub always_allow_tool_actions: bool,
     pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
+    pub play_sound_when_agent_done: bool,
     pub stream_edits: bool,
     pub single_file_review: bool,
     pub model_parameters: Vec<LanguageModelParameters>,
@@ -267,6 +277,7 @@ impl AssistantSettingsContent {
                     thread_summary_model: None,
                     inline_alternatives: None,
                     default_profile: None,
+                    default_view: None,
                     profiles: None,
                     always_allow_tool_actions: None,
                     notify_when_agent_waiting: None,
@@ -275,6 +286,7 @@ impl AssistantSettingsContent {
                     model_parameters: Vec::new(),
                     preferred_completion_mode: None,
                     enable_feedback: None,
+                    play_sound_when_agent_done: None,
                 },
                 VersionedAssistantSettingsContent::V2(ref settings) => settings.clone(),
             },
@@ -298,6 +310,7 @@ impl AssistantSettingsContent {
                 thread_summary_model: None,
                 inline_alternatives: None,
                 default_profile: None,
+                default_view: None,
                 profiles: None,
                 always_allow_tool_actions: None,
                 notify_when_agent_waiting: None,
@@ -306,6 +319,7 @@ impl AssistantSettingsContent {
                 model_parameters: Vec::new(),
                 preferred_completion_mode: None,
                 enable_feedback: None,
+                play_sound_when_agent_done: None,
             },
             None => AssistantSettingsContentV2::default(),
         }
@@ -383,7 +397,9 @@ impl AssistantSettingsContent {
                                 _ => None,
                             };
                             settings.provider = Some(AssistantProviderContentV1::LmStudio {
-                                default_model: Some(lmstudio::Model::new(&model, None, None)),
+                                default_model: Some(lmstudio::Model::new(
+                                    &model, None, None, false,
+                                )),
                                 api_url,
                             });
                         }
@@ -504,6 +520,14 @@ impl AssistantSettingsContent {
         .ok();
     }
 
+    pub fn set_play_sound_when_agent_done(&mut self, allow: bool) {
+        self.v2_setting(|setting| {
+            setting.play_sound_when_agent_done = Some(allow);
+            Ok(())
+        })
+        .ok();
+    }
+
     pub fn set_single_file_review(&mut self, allow: bool) {
         self.v2_setting(|setting| {
             setting.single_file_review = Some(allow);
@@ -581,6 +605,7 @@ impl Default for VersionedAssistantSettingsContent {
             thread_summary_model: None,
             inline_alternatives: None,
             default_profile: None,
+            default_view: None,
             profiles: None,
             always_allow_tool_actions: None,
             notify_when_agent_waiting: None,
@@ -589,6 +614,7 @@ impl Default for VersionedAssistantSettingsContent {
             model_parameters: Vec::new(),
             preferred_completion_mode: None,
             enable_feedback: None,
+            play_sound_when_agent_done: None,
         })
     }
 }
@@ -600,19 +626,19 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: true
     enabled: Option<bool>,
-    /// Whether to show the assistant panel button in the status bar.
+    /// Whether to show the agent panel button in the status bar.
     ///
     /// Default: true
     button: Option<bool>,
-    /// Where to dock the assistant.
+    /// Where to dock the agent panel.
     ///
     /// Default: right
     dock: Option<AssistantDockPosition>,
-    /// Default width in pixels when the assistant is docked to the left or right.
+    /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640
     default_width: Option<f32>,
-    /// Default height in pixels when the assistant is docked to the bottom.
+    /// Default height in pixels when the agent panel is docked to the bottom.
     ///
     /// Default: 320
     default_height: Option<f32>,
@@ -630,6 +656,10 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: write
     default_profile: Option<AgentProfileId>,
+    /// Which view type to show by default in the agent panel.
+    ///
+    /// Default: "thread"
+    default_view: Option<DefaultView>,
     /// The available agent profiles.
     pub profiles: Option<IndexMap<AgentProfileId, AgentProfileContent>>,
     /// Whenever a tool action would normally wait for your confirmation
@@ -641,6 +671,10 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: "primary_screen"
     notify_when_agent_waiting: Option<NotifyWhenAgentWaiting>,
+    /// Whether to play a sound when the agent has either completed its response, or needs user input.
+    ///
+    /// Default: false
+    play_sound_when_agent_done: Option<bool>,
     /// Whether to stream edits from the agent as they are received.
     ///
     /// Default: false
@@ -658,7 +692,6 @@ pub struct AssistantSettingsContentV2 {
     /// Default: []
     #[serde(default)]
     model_parameters: Vec<LanguageModelParameters>,
-
     /// What completion mode to enable for new threads
     ///
     /// Default: normal
@@ -867,9 +900,14 @@ impl Settings for AssistantSettings {
                 &mut settings.notify_when_agent_waiting,
                 value.notify_when_agent_waiting,
             );
+            merge(
+                &mut settings.play_sound_when_agent_done,
+                value.play_sound_when_agent_done,
+            );
             merge(&mut settings.stream_edits, value.stream_edits);
             merge(&mut settings.single_file_review, value.single_file_review);
             merge(&mut settings.default_profile, value.default_profile);
+            merge(&mut settings.default_view, value.default_view);
             merge(
                 &mut settings.preferred_completion_mode,
                 value.preferred_completion_mode,
@@ -980,7 +1018,7 @@ mod tests {
                 AssistantSettings::get_global(cx).default_model,
                 LanguageModelSelection {
                     provider: "zed.dev".into(),
-                    model: "claude-3-7-sonnet-latest".into(),
+                    model: "claude-4-sonnet".into(),
                 }
             );
         });
@@ -1006,8 +1044,10 @@ mod tests {
                                 default_width: None,
                                 default_height: None,
                                 default_profile: None,
+                                default_view: None,
                                 profiles: None,
                                 always_allow_tool_actions: None,
+                                play_sound_when_agent_done: None,
                                 notify_when_agent_waiting: None,
                                 stream_edits: None,
                                 single_file_review: None,
