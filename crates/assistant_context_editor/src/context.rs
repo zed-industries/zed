@@ -2,7 +2,7 @@
 mod context_tests;
 
 use anyhow::{Context as _, Result, bail};
-use assistant_settings::AssistantSettings;
+use agent_settings::AssistantSettings;
 use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandLine, SlashCommandOutputSection,
     SlashCommandResult, SlashCommandWorkingSet,

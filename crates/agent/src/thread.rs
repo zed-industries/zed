@@ -4,8 +4,8 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::time::Instant;
 
+use agent_settings::{AssistantSettings, CompletionMode};
 use anyhow::{Result, anyhow};
-use assistant_settings::{AssistantSettings, CompletionMode};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
@@ -329,7 +329,7 @@ pub struct Thread {
     detailed_summary_task: Task<Option<()>>,
     detailed_summary_tx: postage::watch::Sender<DetailedSummaryState>,
     detailed_summary_rx: postage::watch::Receiver<DetailedSummaryState>,
-    completion_mode: assistant_settings::CompletionMode,
+    completion_mode: agent_settings::CompletionMode,
     messages: Vec<Message>,
     next_message_id: MessageId,
     last_prompt_id: PromptId,
@@ -2835,7 +2835,7 @@ struct PendingCompletion {
 mod tests {
     use super::*;
     use crate::{ThreadStore, context::load_context, context_store::ContextStore, thread_store};
-    use assistant_settings::{AssistantSettings, LanguageModelParameters};
+    use agent_settings::{AssistantSettings, LanguageModelParameters};
     use assistant_tool::ToolRegistry;
     use editor::EditorSettings;
     use gpui::TestAppContext;

@@ -6,7 +6,7 @@ use crate::inline_prompt_editor::{
 use crate::terminal_codegen::{CLEAR_INPUT, CodegenEvent, TerminalCodegen};
 use crate::thread_store::{TextThreadStore, ThreadStore};
 use anyhow::{Context as _, Result};
-use assistant_settings::AssistantSettings;
+use agent_settings::AssistantSettings;
 use client::telemetry::Telemetry;
 use collections::{HashMap, VecDeque};
 use editor::{MultiBuffer, actions::SelectAll};

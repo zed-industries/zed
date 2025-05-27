@@ -9,9 +9,9 @@ use crate::{branch_picker, picker_prompt, render_remote_button};
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
+use agent_settings::AssistantSettings;
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
-use assistant_settings::AssistantSettings;
 use db::kvp::KEY_VALUE_STORE;
 
 use editor::{
@@ -4061,7 +4061,7 @@ impl GitPanel {
 }
 
 fn current_language_model(cx: &Context<'_, GitPanel>) -> Option<Arc<dyn LanguageModel>> {
-    assistant_settings::AssistantSettings::get_global(cx)
+    agent_settings::AssistantSettings::get_global(cx)
         .enabled
         .then(|| {
             let ConfiguredModel { provider, model } =

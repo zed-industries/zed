@@ -13,7 +13,7 @@ use assistant_context_editor::{
     ContextSummary, SlashCommandCompletionProvider, humanize_token_count,
     make_lsp_adapter_delegate, render_remaining_tokens,
 };
-use assistant_settings::{AssistantDockPosition, AssistantSettings, DefaultView};
+use agent_settings::{AssistantDockPosition, AssistantSettings, DefaultView};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 

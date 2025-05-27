@@ -28,7 +28,7 @@ mod ui;
 
 use std::sync::Arc;
 
-use assistant_settings::{AgentProfileId, AssistantSettings, LanguageModelSelection};
+use agent_settings::{AgentProfileId, AssistantSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
 use feature_flags::FeatureFlagAppExt as _;

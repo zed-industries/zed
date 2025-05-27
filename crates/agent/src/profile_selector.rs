@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use assistant_settings::{
+use agent_settings::{
     AgentProfile, AgentProfileId, AssistantDockPosition, AssistantSettings, GroupedAgentProfiles,
     builtin_profiles,
 };

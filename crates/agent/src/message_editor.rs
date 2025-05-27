@@ -10,7 +10,7 @@ use crate::ui::{
     preview::{AgentPreview, UsageCallout},
 };
 use assistant_context_editor::language_model_selector::ToggleModelSelector;
-use assistant_settings::{AssistantSettings, CompletionMode};
+use agent_settings::{AssistantSettings, CompletionMode};
 use buffer_diff::BufferDiff;
 use client::UserStore;
 use collections::{HashMap, HashSet};

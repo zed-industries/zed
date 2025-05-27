@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, anyhow};
-use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings, CompletionMode};
+use agent_settings::{AgentProfile, AgentProfileId, AssistantSettings, CompletionMode};
 use assistant_tool::{ToolId, ToolSource, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;

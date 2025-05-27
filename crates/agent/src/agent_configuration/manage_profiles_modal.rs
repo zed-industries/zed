@@ -2,7 +2,7 @@ mod profile_modal_header;
 
 use std::sync::Arc;
 
-use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings, builtin_profiles};
+use agent_settings::{AgentProfile, AgentProfileId, AssistantSettings, builtin_profiles};
 use assistant_tool::ToolWorkingSet;
 use convert_case::{Case, Casing as _};
 use editor::Editor;

@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
-use assistant_settings::AssistantSettings;
+use agent_settings::AssistantSettings;
 use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet, VecDeque, hash_map};
 use editor::display_map::EditorMargins;

@@ -5,7 +5,7 @@ mod tool_picker;
 
 use std::{sync::Arc, time::Duration};
 
-use assistant_settings::AssistantSettings;
+use agent_settings::AssistantSettings;
 use assistant_tool::{ToolSource, ToolWorkingSet};
 use collections::HashMap;
 use context_server::ContextServerId;

@@ -1,6 +1,6 @@
 use crate::{Keep, KeepAll, OpenAgentDiff, Reject, RejectAll, Thread, ThreadEvent};
 use anyhow::Result;
-use assistant_settings::AssistantSettings;
+use agent_settings::AssistantSettings;
 use buffer_diff::DiffHunkStatus;
 use collections::{HashMap, HashSet};
 use editor::{
@@ -1736,7 +1736,7 @@ impl editor::Addon for EditorAgentDiffAddon {
 mod tests {
     use super::*;
     use crate::{Keep, ThreadStore, thread_store};
-    use assistant_settings::AssistantSettings;
+    use agent_settings::AssistantSettings;
     use assistant_tool::ToolWorkingSet;
     use editor::EditorSettings;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};

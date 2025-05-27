@@ -1,5 +1,5 @@
 use anyhow::Result;
-use assistant_settings::AgentProfileId;
+use agent_settings::AgentProfileId;
 use assistant_tools::{EditFileMode, EditFileToolInput};
 use async_trait::async_trait;
 

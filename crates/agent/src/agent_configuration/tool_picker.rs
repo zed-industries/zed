@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use assistant_settings::{
+use agent_settings::{
     AgentProfile, AgentProfileContent, AgentProfileId, AssistantSettings, AssistantSettingsContent,
     ContextServerPresetContent,
 };

@@ -1,6 +1,6 @@
 mod markdown_preview;
 mod repl_menu;
-use assistant_settings::AssistantSettings;
+use agent_settings::AssistantSettings;
 use editor::actions::{
     AddSelectionAbove, AddSelectionBelow, CodeActionSource, DuplicateLineDown, GoToDiagnostic,
     GoToHunk, GoToPreviousDiagnostic, GoToPreviousHunk, MoveLineDown, MoveLineUp, SelectAll,

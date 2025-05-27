@@ -1,4 +1,4 @@
-use assistant_settings::AssistantSettings;
+use agent_settings::AssistantSettings;
 use fs::Fs;
 use gpui::{Entity, FocusHandle, SharedString};
 

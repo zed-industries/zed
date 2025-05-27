@@ -12,7 +12,7 @@ use crate::{
 };
 use agent::{ContextLoadResult, Thread, ThreadEvent};
 use anyhow::{Result, anyhow};
-use assistant_settings::AgentProfileId;
+use agent_settings::AgentProfileId;
 use async_trait::async_trait;
 use buffer_diff::DiffHunkStatus;
 use collections::HashMap;
