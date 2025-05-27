@@ -197,19 +197,15 @@ async fn test_dap_adapter_config_conversion_and_validation(cx: &mut TestAppConte
         let adapter = cx
             .update(|cx| {
                 let registry = DapRegistry::global(cx);
-                registry.adapter(&adapter_name.to_string())
+                registry.adapter(adapter_name.as_ref())
             })
-            .expect(&format!("Adapter {} should exist", adapter_name));
+            .unwrap_or_else(|| panic!("Adapter {} should exist", adapter_name));
 
         let mut adapter_specific_config = zed_config.clone();
         adapter_specific_config.adapter = adapter_name.to_string().into();
 
-        let debug_scenario = adapter
-            .config_from_zed_format(adapter_specific_config)
-            .expect(&format!(
-                "Adapter {} should successfully convert from Zed format",
-                adapter_name
-            ));
+        let debug_scenario = adapter.config_from_zed_format(adapter_specific_config)
+            .unwrap_or_else(|_| panic!("Adapter {} should successfully convert from Zed format", adapter_name));
 
         assert!(
             debug_scenario.config.is_object(),
@@ -217,12 +213,8 @@ async fn test_dap_adapter_config_conversion_and_validation(cx: &mut TestAppConte
             adapter_name
         );
 
-        let request_type = adapter
-            .validate_config(&debug_scenario.config)
-            .expect(&format!(
-                "Adapter {} should validate the config successfully",
-                adapter_name
-            ));
+        let request_type = adapter.validate_config(&debug_scenario.config)
+            .unwrap_or_else(|_| panic!("Adapter {} should validate the config successfully", adapter_name));
 
         match request_type {
             dap::StartDebuggingRequestArgumentsRequest::Launch => {}
