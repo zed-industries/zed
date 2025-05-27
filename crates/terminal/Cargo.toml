@@ -38,7 +38,6 @@ workspace-hack.workspace = true
 windows.workspace = true
 
 [dev-dependencies]
-itertools.workspace = true
 rand.workspace = true
 unicode-width.workspace = true
 url.workspace = true

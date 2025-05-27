@@ -15681,7 +15681,6 @@ dependencies = [
  "dirs 4.0.0",
  "futures 0.3.31",
  "gpui",
- "itertools 0.14.0",
  "libc",
  "rand 0.8.5",
  "regex",
