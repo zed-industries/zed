@@ -7,8 +7,9 @@ on:
       - "*.nix"
   workflow_call:
     inputs:
-      flake-output:
-        default: ""
+      FLAKE_OUTPUT:
+        default: ".#debug"
+        type: string
 
     secrets:
 
@@ -58,6 +59,7 @@ jobs:
         with:
           name: zed
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
-      - run: nix build
+      - run: nix build ${{ inputs.FLAKE_OUTPUT }} -L --accept-flake-config
       - name: Limit /nix/store to 50GB
-        run: "[ $(du -sm /nix/store | cut -f1) -gt 50000 ] && nix-collect-garbage -d"
+        run: |
+          [ $(du -sm /nix/store | cut -f1) -gt 50000 ] && nix-collect-garbage -d || :
