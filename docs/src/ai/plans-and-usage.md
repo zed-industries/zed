@@ -15,7 +15,7 @@ Please note that if you’re interested in just using Zed as the world’s faste
 - A `request` in Zed is a response to a `prompt`, plus any tool calls that are initiated as part of that response. There may be one `request` per `prompt`, or many.
 
 Most models offered by Zed are metered per-prompt.
-Some models that use large context windows and unlimited tool calls ([“Burn Mode”](./models.md#burn-mode)) count each individual request within a prompt against your prompt limit, since the agentic work spawned by the prompt is expensive to support.
+Some models that use large context windows and unlimited tool calls ([“Max Mode”](./models.md#max-mode)) count each individual request within a prompt against your prompt limit, since the agentic work spawned by the prompt is expensive to support.
 
 See [the Models page](./models.md) for a list of which subset of models are metered by request.
 
