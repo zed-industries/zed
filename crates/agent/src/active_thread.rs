@@ -1031,6 +1031,7 @@ impl ActiveThread {
                     .thread
                     .read(cx)
                     .message(*message_id)
+                    .filter(|message| !message.is_hidden)
                     .map(|message| message.segments.clone())
                 {
                     self.push_message(message_id, &message_segments, window, cx);
