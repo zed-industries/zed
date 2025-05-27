@@ -487,7 +487,7 @@ impl MessageEditor {
         };
 
         Some(
-            IconButton::new("lit-mode", icon)
+            IconButton::new("burn-mode", icon)
                 .icon_size(IconSize::Small)
                 .icon_color(Color::Muted)
                 .toggle_state(max_mode_enabled)

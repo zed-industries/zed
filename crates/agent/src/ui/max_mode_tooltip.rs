@@ -27,7 +27,7 @@ impl Render for MaxModeTooltip {
         let title = h_flex()
             .gap_1p5()
             .child(Icon::new(icon))
-            .child(Label::new("Lit Mode"));
+            .child(Label::new("Burn Mode"));
 
         tooltip_container(window, cx, |this, _, _| {
             this.gap_0p5()

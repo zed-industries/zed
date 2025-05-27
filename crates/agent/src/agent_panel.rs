@@ -2645,7 +2645,7 @@ impl AgentPanel {
                     )
                     .when(model.supports_max_mode(), |this| {
                         this.child(
-                            Button::new("continue-lit-mode", "Continue with Lit Mode")
+                            Button::new("continue-burn-mode", "Continue with Burn Mode")
                                 .style(ButtonStyle::Filled)
                                 .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                                 .layer(ElevationIndex::ModalSurface)
@@ -2659,7 +2659,7 @@ impl AgentPanel {
                                     )
                                     .map(|kb| kb.size(rems_from_px(10.))),
                                 )
-                                .tooltip(Tooltip::text("Enable Lit Mode for unlimited tool use."))
+                                .tooltip(Tooltip::text("Enable Burn Mode for unlimited tool use."))
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.thread.update(cx, |active_thread, cx| {
                                         active_thread.thread().update(cx, |thread, _cx| {
