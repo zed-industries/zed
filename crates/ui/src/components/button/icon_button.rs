@@ -178,7 +178,7 @@ impl VisibleOnHover for IconButton {
 }
 
 impl RenderOnce for IconButton {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> ButtonLike {
         let is_disabled = self.base.disabled;
         let is_selected = self.base.selected;
         let selected_style = self.base.selected_style;

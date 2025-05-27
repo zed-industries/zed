@@ -1,5 +1,5 @@
 use crate::{
-    DevicePixels, ForegroundExecutor, Size,
+    DevicePixels, ForegroundExecutor, SharedString, Size, SourceMetadata,
     platform::{ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream},
     size,
 };
@@ -7,8 +7,9 @@ use anyhow::{Result, anyhow};
 use block::ConcreteBlock;
 use cocoa::{
     base::{YES, id, nil},
-    foundation::NSArray,
+    foundation::{NSArray, NSString},
 };
+use collections::HashMap;
 use core_foundation::base::TCFType;
 use core_graphics::display::{
     CGDirectDisplayID, CGDisplayCopyDisplayMode, CGDisplayModeGetPixelHeight,
@@ -25,13 +26,14 @@ use objc::{
     runtime::{Class, Object, Sel},
     sel, sel_impl,
 };
-use std::{cell::RefCell, ffi::c_void, mem, ptr, rc::Rc};
+use std::{cell::RefCell, ffi::c_void, mem, ptr, rc::Rc, sync::Arc};
 
 use super::NSStringExt;
 
 #[derive(Clone)]
 pub struct MacScreenCaptureSource {
     sc_display: id,
+    meta: Option<ScreenMeta>,
 }
 
 pub struct MacScreenCaptureStream {
@@ -47,19 +49,31 @@ const FRAME_CALLBACK_IVAR: &str = "frame_callback";
 const SCStreamOutputTypeScreen: NSInteger = 0;
 
 impl ScreenCaptureSource for MacScreenCaptureSource {
-    fn resolution(&self) -> Result<Size<DevicePixels>> {
-        unsafe {
+    fn metadata(&self) -> Result<SourceMetadata> {
+        let (display_id, size) = unsafe {
             let display_id: CGDirectDisplayID = msg_send![self.sc_display, displayID];
             let display_mode_ref = CGDisplayCopyDisplayMode(display_id);
             let width = CGDisplayModeGetPixelWidth(display_mode_ref);
             let height = CGDisplayModeGetPixelHeight(display_mode_ref);
             CGDisplayModeRelease(display_mode_ref);
 
-            Ok(size(
-                DevicePixels(width as i32),
-                DevicePixels(height as i32),
-            ))
-        }
+            (
+                display_id,
+                size(DevicePixels(width as i32), DevicePixels(height as i32)),
+            )
+        };
+        let (label, is_main) = self
+            .meta
+            .clone()
+            .map(|meta| (meta.label, meta.is_main))
+            .unzip();
+
+        Ok(SourceMetadata {
+            id: display_id as u64,
+            label,
+            is_main,
+            resolution: size,
+        })
     }
 
     fn stream(
@@ -89,9 +103,9 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
                 Box::into_raw(Box::new(frame_callback)) as *mut c_void,
             );
 
-            let resolution = self.resolution().unwrap();
-            let _: id = msg_send![configuration, setWidth: resolution.width.0 as i64];
-            let _: id = msg_send![configuration, setHeight: resolution.height.0 as i64];
+            let meta = self.metadata().unwrap();
+            let _: id = msg_send![configuration, setWidth: meta.resolution.width.0 as i64];
+            let _: id = msg_send![configuration, setHeight: meta.resolution.height.0 as i64];
             let stream: id = msg_send![stream, initWithFilter:filter configuration:configuration delegate:delegate];
 
             let (mut tx, rx) = oneshot::channel();
@@ -164,24 +178,74 @@ impl Drop for MacScreenCaptureStream {
     }
 }
 
-pub(crate) fn get_sources() -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+#[derive(Clone)]
+struct ScreenMeta {
+    label: SharedString,
+    // Is this the screen with menu bar?
+    is_main: bool,
+}
+
+unsafe fn screen_id_to_human_label() -> HashMap<CGDirectDisplayID, ScreenMeta> {
+    let screens: id = msg_send![class!(NSScreen), screens];
+    let count: usize = msg_send![screens, count];
+    let mut map = HashMap::default();
+    let screen_number_key = unsafe { NSString::alloc(nil).init_str("NSScreenNumber") };
+    for i in 0..count {
+        let screen: id = msg_send![screens, objectAtIndex: i];
+        let device_desc: id = msg_send![screen, deviceDescription];
+        if device_desc == nil {
+            continue;
+        }
+
+        let nsnumber: id = msg_send![device_desc, objectForKey: screen_number_key];
+        if nsnumber == nil {
+            continue;
+        }
+
+        let screen_id: u32 = msg_send![nsnumber, unsignedIntValue];
+
+        let name: id = msg_send![screen, localizedName];
+        if name != nil {
+            let cstr: *const std::os::raw::c_char = msg_send![name, UTF8String];
+            let rust_str = unsafe {
+                std::ffi::CStr::from_ptr(cstr)
+                    .to_string_lossy()
+                    .into_owned()
+            };
+            map.insert(
+                screen_id,
+                ScreenMeta {
+                    label: rust_str.into(),
+                    is_main: i == 0,
+                },
+            );
+        }
+    }
+    map
+}
+
+pub(crate) fn get_sources() -> oneshot::Receiver<Result<Vec<Arc<dyn ScreenCaptureSource>>>> {
     unsafe {
         let (mut tx, rx) = oneshot::channel();
         let tx = Rc::new(RefCell::new(Some(tx)));
-
+        let screen_id_to_label = screen_id_to_human_label();
         let block = ConcreteBlock::new(move |shareable_content: id, error: id| {
             let Some(mut tx) = tx.borrow_mut().take() else {
                 return;
             };
+
             let result = if error == nil {
                 let displays: id = msg_send![shareable_content, displays];
                 let mut result = Vec::new();
                 for i in 0..displays.count() {
                     let display = displays.objectAtIndex(i);
+                    let id: CGDirectDisplayID = msg_send![display, displayID];
+                    let meta = screen_id_to_label.get(&id).cloned();
                     let source = MacScreenCaptureSource {
                         sc_display: msg_send![display, retain],
+                        meta,
                     };
-                    result.push(Box::new(source) as Box<dyn ScreenCaptureSource>);
+                    result.push(Arc::new(source) as Arc<dyn ScreenCaptureSource>);
                 }
                 Ok(result)
             } else {

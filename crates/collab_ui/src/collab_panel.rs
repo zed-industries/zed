@@ -135,7 +135,19 @@ pub fn init(cx: &mut App) {
                         if room.is_screen_sharing() {
                             room.unshare_screen(cx).ok();
                         } else {
-                            room.share_screen(cx).detach_and_log_err(cx);
+                            let sources = cx.screen_capture_sources();
+
+                            cx.spawn(async move |room, cx| {
+                                let sources = sources.await??;
+                                let first = sources.into_iter().next();
+                                if let Some(first) = first {
+                                    room.update(cx, |room, cx| room.share_screen(first, cx))?
+                                        .await
+                                } else {
+                                    Ok(())
+                                }
+                            })
+                            .detach_and_log_err(cx);
                         };
                     });
                 });

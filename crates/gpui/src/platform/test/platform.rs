@@ -47,7 +47,7 @@ pub struct TestScreenCaptureSource {}
 pub struct TestScreenCaptureStream {}
 
 impl ScreenCaptureSource for TestScreenCaptureSource {
-    fn resolution(&self) -> Result<Size<DevicePixels>> {
+    fn metadata(&self) -> Result<Size<DevicePixels>> {
         Ok(size(DevicePixels(1), DevicePixels(1)))
     }
 

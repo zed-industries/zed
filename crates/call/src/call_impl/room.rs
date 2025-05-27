@@ -11,7 +11,10 @@ use client::{
 use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
 use futures::{FutureExt, StreamExt};
-use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
+use gpui::{
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, ScreenCaptureSource, Task,
+    WeakEntity,
+};
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use livekit::{LocalTrackPublication, ParticipantIdentity, RoomEvent};
@@ -1369,7 +1372,11 @@ impl Room {
         })
     }
 
-    pub fn share_screen(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    pub fn share_screen(
+        &mut self,
+        source: Arc<dyn ScreenCaptureSource>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
         if self.status.is_offline() {
             return Task::ready(Err(anyhow!("room is offline")));
         }
@@ -1386,13 +1393,8 @@ impl Room {
             return Task::ready(Err(anyhow!("live-kit was not initialized")));
         };
 
-        let sources = cx.screen_capture_sources();
-
         cx.spawn(async move |this, cx| {
-            let sources = sources.await??;
-            let source = sources.first().context("no display found")?;
-
-            let publication = participant.publish_screenshare_track(&**source, cx).await;
+            let publication = participant.publish_screenshare_track(&*source, cx).await;
 
             this.update(cx, |this, cx| {
                 let live_kit = this

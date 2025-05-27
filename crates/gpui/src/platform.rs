@@ -168,7 +168,7 @@ pub(crate) trait Platform: 'static {
     fn is_screen_capture_supported(&self) -> bool;
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>>;
+    ) -> oneshot::Receiver<Result<Vec<Arc<dyn ScreenCaptureSource>>>>;
 
     fn open_window(
         &self,
@@ -258,10 +258,22 @@ pub trait PlatformDisplay: Send + Sync + Debug {
     }
 }
 
+/// Metadata for a given [ScreenCaptureSource]
+pub struct SourceMetadata {
+    /// Opaque identifier of this screen.
+    pub id: u64,
+    /// Human-readable label for this source.
+    pub label: Option<SharedString>,
+    /// Whether this source is the main display.
+    pub is_main: Option<bool>,
+    /// Video resolution of this source.
+    pub resolution: Size<DevicePixels>,
+}
+
 /// A source of on-screen video content that can be captured.
 pub trait ScreenCaptureSource {
-    /// Returns the video resolution of this source.
-    fn resolution(&self) -> Result<Size<DevicePixels>>;
+    /// Returns metadata for this source.
+    fn metadata(&self) -> Result<SourceMetadata>;
 
     /// Start capture video from this source, invoking the given callback
     /// with each frame.

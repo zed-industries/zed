@@ -73,7 +73,7 @@ impl LinuxClient for HeadlessClient {
 
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<anyhow::Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+    ) -> oneshot::Receiver<anyhow::Result<Vec<Arc<dyn ScreenCaptureSource>>>> {
         let (mut tx, rx) = oneshot::channel();
         tx.send(Err(anyhow!(
             "Headless mode does not support screen capture."

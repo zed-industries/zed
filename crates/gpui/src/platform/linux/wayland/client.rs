@@ -644,7 +644,7 @@ impl LinuxClient for WaylandClient {
 
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<anyhow::Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+    ) -> oneshot::Receiver<anyhow::Result<Vec<Arc<dyn ScreenCaptureSource>>>> {
         // TODO: Get screen capture working on wayland. Be sure to try window resizing as that may
         // be tricky.
         //

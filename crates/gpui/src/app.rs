@@ -686,7 +686,7 @@ impl App {
     /// Returns a list of available screen capture sources.
     pub fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+    ) -> oneshot::Receiver<Result<Vec<Arc<dyn ScreenCaptureSource>>>> {
         self.platform.screen_capture_sources()
     }
 
